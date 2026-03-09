@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Bun build artifacts
+*.bun-build
+/hive
+/hive.exe
+coverage/
+
+# Local HIVE working state when this repo is used as a tracked project
+/.hive/
