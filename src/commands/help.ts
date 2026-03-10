@@ -4,6 +4,7 @@ export async function helpCommand(): Promise<string> {
 Usage:
   hive init <project> <path>
   hive work [project]
+  hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
   hive status
   hive log <message>
   hive msg [--type <type>] <from> <to> <body>

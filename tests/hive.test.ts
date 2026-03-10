@@ -139,4 +139,79 @@ Task: Build the auth endpoint and publish the contract.
     expect(refreshedLog).toContain("# Log: 2026-03-09 dealsplit");
     expect(refreshedLog).not.toContain("Captured session context");
   });
+
+  test("orchestrate kickoff records a human goal and prints a steward prompt", async () => {
+    await runCli(["init", "DealSplit", context.repo]);
+
+    const prompt = await runCli(["orchestrate", "Build", "the", "auth", "flow"]);
+    const log = await Bun.file(
+      join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+    ).text();
+    const msgDirEntries = await readdir(join(context.hiveHome, "msg"));
+    const messageText = await Bun.file(join(context.hiveHome, "msg", msgDirEntries[0])).text();
+
+    expect(prompt).toContain("# HIVE Steward Prompt");
+    expect(prompt).toContain("Interactive mode.");
+    expect(prompt).toContain("Build the auth flow");
+    expect(prompt).toContain("Human nudge pending: Build the auth flow");
+    expect(log).toContain("Goal: Build the auth flow");
+    expect(messageText).toContain("type: nudge");
+    expect(messageText).toContain("to: orchestrator");
+  });
+
+  test("orchestrate loop mode resumes state and surfaces stale-agent signals", async () => {
+    await runCli(["init", "DealSplit", context.repo]);
+
+    await Bun.write(
+      join(context.hiveHome, "projects", "dealsplit", "BOARD.md"),
+      `# Board
+
+## Tasks
+- 001: Auth endpoint [alpha] [active] [14:50]
+
+## Agents
+### alpha (craftsman -> backend)
+status: active on 001
+last-active: 14:50
+
+### beta (craftsman -> frontend)
+status: waiting
+last-active: 15:03
+
+## Blockers
+(none)
+
+## Decisions
+(none)
+`,
+    );
+
+    await Bun.write(
+      join(context.hiveHome, "msg", "20260309-144000-beta-to-alpha-manual.md"),
+      `---
+from: beta
+to: alpha
+type: question
+status: open
+ts: 2026-03-09T14:40:00Z
+project: dealsplit
+---
+
+Need the auth contract shape.
+`,
+    );
+
+    const beforeLog = await Bun.file(
+      join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+    ).text();
+    const prompt = await runCli(["orchestrate", "--mode", "loop", "--interval", "30"]);
+    const afterLog = await Bun.file(
+      join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+    ).text();
+
+    expect(prompt).toContain("Loop mode. Run one assessment/action cycle, then pause 30 seconds");
+    expect(prompt).toContain("alpha is marked active but last-active was 18 minutes ago.");
+    expect(prompt).toContain("Open question from beta to alpha has been waiting 28 minutes.");
+    expect(afterLog).toBe(beforeLog);
+  });
 });

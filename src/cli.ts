@@ -3,6 +3,7 @@ import { helpCommand } from "./commands/help";
 import { initCommand } from "./commands/init";
 import { logCommand } from "./commands/log";
 import { msgCommand, nudgeCommand } from "./commands/msg";
+import { orchestrateCommand } from "./commands/orchestrate";
 import { promptCommand } from "./commands/prompt";
 import { statusCommand } from "./commands/status";
 import { syncCommand } from "./commands/sync";
@@ -22,6 +23,8 @@ export async function runCli(args: string[]): Promise<string> {
       return initCommand(rest);
     case "work":
       return workCommand(rest);
+    case "orchestrate":
+      return orchestrateCommand(rest);
     case "status":
       return statusCommand();
     case "log":

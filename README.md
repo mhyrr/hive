@@ -25,11 +25,13 @@ The core idea is simple: files are the API.
 ## Current Status
 
 Phase 1 is implemented.
+Phase 2 orchestration kickoff is now implemented.
 
 Available commands:
 
 - `hive init <project> <path>`
 - `hive work [project]`
+- `hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]`
 - `hive status`
 - `hive log <message>`
 - `hive msg [--type <type>] <from> <to> <body>`
@@ -43,7 +45,6 @@ Not implemented yet:
 
 - `hive chat`
 - `hive curate`
-- Orchestrator loop mode
 - Agent launching/runtime adapters
 
 ## Why This Exists
@@ -117,10 +118,35 @@ Edit these files in `~/.hive/projects/dealsplit/`:
 - `PLAN.md`
 - `BOARD.md`
 
-In Phase 1, the steward/orchestrator is still a normal agent session. HIVE
-does not generate plans or run the loop for you yet.
+HIVE still does not call an LLM for you. The steward/orchestrator remains an
+agent session you run in your preferred runtime.
 
-### 5. Generate an agent prompt
+### 5. Kick off or resume the steward
+
+Kick off a new orchestration goal:
+
+```bash
+bun run bin/hive.ts orchestrate "Build auth"
+```
+
+Resume in loop mode:
+
+```bash
+bun run bin/hive.ts orchestrate --mode loop --interval 45
+```
+
+`hive orchestrate`:
+
+- records a human goal as a `nudge` message when you provide one
+- appends a kickoff note to `LOG.md`
+- builds a steward-specific prompt
+- includes derived orchestration signals like pending nudges, stale active
+  agents, and old open questions
+
+Use the output as the steward/orchestrator prompt in Claude Code, Codex,
+Gemini CLI, or any other runtime.
+
+### 6. Generate an agent prompt
 
 ```bash
 bun run bin/hive.ts prompt orchestrator
@@ -147,7 +173,7 @@ bun run bin/hive.ts prompt alpha
 This prompt is the handoff into Claude Code, Codex, Gemini CLI, or any
 other runtime you want to use.
 
-### 6. Send messages between agents
+### 7. Send messages between agents
 
 ```bash
 bun run bin/hive.ts msg --type question beta alpha "Need the auth contract"
@@ -159,7 +185,7 @@ Send a human priority change to the orchestrator:
 bun run bin/hive.ts nudge "Payments now take priority over auth"
 ```
 
-### 7. View the current state
+### 8. View the current state
 
 ```bash
 bun run bin/hive.ts status
@@ -168,7 +194,7 @@ bun run bin/hive.ts status
 This prints the active project's `BOARD.md` and all open messages for that
 project.
 
-### 8. Sync the plan into the repo
+### 9. Sync the plan into the repo
 
 ```bash
 bun run bin/hive.ts sync
@@ -176,7 +202,7 @@ bun run bin/hive.ts sync
 
 This copies the active project's `PLAN.md` into `<repo>/.hive/PLAN.md`.
 
-### 9. Archive the session
+### 10. Archive the session
 
 ```bash
 bun run bin/hive.ts archive
@@ -203,6 +229,21 @@ Notes:
 Without arguments, prints the active project and repo path.
 
 With a project name, switches the active project.
+
+### `hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]`
+
+Builds the steward/orchestrator prompt for the active project.
+
+Behavior:
+
+- if `goal` is provided, HIVE records it as a `nudge` to `orchestrator`
+- `interactive` mode is the default
+- `loop` mode tells the steward to re-read state and continue after the
+  given interval
+- if no goal is provided, the command resumes current state without adding
+  new messages or log entries
+
+This is the Phase 2 orchestration entrypoint.
 
 ### `hive status`
 
@@ -338,21 +379,21 @@ Useful environment variables:
 
 ## Read More
 
-- [FINAL-PRD.md](./FINAL-PRD.md) for the full product requirements
-- [CLAUDE.md](./CLAUDE.md) for implementation constraints and scope
-- [SOUL.md](./SOUL.md) for the hive's culture document
+- [FINAL-PRD.md](./docs/FINAL-PRD.md) for the full product requirements
+- [CLAUDE.md](./docs/CLAUDE.md) for implementation constraints and scope
+- [SOUL.md](./docs/SOUL.md) for the hive's culture document
 
 ## What Phase 1 Does Not Try To Solve
 
-Phase 1 gives you the file model, the CLI primitives, and prompt assembly.
-It does not yet give you a self-running hive.
+Phase 1 and Phase 2 give you the file model, the CLI primitives, prompt
+assembly, and a steward orchestration entrypoint. They still do not give you
+a self-running hive.
 
 You still need to:
 
-- write or update `PLAN.md`
-- maintain `BOARD.md` through the orchestrator workflow
 - run your agents manually
-- feed `hive prompt` output into those agent runtimes yourself
+- feed `hive orchestrate` or `hive prompt` output into those runtimes
+- let the steward agent maintain `PLAN.md` and `BOARD.md`
 
 That is intentional. The foundation needs to be boring and reliable before
 the autonomous layer sits on top of it.
