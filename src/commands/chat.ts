@@ -244,10 +244,17 @@ Command: ${renderLaunchPreview(spec)}`;
   await appendFeedEntry(paths, {
     project: activeProject,
     headline: `Hive chat completed`,
-    details: [`runtime: ${spec.runtime}`, `exit: ${result.code ?? "unknown"}`],
+    details: [
+      `runtime: ${spec.runtime}`,
+      `exit: ${result.code ?? "unknown"}${result.signal ? ` | signal: ${result.signal}` : ""}`,
+    ],
   });
 
-  if (result.code && result.code !== 0) {
+  if (result.signal) {
+    throw new UsageError(`Chat runtime exited due to ${result.signal}`);
+  }
+
+  if (result.code !== null && result.code !== 0) {
     throw new UsageError(`Chat runtime exited with status ${result.code}`);
   }
 

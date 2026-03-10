@@ -367,17 +367,34 @@ After 3 years: ~1,095 journal files across 36 month directories.
 
 ## The Orchestrator (Steward Persona)
 
-The orchestrator runs in its own terminal session. It reads state,
-assigns work, monitors progress, and adjusts the plan.
+The orchestrator is still an agent. It reads state, assigns work,
+monitors progress, and adjusts the plan.
 
 ### Modes
 - **Interactive:** Human drives. "What's next?" triggers assessment.
 - **Loop:** Autonomous. Cycles every 30-60s. Human nudges via msg.
-- **Headless (future):** Background process via runtime headless mode.
+- **Headless (future):** Launched by the supervisor without a human
+  manually pasting prompts.
 
 Same prompt, same files, different cadence.
 
 (See steward.md persona for the full operational prompt.)
+
+### The Supervisor
+
+Auto-launch should not be implemented inside the steward prompt itself.
+The steward decides. A deterministic supervisor loop launches and observes
+runs based on files written by the steward.
+
+That preserves the architecture:
+
+- the steward remains the thinker
+- the supervisor remains the launcher
+- `BOARD.md` stays steward-owned
+- run state stays on disk
+
+See [PHASE-4-AUTO-LAUNCH.md](./PHASE-4-AUTO-LAUNCH.md) for the concrete
+design.
 
 ---
 
@@ -418,8 +435,16 @@ hive chat is a conversational interface over them.
 ## CLI
 
 ```bash
-hive init <project> <path>       # Register a project with repo path
+hive init                        # Bootstrap ~/.hive/
+hive project add <project> <path># Register a project with repo path
 hive work [project]              # Set/show active project
+hive orchestrate [goal]          # Build a steward pass prompt
+hive launch <agent>              # Manual one-shot runtime launch
+hive supervise                   # Autonomous launch + supervision loop
+hive ps                          # Show active runs
+hive stop <agent|run>            # Stop a supervised run
+hive feed [n]                    # Show recent feed entries
+hive watch                       # Tail feed.md
 hive status                      # Pretty-print active BOARD.md + open msgs
 hive log <message>               # Append to active LOG.md
 hive msg <from> <to> <body>      # Create message
@@ -464,27 +489,44 @@ Compiles to standalone binary via `bun build --compile`.
 - [ ] Project configuration via chat
 - [ ] Memory querying via chat
 - [ ] Local model support (Ollama integration)
+- [x] One-shot `hive launch <agent>` runtime invocation
+- [x] `hive feed` / `hive watch` human event stream
 
-### Phase 4: Memory Intelligence
+### Phase 4: Autonomous Launch And Supervision
+- [x] `hive supervise` — deterministic supervisor loop
+- [x] Supervisor-owned run records under `projects/<project>/runs/`
+- [x] Orchestrator-triggered worker auto-launch from assignment messages
+- [x] Parallel worker dispatch with explicit scope guards
+- [x] `hive ps` / `hive stop` operational control
+- [x] Restart recovery from on-disk run state
+
+### Phase 5: Rich Human Modes
+- [ ] Persistent console over the hive files
+- [ ] Notification and escalation surfaces
+- [ ] Transport adapters (desktop, Slack, Telegram, iMessage, etc.)
+- [ ] Cross-project status and steering from one human interface
+
+### Phase 6: Memory Intelligence
 - [ ] `hive curate` — memory curation pass
 - [ ] Auto-curation on archive
 - [ ] `hive recall <query>` — search across memory
 - [ ] SQLite FTS5 index
 - [ ] Vector embeddings (future)
 
-### Phase 5: Integration & Polish
-- [ ] Runtime-specific launch scripts
-- [ ] `hive launch <agent>` — start agent with injected prompt
+### Phase 7: Integration & Polish
+- [ ] Additional runtime adapters
 - [ ] `hive sync` — copy PLAN to repo
-- [ ] `hive watch` — live tail of changes
 - [ ] Template library (shareable project configs)
 
 ---
 
 ## What This Is NOT
 
-- Not a daemon (but stateless = resumable = long-run capable)
-- Not a process manager (you start agents; HIVE coordinates via files)
-- Not an LLM router (HIVE never calls an LLM except in `hive chat`)
+- Not a required daemon (foreground supervision is enough; backgrounding is
+  optional)
+- Not a general-purpose process manager (HIVE only supervises its own agent
+  runs)
+- Not an LLM router in the framework sense (HIVE launches explicitly
+  configured runtimes; it does not become the model layer)
 - Not a framework (no SDK, no library imports)
 - Not project-scoped (lives in home dir, works across projects)

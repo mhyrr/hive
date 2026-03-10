@@ -9,7 +9,10 @@ Usage:
   hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>
   hive feed [count]
   hive watch [count]
+  hive supervise [--interval <seconds>] [--max-parallel <count>] [--once]
   hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]
+  hive ps
+  hive stop <agent-id|run-id>
   hive inbox [agent]
   hive status
   hive log <message>

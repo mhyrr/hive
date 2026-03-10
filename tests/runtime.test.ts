@@ -16,6 +16,15 @@ describe("runtime output filtering", () => {
     expect(shouldSuppressRuntimeLine("codex", "mcp startup: no servers")).toBeTrue();
   });
 
+  test("suppresses known codex state-db discrepancy warnings", () => {
+    expect(
+      shouldSuppressRuntimeLine(
+        "codex",
+        "2026-03-10T15:26:20.145324Z  WARN codex_core::state_db: state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
+      ),
+    ).toBeTrue();
+  });
+
   test("keeps ordinary runtime output visible", () => {
     expect(shouldSuppressRuntimeLine("codex", "OpenAI Codex v0.101.0 (research preview)")).toBeFalse();
     expect(shouldSuppressRuntimeLine("codex", "Review complete. No blocker in HIVE-004 itself.")).toBeFalse();

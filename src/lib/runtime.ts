@@ -13,6 +13,17 @@ export type LaunchSpec = {
   args: string[];
 };
 
+export type LaunchResult = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  visibleOutput: string;
+};
+
+export type LaunchHandle = {
+  pid: number | null;
+  wait: () => Promise<LaunchResult>;
+};
+
 export type RuntimeHints = {
   runtime: RuntimeName;
   model: string | null;
@@ -200,6 +211,9 @@ export function shouldSuppressRuntimeLine(runtime: RuntimeName, line: string): b
   if (runtime === "codex") {
     return (
       trimmed === "mcp startup: no servers" ||
+      /WARN codex_core::state_db: state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back\b/.test(
+        trimmed,
+      ) ||
       /ERROR codex_core::rollout::list: state db missing rollout path for thread\b/.test(
         trimmed,
       )
@@ -209,13 +223,18 @@ export function shouldSuppressRuntimeLine(runtime: RuntimeName, line: string): b
   return false;
 }
 
-function createForwarder(runtime: RuntimeName, stream: NodeJS.WriteStream) {
+function createForwarder(
+  runtime: RuntimeName,
+  stream: NodeJS.WriteStream,
+  onLine: (line: string) => void,
+) {
   const decoder = new StringDecoder("utf8");
   let buffer = "";
 
   const flushLine = (line: string) => {
     if (!shouldSuppressRuntimeLine(runtime, line)) {
       stream.write(`${line}\n`);
+      onLine(line);
     }
   };
 
@@ -243,16 +262,24 @@ function createForwarder(runtime: RuntimeName, stream: NodeJS.WriteStream) {
   };
 }
 
-export async function runLaunchSpec(
+export function startLaunchSpec(
   spec: LaunchSpec,
   repoPath: string,
-): Promise<{ code: number | null }> {
+): LaunchHandle {
   const child = spawn(spec.command, spec.args, {
     cwd: repoPath,
     stdio: ["inherit", "pipe", "pipe"],
   });
-  const stdoutForwarder = createForwarder(spec.runtime, process.stdout);
-  const stderrForwarder = createForwarder(spec.runtime, process.stderr);
+  const visibleLines: string[] = [];
+  const captureLine = (line: string) => {
+    visibleLines.push(line);
+
+    if (visibleLines.length > 40) {
+      visibleLines.shift();
+    }
+  };
+  const stdoutForwarder = createForwarder(spec.runtime, process.stdout, captureLine);
+  const stderrForwarder = createForwarder(spec.runtime, process.stderr, captureLine);
 
   child.stdout?.on("data", (chunk: Buffer) => {
     stdoutForwarder.write(chunk);
@@ -262,13 +289,29 @@ export async function runLaunchSpec(
     stderrForwarder.write(chunk);
   });
 
-  const code = await new Promise<number | null>((resolve, reject) => {
-    child.on("error", reject);
-    child.on("exit", (exitCode) => resolve(exitCode));
-  });
+  return {
+    pid: child.pid ?? null,
+    wait: async () => {
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("exit", (exitCode) => resolve(exitCode));
+      });
 
-  stdoutForwarder.end();
-  stderrForwarder.end();
+      stdoutForwarder.end();
+      stderrForwarder.end();
 
-  return { code };
+      return {
+        code,
+        signal: child.signalCode ?? null,
+        visibleOutput: visibleLines.join("\n").trim(),
+      };
+    },
+  };
+}
+
+export async function runLaunchSpec(
+  spec: LaunchSpec,
+  repoPath: string,
+): Promise<LaunchResult> {
+  return startLaunchSpec(spec, repoPath).wait();
 }
