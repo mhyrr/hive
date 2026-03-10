@@ -21,10 +21,11 @@ Agents are transient. The hive persists.
 - All data: Markdown with optional YAML frontmatter
 - No servers, no databases, no build step beyond Bun itself
 
-## CLI (12 commands)
+## CLI
 ```
 hive init <project> <path>       # Register a project
 hive work [project]              # Set/show active project
+hive orchestrate [goal]          # Steward/orchestrator prompt assembly
 hive status                      # BOARD.md + open msgs
 hive log <message>               # Append to LOG.md
 hive msg <from> <to> <body>      # Create message file
@@ -44,6 +45,7 @@ src/
   commands/
     init.ts                  # hive init — register project, scaffold ~/.hive/
     work.ts                  # hive work — set/show active project
+    orchestrate.ts           # hive orchestrate — steward kickoff/resume prompt
     status.ts                # hive status — read BOARD + msg, format for terminal
     log.ts                   # hive log — append timestamped entry
     msg.ts                   # hive msg + nudge — create message files
@@ -52,25 +54,29 @@ src/
     sync.ts                  # hive sync — copy PLAN to repo
   lib/
     paths.ts                 # ~/.hive/ path resolution + active project
+    board.ts                 # BOARD.md signal parsing for orchestration
     frontmatter.ts           # YAML frontmatter parse/write (no deps)
     format.ts                # Terminal formatting (colors, tables)
+    log.ts                   # Shared LOG.md append helper
+    orchestrator.ts          # Steward prompt assembly + orchestration signals
     time.ts                  # Timestamp helpers
 templates/
-  SOUL.md                    # Default soul (ship as-is)
   SELF.md                    # Template for user preferences
   config.md                  # Global config template
   project-config.md          # Per-project config template
   PLAN.md                    # Plan template
   BOARD.md                   # Board template
   LOG.md                     # Log template
-  personas/                  # All 5 default personas
+docs/
+  SOUL.md                    # Source soul artifact used for scaffolding
+  personas/                  # Source persona artifacts used for scaffolding
     architect.md
     craftsman.md
     critic.md
     scout.md
     steward.md
-FINAL-PRD.md
-CLAUDE.md
+  FINAL-PRD.md
+  CLAUDE.md
 ```
 
 ## Build Rules
