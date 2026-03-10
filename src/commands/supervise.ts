@@ -5,6 +5,7 @@ import {
   markDetachedSupervisorStopRequested,
   markDetachedSupervisorStopped,
   noteDetachedSupervisorPass,
+  readDetachedSupervisorState,
   reconcileDetachedSupervisorState,
   startDetachedSupervisor,
   writeDetachedSupervisorState,
@@ -47,7 +48,7 @@ type SuperviseOptions = {
   once: boolean;
   detach: boolean;
   child: boolean;
-  action: "run" | "status" | "stop";
+  action: "run" | "status" | "stop" | "logs";
 };
 
 type ProjectState = {
@@ -63,10 +64,10 @@ type ProjectState = {
 
 function parseOptions(args: string[]): SuperviseOptions {
   const usage =
-    "Usage: hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]\n       hive supervise status\n       hive supervise stop";
+    "Usage: hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]\n       hive supervise status\n       hive supervise stop\n       hive supervise logs";
   const first = args[0]?.trim().toLowerCase();
 
-  if (first === "status" || first === "stop") {
+  if (first === "status" || first === "stop" || first === "logs") {
     if (args.length !== 1) {
       throw new UsageError(usage);
     }
@@ -371,6 +372,26 @@ export async function superviseCommand(args: string[]): Promise<string> {
   }
 
   const projectPaths = getProjectPaths(paths, activeProject);
+
+  if (options.action === "logs") {
+    const state = await readDetachedSupervisorState(projectPaths);
+
+    if (!state?.logPath) {
+      throw new UsageError("No detached supervisor log found.");
+    }
+
+    const file = Bun.file(state.logPath);
+
+    if (!(await file.exists())) {
+      return `Supervisor log: ${state.logPath}\n\n(empty)`;
+    }
+
+    const content = await file.text();
+    const lines = content.split("\n");
+    const tail = lines.slice(-50).join("\n");
+
+    return `Supervisor log: ${state.logPath}\n\n${tail}`;
+  }
 
   if (options.action === "status") {
     const state = await reconcileDetachedSupervisorState(projectPaths);

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import {
   baseTemplates,
   personaTemplates,
+  skillTemplates,
   renderBoardTemplate,
   renderLogTemplate,
   renderPlanTemplate,
@@ -17,9 +18,11 @@ export type HivePaths = {
   home: string;
   soul: string;
   self: string;
+  agents: string;
   config: string;
   feed: string;
   personasDir: string;
+  skillsDir: string;
   memoryDir: string;
   memoryProjectsDir: string;
   memoryPersonasDir: string;
@@ -51,9 +54,11 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     home,
     soul: join(home, "SOUL.md"),
     self: join(home, "SELF.md"),
+    agents: join(home, "AGENTS.md"),
     config: join(home, "config.md"),
     feed: join(home, "feed.md"),
     personasDir: join(home, "personas"),
+    skillsDir: join(home, "skills"),
     memoryDir: join(home, "memory"),
     memoryProjectsDir: join(home, "memory", "projects"),
     memoryPersonasDir: join(home, "memory", "personas"),
@@ -81,6 +86,7 @@ export async function ensureHiveScaffold(
   const paths = getHivePaths(home);
 
   await mkdir(paths.personasDir, { recursive: true });
+  await mkdir(paths.skillsDir, { recursive: true });
   await mkdir(paths.memoryProjectsDir, { recursive: true });
   await mkdir(paths.memoryPersonasDir, { recursive: true });
   await mkdir(paths.journalDir, { recursive: true });
@@ -95,6 +101,10 @@ export async function ensureHiveScaffold(
   for (const [name, template] of Object.entries(personaTemplates)) {
     await writeIfMissing(join(paths.personasDir, `${name}.md`), template);
     await writeIfMissing(join(paths.memoryPersonasDir, `${name}.md`), `# Persona Memory: ${name}\n\n(none yet)`);
+  }
+
+  for (const [name, template] of Object.entries(skillTemplates)) {
+    await writeIfMissing(join(paths.skillsDir, `${name}.md`), template);
   }
 
   return paths;

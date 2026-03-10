@@ -1,5 +1,7 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { digestBoard, listSkills } from "../lib/digest";
 import { UsageError } from "../lib/errors";
 import { listOpenProjectMessages } from "../lib/messages";
 import {
@@ -13,22 +15,23 @@ import {
   parseDefaultTeam,
 } from "../lib/project";
 
-async function readIfExists(path: string): Promise<string> {
-  const file = Bun.file(path);
-
-  if (!(await file.exists())) {
-    return "";
-  }
-
-  return (await file.text()).trim();
-}
-
 function renderMessages(messages: Awaited<ReturnType<typeof listOpenProjectMessages>>): string {
   if (messages.length === 0) {
     return "(none)";
   }
 
   return messages.map((message) => `### ${message.filename}\n${message.raw}`).join("\n\n");
+}
+
+async function listAvailableSkills(skillsDir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(skillsDir);
+    return entries
+      .filter((e) => e.endsWith(".md"))
+      .map((e) => e.replace(/\.md$/, ""));
+  } catch {
+    return [];
+  }
 }
 
 export async function promptCommand(args: string[]): Promise<string> {
@@ -47,12 +50,9 @@ export async function promptCommand(args: string[]): Promise<string> {
 
   const projectPaths = getProjectPaths(paths, activeProject);
   const soul = await Bun.file(paths.soul).text();
-  const self = await Bun.file(paths.self).text();
-  const knowledge = await readIfExists(join(paths.memoryDir, "knowledge.md"));
-  const projectMemory = await readIfExists(projectPaths.memory);
   const projectConfig = await Bun.file(projectPaths.config).text();
-  const plan = await Bun.file(projectPaths.plan).text();
   const board = await Bun.file(projectPaths.board).text();
+  const plan = await Bun.file(projectPaths.plan).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
   const planAgent = findPlanAgent(plan, agentId);
   const teamAgent = parseDefaultTeam(projectConfig).find((agent) => agent.id === agentId);
@@ -70,9 +70,9 @@ export async function promptCommand(args: string[]): Promise<string> {
   }
 
   const personaPath = join(paths.personasDir, `${resolvedAgent.persona}.md`);
-  const persona = await readIfExists(personaPath);
+  const personaFile = Bun.file(personaPath);
 
-  if (!persona) {
+  if (!(await personaFile.exists())) {
     throw new UsageError(`Missing persona file: ${resolvedAgent.persona}`);
   }
 
@@ -84,30 +84,38 @@ export async function promptCommand(args: string[]): Promise<string> {
       ? resolvedAgent.body
       : "No active assignment in PLAN.md. Default to the project configuration and the live board.";
 
+  const availableSkillNames = await listAvailableSkills(paths.skillsDir);
+
   return `# HIVE Agent Prompt
 
 You are ${agentId} for project ${activeProject}. Operate from the files below, not assumptions.
 
+## Identity
+${soul.trim()}
+
 ## Runtime Rules
-- Respect BOARD.md as the shared state snapshot. If you need it changed, send a message.
-- The authoritative hive files are not in the repo root. Use the absolute paths below instead of repo-relative guesses like \`BOARD.md\` or \`LOG.md\`.
-- Post status, questions, handoffs, and contracts through message files in ~/.hive/msg/.
-- Use \`hive inbox ${agentId}\` between major steps instead of manually polling the full prompt. In this repo, use \`./hive inbox ${agentId}\` when the binary is built locally but not installed on PATH.
-- When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or \`./hive msg resolve <message> ${agentId} <answer>\`. Close obsolete threads with \`hive msg close <message> ${agentId} [note]\` or \`./hive msg close <message> ${agentId} [note]\`.
+- Read ${paths.agents} for full operational protocols before starting work.
+- Read ${projectPaths.board} before acting — it's the shared state snapshot.
+- The authoritative hive files are not in the repo root. Use the absolute paths below.
+- Check \`hive inbox ${agentId}\` between major steps. Use \`./hive inbox ${agentId}\` when the binary is built locally but not installed on PATH.
+- When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or \`./hive msg resolve <message> ${agentId} <answer>\`.
+- Close obsolete threads with \`hive msg close <message> ${agentId} [note]\` or \`./hive msg close <message> ${agentId} [note]\`.
 - Write durable decisions and learnings to LOG.md before ending the session.
 - Stay inside your stated scope unless the orchestrator or human reassigns you.
 
-## Agent Identity
+## Agent
 id: ${agentId}
-persona: ${resolvedAgent.persona}
+persona: ${resolvedAgent.persona} (${personaPath})
 descriptor: ${resolvedAgent.descriptor}
 project: ${activeProject}
 repo: ${repoPath}
 hive-home: ${paths.home}
 
-## HIVE File Paths
+## Files
 SOUL.md: ${paths.soul}
 SELF.md: ${paths.self}
+AGENTS.md: ${paths.agents}
+persona: ${personaPath}
 project-config: ${projectPaths.config}
 PLAN.md: ${projectPaths.plan}
 BOARD.md: ${projectPaths.board}
@@ -115,32 +123,14 @@ LOG.md: ${projectPaths.log}
 project-memory: ${projectPaths.memory}
 messages-dir: ${paths.msgDir}
 
-## SOUL.md
-${soul.trim()}
-
-## SELF.md
-${self.trim()}
-
-## Persona
-${persona}
-
-## Hive Knowledge
-${knowledge || "(none yet)"}
-
-## Project Memory
-${projectMemory || "(none yet)"}
-
-## Project Config
-${projectConfig.trim()}
+## Available Skills
+${listSkills(paths.skillsDir, availableSkillNames)}
 
 ## Your Assignment
 ${assignment}
 
-## Active PLAN.md
-${plan.trim()}
-
-## BOARD.md Snapshot
-${board.trim()}
+## Board Summary
+${digestBoard(board)}
 
 ## Open Messages For You
 ${renderMessages(messages)}`;

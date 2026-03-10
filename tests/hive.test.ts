@@ -242,9 +242,9 @@ Task: Build the auth endpoint and publish the contract.
 
     expect(prompt).toContain("You are alpha for project dealsplit.");
     expect(prompt).toContain("# HIVE Soul");
-    expect(prompt).toContain("# Persona: Craftsman");
+    expect(prompt).toContain("persona: craftsman");
     expect(prompt).toContain("The authoritative hive files are not in the repo root.");
-    expect(prompt).toContain("## HIVE File Paths");
+    expect(prompt).toContain("## Files");
     expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "dealsplit", "BOARD.md")}`);
     expect(prompt).toContain(`LOG.md: ${join(context.hiveHome, "projects", "dealsplit", "LOG.md")}`);
     expect(prompt).toContain("hive inbox alpha");
@@ -296,7 +296,7 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("Human nudge pending: Build the auth flow");
     expect(prompt).toContain("When you fully handle a message, resolve it or close it so the open queue stays clean.");
     expect(prompt).toContain("The authoritative hive files are not in the repo root.");
-    expect(prompt).toContain("## HIVE File Paths");
+    expect(prompt).toContain("## Files");
     expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "dealsplit", "BOARD.md")}`);
     expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
     expect(prompt).toContain("./hive msg resolve <message> orchestrator <answer>");

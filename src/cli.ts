@@ -1,4 +1,5 @@
 import { archiveCommand } from "./commands/archive";
+import { askCommand } from "./commands/ask";
 import { chatCommand } from "./commands/chat";
 import { feedCommand, watchCommand } from "./commands/feed";
 import { helpCommand } from "./commands/help";
@@ -11,6 +12,8 @@ import { orchestrateCommand } from "./commands/orchestrate";
 import { psCommand } from "./commands/ps";
 import { projectCommand } from "./commands/project";
 import { promptCommand } from "./commands/prompt";
+import { runCommand } from "./commands/run";
+import { sayCommand } from "./commands/say";
 import { statusCommand } from "./commands/status";
 import { stopCommand } from "./commands/stop";
 import { superviseCommand } from "./commands/supervise";
@@ -27,6 +30,12 @@ export async function runCli(args: string[]): Promise<string> {
     case "--help":
     case "-h":
       return helpCommand();
+    case "run":
+      return runCommand(rest);
+    case "say":
+      return sayCommand(rest);
+    case "ask":
+      return askCommand(rest);
     case "init":
       return initCommand(rest);
     case "project":
