@@ -2,21 +2,27 @@ export async function helpCommand(): Promise<string> {
   return `HIVE
 
 Usage:
+  hive run [--interval <seconds>] [--max-parallel <count>]
+  hive say <message>
+  hive ask [question]
+  hive watch [count]
+  hive stop <agent-id|run-id>
+
   hive init
   hive project add <project> <path>
   hive work [project]
-  hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
-  hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>
+  hive status
   hive feed [count]
-  hive watch [count]
+  hive ps
+
   hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]
   hive supervise status
   hive supervise stop
+  hive supervise logs
+  hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
+  hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>
   hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]
-  hive ps
-  hive stop <agent-id|run-id>
   hive inbox [agent]
-  hive status
   hive log <message>
   hive msg [--type <type>] <from> <to> <body>
   hive msg show <message>

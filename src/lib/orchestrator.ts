@@ -1,5 +1,6 @@
 import { appendLogEntry } from "./log";
 import { appendFeedEntry } from "./feed";
+import { digestBoard, listSkills } from "./digest";
 import { HiveMessage, createMessage } from "./messages";
 import { HivePaths, ProjectPaths } from "./paths";
 import { parseBoard, minutesSince } from "./board";
@@ -181,21 +182,18 @@ export function buildOrchestratorPrompt(input: {
   repoPath: string;
   pathsSoul: string;
   pathsSelf: string;
+  pathsAgents: string;
+  personaPath: string;
   projectConfigPath: string;
   planPath: string;
   boardPath: string;
   logPath: string;
   projectMemoryPath: string;
   messagesDir: string;
+  skillsDir: string;
+  availableSkillNames: string[];
   soul: string;
-  self: string;
-  persona: string;
-  knowledge: string;
-  projectMemory: string;
-  projectConfig: string;
-  plan: string;
   board: string;
-  log: string;
   activeRuns: RunRecord[];
   recentRunResults: RunResult[];
   openMessages: HiveMessage[];
@@ -213,6 +211,9 @@ export function buildOrchestratorPrompt(input: {
   return `# HIVE Steward Prompt
 
 You are the steward/orchestrator for project ${input.projectId}. Operate from the files below and keep BOARD.md as the single source of truth.
+
+## Identity
+${input.soul.trim()}
 
 ${renderModeInstructions(input.options)}
 
@@ -233,6 +234,7 @@ ${renderList(signals)}
 
 ## Steward Rules
 - BOARD.md is yours to maintain. Other agents should update you via msg/.
+- Read ${input.pathsAgents} for full operational protocols.
 - The authoritative hive files are not in the repo root. Use the absolute paths below instead of repo-relative guesses like \`BOARD.md\` or \`LOG.md\`.
 - Answer human nudges before anything else.
 - Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\` or \`./hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\` or \`./hive msg close <message> orchestrator [note]\`.
@@ -247,9 +249,11 @@ project: ${input.projectId}
 repo: ${input.repoPath}
 hive-home: ${input.pathsHome}
 
-## HIVE File Paths
+## Files
 SOUL.md: ${input.pathsSoul}
 SELF.md: ${input.pathsSelf}
+AGENTS.md: ${input.pathsAgents}
+persona: ${input.personaPath}
 project-config: ${input.projectConfigPath}
 PLAN.md: ${input.planPath}
 BOARD.md: ${input.boardPath}
@@ -257,32 +261,11 @@ LOG.md: ${input.logPath}
 project-memory: ${input.projectMemoryPath}
 messages-dir: ${input.messagesDir}
 
-## SOUL.md
-${input.soul.trim()}
+## Available Skills
+${listSkills(input.skillsDir, input.availableSkillNames)}
 
-## SELF.md
-${input.self.trim()}
-
-## Persona
-${input.persona.trim()}
-
-## Hive Knowledge
-${input.knowledge || "(none yet)"}
-
-## Project Memory
-${input.projectMemory || "(none yet)"}
-
-## Project Config
-${input.projectConfig.trim()}
-
-## Active PLAN.md
-${input.plan.trim()}
-
-## BOARD.md
-${input.board.trim()}
-
-## LOG.md
-${input.log.trim()}
+## Board Summary
+${digestBoard(input.board)}
 
 ## Active Runs
 ${renderActiveRuns(input.activeRuns)}

@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { UsageError } from "../lib/errors";
@@ -20,16 +21,6 @@ type ParsedOptions = {
   intervalSeconds: number;
   goal: string | null;
 };
-
-async function readIfExists(path: string): Promise<string> {
-  const file = Bun.file(path);
-
-  if (!(await file.exists())) {
-    return "";
-  }
-
-  return (await file.text()).trim();
-}
 
 function parseOptions(args: string[]): ParsedOptions {
   let mode: OrchestrateMode = "interactive";
@@ -73,6 +64,17 @@ function parseOptions(args: string[]): ParsedOptions {
   };
 }
 
+async function listAvailableSkills(skillsDir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(skillsDir);
+    return entries
+      .filter((e) => e.endsWith(".md"))
+      .map((e) => e.replace(/\.md$/, ""));
+  } catch {
+    return [];
+  }
+}
+
 export async function orchestrateCommand(args: string[]): Promise<string> {
   const options = parseOptions(args);
   const paths = await ensureHiveScaffold();
@@ -89,20 +91,16 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
   }
 
   const soul = await Bun.file(paths.soul).text();
-  const self = await Bun.file(paths.self).text();
-  const persona = await Bun.file(join(paths.personasDir, "steward.md")).text();
-  const knowledge = await readIfExists(join(paths.memoryDir, "knowledge.md"));
-  const projectMemory = await readIfExists(projectPaths.memory);
   const projectConfig = await Bun.file(projectPaths.config).text();
-  const plan = await Bun.file(projectPaths.plan).text();
   const board = await Bun.file(projectPaths.board).text();
-  const log = await Bun.file(projectPaths.log).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
+  const personaPath = join(paths.personasDir, "steward.md");
   const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
   const activeRuns = await listActiveRuns(projectPaths);
   const recentRunResults = (await listRecentRunResults(projectPaths, 5)).filter(
     (result) => result.agentId !== "orchestrator",
   );
+  const availableSkillNames = await listAvailableSkills(paths.skillsDir);
 
   return buildOrchestratorPrompt({
     projectId: activeProject,
@@ -110,21 +108,18 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
     repoPath,
     pathsSoul: paths.soul,
     pathsSelf: paths.self,
+    pathsAgents: paths.agents,
+    personaPath,
     projectConfigPath: projectPaths.config,
     planPath: projectPaths.plan,
     boardPath: projectPaths.board,
     logPath: projectPaths.log,
     projectMemoryPath: projectPaths.memory,
     messagesDir: paths.msgDir,
+    skillsDir: paths.skillsDir,
+    availableSkillNames,
     soul,
-    self,
-    persona,
-    knowledge,
-    projectMemory,
-    projectConfig,
-    plan,
     board,
-    log,
     activeRuns,
     recentRunResults,
     openMessages,

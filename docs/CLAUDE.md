@@ -25,30 +25,38 @@ Agents are transient. The hive persists.
 
 ## CLI
 ```
-hive init                        # Bootstrap ~/.hive/
-hive project add <project> <path># Register a project
-hive work [project]              # Set/show active project
+# Front door — talk to the hive like a team
+hive run [--interval] [--max-parallel]  # Start supervision (idempotent)
+hive say <message>                      # Nudge + auto-start supervision
+hive ask [question]                     # Synthesized status snapshot (no LLM)
+hive watch [count]                      # Live tail of feed.md
+hive stop <agent|run>                   # Signal an active supervised run
+
+# Setup
+hive init                               # Bootstrap ~/.hive/
+hive project add <project> <path>       # Register a project
+hive work [project]                     # Set/show active project
+hive status                             # BOARD.md + open msgs
+hive feed [count]                       # Recent feed entries
+hive ps                                 # Active-run and recent-run inspection
+
+# Operator escape hatches
+hive supervise [--max-parallel] [--once|--detach]
+hive supervise status|stop|logs
 hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
-                                # Steward/orchestrator prompt assembly
-hive chat [--runtime ...] <msg>  # Human-facing one-shot runtime call
-hive supervise [--max-parallel]  # Autonomous supervisor loop
-hive supervise status            # Detached supervisor state
-hive supervise stop              # Stop detached supervisor
-hive ps                          # Active-run and recent-run inspection
-hive stop <agent|run>            # Signal an active supervised run
-hive feed [count]                # Recent feed entries
-hive watch [count]               # Live tail of feed.md
-hive launch [--runtime ...] <agent>
-                                # One-shot agent runtime call
-hive status                      # BOARD.md + open msgs
-hive log <message>               # Append to LOG.md
-hive msg <from> <to> <body>      # Create message file
-hive nudge <message>             # Human → orchestrator
-hive prompt <agent-id>           # Full prompt assembly
-hive curate                      # Memory curation (Phase 4)
-hive archive                     # Archive session + curate
-hive sync                        # PLAN.md → repo .hive/
-hive help                        # Usage
+hive chat [--runtime ...] [--dry-run] <msg>
+hive launch [--runtime ...] [--dry-run] <agent> [goal]
+
+# Primitives
+hive inbox [agent]                      # Agent message queue
+hive log <message>                      # Append to LOG.md
+hive msg [--type] <from> <to> <body>    # Create message file
+hive msg show|resolve|close ...         # Message lifecycle
+hive nudge <message>                    # Human → orchestrator
+hive prompt <agent-id>                  # Full prompt assembly
+hive archive                            # Archive session
+hive sync                               # PLAN.md → repo .hive/
+hive help                               # Usage
 ```
 
 ## Structure
@@ -56,22 +64,31 @@ hive help                        # Usage
 bin/hive.ts                  # Entry point (command router)
 src/
   commands/
+    run.ts                   # hive run — idempotent supervision start
+    say.ts                   # hive say — nudge + auto-start supervision
+    ask.ts                   # hive ask — synthesized status (no LLM)
     init.ts                  # hive init — scaffold ~/.hive/
     project.ts               # hive project add — register project state
     work.ts                  # hive work — set/show active project
     orchestrate.ts           # hive orchestrate — steward kickoff/resume prompt
     chat.ts                  # hive chat — one-shot human interface runtime call
     feed.ts                  # hive feed/watch — human event stream
+    supervise.ts             # hive supervise — autonomous supervisor loop
     launch.ts                # hive launch — one-shot agent runtime call
     status.ts                # hive status — read BOARD + msg, format for terminal
     log.ts                   # hive log — append timestamped entry
     msg.ts                   # hive msg + nudge — create message files
-    prompt.ts                # hive prompt — assemble soul+self+persona+context
+    prompt.ts                # hive prompt — path-first compact agent prompt
     archive.ts               # hive archive — session → archive/
     sync.ts                  # hive sync — copy PLAN to repo
+    ps.ts                    # hive ps — active/recent run inspection
+    stop.ts                  # hive stop — signal active runs
+    inbox.ts                 # hive inbox — agent message queue
+    help.ts                  # hive help — usage text
   lib/
     paths.ts                 # ~/.hive/ path resolution + active project
     board.ts                 # BOARD.md signal parsing for orchestration
+    digest.ts                # Compact digest generators for prompts
     feed.ts                  # feed.md formatting + append helpers
     frontmatter.ts           # YAML frontmatter parse/write (no deps)
     format.ts                # Terminal formatting (colors, tables)
@@ -80,8 +97,11 @@ src/
     runtime.ts               # Runtime/model resolution + launcher adapters
     time.ts                  # Timestamp helpers
 templates/
-  SOUL.md                    # Default soul scaffold
-  SELF.md                    # Template for user preferences
+  SOUL.md                    # Hive soul — identity and culture
+  SELF.md                    # User preferences and context
+  AGENTS.md                  # Operational protocols (complement to SOUL)
+  skills/
+    state-efficient-ops.md   # Skill #1: token/state management patterns
   feed.md                    # Default human event feed scaffold
   config.md                  # Global config template
   project-config.md          # Per-project config template
@@ -89,11 +109,7 @@ templates/
   BOARD.md                   # Board template
   LOG.md                     # Log template
   personas/                  # Default persona scaffolds
-    architect.md
-    craftsman.md
-    critic.md
-    scout.md
-    steward.md
+    architect.md, craftsman.md, critic.md, scout.md, steward.md
 docs/
   FINAL-PRD.md
   PHASE-4-AUTO-LAUNCH.md
@@ -105,16 +121,21 @@ docs/
 - No class hierarchies. Exported async functions per command.
 - YAML frontmatter: split on `---`, parse `key: value` lines. No yaml lib.
 - Markdown is the data model. Don't parse it into objects.
-- `hive prompt` is the most critical command. It assembles the full agent
-  identity: SOUL.md + SELF.md + persona + project config + PLAN.md + BOARD.md.
-  This prompt IS the agent. Get it right.
+- Prompt assembly is path-first with digests. Three layers:
+  1. Identity (SOUL.md inlined — always loaded)
+  2. Doctrine (AGENTS.md, persona, skills — path-referenced)
+  3. Context (board/message/run digests — generated fresh per prompt)
+  Only SOUL.md, assignment, board digest, and agent-specific messages are inlined.
+  Everything else is a path the agent reads on demand.
 - Tests: `bun test`. End-to-end: create temp ~/.hive-test/, run commands,
   assert file contents.
 
 ## Implementation Status
 - Phase 1 core primitives: implemented
 - Phase 2 orchestrator prompt assembly: implemented
-- Phase 3 partial: feed/watch, `hive chat`, and one-shot `hive launch`
-- Phase 4 current: run records, `hive ps`, `hive stop`, worker auto-launch, restart recovery through `hive supervise`, and detached supervisor start/status/stop are implemented
-- Next phase: deeper supervision ergonomics beyond the initial detached/background control surface as defined in `docs/PHASE-4-AUTO-LAUNCH.md`
-- Still future after that: richer human modes, transport adapters, curate, and deeper memory intelligence
+- Phase 3: feed/watch, `hive chat`, one-shot `hive launch` — implemented
+- Phase 4: run records, `hive ps`, `hive stop`, worker auto-launch, restart recovery, detached supervisor start/status/stop/logs — implemented
+- Prompt compaction: path-first assembly with digests, SOUL/AGENTS split, skills infrastructure — implemented
+- Front door: `hive run`, `hive say`, `hive ask` — implemented
+- Skills system: `~/.hive/skills/` with `state-efficient-ops` as skill #1 — implemented
+- Next: deeper supervision ergonomics, richer human modes, transport adapters, curate, memory intelligence

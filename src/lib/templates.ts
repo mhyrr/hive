@@ -1,4 +1,5 @@
 import soulTemplate from "../../templates/SOUL.md" with { type: "text" };
+import agentsTemplate from "../../templates/AGENTS.md" with { type: "text" };
 import architectTemplate from "../../templates/personas/architect.md" with { type: "text" };
 import craftsmanTemplate from "../../templates/personas/craftsman.md" with { type: "text" };
 import criticTemplate from "../../templates/personas/critic.md" with { type: "text" };
@@ -11,10 +12,12 @@ import projectConfigTemplate from "../../templates/project-config.md" with { typ
 import planTemplate from "../../templates/PLAN.md" with { type: "text" };
 import boardTemplate from "../../templates/BOARD.md" with { type: "text" };
 import logTemplate from "../../templates/LOG.md" with { type: "text" };
+import stateEfficientOpsSkill from "../../templates/skills/state-efficient-ops.md" with { type: "text" };
 
 export const baseTemplates = {
   "SOUL.md": soulTemplate.trim(),
   "SELF.md": selfTemplate.trim(),
+  "AGENTS.md": agentsTemplate.trim(),
   "config.md": configTemplate.trim(),
   "feed.md": feedTemplate.trim(),
   "memory/knowledge.md": "# Knowledge\n\n(none yet)",
@@ -27,6 +30,10 @@ export const personaTemplates: Record<string, string> = {
   critic: criticTemplate.trim(),
   scout: scoutTemplate.trim(),
   steward: stewardTemplate.trim(),
+};
+
+export const skillTemplates: Record<string, string> = {
+  "state-efficient-ops": stateEfficientOpsSkill.trim(),
 };
 
 function renderTemplate(

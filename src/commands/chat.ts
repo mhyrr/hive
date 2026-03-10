@@ -1,6 +1,8 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { appendLogEntry } from "../lib/log";
+import { digestBoard, digestMessages, listSkills } from "../lib/digest";
 import { listOpenProjectMessages } from "../lib/messages";
 import {
   ensureHiveScaffold,
@@ -15,7 +17,7 @@ import {
   runLaunchSpec,
 } from "../lib/runtime";
 import { UsageError } from "../lib/errors";
-import { appendFeedEntry, formatFeed } from "../lib/feed";
+import { appendFeedEntry } from "../lib/feed";
 import { toCompactTimestamp } from "../lib/time";
 
 type ChatOptions = {
@@ -68,47 +70,47 @@ function parseOptions(args: string[]): ChatOptions {
   };
 }
 
-async function readIfExists(path: string): Promise<string> {
-  const file = Bun.file(path);
-
-  if (!(await file.exists())) {
-    return "";
+async function listAvailableSkills(skillsDir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(skillsDir);
+    return entries
+      .filter((e) => e.endsWith(".md"))
+      .map((e) => e.replace(/\.md$/, ""));
+  } catch {
+    return [];
   }
-
-  return (await file.text()).trim();
-}
-
-function renderMessages(
-  messages: Awaited<ReturnType<typeof listOpenProjectMessages>>,
-): string {
-  if (messages.length === 0) {
-    return "(none)";
-  }
-
-  return messages.map((message) => `### ${message.filename}\n${message.raw}`).join("\n\n");
 }
 
 function buildChatPrompt(input: {
   projectId: string;
   repoPath: string;
   hiveHome: string;
+  pathsSoul: string;
+  pathsSelf: string;
+  pathsAgents: string;
+  pathsConfig: string;
+  pathsFeed: string;
+  knowledgePath: string;
+  decisionsPath: string;
+  projectConfigPath: string;
+  planPath: string;
+  boardPath: string;
+  logPath: string;
+  projectMemoryPath: string;
+  messagesDir: string;
+  skillsDir: string;
+  availableSkillNames: string[];
   soul: string;
-  self: string;
-  globalConfig: string;
-  knowledge: string;
-  decisions: string;
-  projectMemory: string;
-  projectConfig: string;
-  plan: string;
   board: string;
-  log: string;
-  feed: string;
   openMessages: Awaited<ReturnType<typeof listOpenProjectMessages>>;
   message: string;
 }): string {
   return `# HIVE Chat Prompt
 
 You are HIVE itself for project ${input.projectId}. You are the human-facing interface over the hive's files.
+
+## Identity
+${input.soul}
 
 ## Operating Rules
 - Answer the human directly and concretely.
@@ -117,6 +119,7 @@ You are HIVE itself for project ${input.projectId}. You are the human-facing int
 - Keep BOARD.md as steward-owned. If you are acting as the human-facing layer, send direction through the proper files rather than inventing side channels.
 - Keep feed.md high-signal. If you make a meaningful change, append a concise feed entry.
 - Keep LOG.md durable. Record important decisions or redirections there.
+- The authoritative hive files are not in the repo root. Use the absolute paths below.
 
 ## Human Message
 ${input.message}
@@ -126,44 +129,29 @@ project: ${input.projectId}
 repo: ${input.repoPath}
 hive-home: ${input.hiveHome}
 
-## HIVE File Paths
-project files live under the hive home, not the repo root. Use the referenced hive paths directly when reading or updating state.
+## Files
+SOUL.md: ${input.pathsSoul}
+SELF.md: ${input.pathsSelf}
+AGENTS.md: ${input.pathsAgents}
+config: ${input.pathsConfig}
+feed: ${input.pathsFeed}
+knowledge: ${input.knowledgePath}
+decisions: ${input.decisionsPath}
+project-config: ${input.projectConfigPath}
+PLAN.md: ${input.planPath}
+BOARD.md: ${input.boardPath}
+LOG.md: ${input.logPath}
+project-memory: ${input.projectMemoryPath}
+messages-dir: ${input.messagesDir}
 
-## SOUL.md
-${input.soul}
+## Available Skills
+${listSkills(input.skillsDir, input.availableSkillNames)}
 
-## SELF.md
-${input.self}
-
-## Hive Config
-${input.globalConfig}
-
-## Hive Knowledge
-${input.knowledge || "(none yet)"}
-
-## Hive Decisions
-${input.decisions || "(none yet)"}
-
-## Project Memory
-${input.projectMemory || "(none yet)"}
-
-## Project Config
-${input.projectConfig}
-
-## Active PLAN.md
-${input.plan}
-
-## BOARD.md
-${input.board}
-
-## LOG.md
-${input.log}
-
-## Recent Feed
-${input.feed}
+## Board Summary
+${digestBoard(input.board)}
 
 ## Open Project Messages
-${renderMessages(input.openMessages)}`;
+${digestMessages(input.openMessages)}`;
 }
 
 export async function chatCommand(args: string[]): Promise<string> {
@@ -177,7 +165,6 @@ export async function chatCommand(args: string[]): Promise<string> {
 
   const projectPaths = getProjectPaths(paths, activeProject);
   const soul = await Bun.file(paths.soul).text();
-  const self = await Bun.file(paths.self).text();
   const globalConfig = await Bun.file(paths.config).text();
   const projectConfig = await Bun.file(projectPaths.config).text();
   const repoPath = extractRepoPath(projectConfig);
@@ -186,22 +173,32 @@ export async function chatCommand(args: string[]): Promise<string> {
     throw new UsageError("Project config is missing `path:` in the repo section.");
   }
 
+  const board = await Bun.file(projectPaths.board).text();
+  const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
+  const availableSkillNames = await listAvailableSkills(paths.skillsDir);
+
   const prompt = buildChatPrompt({
     projectId: activeProject,
     repoPath,
     hiveHome: paths.home,
+    pathsSoul: paths.soul,
+    pathsSelf: paths.self,
+    pathsAgents: paths.agents,
+    pathsConfig: paths.config,
+    pathsFeed: paths.feed,
+    knowledgePath: join(paths.memoryDir, "knowledge.md"),
+    decisionsPath: join(paths.memoryDir, "decisions.md"),
+    projectConfigPath: projectPaths.config,
+    planPath: projectPaths.plan,
+    boardPath: projectPaths.board,
+    logPath: projectPaths.log,
+    projectMemoryPath: projectPaths.memory,
+    messagesDir: paths.msgDir,
+    skillsDir: paths.skillsDir,
+    availableSkillNames,
     soul: soul.trim(),
-    self: self.trim(),
-    globalConfig: globalConfig.trim(),
-    knowledge: await readIfExists(join(paths.memoryDir, "knowledge.md")),
-    decisions: await readIfExists(join(paths.memoryDir, "decisions.md")),
-    projectMemory: await readIfExists(projectPaths.memory),
-    projectConfig: projectConfig.trim(),
-    plan: (await Bun.file(projectPaths.plan).text()).trim(),
-    board: (await Bun.file(projectPaths.board).text()).trim(),
-    log: (await Bun.file(projectPaths.log).text()).trim(),
-    feed: formatFeed(await Bun.file(paths.feed).text(), 10),
-    openMessages: await listOpenProjectMessages(paths.msgDir, activeProject),
+    board: board.trim(),
+    openMessages,
     message: options.message,
   });
   const hints = resolveRuntimeHints({
