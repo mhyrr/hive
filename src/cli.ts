@@ -8,9 +8,12 @@ import { launchCommand } from "./commands/launch";
 import { logCommand } from "./commands/log";
 import { msgCommand, nudgeCommand } from "./commands/msg";
 import { orchestrateCommand } from "./commands/orchestrate";
+import { psCommand } from "./commands/ps";
 import { projectCommand } from "./commands/project";
 import { promptCommand } from "./commands/prompt";
 import { statusCommand } from "./commands/status";
+import { stopCommand } from "./commands/stop";
+import { superviseCommand } from "./commands/supervise";
 import { syncCommand } from "./commands/sync";
 import { workCommand } from "./commands/work";
 import { UsageError } from "./lib/errors";
@@ -38,8 +41,14 @@ export async function runCli(args: string[]): Promise<string> {
       return feedCommand(rest);
     case "watch":
       return watchCommand(rest);
+    case "supervise":
+      return superviseCommand(rest);
     case "launch":
       return launchCommand(rest);
+    case "ps":
+      return psCommand();
+    case "stop":
+      return stopCommand(rest);
     case "inbox":
       return inboxCommand(rest);
     case "status":

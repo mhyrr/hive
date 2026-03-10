@@ -13,6 +13,7 @@ import {
   getProjectPaths,
 } from "../lib/paths";
 import { extractRepoPath } from "../lib/project";
+import { listActiveRuns, listRecentRunResults } from "../lib/runs";
 
 type ParsedOptions = {
   mode: OrchestrateMode;
@@ -98,6 +99,10 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
   const log = await Bun.file(projectPaths.log).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
   const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
+  const activeRuns = await listActiveRuns(projectPaths);
+  const recentRunResults = (await listRecentRunResults(projectPaths, 5)).filter(
+    (result) => result.agentId !== "orchestrator",
+  );
 
   return buildOrchestratorPrompt({
     projectId: activeProject,
@@ -120,6 +125,8 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
     plan,
     board,
     log,
+    activeRuns,
+    recentRunResults,
     openMessages,
     options,
   });

@@ -406,7 +406,6 @@ path: ${context.repo}
 
     const chatDryRun = await runCli(["chat", "--dry-run", "How's", "auth", "going?"]);
     const launchDryRun = await runCli(["launch", "--dry-run", "alpha"]);
-    const runsDirEntries = await readdir(join(context.hiveHome, "projects", "dealsplit", "runs"));
 
     expect(chatDryRun).toContain("Chat dry run");
     expect(chatDryRun).toContain("Runtime: codex");
@@ -419,7 +418,38 @@ path: ${context.repo}
     expect(launchDryRun).toContain("Runtime: codex");
     expect(launchDryRun).toContain("Command: codex exec");
 
-    expect(runsDirEntries.some((entry) => entry.endsWith("-chat.prompt.md"))).toBeTrue();
-    expect(runsDirEntries.some((entry) => entry.endsWith("-alpha.prompt.md"))).toBeTrue();
+    expect(
+      await Bun.file(
+        join(context.hiveHome, "projects", "dealsplit", "runs", "20260309-150800Z-chat.prompt.md"),
+      ).exists(),
+    ).toBeTrue();
+    expect(
+      await Bun.file(
+        join(
+          context.hiveHome,
+          "projects",
+          "dealsplit",
+          "runs",
+          "2026",
+          "03",
+          "20260309-150800Z-alpha",
+          "prompt.md",
+        ),
+      ).exists(),
+    ).toBeTrue();
+    expect(
+      await Bun.file(
+        join(
+          context.hiveHome,
+          "projects",
+          "dealsplit",
+          "runs",
+          "2026",
+          "03",
+          "20260309-150800Z-alpha",
+          "run.md",
+        ),
+      ).exists(),
+    ).toBeFalse();
   });
 });

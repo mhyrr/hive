@@ -27,6 +27,13 @@ The core idea is simple: files are the API.
 Phase 1 is implemented.
 Phase 2 orchestration kickoff is now implemented.
 Phase 3 human interaction primitives are now partially implemented.
+Phase 4 now includes run records, `hive ps`, `hive stop`, and worker
+auto-launch through `hive supervise`.
+It also now recovers stale active runs from on-disk state and preserves
+cancelled runs across supervisor restarts.
+The next target is deeper supervision ergonomics and detached/background run
+management; see
+[`docs/PHASE-4-AUTO-LAUNCH.md`](./docs/PHASE-4-AUTO-LAUNCH.md).
 
 Available commands:
 
@@ -37,7 +44,10 @@ Available commands:
 - `hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>`
 - `hive feed [count]`
 - `hive watch [count]`
+- `hive supervise [--interval <seconds>] [--max-parallel <count>] [--once]`
 - `hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]`
+- `hive ps`
+- `hive stop <agent-id|run-id>`
 - `hive inbox [agent]`
 - `hive status`
 - `hive log <message>`
@@ -54,7 +64,6 @@ Available commands:
 Not implemented yet:
 
 - `hive curate`
-- Automatic orchestrator-driven worker launch
 - Runtime adapters beyond the first `codex` / `claude` one-shot launchers
 - Detached background launch management and session supervision
 
@@ -276,6 +285,28 @@ Dry-run the resolved command and prompt artifact first:
 bun run bin/hive.ts launch --dry-run alpha
 ```
 
+### 10b. Let the supervisor launch work automatically
+
+Run one deterministic supervisor pass:
+
+```bash
+bun run bin/hive.ts supervise --once --max-parallel 3
+```
+
+Run the foreground supervisor loop:
+
+```bash
+bun run bin/hive.ts supervise --interval 30 --max-parallel 3
+```
+
+`hive supervise` now:
+
+- decides whether the steward needs a reassessment pass
+- launches ready worker assignment messages automatically
+- respects one-run-per-assignment safety
+- enforces conservative scope conflict checks before parallel work
+- uses `hive ps` and `hive stop` as the operational surface for live runs
+
 ### 11. Send messages between agents
 
 ```bash
@@ -410,7 +441,43 @@ Notes:
 - for workers, it uses `hive prompt <agent-id>`
 - for `orchestrator`, it uses `hive orchestrate [goal]`
 - the first launcher adapters target `codex` and `claude`
+- actual launches now write run records under `~/.hive/projects/<project>/runs/`
+- it refuses duplicate launches for an agent that already has an active run
 - `--dry-run` shows the resolved command and writes the prompt artifact without invoking a model
+
+### `hive supervise [--interval <seconds>] [--max-parallel <count>] [--once]`
+
+Runs the Phase 4 supervisor loop.
+
+Notes:
+
+- `--once` performs a single deterministic assessment cycle and stops
+- without `--once`, it loops and sleeps between passes
+- `--max-parallel` limits concurrent worker launches per project
+- it launches `orchestrator` when the trigger rules say yes
+- it launches ready worker assignments automatically when launch mode and scope rules allow it
+- one open assignment triggers at most one automatic launch attempt until the steward reassigns or retries it
+- on startup or each tick, it reconciles stale `runs/active/` entries against live pids and recovers dead runs into failed/cancelled results
+
+### `hive ps`
+
+Shows the active project's run ledger.
+
+Notes:
+
+- lists active runs from `~/.hive/projects/<project>/runs/active/`
+- shows recent completed or failed runs from the archived run tree
+- recent run results are also fed back into steward prompt assembly for reassessment
+
+### `hive stop <agent-id|run-id>`
+
+Signals an active supervised run with `SIGTERM`.
+
+Notes:
+
+- accepts either an active agent id or a unique run id / prefix
+- records the stop request in `feed.md` and `LOG.md`
+- records the cancellation intent durably so a later supervisor pass can recover it as `cancelled` if the owning launcher disappears before finalization
 
 ### `hive status`
 
@@ -580,6 +647,7 @@ Useful environment variables:
 ## Read More
 
 - [FINAL-PRD.md](./docs/FINAL-PRD.md) for the full product requirements
+- [PHASE-4-AUTO-LAUNCH.md](./docs/PHASE-4-AUTO-LAUNCH.md) for the Phase 4 supervisor and auto-launch design
 - [CLAUDE.md](./docs/CLAUDE.md) for implementation constraints and scope
 - [SOUL.md](./templates/SOUL.md) for the default hive culture template
 

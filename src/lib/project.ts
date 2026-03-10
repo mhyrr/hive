@@ -13,6 +13,15 @@ export type TeamAgent = {
   persona: string;
 };
 
+function splitScopeRoots(value: string): string[] {
+  return [...new Set(
+    value
+      .split(",")
+      .map((entry) => normalizeScopeRoot(entry))
+      .filter((entry): entry is string => Boolean(entry)),
+  )];
+}
+
 export function normalizeProjectName(input: string): string {
   const normalized = input
     .trim()
@@ -29,6 +38,12 @@ export function normalizeProjectName(input: string): string {
 
 export function extractRepoPath(projectConfig: string): string | null {
   const match = projectConfig.match(/^path:\s*(.+)$/m);
+
+  return match ? match[1].trim() : null;
+}
+
+export function extractProjectConfigValue(projectConfig: string, key: string): string | null {
+  const match = projectConfig.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
 
   return match ? match[1].trim() : null;
 }
@@ -101,4 +116,105 @@ export function extractPersonaName(descriptor: string): string {
   const match = descriptor.match(/[a-z0-9_-]+/i);
 
   return match ? match[0].toLowerCase() : descriptor.trim().toLowerCase();
+}
+
+export function extractBodyValue(body: string, key: string): string | null {
+  const match = body.match(new RegExp(`^${key}:\\s*(.+)$`, "mi"));
+
+  return match ? match[1].trim() : null;
+}
+
+export function normalizeScopeRoot(value: string): string | null {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed === "*") {
+    return "*";
+  }
+
+  let normalized = trimmed.replace(/\\/g, "/").replace(/^\.\//, "");
+
+  normalized = normalized.replace(/\/\*\*$/, "");
+  normalized = normalized.replace(/\/\*$/, "");
+  normalized = normalized.replace(/\/+$/, "");
+
+  return normalized || null;
+}
+
+export function parseScopeRoots(value: string | null | undefined): string[] | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const roots = splitScopeRoots(value);
+
+  if (roots.length === 0 || roots.includes("*")) {
+    return null;
+  }
+
+  return roots;
+}
+
+function looksLikeRepoScope(value: string): boolean {
+  return /[/*.]/.test(value) || value.includes("/");
+}
+
+export function extractScopeRootsFromDescriptor(descriptor: string): string[] | null {
+  const explicitMatch = descriptor.match(/\bscope(?:d)?(?:\s+to)?\s*:?\s*([^)]+)$/i);
+
+  if (explicitMatch) {
+    return parseScopeRoots(explicitMatch[1]);
+  }
+
+  const arrowIndex = descriptor.indexOf("->");
+
+  if (arrowIndex === -1) {
+    return null;
+  }
+
+  const candidate = descriptor.slice(arrowIndex + 2).trim();
+
+  if (!candidate || !looksLikeRepoScope(candidate)) {
+    return null;
+  }
+
+  return parseScopeRoots(candidate);
+}
+
+export function resolveAgentScopeRoots(input: {
+  plan: string;
+  projectConfig: string;
+  agentId: string;
+  assignmentScope?: string | null;
+}): string[] | null {
+  if (input.assignmentScope?.trim()) {
+    return parseScopeRoots(input.assignmentScope);
+  }
+
+  const planAgent = findPlanAgent(input.plan, input.agentId);
+
+  if (planAgent) {
+    const bodyScope = extractBodyValue(planAgent.body, "scope");
+
+    if (bodyScope?.trim()) {
+      return parseScopeRoots(bodyScope);
+    }
+
+    const descriptorScope = extractScopeRootsFromDescriptor(planAgent.descriptor);
+
+    if (descriptorScope) {
+      return descriptorScope;
+    }
+  }
+
+  const teamAgent = parseDefaultTeam(input.projectConfig).find((agent) => agent.id === input.agentId);
+
+  if (!teamAgent) {
+    return null;
+  }
+
+  return extractScopeRootsFromDescriptor(teamAgent.descriptor);
 }

@@ -5,6 +5,7 @@ Agents are transient. The hive persists.
 
 ## Read First
 `FINAL-PRD.md` — the complete PRD with architecture, memory design, and all conventions.
+`PHASE-4-AUTO-LAUNCH.md` — the next-phase design for supervisor-driven auto-launch and parallel workers.
 
 ## Philosophy
 - One home (`~/.hive/`), no split brain. Projects are subdirectories.
@@ -29,6 +30,9 @@ hive work [project]              # Set/show active project
 hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
                                 # Steward/orchestrator prompt assembly
 hive chat [--runtime ...] <msg>  # Human-facing one-shot runtime call
+hive supervise [--max-parallel]  # Autonomous supervisor loop
+hive ps                          # Active-run and recent-run inspection
+hive stop <agent|run>            # Signal an active supervised run
 hive feed [count]                # Recent feed entries
 hive watch [count]               # Live tail of feed.md
 hive launch [--runtime ...] <agent>
@@ -38,7 +42,6 @@ hive log <message>               # Append to LOG.md
 hive msg <from> <to> <body>      # Create message file
 hive nudge <message>             # Human → orchestrator
 hive prompt <agent-id>           # Full prompt assembly
-hive chat                        # Meta-interface (Phase 3)
 hive curate                      # Memory curation (Phase 4)
 hive archive                     # Archive session + curate
 hive sync                        # PLAN.md → repo .hive/
@@ -90,6 +93,7 @@ templates/
     steward.md
 docs/
   FINAL-PRD.md
+  PHASE-4-AUTO-LAUNCH.md
   CLAUDE.md
 ```
 
@@ -108,4 +112,6 @@ docs/
 - Phase 1 core primitives: implemented
 - Phase 2 orchestrator prompt assembly: implemented
 - Phase 3 partial: feed/watch, `hive chat`, and one-shot `hive launch`
-- Still future: curate, orchestrator-driven auto-launch, richer runtime adapters, long-running supervision
+- Phase 4 current: run records, `hive ps`, `hive stop`, worker auto-launch, and restart recovery through `hive supervise` are implemented
+- Next phase: deeper supervision ergonomics and detached/background management as defined in `docs/PHASE-4-AUTO-LAUNCH.md`
+- Still future after that: richer human modes, transport adapters, curate, and deeper memory intelligence

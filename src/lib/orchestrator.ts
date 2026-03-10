@@ -3,6 +3,7 @@ import { appendFeedEntry } from "./feed";
 import { HiveMessage, createMessage } from "./messages";
 import { HivePaths, ProjectPaths } from "./paths";
 import { parseBoard, minutesSince } from "./board";
+import { RunRecord, RunResult } from "./runs";
 
 export type OrchestrateMode = "interactive" | "loop";
 
@@ -28,7 +29,53 @@ function renderList(items: string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
-function summarizeSignals(boardText: string, messages: HiveMessage[]): string[] {
+function renderActiveRuns(runs: RunRecord[]): string {
+  if (runs.length === 0) {
+    return "(none)";
+  }
+
+  return runs
+    .map((run) =>
+      [
+        `### ${run.agentId}`,
+        `status: ${run.status}`,
+        `runtime: ${run.runtime}${run.model ? ` (${run.model})` : ""}`,
+        `started: ${run.started}`,
+        `pid: ${run.pid ?? "unknown"}`,
+        `scope: ${run.scope?.join(", ") || "*"}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
+function renderRunResults(results: RunResult[]): string {
+  if (results.length === 0) {
+    return "(none)";
+  }
+
+  return results
+    .map((result) =>
+      [
+        `### ${result.runId} (${result.agentId})`,
+        `status: ${result.status}`,
+        `exit-code: ${result.exitCode ?? "unknown"}`,
+        `assignment: ${result.assignmentMessage ?? "(none)"}`,
+        `assignment-status-after-exit: ${result.assignmentStatusAfterExit ?? "(none)"}`,
+        `assignment-resolved-by-worker: ${result.assignmentResolvedByWorker ? "yes" : "no"}`,
+        `files-changed: ${result.changedFiles.join(", ") || "(none detected)"}`,
+        `git-summary: ${result.gitSummaryLines.join("; ") || "(none detected)"}`,
+        "final-visible-output:",
+        result.finalVisibleOutput || "(none)",
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
+function summarizeSignals(
+  boardText: string,
+  messages: HiveMessage[],
+  activeRuns: RunRecord[],
+): string[] {
   const signals: string[] = [];
   const board = parseBoard(boardText);
 
@@ -36,11 +83,16 @@ function summarizeSignals(boardText: string, messages: HiveMessage[]): string[] 
     const status = (agent.fields.status ?? "").toLowerCase();
     const lastActive = agent.fields["last-active"];
     const staleMinutes = lastActive ? minutesSince(lastActive) : null;
+    const hasActiveRun = activeRuns.some((run) => run.agentId === agent.id);
 
     if (status.includes("active") && staleMinutes !== null && staleMinutes > 10) {
       signals.push(
         `${agent.id} is marked active but last-active was ${staleMinutes} minutes ago.`,
       );
+    }
+
+    if (status.includes("active") && !hasActiveRun) {
+      signals.push(`${agent.id} is marked active on the board but has no active run record.`);
     }
   }
 
@@ -144,10 +196,12 @@ export function buildOrchestratorPrompt(input: {
   plan: string;
   board: string;
   log: string;
+  activeRuns: RunRecord[];
+  recentRunResults: RunResult[];
   openMessages: HiveMessage[];
   options: OrchestrateOptions;
 }): string {
-  const signals = summarizeSignals(input.board, input.openMessages);
+  const signals = summarizeSignals(input.board, input.openMessages, input.activeRuns);
   const recentGoal =
     input.options.goal?.trim() ||
     input.openMessages.find(
@@ -183,6 +237,7 @@ ${renderList(signals)}
 - Answer human nudges before anything else.
 - Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\` or \`./hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\` or \`./hive msg close <message> orchestrator [note]\`.
 - Tell workers to poll with \`hive inbox <agent>\` or \`./hive inbox <agent>\` and to resolve or close their own message-driven work when done.
+- When you create an assignment message, include machine-usable frontmatter: \`task:\` for the work id, \`launch:\` (\`auto\` or \`manual\`), and conservative \`scope:\` roots whenever parallel launch is safe.
 - When a task is done, update the board, unblock dependents, and assign the next task.
 - When an agent is stale or blocked, either unblock it or reassign the work. Do not let ambiguity linger.
 - If everything is healthy and in progress, wait. Do not micro-manage.
@@ -228,6 +283,12 @@ ${input.board.trim()}
 
 ## LOG.md
 ${input.log.trim()}
+
+## Active Runs
+${renderActiveRuns(input.activeRuns)}
+
+## Recent Run Results
+${renderRunResults(input.recentRunResults)}
 
 ## Open Project Messages
 ${renderMessages(input.openMessages)}`;

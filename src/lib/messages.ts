@@ -117,6 +117,31 @@ export async function listOpenProjectMessages(
   return (await listProjectMessages(msgDir, project)).filter((message) => isOpenMessage(message));
 }
 
+export async function listOpenAssignmentMessages(
+  msgDir: string,
+  project: string,
+): Promise<HiveMessage[]> {
+  return (await listOpenProjectMessages(msgDir, project)).filter(
+    (message) => message.attributes.type === "assign",
+  );
+}
+
+export async function findOpenAssignmentMessage(
+  msgDir: string,
+  project: string,
+  agentId: string,
+): Promise<HiveMessage | null> {
+  const matches = (await listOpenProjectMessages(msgDir, project)).filter(
+    (message) => message.attributes.type === "assign" && message.attributes.to === agentId,
+  );
+
+  if (matches.length !== 1) {
+    return null;
+  }
+
+  return matches[0];
+}
+
 export async function findMessage(
   msgDir: string,
   reference: string,
