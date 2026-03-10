@@ -1,5 +1,5 @@
 import { section } from "../lib/format";
-import { listMessages } from "../lib/messages";
+import { listOpenProjectMessages } from "../lib/messages";
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -8,7 +8,7 @@ import {
 import { extractRepoPath } from "../lib/project";
 import { UsageError } from "../lib/errors";
 
-function formatMessages(messages: Awaited<ReturnType<typeof listMessages>>): string {
+function formatMessages(messages: Awaited<ReturnType<typeof listOpenProjectMessages>>): string {
   if (messages.length === 0) {
     return "(none)";
   }
@@ -38,12 +38,7 @@ export async function statusCommand(): Promise<string> {
   const board = await Bun.file(projectPaths.board).text();
   const configText = await Bun.file(projectPaths.config).text();
   const repoPath = extractRepoPath(configText) ?? "(unknown)";
-  const openMessages = (await listMessages(paths.msgDir)).filter((message) => {
-    return (
-      message.attributes.project === activeProject &&
-      (message.attributes.status ?? "open") === "open"
-    );
-  });
+  const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
 
   return [
     `Project: ${activeProject}`,

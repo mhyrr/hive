@@ -13,6 +13,14 @@ type TestContext = {
 
 let context: TestContext;
 
+async function initHive(): Promise<string> {
+  return runCli(["init"]);
+}
+
+async function addProject(): Promise<string> {
+  return runCli(["project", "add", "DealSplit", context.repo]);
+}
+
 async function setupContext(): Promise<TestContext> {
   const root = await mkdtemp(join(tmpdir(), "hive-"));
   const repo = join(root, "repo");
@@ -37,20 +45,31 @@ afterEach(async () => {
 });
 
 describe("HIVE CLI", () => {
-  test("init scaffolds the hive home and activates the project", async () => {
-    const output = await runCli(["init", "DealSplit", context.repo]);
+  test("init scaffolds the hive home without registering a project", async () => {
+    const output = await initHive();
 
-    expect(output).toContain("Initialized dealsplit");
+    expect(output).toContain("Initialized hive home");
     expect(await Bun.file(join(context.hiveHome, "SOUL.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "SELF.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "personas", "steward.md")).exists()).toBeTrue();
+    expect(await Bun.file(join(context.hiveHome, "active-project.txt")).exists()).toBeFalse();
+  });
+
+  test("project add registers the repo and activates the project", async () => {
+    await initHive();
+
+    const output = await addProject();
+
+    expect(output).toContain("Registered project dealsplit");
     expect((await Bun.file(join(context.hiveHome, "active-project.txt")).text()).trim()).toBe(
       "dealsplit",
     );
+    expect(await Bun.file(join(context.hiveHome, "projects", "dealsplit", "PLAN.md")).exists()).toBeTrue();
   });
 
   test("status shows the board and open messages for the active project", async () => {
-    await runCli(["init", "DealSplit", context.repo]);
+    await initHive();
+    await addProject();
     await runCli(["log", "Session kickoff"]);
     await runCli([
       "msg",
@@ -75,8 +94,96 @@ describe("HIVE CLI", () => {
     expect(log).toContain("Session kickoff");
   });
 
+  test("inbox and message lifecycle commands keep open queues clean", async () => {
+    await initHive();
+    await addProject();
+
+    const createOutput = await runCli([
+      "msg",
+      "--type",
+      "question",
+      "beta",
+      "alpha",
+      "Need",
+      "the",
+      "auth",
+      "contract",
+    ]);
+    const filename = createOutput.match(/([^\s]+\.md)$/)?.[1];
+
+    expect(filename).toBeString();
+
+    const inboxBefore = await runCli(["inbox", "alpha"]);
+    const rawBefore = await runCli(["msg", "show", filename!]);
+
+    expect(inboxBefore).toContain("Inbox: alpha");
+    expect(inboxBefore).toContain(filename!);
+    expect(rawBefore).toContain("status: open");
+    expect(rawBefore).toContain("Need the auth contract");
+
+    const resolveOutput = await runCli([
+      "msg",
+      "resolve",
+      filename!,
+      "alpha",
+      "Published",
+      "the",
+      "contract",
+      "in",
+      "src/api/auth.ts",
+    ]);
+    const rawAfter = await Bun.file(join(context.hiveHome, "msg", filename!)).text();
+    const inboxAfter = await runCli(["inbox", "alpha"]);
+    const statusAfter = await runCli(["status"]);
+
+    expect(resolveOutput).toContain(`Resolved ${filename!}`);
+    expect(rawAfter).toContain("status: resolved");
+    expect(rawAfter).toContain("resolved: 2026-03-09T15:08:00Z");
+    expect(rawAfter).toContain("## Answer (alpha, 2026-03-09T15:08:00Z)");
+    expect(rawAfter).toContain("Published the contract in src/api/auth.ts");
+    expect(inboxAfter).toContain("No open messages.");
+    expect(statusAfter).not.toContain(filename!);
+    expect(statusAfter).not.toContain("Need the auth contract");
+
+    const secondCreateOutput = await runCli([
+      "msg",
+      "--type",
+      "notify",
+      "orchestrator",
+      "alpha",
+      "Hold",
+      "for",
+      "task",
+      "004",
+    ]);
+    const secondFilename = secondCreateOutput.match(/([^\s]+\.md)$/)?.[1];
+
+    expect(secondFilename).toBeString();
+
+    const closeOutput = await runCli([
+      "msg",
+      "close",
+      secondFilename!,
+      "alpha",
+      "Superseded",
+      "by",
+      "task",
+      "004",
+    ]);
+    const closedRaw = await Bun.file(join(context.hiveHome, "msg", secondFilename!)).text();
+    const finalInbox = await runCli(["inbox", "alpha"]);
+
+    expect(closeOutput).toContain(`Closed ${secondFilename!}`);
+    expect(closedRaw).toContain("status: closed");
+    expect(closedRaw).toContain("closed: 2026-03-09T15:08:00Z");
+    expect(closedRaw).toContain("## Closed (alpha, 2026-03-09T15:08:00Z)");
+    expect(closedRaw).toContain("Superseded by task 004");
+    expect(finalInbox).toContain("No open messages.");
+  });
+
   test("prompt assembles persona, plan assignment, and agent messages", async () => {
-    await runCli(["init", "DealSplit", context.repo]);
+    await initHive();
+    await addProject();
 
     await Bun.write(
       join(context.hiveHome, "projects", "dealsplit", "PLAN.md"),
@@ -120,7 +227,8 @@ Task: Build the auth endpoint and publish the contract.
   });
 
   test("sync copies PLAN.md into the repo and archive snapshots the session", async () => {
-    await runCli(["init", "DealSplit", context.repo]);
+    await initHive();
+    await addProject();
     await runCli(["log", "Captured session context"]);
 
     const syncOutput = await runCli(["sync"]);
@@ -141,7 +249,8 @@ Task: Build the auth endpoint and publish the contract.
   });
 
   test("orchestrate kickoff records a human goal and prints a steward prompt", async () => {
-    await runCli(["init", "DealSplit", context.repo]);
+    await initHive();
+    await addProject();
 
     const prompt = await runCli(["orchestrate", "Build", "the", "auth", "flow"]);
     const log = await Bun.file(
@@ -151,16 +260,20 @@ Task: Build the auth endpoint and publish the contract.
     const messageText = await Bun.file(join(context.hiveHome, "msg", msgDirEntries[0])).text();
 
     expect(prompt).toContain("# HIVE Steward Prompt");
-    expect(prompt).toContain("Interactive mode.");
+    expect(prompt).toContain("Human-driven single-pass mode.");
     expect(prompt).toContain("Build the auth flow");
     expect(prompt).toContain("Human nudge pending: Build the auth flow");
+    expect(prompt).toContain("When you fully handle a message, resolve it or close it so the open queue stays clean.");
+    expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
+    expect(prompt).toContain("hive inbox <agent>");
     expect(log).toContain("Goal: Build the auth flow");
     expect(messageText).toContain("type: nudge");
     expect(messageText).toContain("to: orchestrator");
   });
 
   test("orchestrate loop mode resumes state and surfaces stale-agent signals", async () => {
-    await runCli(["init", "DealSplit", context.repo]);
+    await initHive();
+    await addProject();
 
     await Bun.write(
       join(context.hiveHome, "projects", "dealsplit", "BOARD.md"),

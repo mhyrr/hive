@@ -86,9 +86,9 @@ Loop discipline:
   }
 
   return `## Mode
-Interactive mode. Perform one meaningful orchestration pass in response to the current state and then stop for human review.
+Human-driven single-pass mode. Perform one meaningful orchestration pass in response to the current state and then stop for human review.
 
-Interactive discipline:
+Single-pass discipline:
 - Prefer the single highest-leverage action over broad rewrites.
 - If the next step depends on human direction, surface the decision cleanly instead of guessing.
 - Treat a fresh goal or nudge as the top priority.`;
@@ -156,6 +156,7 @@ ${renderList([
   "Read the board, open messages, and recent log before acting.",
   "If the goal is new or changed, decompose it into clear tasks and update PLAN.md and BOARD.md.",
   "Send assignments or clarifications through message files. Do not rely on unrecorded context.",
+  "When you fully handle a message, resolve it or close it so the open queue stays clean.",
   "Log every orchestration action you take.",
 ])}
 
@@ -165,6 +166,8 @@ ${renderList(signals)}
 ## Steward Rules
 - BOARD.md is yours to maintain. Other agents should update you via msg/.
 - Answer human nudges before anything else.
+- Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\`.
+- Tell workers to poll with \`hive inbox <agent>\` and to resolve or close their own message-driven work when done.
 - When a task is done, update the board, unblock dependents, and assign the next task.
 - When an agent is stale or blocked, either unblock it or reassign the work. Do not let ambiguity linger.
 - If everything is healthy and in progress, wait. Do not micro-manage.

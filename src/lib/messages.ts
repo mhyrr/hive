@@ -2,7 +2,7 @@ import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter";
-import { toCompactTimestamp, toIsoTimestamp } from "./time";
+import { now, toCompactTimestamp, toIsoTimestamp } from "./time";
 
 export type HiveMessage = {
   path: string;
@@ -18,6 +18,14 @@ export type CreateMessageInput = {
   type: string;
   project: string;
   body: string;
+};
+
+type UpdateMessageInput = {
+  reference: string;
+  status: "resolved" | "closed";
+  actor: string;
+  body?: string;
+  project?: string;
 };
 
 function sanitizeSegment(value: string): string {
@@ -85,4 +93,127 @@ export async function listMessages(msgDir: string): Promise<HiveMessage[]> {
   }
 
   return messages;
+}
+
+export function isOpenMessage(message: HiveMessage): boolean {
+  return (message.attributes.status ?? "open") === "open";
+}
+
+export function isProjectMessage(message: HiveMessage, project: string): boolean {
+  return message.attributes.project === project;
+}
+
+export async function listProjectMessages(
+  msgDir: string,
+  project: string,
+): Promise<HiveMessage[]> {
+  return (await listMessages(msgDir)).filter((message) => isProjectMessage(message, project));
+}
+
+export async function listOpenProjectMessages(
+  msgDir: string,
+  project: string,
+): Promise<HiveMessage[]> {
+  return (await listProjectMessages(msgDir, project)).filter((message) => isOpenMessage(message));
+}
+
+export async function findMessage(
+  msgDir: string,
+  reference: string,
+  project?: string,
+): Promise<HiveMessage | null> {
+  const normalizedReference = reference.trim();
+
+  if (!normalizedReference) {
+    return null;
+  }
+
+  const messages = project
+    ? await listProjectMessages(msgDir, project)
+    : await listMessages(msgDir);
+  const matches = messages.filter((message) => {
+    const filenameWithoutExtension = message.filename.replace(/\.md$/, "");
+
+    return (
+      message.filename === normalizedReference ||
+      filenameWithoutExtension === normalizedReference ||
+      message.filename.startsWith(normalizedReference) ||
+      filenameWithoutExtension.startsWith(normalizedReference)
+    );
+  });
+
+  if (matches.length !== 1) {
+    return null;
+  }
+
+  return matches[0];
+}
+
+async function updateMessage(
+  msgDir: string,
+  input: UpdateMessageInput,
+): Promise<HiveMessage | null> {
+  const message = await findMessage(msgDir, input.reference, input.project);
+  const timestamp = toIsoTimestamp(now());
+
+  if (!message) {
+    return null;
+  }
+
+  const attributes = {
+    ...message.attributes,
+    status: input.status,
+    [input.status]: timestamp,
+  };
+  const bodyParts = [message.body.trim()];
+
+  if (input.body?.trim()) {
+    const sectionTitle = input.status === "resolved" ? "Answer" : "Closed";
+
+    bodyParts.push(`## ${sectionTitle} (${input.actor}, ${timestamp})\n${input.body.trim()}`);
+  }
+
+  const raw = stringifyFrontmatter(attributes, bodyParts.filter(Boolean).join("\n\n"));
+
+  await Bun.write(message.path, raw);
+
+  return {
+    path: message.path,
+    filename: message.filename,
+    attributes,
+    body: parseFrontmatter(raw).body,
+    raw: raw.trim(),
+  };
+}
+
+export async function resolveMessage(
+  msgDir: string,
+  reference: string,
+  actor: string,
+  answer: string,
+  project?: string,
+): Promise<HiveMessage | null> {
+  return updateMessage(msgDir, {
+    reference,
+    status: "resolved",
+    actor,
+    body: answer,
+    project,
+  });
+}
+
+export async function closeMessage(
+  msgDir: string,
+  reference: string,
+  actor: string,
+  note: string,
+  project?: string,
+): Promise<HiveMessage | null> {
+  return updateMessage(msgDir, {
+    reference,
+    status: "closed",
+    actor,
+    body: note,
+    project,
+  });
 }

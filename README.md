@@ -29,12 +29,17 @@ Phase 2 orchestration kickoff is now implemented.
 
 Available commands:
 
-- `hive init <project> <path>`
+- `hive init`
+- `hive project add <project> <path>`
 - `hive work [project]`
 - `hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]`
+- `hive inbox [agent]`
 - `hive status`
 - `hive log <message>`
 - `hive msg [--type <type>] <from> <to> <body>`
+- `hive msg show <message>`
+- `hive msg resolve <message> <actor> <answer>`
+- `hive msg close <message> <actor> [note]`
 - `hive nudge <message>`
 - `hive prompt <agent-id>`
 - `hive archive`
@@ -85,20 +90,43 @@ bun build --compile ./bin/hive.ts --outfile hive
 ./hive help
 ```
 
-### 2. Register a project
+### 2. Bootstrap the hive
 
 ```bash
-bun run bin/hive.ts init dealsplit /absolute/path/to/dealsplit
+bun run bin/hive.ts init
 ```
 
 This will:
 
 - create `~/.hive/` if it does not exist
 - scaffold core files like `SOUL.md`, `SELF.md`, and default personas
+- create the base memory, persona, project, message, and archive directories
+
+### 3. Customize the hive
+
+After `init`, there should be a human step.
+
+Edit these first:
+
+- `~/.hive/SOUL.md`
+- `~/.hive/SELF.md`
+
+That is where your hive stops being a template and starts becoming yours.
+
+### 4. Register a project
+
+```bash
+bun run bin/hive.ts project add dealsplit /absolute/path/to/dealsplit
+```
+
+This will:
+
 - create `~/.hive/projects/dealsplit/`
+- create the project config, plan, board, and log files if missing
+- create `~/.hive/memory/projects/dealsplit.md` if missing
 - mark `dealsplit` as the active project
 
-### 3. Check the active project
+### 5. Check the active project
 
 ```bash
 bun run bin/hive.ts work
@@ -110,7 +138,7 @@ Switch projects:
 bun run bin/hive.ts work dealsplit
 ```
 
-### 4. Write the mission
+### 6. Write the mission
 
 Edit these files in `~/.hive/projects/dealsplit/`:
 
@@ -121,7 +149,7 @@ Edit these files in `~/.hive/projects/dealsplit/`:
 HIVE still does not call an LLM for you. The steward/orchestrator remains an
 agent session you run in your preferred runtime.
 
-### 5. Kick off or resume the steward
+### 7. Kick off or resume the steward
 
 Kick off a new orchestration goal:
 
@@ -143,10 +171,13 @@ bun run bin/hive.ts orchestrate --mode loop --interval 45
 - includes derived orchestration signals like pending nudges, stale active
   agents, and old open questions
 
+`interactive` here means human-driven single-pass mode. The CLI is not a live
+console yet; it generates one steward pass worth of context and stops.
+
 Use the output as the steward/orchestrator prompt in Claude Code, Codex,
 Gemini CLI, or any other runtime.
 
-### 6. Generate an agent prompt
+### 8. Generate an agent prompt
 
 ```bash
 bun run bin/hive.ts prompt orchestrator
@@ -173,10 +204,35 @@ bun run bin/hive.ts prompt alpha
 This prompt is the handoff into Claude Code, Codex, Gemini CLI, or any
 other runtime you want to use.
 
-### 7. Send messages between agents
+Between major steps, agents should use a lightweight inbox check instead of
+reprinting the full prompt:
+
+```bash
+bun run bin/hive.ts inbox alpha
+```
+
+### 9. Send messages between agents
 
 ```bash
 bun run bin/hive.ts msg --type question beta alpha "Need the auth contract"
+```
+
+Inspect a specific message:
+
+```bash
+bun run bin/hive.ts msg show 20260309-150800-beta-to-alpha-ab12cd34
+```
+
+Resolve a message once it is answered:
+
+```bash
+bun run bin/hive.ts msg resolve 20260309-150800-beta-to-alpha-ab12cd34 alpha "Published the contract in src/api/auth.ts"
+```
+
+Close a message without a substantive answer:
+
+```bash
+bun run bin/hive.ts msg close 20260309-150800-beta-to-alpha-ab12cd34 alpha "Superseded by task 004"
 ```
 
 Send a human priority change to the orchestrator:
@@ -185,7 +241,7 @@ Send a human priority change to the orchestrator:
 bun run bin/hive.ts nudge "Payments now take priority over auth"
 ```
 
-### 8. View the current state
+### 10. View the current state
 
 ```bash
 bun run bin/hive.ts status
@@ -194,7 +250,7 @@ bun run bin/hive.ts status
 This prints the active project's `BOARD.md` and all open messages for that
 project.
 
-### 9. Sync the plan into the repo
+### 11. Sync the plan into the repo
 
 ```bash
 bun run bin/hive.ts sync
@@ -202,7 +258,7 @@ bun run bin/hive.ts sync
 
 This copies the active project's `PLAN.md` into `<repo>/.hive/PLAN.md`.
 
-### 10. Archive the session
+### 12. Archive the session
 
 ```bash
 bun run bin/hive.ts archive
@@ -213,16 +269,28 @@ This snapshots the active project's `config.md`, `PLAN.md`, `BOARD.md`, and
 
 ## Command Guide
 
-### `hive init <project> <path>`
+### `hive init`
 
-Registers a repo with the hive and scaffolds all required directories and
-default files on first run.
+Bootstraps the hive home at `~/.hive/` and writes the default hive files if
+they do not already exist.
+
+This command is intentionally hive-scoped, not project-scoped.
+
+Recommended next step:
+
+- edit `~/.hive/SOUL.md`
+- edit `~/.hive/SELF.md`
+- then register a project with `hive project add <project> <path>`
+
+### `hive project add <project> <path>`
+
+Registers a repo with the hive and scaffolds the project-specific files.
 
 Notes:
 
 - project names are normalized to lowercase slugs on disk
 - the repo path must already exist
-- the initialized project becomes the active project
+- the registered project becomes the active project
 
 ### `hive work [project]`
 
@@ -237,7 +305,8 @@ Builds the steward/orchestrator prompt for the active project.
 Behavior:
 
 - if `goal` is provided, HIVE records it as a `nudge` to `orchestrator`
-- `interactive` mode is the default
+- `interactive` mode is the default, but it is a human-driven single-pass
+  prompt build, not a live terminal session
 - `loop` mode tells the steward to re-read state and continue after the
   given interval
 - if no goal is provided, the command resumes current state without adding
@@ -249,6 +318,17 @@ This is the Phase 2 orchestration entrypoint.
 
 Reads the active project's `BOARD.md` and lists open messages for that
 project from `~/.hive/msg/`.
+
+### `hive inbox [agent]`
+
+Shows the open message queue for the active project.
+
+Notes:
+
+- with no argument, it prints all open project messages
+- with an agent id, it prints just that agent's open inbox
+- this is the intended lightweight polling command for workers between major
+  steps
 
 ### `hive log <message>`
 
@@ -269,6 +349,23 @@ Useful types include:
 - `assign`
 - `nudge`
 - `escalate`
+
+### `hive msg show <message>`
+
+Prints the full raw message file for the active project.
+
+You can reference the message by full filename, filename without `.md`, or a
+unique prefix.
+
+### `hive msg resolve <message> <actor> <answer>`
+
+Marks a message as `resolved`, timestamps it, and appends an `Answer` section
+to the message body.
+
+### `hive msg close <message> <actor> [note]`
+
+Marks a message as `closed`, timestamps it, and optionally appends a closing
+note.
 
 ### `hive nudge <message>`
 

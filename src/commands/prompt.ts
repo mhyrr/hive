@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { UsageError } from "../lib/errors";
-import { listMessages } from "../lib/messages";
+import { listOpenProjectMessages } from "../lib/messages";
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -23,7 +23,7 @@ async function readIfExists(path: string): Promise<string> {
   return (await file.text()).trim();
 }
 
-function renderMessages(messages: Awaited<ReturnType<typeof listMessages>>): string {
+function renderMessages(messages: Awaited<ReturnType<typeof listOpenProjectMessages>>): string {
   if (messages.length === 0) {
     return "(none)";
   }
@@ -76,13 +76,9 @@ export async function promptCommand(args: string[]): Promise<string> {
     throw new UsageError(`Missing persona file: ${resolvedAgent.persona}`);
   }
 
-  const messages = (await listMessages(paths.msgDir)).filter((message) => {
-    return (
-      message.attributes.project === activeProject &&
-      message.attributes.to === agentId &&
-      (message.attributes.status ?? "open") === "open"
-    );
-  });
+  const messages = (await listOpenProjectMessages(paths.msgDir, activeProject)).filter(
+    (message) => message.attributes.to === agentId,
+  );
   const assignment =
     "body" in resolvedAgent && resolvedAgent.body
       ? resolvedAgent.body
@@ -95,7 +91,8 @@ You are ${agentId} for project ${activeProject}. Operate from the files below, n
 ## Runtime Rules
 - Respect BOARD.md as the shared state snapshot. If you need it changed, send a message.
 - Post status, questions, handoffs, and contracts through message files in ~/.hive/msg/.
-- Check for new messages between major steps and before declaring work complete.
+- Use \`hive inbox ${agentId}\` between major steps instead of manually polling the full prompt.
+- When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or close it with \`hive msg close <message> ${agentId} [note]\`.
 - Write durable decisions and learnings to LOG.md before ending the session.
 - Stay inside your stated scope unless the orchestrator or human reassigns you.
 
