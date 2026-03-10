@@ -2,9 +2,16 @@ import { UsageError } from "../lib/errors";
 import { listOpenProjectMessages } from "../lib/messages";
 import { ensureHiveScaffold, getActiveProject } from "../lib/paths";
 
+const COMMAND_HINTS = [
+  "Next:",
+  "- inspect a message with `hive msg show <message>` or `./hive msg show <message>`",
+  "- answer it with `hive msg resolve <message> <actor> <answer>` or `./hive msg resolve <message> <actor> <answer>`",
+  "- retire noise with `hive msg close <message> <actor> [note]` or `./hive msg close <message> <actor> [note]`",
+].join("\n");
+
 function formatInbox(messages: Awaited<ReturnType<typeof listOpenProjectMessages>>): string {
   if (messages.length === 0) {
-    return "No open messages.";
+    return "No open messages. Queue is clean.";
   }
 
   return messages
@@ -36,6 +43,8 @@ export async function inboxCommand(args: string[]): Promise<string> {
   return [
     `Project: ${activeProject}`,
     agentId ? `Inbox: ${agentId}` : "Inbox: all open project messages",
+    `Open messages: ${messages.length}`,
     formatInbox(messages),
+    COMMAND_HINTS,
   ].join("\n\n");
 }

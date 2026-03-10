@@ -91,8 +91,8 @@ You are ${agentId} for project ${activeProject}. Operate from the files below, n
 ## Runtime Rules
 - Respect BOARD.md as the shared state snapshot. If you need it changed, send a message.
 - Post status, questions, handoffs, and contracts through message files in ~/.hive/msg/.
-- Use \`hive inbox ${agentId}\` between major steps instead of manually polling the full prompt.
-- When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or close it with \`hive msg close <message> ${agentId} [note]\`.
+- Use \`hive inbox ${agentId}\` between major steps instead of manually polling the full prompt. In this repo, use \`./hive inbox ${agentId}\` when the binary is built locally but not installed on PATH.
+- When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or \`./hive msg resolve <message> ${agentId} <answer>\`. Close obsolete threads with \`hive msg close <message> ${agentId} [note]\` or \`./hive msg close <message> ${agentId} [note]\`.
 - Write durable decisions and learnings to LOG.md before ending the session.
 - Stay inside your stated scope unless the orchestrator or human reassigns you.
 
