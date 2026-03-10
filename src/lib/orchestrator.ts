@@ -1,4 +1,5 @@
 import { appendLogEntry } from "./log";
+import { appendFeedEntry } from "./feed";
 import { HiveMessage, createMessage } from "./messages";
 import { HivePaths, ProjectPaths } from "./paths";
 import { parseBoard, minutesSince } from "./board";
@@ -113,6 +114,11 @@ export async function enqueueGoalForOrchestrator(
     "human → orchestrator",
     `Goal: ${goal}\nMessage: ${message.filename}`,
   );
+  await appendFeedEntry(paths, {
+    project: projectId,
+    headline: `Orchestrator goal queued`,
+    details: [goal],
+  });
 
   return message.filename;
 }
@@ -121,6 +127,14 @@ export function buildOrchestratorPrompt(input: {
   projectId: string;
   pathsHome: string;
   repoPath: string;
+  pathsSoul: string;
+  pathsSelf: string;
+  projectConfigPath: string;
+  planPath: string;
+  boardPath: string;
+  logPath: string;
+  projectMemoryPath: string;
+  messagesDir: string;
   soul: string;
   self: string;
   persona: string;
@@ -165,6 +179,7 @@ ${renderList(signals)}
 
 ## Steward Rules
 - BOARD.md is yours to maintain. Other agents should update you via msg/.
+- The authoritative hive files are not in the repo root. Use the absolute paths below instead of repo-relative guesses like \`BOARD.md\` or \`LOG.md\`.
 - Answer human nudges before anything else.
 - Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\` or \`./hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\` or \`./hive msg close <message> orchestrator [note]\`.
 - Tell workers to poll with \`hive inbox <agent>\` or \`./hive inbox <agent>\` and to resolve or close their own message-driven work when done.
@@ -176,6 +191,16 @@ ${renderList(signals)}
 project: ${input.projectId}
 repo: ${input.repoPath}
 hive-home: ${input.pathsHome}
+
+## HIVE File Paths
+SOUL.md: ${input.pathsSoul}
+SELF.md: ${input.pathsSelf}
+project-config: ${input.projectConfigPath}
+PLAN.md: ${input.planPath}
+BOARD.md: ${input.boardPath}
+LOG.md: ${input.logPath}
+project-memory: ${input.projectMemoryPath}
+messages-dir: ${input.messagesDir}
 
 ## SOUL.md
 ${input.soul.trim()}

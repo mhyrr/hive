@@ -26,6 +26,7 @@ The core idea is simple: files are the API.
 
 Phase 1 is implemented.
 Phase 2 orchestration kickoff is now implemented.
+Phase 3 human interaction primitives are now partially implemented.
 
 Available commands:
 
@@ -33,6 +34,10 @@ Available commands:
 - `hive project add <project> <path>`
 - `hive work [project]`
 - `hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]`
+- `hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>`
+- `hive feed [count]`
+- `hive watch [count]`
+- `hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]`
 - `hive inbox [agent]`
 - `hive status`
 - `hive log <message>`
@@ -48,9 +53,10 @@ Available commands:
 
 Not implemented yet:
 
-- `hive chat`
 - `hive curate`
-- Agent launching/runtime adapters
+- Automatic orchestrator-driven worker launch
+- Runtime adapters beyond the first `codex` / `claude` one-shot launchers
+- Detached background launch management and session supervision
 
 ## Why This Exists
 
@@ -146,8 +152,9 @@ Edit these files in `~/.hive/projects/dealsplit/`:
 - `PLAN.md`
 - `BOARD.md`
 
-HIVE still does not call an LLM for you. The steward/orchestrator remains an
-agent session you run in your preferred runtime.
+The core file commands are still model-free. `hive orchestrate` and
+`hive prompt` only assemble context. `hive chat` and `hive launch` are the
+first commands that actually invoke configured runtimes.
 
 ### 7. Kick off or resume the steward
 
@@ -176,6 +183,13 @@ console yet; it generates one steward pass worth of context and stops.
 
 Use the output as the steward/orchestrator prompt in Claude Code, Codex,
 Gemini CLI, or any other runtime.
+
+If you want HIVE to run the steward for a one-shot pass instead of manually
+copying the prompt, use:
+
+```bash
+bun run bin/hive.ts launch orchestrator "Build auth"
+```
 
 ### 8. Generate an agent prompt
 
@@ -217,7 +231,52 @@ building the local binary. The important point is to use `inbox` as the default
 worker polling loop instead of reopening the full prompt or inspecting
 `~/.hive/msg/` by hand.
 
-### 9. Send messages between agents
+If you are dogfooding with the repo-local `./hive` binary, rebuild it after CLI
+changes or you will be testing stale behavior:
+
+```bash
+bun build --compile ./bin/hive.ts --outfile hive
+```
+
+### 9. Use the human interaction layer
+
+Show the recent human-facing event feed:
+
+```bash
+bun run bin/hive.ts feed
+```
+
+Watch the feed live:
+
+```bash
+bun run bin/hive.ts watch
+```
+
+Talk to the hive through the configured runtime:
+
+```bash
+bun run bin/hive.ts chat --runtime codex --model gpt-5.4-medium "How's auth going?"
+```
+
+`hive chat` is the first human-facing interface over the hive files. It is
+still a one-shot command, not a persistent console, but it already lets HIVE
+read state, answer questions, and make file-backed changes through a runtime.
+
+### 10. Launch an agent directly
+
+Run a one-shot agent pass without manually copying prompts:
+
+```bash
+bun run bin/hive.ts launch --runtime codex --model gpt-5.4-medium alpha
+```
+
+Dry-run the resolved command and prompt artifact first:
+
+```bash
+bun run bin/hive.ts launch --dry-run alpha
+```
+
+### 11. Send messages between agents
 
 ```bash
 bun run bin/hive.ts msg --type question beta alpha "Need the auth contract"
@@ -247,7 +306,7 @@ Send a human priority change to the orchestrator:
 bun run bin/hive.ts nudge "Payments now take priority over auth"
 ```
 
-### 10. View the current state
+### 12. View the current state
 
 ```bash
 bun run bin/hive.ts status
@@ -256,7 +315,7 @@ bun run bin/hive.ts status
 This prints the active project's `BOARD.md` and all open messages for that
 project.
 
-### 11. Sync the plan into the repo
+### 13. Sync the plan into the repo
 
 ```bash
 bun run bin/hive.ts sync
@@ -264,7 +323,7 @@ bun run bin/hive.ts sync
 
 This copies the active project's `PLAN.md` into `<repo>/.hive/PLAN.md`.
 
-### 12. Archive the session
+### 14. Archive the session
 
 ```bash
 bun run bin/hive.ts archive
@@ -319,6 +378,39 @@ Behavior:
   new messages or log entries
 
 This is the Phase 2 orchestration entrypoint.
+
+### `hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>`
+
+Runs a one-shot human-facing hive session against the active project.
+
+Notes:
+
+- uses the hive's global `runtime:` and `model:` as defaults
+- `--runtime` and `--model` override those defaults per invocation
+- `--dry-run` writes the prompt artifact and shows the resolved launch command
+- this is a non-persistent chat entrypoint today, not the final long-running console
+
+### `hive feed [count]`
+
+Prints the most recent high-signal entries from `~/.hive/feed.md`.
+
+### `hive watch [count]`
+
+Tails `~/.hive/feed.md` live.
+
+This is the passive observation surface for the hive.
+
+### `hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]`
+
+Runs a one-shot agent pass by combining the existing prompt assembly with a
+runtime adapter.
+
+Notes:
+
+- for workers, it uses `hive prompt <agent-id>`
+- for `orchestrator`, it uses `hive orchestrate [goal]`
+- the first launcher adapters target `codex` and `claude`
+- `--dry-run` shows the resolved command and writes the prompt artifact without invoking a model
 
 ### `hive status`
 
@@ -409,6 +501,7 @@ After the first `hive init`, the hive home looks like this:
 ├── SOUL.md
 ├── SELF.md
 ├── config.md
+├── feed.md
 ├── active-project.txt
 ├── personas/
 │   ├── architect.md
@@ -427,7 +520,8 @@ After the first `hive init`, the hive home looks like this:
 │       ├── config.md
 │       ├── PLAN.md
 │       ├── BOARD.md
-│       └── LOG.md
+│       ├── LOG.md
+│       └── runs/
 ├── msg/
 └── archive/
 ```
@@ -489,17 +583,18 @@ Useful environment variables:
 - [CLAUDE.md](./docs/CLAUDE.md) for implementation constraints and scope
 - [SOUL.md](./templates/SOUL.md) for the default hive culture template
 
-## What Phase 1 Does Not Try To Solve
+## What HIVE Still Does Not Solve
 
-Phase 1 and Phase 2 give you the file model, the CLI primitives, prompt
-assembly, and a steward orchestration entrypoint. They still do not give you
-a self-running hive.
+Phase 1 through the current Phase 3 slice give you the file model, CLI
+primitives, orchestration prompts, the event feed, one-shot chat, and
+one-shot agent launch. They still do not give you a self-running hive.
 
 You still need to:
 
-- run your agents manually
-- feed `hive orchestrate` or `hive prompt` output into those runtimes
-- let the steward agent maintain `PLAN.md` and `BOARD.md`
+- decide when to run the steward again
+- decide when to launch workers
+- let the steward maintain `PLAN.md` and `BOARD.md`
+- accept that launches are one-shot passes, not supervised long-running sessions
 
 That is intentional. The foundation needs to be boring and reliable before
 the autonomous layer sits on top of it.

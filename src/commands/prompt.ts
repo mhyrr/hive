@@ -90,6 +90,7 @@ You are ${agentId} for project ${activeProject}. Operate from the files below, n
 
 ## Runtime Rules
 - Respect BOARD.md as the shared state snapshot. If you need it changed, send a message.
+- The authoritative hive files are not in the repo root. Use the absolute paths below instead of repo-relative guesses like \`BOARD.md\` or \`LOG.md\`.
 - Post status, questions, handoffs, and contracts through message files in ~/.hive/msg/.
 - Use \`hive inbox ${agentId}\` between major steps instead of manually polling the full prompt. In this repo, use \`./hive inbox ${agentId}\` when the binary is built locally but not installed on PATH.
 - When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or \`./hive msg resolve <message> ${agentId} <answer>\`. Close obsolete threads with \`hive msg close <message> ${agentId} [note]\` or \`./hive msg close <message> ${agentId} [note]\`.
@@ -103,6 +104,16 @@ descriptor: ${resolvedAgent.descriptor}
 project: ${activeProject}
 repo: ${repoPath}
 hive-home: ${paths.home}
+
+## HIVE File Paths
+SOUL.md: ${paths.soul}
+SELF.md: ${paths.self}
+project-config: ${projectPaths.config}
+PLAN.md: ${projectPaths.plan}
+BOARD.md: ${projectPaths.board}
+LOG.md: ${projectPaths.log}
+project-memory: ${projectPaths.memory}
+messages-dir: ${paths.msgDir}
 
 ## SOUL.md
 ${soul.trim()}
