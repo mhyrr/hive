@@ -81,20 +81,22 @@ The current identity split is not quite right.
 Going forward, separate it into:
 
 1. `SOUL.md`
+- about the HIVE
 - very small
 - identity, values, culture, tone
 - loaded every session
 - should stay compact
 
-2. `SELF.md`
-- user-specific preferences, working relationship, decision heuristics
-- loaded every session
-- should also stay compact and curated
-
-3. `AGENTS.md`
+2. `AGENTS.md`
 - operational working patterns that currently live in `SOUL.md`
 - how agents read state, communicate, hand off, log, and self-correct
 - this is where the durable "how we work" rules belong
+
+3. `SELF.md`
+- about the user the HIVE supports
+- user-specific preferences, working relationship, decision heuristics
+- loaded every session
+- should also stay compact and curated
 
 The current `SOUL.md` is doing too much. It should be split so identity stays
 small and operational doctrine moves into `AGENTS.md`.
