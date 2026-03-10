@@ -6,6 +6,10 @@ Usage:
   hive project add <project> <path>
   hive work [project]
   hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
+  hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>
+  hive feed [count]
+  hive watch [count]
+  hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]
   hive inbox [agent]
   hive status
   hive log <message>

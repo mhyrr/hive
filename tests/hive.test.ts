@@ -51,6 +51,7 @@ describe("HIVE CLI", () => {
     expect(output).toContain("Initialized hive home");
     expect(await Bun.file(join(context.hiveHome, "SOUL.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "SELF.md")).exists()).toBeTrue();
+    expect(await Bun.file(join(context.hiveHome, "feed.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "personas", "steward.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "active-project.txt")).exists()).toBeFalse();
   });
@@ -59,12 +60,28 @@ describe("HIVE CLI", () => {
     await initHive();
 
     const output = await addProject();
+    const feed = await Bun.file(join(context.hiveHome, "feed.md")).text();
 
     expect(output).toContain("Registered project dealsplit");
     expect((await Bun.file(join(context.hiveHome, "active-project.txt")).text()).trim()).toBe(
       "dealsplit",
     );
     expect(await Bun.file(join(context.hiveHome, "projects", "dealsplit", "PLAN.md")).exists()).toBeTrue();
+    expect(feed).toContain("Registered project dealsplit");
+    expect(feed).toContain(`repo: ${context.repo}`);
+  });
+
+  test("feed shows recent high-signal events", async () => {
+    await initHive();
+    await addProject();
+    await runCli(["nudge", "Auth", "takes", "priority"]);
+
+    const feed = await runCli(["feed", "2"]);
+
+    expect(feed).toContain("# HIVE Feed");
+    expect(feed).toContain("Registered project dealsplit");
+    expect(feed).toContain("Human nudge");
+    expect(feed).toContain("Auth takes priority");
   });
 
   test("status shows the board and open messages for the active project", async () => {
@@ -226,6 +243,16 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("You are alpha for project dealsplit.");
     expect(prompt).toContain("# HIVE Soul");
     expect(prompt).toContain("# Persona: Craftsman");
+    expect(prompt).toContain("The authoritative hive files are not in the repo root.");
+    expect(prompt).toContain("## HIVE File Paths");
+    expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "dealsplit", "BOARD.md")}`);
+    expect(prompt).toContain(`LOG.md: ${join(context.hiveHome, "projects", "dealsplit", "LOG.md")}`);
+    expect(prompt).toContain("hive inbox alpha");
+    expect(prompt).toContain("./hive inbox alpha");
+    expect(prompt).toContain("hive msg resolve <message> alpha <answer>");
+    expect(prompt).toContain("./hive msg resolve <message> alpha <answer>");
+    expect(prompt).toContain("hive msg close <message> alpha [note]");
+    expect(prompt).toContain("./hive msg close <message> alpha [note]");
     expect(prompt).toContain("Task: Build the auth endpoint and publish the contract.");
     expect(prompt).toContain("Need the login contract shape");
   });
@@ -268,6 +295,9 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("Build the auth flow");
     expect(prompt).toContain("Human nudge pending: Build the auth flow");
     expect(prompt).toContain("When you fully handle a message, resolve it or close it so the open queue stays clean.");
+    expect(prompt).toContain("The authoritative hive files are not in the repo root.");
+    expect(prompt).toContain("## HIVE File Paths");
+    expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "dealsplit", "BOARD.md")}`);
     expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
     expect(prompt).toContain("./hive msg resolve <message> orchestrator <answer>");
     expect(prompt).toContain("hive inbox <agent>");
@@ -332,5 +362,64 @@ Need the auth contract shape.
     expect(prompt).toContain("alpha is marked active but last-active was 18 minutes ago.");
     expect(prompt).toContain("Open question from beta to alpha has been waiting 28 minutes.");
     expect(afterLog).toBe(beforeLog);
+  });
+
+  test("chat and launch dry runs resolve runtime settings and write prompt artifacts", async () => {
+    await initHive();
+    await addProject();
+
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+model: gpt-5.4-medium
+runtime: codex
+
+## Defaults
+orchestrator: steward
+message-check-seconds: 30
+archive-curation: deferred
+`,
+    );
+
+    await Bun.write(
+      join(context.hiveHome, "projects", "dealsplit", "config.md"),
+      `# Project: DealSplit
+
+## Repo
+path: ${context.repo}
+
+## Stack
+- Bun + TypeScript
+
+## Default Team
+- orchestrator: steward, gpt-5.4-medium via codex
+- alpha: craftsman, gpt-5.4-medium via codex
+- beta: craftsman
+- gamma: critic
+
+## Rules
+- Keep the board current via messages.
+`,
+    );
+
+    const chatDryRun = await runCli(["chat", "--dry-run", "How's", "auth", "going?"]);
+    const launchDryRun = await runCli(["launch", "--dry-run", "alpha"]);
+    const runsDirEntries = await readdir(join(context.hiveHome, "projects", "dealsplit", "runs"));
+
+    expect(chatDryRun).toContain("Chat dry run");
+    expect(chatDryRun).toContain("Runtime: codex");
+    expect(chatDryRun).toContain("Model: gpt-5.4-medium");
+    expect(chatDryRun).toContain("Command: codex exec");
+    expect(chatDryRun).toContain("gpt-5.4-medium");
+
+    expect(launchDryRun).toContain("Launch dry run");
+    expect(launchDryRun).toContain("Agent: alpha");
+    expect(launchDryRun).toContain("Runtime: codex");
+    expect(launchDryRun).toContain("Command: codex exec");
+
+    expect(runsDirEntries.some((entry) => entry.endsWith("-chat.prompt.md"))).toBeTrue();
+    expect(runsDirEntries.some((entry) => entry.endsWith("-alpha.prompt.md"))).toBeTrue();
   });
 });

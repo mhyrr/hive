@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
 import { UsageError } from "../lib/errors";
+import { appendFeedEntry } from "../lib/feed";
 import {
   ensureDirectory,
   ensureHiveScaffold,
@@ -48,6 +49,11 @@ ${log.trim()}`;
   await ensureDirectory(archiveDir);
   await Bun.write(archivePath, `${snapshot.trim()}\n`);
   await Bun.write(projectPaths.log, `${renderLogTemplate(activeProject, toDateLabel())}\n`);
+  await appendFeedEntry(paths, {
+    project: activeProject,
+    headline: `Archived session`,
+    details: [archivePath],
+  });
 
   return `Archived session to ${archivePath}`;
 }

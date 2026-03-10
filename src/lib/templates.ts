@@ -5,6 +5,7 @@ import criticTemplate from "../../templates/personas/critic.md" with { type: "te
 import scoutTemplate from "../../templates/personas/scout.md" with { type: "text" };
 import stewardTemplate from "../../templates/personas/steward.md" with { type: "text" };
 import selfTemplate from "../../templates/SELF.md" with { type: "text" };
+import feedTemplate from "../../templates/feed.md" with { type: "text" };
 import configTemplate from "../../templates/config.md" with { type: "text" };
 import projectConfigTemplate from "../../templates/project-config.md" with { type: "text" };
 import planTemplate from "../../templates/PLAN.md" with { type: "text" };
@@ -15,6 +16,7 @@ export const baseTemplates = {
   "SOUL.md": soulTemplate.trim(),
   "SELF.md": selfTemplate.trim(),
   "config.md": configTemplate.trim(),
+  "feed.md": feedTemplate.trim(),
   "memory/knowledge.md": "# Knowledge\n\n(none yet)",
   "memory/decisions.md": "# Decisions\n\n(none yet)",
 };

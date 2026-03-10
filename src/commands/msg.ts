@@ -1,4 +1,5 @@
 import { UsageError } from "../lib/errors";
+import { appendFeedEntry } from "../lib/feed";
 import {
   closeMessage,
   createMessage,
@@ -82,6 +83,12 @@ export async function msgCommand(args: string[]): Promise<string> {
         throw new UsageError(`Unknown message: ${reference}`);
       }
 
+      await appendFeedEntry(paths, {
+        project: activeProject,
+        headline: `Resolved message ${message.filename}`,
+        details: [`actor: ${actor}`],
+      });
+
       return `Resolved ${message.filename}`;
     }
     case "close": {
@@ -98,6 +105,12 @@ export async function msgCommand(args: string[]): Promise<string> {
         throw new UsageError(`Unknown message: ${reference}`);
       }
 
+      await appendFeedEntry(paths, {
+        project: activeProject,
+        headline: `Closed message ${message.filename}`,
+        details: [`actor: ${actor}`],
+      });
+
       return `Closed ${message.filename}`;
     }
     default:
@@ -109,6 +122,17 @@ export async function msgCommand(args: string[]): Promise<string> {
     ...input,
     project: activeProject,
   });
+  const shouldFeed = new Set(["assign", "question", "nudge", "escalate", "handoff"]).has(
+    input.type,
+  );
+
+  if (shouldFeed) {
+    await appendFeedEntry(paths, {
+      project: activeProject,
+      headline: `${input.type}: ${input.from} -> ${input.to}`,
+      details: [message.body.split("\n")[0]],
+    });
+  }
 
   return `Created ${input.type} message ${message.filename}`;
 }
@@ -133,6 +157,11 @@ export async function nudgeCommand(args: string[]): Promise<string> {
     type: "nudge",
     project: activeProject,
     body,
+  });
+  await appendFeedEntry(paths, {
+    project: activeProject,
+    headline: `Human nudge`,
+    details: [body.split("\n")[0]],
   });
 
   return `Created nudge ${message.filename}`;

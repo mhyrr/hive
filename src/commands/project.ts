@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 
 import { UsageError } from "../lib/errors";
+import { appendFeedEntry } from "../lib/feed";
 import {
   ensureHiveScaffold,
   ensureProjectScaffold,
@@ -37,6 +38,11 @@ async function addProjectCommand(args: string[]): Promise<string> {
   });
 
   await setActiveProject(paths, projectId);
+  await appendFeedEntry(paths, {
+    project: projectId,
+    headline: `Registered project ${projectId}`,
+    details: [`repo: ${repoPath}`],
+  });
 
   return `Registered project ${projectId}
 Hive home: ${paths.home}

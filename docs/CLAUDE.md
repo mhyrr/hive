@@ -28,6 +28,11 @@ hive project add <project> <path># Register a project
 hive work [project]              # Set/show active project
 hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
                                 # Steward/orchestrator prompt assembly
+hive chat [--runtime ...] <msg>  # Human-facing one-shot runtime call
+hive feed [count]                # Recent feed entries
+hive watch [count]               # Live tail of feed.md
+hive launch [--runtime ...] <agent>
+                                # One-shot agent runtime call
 hive status                      # BOARD.md + open msgs
 hive log <message>               # Append to LOG.md
 hive msg <from> <to> <body>      # Create message file
@@ -49,6 +54,9 @@ src/
     project.ts               # hive project add — register project state
     work.ts                  # hive work — set/show active project
     orchestrate.ts           # hive orchestrate — steward kickoff/resume prompt
+    chat.ts                  # hive chat — one-shot human interface runtime call
+    feed.ts                  # hive feed/watch — human event stream
+    launch.ts                # hive launch — one-shot agent runtime call
     status.ts                # hive status — read BOARD + msg, format for terminal
     log.ts                   # hive log — append timestamped entry
     msg.ts                   # hive msg + nudge — create message files
@@ -58,14 +66,17 @@ src/
   lib/
     paths.ts                 # ~/.hive/ path resolution + active project
     board.ts                 # BOARD.md signal parsing for orchestration
+    feed.ts                  # feed.md formatting + append helpers
     frontmatter.ts           # YAML frontmatter parse/write (no deps)
     format.ts                # Terminal formatting (colors, tables)
     log.ts                   # Shared LOG.md append helper
     orchestrator.ts          # Steward prompt assembly + orchestration signals
+    runtime.ts               # Runtime/model resolution + launcher adapters
     time.ts                  # Timestamp helpers
 templates/
   SOUL.md                    # Default soul scaffold
   SELF.md                    # Template for user preferences
+  feed.md                    # Default human event feed scaffold
   config.md                  # Global config template
   project-config.md          # Per-project config template
   PLAN.md                    # Plan template
@@ -93,8 +104,8 @@ docs/
 - Tests: `bun test`. End-to-end: create temp ~/.hive-test/, run commands,
   assert file contents.
 
-## Phase 1 Scope (Build This Now)
-Commands: init, project add, work, status, log, msg, nudge, prompt, archive, sync, help.
-Templates: SOUL.md, SELF.md, all 5 personas, project scaffolding.
-Skip for now: chat, curate (Phase 3-4). The orchestrator runs as a Claude
-Code session with the steward persona prompt, not as hive-managed process.
+## Implementation Status
+- Phase 1 core primitives: implemented
+- Phase 2 orchestrator prompt assembly: implemented
+- Phase 3 partial: feed/watch, `hive chat`, and one-shot `hive launch`
+- Still future: curate, orchestrator-driven auto-launch, richer runtime adapters, long-running supervision

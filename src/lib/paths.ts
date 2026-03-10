@@ -18,6 +18,7 @@ export type HivePaths = {
   soul: string;
   self: string;
   config: string;
+  feed: string;
   personasDir: string;
   memoryDir: string;
   memoryProjectsDir: string;
@@ -36,6 +37,7 @@ export type ProjectPaths = {
   board: string;
   log: string;
   memory: string;
+  runsDir: string;
 };
 
 export function resolveHiveHome(): string {
@@ -48,6 +50,7 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     soul: join(home, "SOUL.md"),
     self: join(home, "SELF.md"),
     config: join(home, "config.md"),
+    feed: join(home, "feed.md"),
     personasDir: join(home, "personas"),
     memoryDir: join(home, "memory"),
     memoryProjectsDir: join(home, "memory", "projects"),
@@ -105,6 +108,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     board: join(root, "BOARD.md"),
     log: join(root, "LOG.md"),
     memory: join(paths.memoryProjectsDir, `${projectId}.md`),
+    runsDir: join(root, "runs"),
   };
 }
 
@@ -119,6 +123,7 @@ export async function ensureProjectScaffold(
   const projectPaths = getProjectPaths(paths, input.projectId);
 
   await mkdir(projectPaths.root, { recursive: true });
+  await mkdir(projectPaths.runsDir, { recursive: true });
   await writeIfMissing(
     projectPaths.config,
     renderProjectConfigTemplate(input.projectName, input.repoPath),

@@ -61,15 +61,19 @@ export function findPlanAgent(plan: string, agentId: string): PlanAgent | null {
 
 export function parseDefaultTeam(projectConfig: string): TeamAgent[] {
   const normalized = projectConfig.replace(/\r\n/g, "\n");
-  const defaultTeamMatch = normalized.match(
-    /^## Default Team\s*\n([\s\S]*?)(?=^##\s+|$)/m,
-  );
+  const sectionHeading = normalized.match(/^## Default Team\s*$/m);
 
-  if (!defaultTeamMatch) {
+  if (!sectionHeading || sectionHeading.index === undefined) {
     return [];
   }
 
-  return defaultTeamMatch[1]
+  const sectionStart = sectionHeading.index + sectionHeading[0].length + 1;
+  const remainder = normalized.slice(sectionStart);
+  const nextHeadingIndex = remainder.search(/^##\s+/m);
+  const section =
+    nextHeadingIndex === -1 ? remainder.trim() : remainder.slice(0, nextHeadingIndex).trim();
+
+  return section
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "))
