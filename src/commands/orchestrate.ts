@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { UsageError } from "../lib/errors";
-import { listMessages } from "../lib/messages";
+import { listOpenProjectMessages } from "../lib/messages";
 import {
   buildOrchestratorPrompt,
   enqueueGoalForOrchestrator,
@@ -97,12 +97,7 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
   const board = await Bun.file(projectPaths.board).text();
   const log = await Bun.file(projectPaths.log).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
-  const openMessages = (await listMessages(paths.msgDir)).filter((message) => {
-    return (
-      message.attributes.project === activeProject &&
-      (message.attributes.status ?? "open") === "open"
-    );
-  });
+  const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
 
   return buildOrchestratorPrompt({
     projectId: activeProject,

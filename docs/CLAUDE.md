@@ -23,9 +23,11 @@ Agents are transient. The hive persists.
 
 ## CLI
 ```
-hive init <project> <path>       # Register a project
+hive init                        # Bootstrap ~/.hive/
+hive project add <project> <path># Register a project
 hive work [project]              # Set/show active project
-hive orchestrate [goal]          # Steward/orchestrator prompt assembly
+hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
+                                # Steward/orchestrator prompt assembly
 hive status                      # BOARD.md + open msgs
 hive log <message>               # Append to LOG.md
 hive msg <from> <to> <body>      # Create message file
@@ -43,7 +45,8 @@ hive help                        # Usage
 bin/hive.ts                  # Entry point (command router)
 src/
   commands/
-    init.ts                  # hive init — register project, scaffold ~/.hive/
+    init.ts                  # hive init — scaffold ~/.hive/
+    project.ts               # hive project add — register project state
     work.ts                  # hive work — set/show active project
     orchestrate.ts           # hive orchestrate — steward kickoff/resume prompt
     status.ts                # hive status — read BOARD + msg, format for terminal
@@ -91,7 +94,7 @@ docs/
   assert file contents.
 
 ## Phase 1 Scope (Build This Now)
-Commands: init, work, status, log, msg, nudge, prompt, archive, sync, help.
+Commands: init, project add, work, status, log, msg, nudge, prompt, archive, sync, help.
 Templates: SOUL.md, SELF.md, all 5 personas, project scaffolding.
 Skip for now: chat, curate (Phase 3-4). The orchestrator runs as a Claude
 Code session with the steward persona prompt, not as hive-managed process.
