@@ -211,6 +211,12 @@ reprinting the full prompt:
 bun run bin/hive.ts inbox alpha
 ```
 
+If you have a compiled or installed `hive` binary, the equivalent `hive inbox alpha`
+works too. For self-hosting in this repo, prefer `./hive inbox alpha` after
+building the local binary. The important point is to use `inbox` as the default
+worker polling loop instead of reopening the full prompt or inspecting
+`~/.hive/msg/` by hand.
+
 ### 9. Send messages between agents
 
 ```bash
@@ -329,6 +335,8 @@ Notes:
 - with an agent id, it prints just that agent's open inbox
 - this is the intended lightweight polling command for workers between major
   steps
+- it now reports the open count, says when the queue is clean, and reminds the
+  worker how to `show`, `resolve`, or `close` messages without manual file work
 
 ### `hive log <message>`
 
@@ -360,12 +368,13 @@ unique prefix.
 ### `hive msg resolve <message> <actor> <answer>`
 
 Marks a message as `resolved`, timestamps it, and appends an `Answer` section
-to the message body.
+to the message body. Resolved messages disappear from `hive inbox` and
+`hive status`.
 
 ### `hive msg close <message> <actor> [note]`
 
 Marks a message as `closed`, timestamps it, and optionally appends a closing
-note.
+note. Closed messages also leave the open queue immediately.
 
 ### `hive nudge <message>`
 
@@ -478,7 +487,7 @@ Useful environment variables:
 
 - [FINAL-PRD.md](./docs/FINAL-PRD.md) for the full product requirements
 - [CLAUDE.md](./docs/CLAUDE.md) for implementation constraints and scope
-- [SOUL.md](./docs/SOUL.md) for the hive's culture document
+- [SOUL.md](./templates/SOUL.md) for the default hive culture template
 
 ## What Phase 1 Does Not Try To Solve
 

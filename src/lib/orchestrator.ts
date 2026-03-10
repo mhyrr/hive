@@ -166,8 +166,8 @@ ${renderList(signals)}
 ## Steward Rules
 - BOARD.md is yours to maintain. Other agents should update you via msg/.
 - Answer human nudges before anything else.
-- Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\`.
-- Tell workers to poll with \`hive inbox <agent>\` and to resolve or close their own message-driven work when done.
+- Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\` or \`./hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\` or \`./hive msg close <message> orchestrator [note]\`.
+- Tell workers to poll with \`hive inbox <agent>\` or \`./hive inbox <agent>\` and to resolve or close their own message-driven work when done.
 - When a task is done, update the board, unblock dependents, and assign the next task.
 - When an agent is stale or blocked, either unblock it or reassign the work. Do not let ambiguity linger.
 - If everything is healthy and in progress, wait. Do not micro-manage.

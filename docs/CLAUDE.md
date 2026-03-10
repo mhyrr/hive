@@ -64,20 +64,20 @@ src/
     orchestrator.ts          # Steward prompt assembly + orchestration signals
     time.ts                  # Timestamp helpers
 templates/
+  SOUL.md                    # Default soul scaffold
   SELF.md                    # Template for user preferences
   config.md                  # Global config template
   project-config.md          # Per-project config template
   PLAN.md                    # Plan template
   BOARD.md                   # Board template
   LOG.md                     # Log template
-docs/
-  SOUL.md                    # Source soul artifact used for scaffolding
-  personas/                  # Source persona artifacts used for scaffolding
+  personas/                  # Default persona scaffolds
     architect.md
     craftsman.md
     critic.md
     scout.md
     steward.md
+docs/
   FINAL-PRD.md
   CLAUDE.md
 ```

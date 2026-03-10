@@ -1,9 +1,9 @@
-import soulTemplate from "../../docs/SOUL.md" with { type: "text" };
-import architectTemplate from "../../docs/personas/architect.md" with { type: "text" };
-import craftsmanTemplate from "../../docs/personas/craftsman.md" with { type: "text" };
-import criticTemplate from "../../docs/personas/critic.md" with { type: "text" };
-import scoutTemplate from "../../docs/personas/scout.md" with { type: "text" };
-import stewardTemplate from "../../docs/personas/steward.md" with { type: "text" };
+import soulTemplate from "../../templates/SOUL.md" with { type: "text" };
+import architectTemplate from "../../templates/personas/architect.md" with { type: "text" };
+import craftsmanTemplate from "../../templates/personas/craftsman.md" with { type: "text" };
+import criticTemplate from "../../templates/personas/critic.md" with { type: "text" };
+import scoutTemplate from "../../templates/personas/scout.md" with { type: "text" };
+import stewardTemplate from "../../templates/personas/steward.md" with { type: "text" };
 import selfTemplate from "../../templates/SELF.md" with { type: "text" };
 import configTemplate from "../../templates/config.md" with { type: "text" };
 import projectConfigTemplate from "../../templates/project-config.md" with { type: "text" };

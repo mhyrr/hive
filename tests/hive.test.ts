@@ -117,7 +117,9 @@ describe("HIVE CLI", () => {
     const rawBefore = await runCli(["msg", "show", filename!]);
 
     expect(inboxBefore).toContain("Inbox: alpha");
+    expect(inboxBefore).toContain("Open messages: 1");
     expect(inboxBefore).toContain(filename!);
+    expect(inboxBefore).toContain("./hive msg resolve <message> <actor> <answer>");
     expect(rawBefore).toContain("status: open");
     expect(rawBefore).toContain("Need the auth contract");
 
@@ -141,7 +143,8 @@ describe("HIVE CLI", () => {
     expect(rawAfter).toContain("resolved: 2026-03-09T15:08:00Z");
     expect(rawAfter).toContain("## Answer (alpha, 2026-03-09T15:08:00Z)");
     expect(rawAfter).toContain("Published the contract in src/api/auth.ts");
-    expect(inboxAfter).toContain("No open messages.");
+    expect(inboxAfter).toContain("Open messages: 0");
+    expect(inboxAfter).toContain("No open messages. Queue is clean.");
     expect(statusAfter).not.toContain(filename!);
     expect(statusAfter).not.toContain("Need the auth contract");
 
@@ -178,7 +181,8 @@ describe("HIVE CLI", () => {
     expect(closedRaw).toContain("closed: 2026-03-09T15:08:00Z");
     expect(closedRaw).toContain("## Closed (alpha, 2026-03-09T15:08:00Z)");
     expect(closedRaw).toContain("Superseded by task 004");
-    expect(finalInbox).toContain("No open messages.");
+    expect(finalInbox).toContain("Open messages: 0");
+    expect(finalInbox).toContain("No open messages. Queue is clean.");
   });
 
   test("prompt assembles persona, plan assignment, and agent messages", async () => {
@@ -265,7 +269,9 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("Human nudge pending: Build the auth flow");
     expect(prompt).toContain("When you fully handle a message, resolve it or close it so the open queue stays clean.");
     expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
+    expect(prompt).toContain("./hive msg resolve <message> orchestrator <answer>");
     expect(prompt).toContain("hive inbox <agent>");
+    expect(prompt).toContain("./hive inbox <agent>");
     expect(log).toContain("Goal: Build the auth flow");
     expect(messageText).toContain("type: nudge");
     expect(messageText).toContain("to: orchestrator");
