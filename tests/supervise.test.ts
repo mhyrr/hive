@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli";
+import { readDetachedSupervisorState } from "../src/lib/detached-supervisor";
 import { ensureHiveScaffold, getProjectPaths } from "../src/lib/paths";
 import {
   createRunDraft,
@@ -20,6 +21,7 @@ type TestContext = {
   hiveHome: string;
   binDir: string;
   originalPath: string;
+  originalCwd: string;
 };
 
 let context: TestContext;
@@ -42,6 +44,7 @@ async function setupContext(): Promise<TestContext> {
     hiveHome,
     binDir,
     originalPath: process.env.PATH ?? "",
+    originalCwd: process.cwd(),
   };
 }
 
@@ -51,6 +54,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   process.env.PATH = context.originalPath;
+  process.chdir(context.originalCwd);
   delete process.env.HIVE_HOME;
   delete process.env.HIVE_FIXED_NOW;
   await rm(context.root, { recursive: true, force: true });
@@ -71,6 +75,118 @@ exit 0
 }
 
 describe("hive supervise", () => {
+  test("detached supervisor start/status/stop persists state on disk", async () => {
+    await installFakeCodex();
+    await runCli(["init"]);
+    await runCli(["project", "add", "DealSplit", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+
+    const startOutput = await runCli([
+      "supervise",
+      "--detach",
+      "--interval",
+      "1",
+      "--max-parallel",
+      "2",
+    ]);
+
+    expect(startOutput).toContain("Started detached supervisor for dealsplit");
+    expect(startOutput).toContain("interval: 1s");
+    expect(startOutput).toContain("max-parallel: 2");
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "dealsplit");
+
+    let state = await readDetachedSupervisorState(projectPaths);
+    let attempts = 0;
+
+    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 20) {
+      await Bun.sleep(150);
+      state = await readDetachedSupervisorState(projectPaths);
+      attempts += 1;
+    }
+
+    expect(state).not.toBeNull();
+    expect(state?.status).toBe("active");
+    expect(state?.pid).toBeNumber();
+    expect(state?.lastPassAt).not.toBeNull();
+    expect(await Bun.file(join(projectPaths.supervisorDir, "detached.log")).exists()).toBeTrue();
+
+    const statusOutput = await runCli(["supervise", "status"]);
+
+    expect(statusOutput).toContain("Detached Supervisor");
+    expect(statusOutput).toContain("status: active");
+    expect(statusOutput).toContain("last-pass:");
+
+    const stopOutput = await runCli(["supervise", "stop"]);
+
+    expect(stopOutput).toContain("Signaled detached supervisor pid");
+
+    attempts = 0;
+
+    do {
+      await Bun.sleep(150);
+      state = await readDetachedSupervisorState(projectPaths);
+      attempts += 1;
+    } while (state?.status !== "stopped" && attempts < 20);
+
+    expect(state?.status).toBe("stopped");
+    expect(state?.pid).toBeNull();
+
+    const stoppedOutput = await runCli(["supervise", "status"]);
+
+    expect(stoppedOutput).toContain("status: stopped");
+  });
+
+  test("detached supervisor start works outside the repo-root cwd", async () => {
+    await installFakeCodex();
+    await runCli(["init"]);
+    await runCli(["project", "add", "DealSplit", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    process.chdir(context.root);
+
+    const startOutput = await runCli([
+      "supervise",
+      "--detach",
+      "--interval",
+      "1",
+      "--max-parallel",
+      "1",
+    ]);
+
+    expect(startOutput).toContain("Started detached supervisor for dealsplit");
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "dealsplit");
+    let state = await readDetachedSupervisorState(projectPaths);
+    let attempts = 0;
+
+    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 20) {
+      await Bun.sleep(150);
+      state = await readDetachedSupervisorState(projectPaths);
+      attempts += 1;
+    }
+
+    expect(state?.status).toBe("active");
+    expect(state?.lastPassAt).not.toBeNull();
+
+    await runCli(["supervise", "stop"]);
+  });
+
   test("auto-launches ready worker assignments and records the consumed run", async () => {
     await installFakeCodex();
     await runCli(["init"]);

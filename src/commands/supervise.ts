@@ -1,6 +1,17 @@
+import { join } from "node:path";
+
+import {
+  formatDetachedSupervisorState,
+  markDetachedSupervisorStopRequested,
+  markDetachedSupervisorStopped,
+  noteDetachedSupervisorPass,
+  reconcileDetachedSupervisorState,
+  startDetachedSupervisor,
+  writeDetachedSupervisorState,
+} from "../lib/detached-supervisor";
 import { appendFeedEntry } from "../lib/feed";
-import { section } from "../lib/format";
 import { UsageError } from "../lib/errors";
+import { section } from "../lib/format";
 import { appendLogEntry } from "../lib/log";
 import { findMessage, listOpenProjectMessages } from "../lib/messages";
 import {
@@ -27,12 +38,16 @@ import {
   RecoveredRun,
   selectWorkerLaunches,
 } from "../lib/supervisor";
+import { toIsoTimestamp } from "../lib/time";
 import { launchAgentPass } from "./launch";
 
 type SuperviseOptions = {
   intervalSeconds: number;
   maxParallel: number;
   once: boolean;
+  detach: boolean;
+  child: boolean;
+  action: "run" | "status" | "stop";
 };
 
 type ProjectState = {
@@ -47,9 +62,30 @@ type ProjectState = {
 };
 
 function parseOptions(args: string[]): SuperviseOptions {
+  const usage =
+    "Usage: hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]\n       hive supervise status\n       hive supervise stop";
+  const first = args[0]?.trim().toLowerCase();
+
+  if (first === "status" || first === "stop") {
+    if (args.length !== 1) {
+      throw new UsageError(usage);
+    }
+
+    return {
+      intervalSeconds: DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
+      maxParallel: DEFAULT_MAX_PARALLEL,
+      once: false,
+      detach: false,
+      child: false,
+      action: first,
+    };
+  }
+
   let intervalSeconds = DEFAULT_SUPERVISOR_INTERVAL_SECONDS;
   let maxParallel = DEFAULT_MAX_PARALLEL;
   let once = false;
+  let detach = false;
+  let child = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -58,9 +94,7 @@ function parseOptions(args: string[]): SuperviseOptions {
       const value = Number(args[index + 1]);
 
       if (!Number.isInteger(value) || value <= 0) {
-        throw new UsageError(
-          "Usage: hive supervise [--interval <seconds>] [--max-parallel <count>] [--once]",
-        );
+        throw new UsageError(usage);
       }
 
       intervalSeconds = value;
@@ -72,9 +106,7 @@ function parseOptions(args: string[]): SuperviseOptions {
       const value = Number(args[index + 1]);
 
       if (!Number.isInteger(value) || value <= 0) {
-        throw new UsageError(
-          "Usage: hive supervise [--interval <seconds>] [--max-parallel <count>] [--once]",
-        );
+        throw new UsageError(usage);
       }
 
       maxParallel = value;
@@ -87,12 +119,28 @@ function parseOptions(args: string[]): SuperviseOptions {
       continue;
     }
 
-    throw new UsageError(
-      "Usage: hive supervise [--interval <seconds>] [--max-parallel <count>] [--once]",
-    );
+    if (arg === "--detach") {
+      detach = true;
+      continue;
+    }
+
+    if (arg === "--supervisor-child") {
+      child = true;
+      continue;
+    }
+
+    throw new UsageError(usage);
   }
 
-  return { intervalSeconds, maxParallel, once };
+  if (once && detach) {
+    throw new UsageError("`hive supervise` cannot combine `--once` with `--detach`.");
+  }
+
+  if (child && (once || detach)) {
+    throw new UsageError("Internal supervisor child mode cannot be combined with `--once` or `--detach`.");
+  }
+
+  return { intervalSeconds, maxParallel, once, detach, child, action: "run" };
 }
 
 async function readProjectState(input: {
@@ -315,6 +363,121 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
 
 export async function superviseCommand(args: string[]): Promise<string> {
   const options = parseOptions(args);
+  const paths = await ensureHiveScaffold();
+  const activeProject = await getActiveProject(paths);
+
+  if (!activeProject) {
+    throw new UsageError("No active project. Run `hive work <project>` first.");
+  }
+
+  const projectPaths = getProjectPaths(paths, activeProject);
+
+  if (options.action === "status") {
+    const state = await reconcileDetachedSupervisorState(projectPaths);
+    return formatDetachedSupervisorState(state, activeProject);
+  }
+
+  if (options.action === "stop") {
+    const state = await markDetachedSupervisorStopRequested(projectPaths, "human");
+
+    if (!state || !state.pid) {
+      throw new UsageError("No detached supervisor is currently active.");
+    }
+
+    process.kill(state.pid, "SIGTERM");
+    await appendFeedEntry(paths, {
+      project: activeProject,
+      headline: "Detached supervisor stop requested",
+      details: [`pid: ${state.pid}`, `state: ${state.path}`],
+    });
+    await appendLogEntry(
+      projectPaths.log,
+      "human → hive supervise stop",
+      `Requested detached supervisor stop pid ${state.pid}`,
+    );
+
+    return `Signaled detached supervisor pid ${state.pid}`;
+  }
+
+  if (options.detach) {
+    const state = await startDetachedSupervisor({
+      projectPaths,
+      projectId: activeProject,
+      intervalSeconds: options.intervalSeconds,
+      maxParallel: options.maxParallel,
+    });
+
+    await appendFeedEntry(paths, {
+      project: activeProject,
+      headline: "Detached supervisor started",
+      details: [`pid: ${state.pid ?? "unknown"}`, `interval: ${state.intervalSeconds}s`],
+    });
+    await appendLogEntry(
+      projectPaths.log,
+      "human → hive supervise --detach",
+      `Started detached supervisor pid ${state.pid ?? "unknown"} interval ${state.intervalSeconds}s max-parallel ${state.maxParallel}`,
+    );
+
+    return [
+      `Started detached supervisor for ${activeProject}`,
+      `pid: ${state.pid ?? "unknown"}`,
+      `interval: ${state.intervalSeconds}s`,
+      `max-parallel: ${state.maxParallel}`,
+      `state: ${state.path}`,
+      `log: ${state.logPath}`,
+    ].join("\n");
+  }
+
+  if (options.child) {
+    const existingState = await reconcileDetachedSupervisorState(projectPaths);
+    const startedAt = existingState?.startedAt ?? toIsoTimestamp();
+
+    await writeDetachedSupervisorState(projectPaths, {
+      projectId: activeProject,
+      pid: process.pid,
+      status: "active",
+      mode: "detached",
+      intervalSeconds: options.intervalSeconds,
+      maxParallel: options.maxParallel,
+      startedAt,
+      updatedAt: toIsoTimestamp(),
+      lastPassAt: existingState?.lastPassAt ?? null,
+      stoppedAt: null,
+      stopRequestedAt: null,
+      stopRequestedBy: null,
+      logPath: join(projectPaths.supervisorDir, "detached.log"),
+    });
+
+    const stopChild = async (status: "stopped" | "exited") => {
+      await markDetachedSupervisorStopped(projectPaths, status);
+      process.exit(status === "stopped" ? 0 : 1);
+    };
+
+    process.on("SIGTERM", () => {
+      void stopChild("stopped");
+    });
+    process.on("SIGINT", () => {
+      void stopChild("stopped");
+    });
+    process.on("uncaughtException", (error) => {
+      console.error(error);
+      void stopChild("exited");
+    });
+
+    for (;;) {
+      try {
+        const output = await runSupervisorPass(options);
+
+        console.log(output);
+        console.log("");
+        await noteDetachedSupervisorPass(projectPaths);
+        await Bun.sleep(options.intervalSeconds * 1000);
+      } catch (error) {
+        console.error(error);
+        await stopChild("exited");
+      }
+    }
+  }
 
   if (options.once) {
     return runSupervisorPass(options);

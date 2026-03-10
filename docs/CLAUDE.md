@@ -4,6 +4,7 @@ Persistent local multi-agent orchestration. Lives at `~/.hive/`. Works across pr
 Agents are transient. The hive persists.
 
 ## Read First
+`NEXT-SESSION-PROMPT.md` — the current continuity brief and next-session prompt.
 `FINAL-PRD.md` — the complete PRD with architecture, memory design, and all conventions.
 `PHASE-4-AUTO-LAUNCH.md` — the next-phase design for supervisor-driven auto-launch and parallel workers.
 
@@ -31,6 +32,8 @@ hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
                                 # Steward/orchestrator prompt assembly
 hive chat [--runtime ...] <msg>  # Human-facing one-shot runtime call
 hive supervise [--max-parallel]  # Autonomous supervisor loop
+hive supervise status            # Detached supervisor state
+hive supervise stop              # Stop detached supervisor
 hive ps                          # Active-run and recent-run inspection
 hive stop <agent|run>            # Signal an active supervised run
 hive feed [count]                # Recent feed entries
@@ -112,6 +115,6 @@ docs/
 - Phase 1 core primitives: implemented
 - Phase 2 orchestrator prompt assembly: implemented
 - Phase 3 partial: feed/watch, `hive chat`, and one-shot `hive launch`
-- Phase 4 current: run records, `hive ps`, `hive stop`, worker auto-launch, and restart recovery through `hive supervise` are implemented
-- Next phase: deeper supervision ergonomics and detached/background management as defined in `docs/PHASE-4-AUTO-LAUNCH.md`
+- Phase 4 current: run records, `hive ps`, `hive stop`, worker auto-launch, restart recovery through `hive supervise`, and detached supervisor start/status/stop are implemented
+- Next phase: deeper supervision ergonomics beyond the initial detached/background control surface as defined in `docs/PHASE-4-AUTO-LAUNCH.md`
 - Still future after that: richer human modes, transport adapters, curate, and deeper memory intelligence

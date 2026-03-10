@@ -259,15 +259,17 @@ HIVE memory should remain curated, not accidental.
 
 ## The Supervisor Loop
 
-New command:
+New commands:
 
 ```bash
-hive supervise [--interval 30] [--max-parallel 3] [--once]
+hive supervise [--interval 30] [--max-parallel 3] [--once|--detach]
+hive supervise status
+hive supervise stop
 ```
 
-This is the autonomous layer. It is a foreground loop by default. If the
-user wants it in the background, they can run it under `tmux`, `nohup`, or a
-launchd/systemd wrapper later. HIVE does not need a resident daemon to work.
+This is the autonomous layer. It is a foreground loop by default, but it can
+also detach itself into the background while keeping its control state on
+disk. HIVE still does not need a resident daemon to work.
 
 The supervisor tick can stay relatively short, but the default steward
 reassessment interval should be 120 seconds when no event-triggered reason to
@@ -396,10 +398,18 @@ consistent with the HIVE architecture.
 Phase 4 should add only the minimum commands needed for supervision:
 
 ```bash
-hive supervise [--interval 30] [--max-parallel 3] [--once]
+hive supervise [--interval 30] [--max-parallel 3] [--once|--detach]
+hive supervise status
+hive supervise stop
 hive ps
 hive stop <agent-id|run-id>
 ```
+
+`hive supervise status` shows the detached supervisor state, pid, last pass,
+and log path from the project's control record.
+
+`hive supervise stop` stops the detached supervisor cleanly without touching
+worker runs.
 
 `hive ps` shows active runs and recent failures.
 
