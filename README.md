@@ -27,12 +27,12 @@ The core idea is simple: files are the API.
 Phase 1 is implemented.
 Phase 2 orchestration kickoff is now implemented.
 Phase 3 human interaction primitives are now partially implemented.
-Phase 4 now includes run records, `hive ps`, `hive stop`, and worker
-auto-launch through `hive supervise`.
-It also now recovers stale active runs from on-disk state and preserves
-cancelled runs across supervisor restarts.
-The next target is deeper supervision ergonomics and detached/background run
-management; see
+Phase 4 now includes run records, `hive ps`, `hive stop`, worker
+auto-launch through `hive supervise`, and optional detached/background
+supervision control.
+It also now recovers stale active runs from on-disk state, preserves
+cancelled runs across supervisor restarts, and records detached supervisor
+state on disk; see
 [`docs/PHASE-4-AUTO-LAUNCH.md`](./docs/PHASE-4-AUTO-LAUNCH.md).
 
 Available commands:
@@ -44,7 +44,9 @@ Available commands:
 - `hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>`
 - `hive feed [count]`
 - `hive watch [count]`
-- `hive supervise [--interval <seconds>] [--max-parallel <count>] [--once]`
+- `hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]`
+- `hive supervise status`
+- `hive supervise stop`
 - `hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]`
 - `hive ps`
 - `hive stop <agent-id|run-id>`
@@ -65,7 +67,7 @@ Not implemented yet:
 
 - `hive curate`
 - Runtime adapters beyond the first `codex` / `claude` one-shot launchers
-- Detached background launch management and session supervision
+- Broader supervision ergonomics beyond detached start/status/stop
 
 ## Why This Exists
 
@@ -445,7 +447,7 @@ Notes:
 - it refuses duplicate launches for an agent that already has an active run
 - `--dry-run` shows the resolved command and writes the prompt artifact without invoking a model
 
-### `hive supervise [--interval <seconds>] [--max-parallel <count>] [--once]`
+### `hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]`
 
 Runs the Phase 4 supervisor loop.
 
@@ -453,11 +455,33 @@ Notes:
 
 - `--once` performs a single deterministic assessment cycle and stops
 - without `--once`, it loops and sleeps between passes
+- `--detach` starts the supervisor in the background and returns immediately
 - `--max-parallel` limits concurrent worker launches per project
 - it launches `orchestrator` when the trigger rules say yes
 - it launches ready worker assignments automatically when launch mode and scope rules allow it
 - one open assignment triggers at most one automatic launch attempt until the steward reassigns or retries it
 - on startup or each tick, it reconciles stale `runs/active/` entries against live pids and recovers dead runs into failed/cancelled results
+- detached mode records supervisor state in `~/.hive/projects/<project>/supervisor/detached.md` and appends output to `~/.hive/projects/<project>/supervisor/detached.log`
+
+### `hive supervise status`
+
+Shows the active project's detached supervisor state.
+
+Notes:
+
+- reads `~/.hive/projects/<project>/supervisor/detached.md`
+- reconciles stale pids before printing status
+- reports the detached supervisor pid, last pass timestamp, and log path
+
+### `hive supervise stop`
+
+Stops the active project's detached supervisor with `SIGTERM`.
+
+Notes:
+
+- only targets the detached supervisor control record, not worker runs
+- marks the detached supervisor as `stopping` before signaling it
+- the detached child writes a final `stopped` state on exit
 
 ### `hive ps`
 
@@ -649,6 +673,7 @@ Useful environment variables:
 - [FINAL-PRD.md](./docs/FINAL-PRD.md) for the full product requirements
 - [PHASE-4-AUTO-LAUNCH.md](./docs/PHASE-4-AUTO-LAUNCH.md) for the Phase 4 supervisor and auto-launch design
 - [CLAUDE.md](./docs/CLAUDE.md) for implementation constraints and scope
+- [NEXT-SESSION-PROMPT.md](./docs/NEXT-SESSION-PROMPT.md) for the current continuity brief and next-session prompt
 - [SOUL.md](./templates/SOUL.md) for the default hive culture template
 
 ## What HIVE Still Does Not Solve

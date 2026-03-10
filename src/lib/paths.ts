@@ -39,6 +39,7 @@ export type ProjectPaths = {
   memory: string;
   runsDir: string;
   runsActiveDir: string;
+  supervisorDir: string;
 };
 
 export function resolveHiveHome(): string {
@@ -111,6 +112,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     memory: join(paths.memoryProjectsDir, `${projectId}.md`),
     runsDir: join(root, "runs"),
     runsActiveDir: join(root, "runs", "active"),
+    supervisorDir: join(root, "supervisor"),
   };
 }
 
@@ -127,6 +129,7 @@ export async function ensureProjectScaffold(
   await mkdir(projectPaths.root, { recursive: true });
   await mkdir(projectPaths.runsDir, { recursive: true });
   await mkdir(projectPaths.runsActiveDir, { recursive: true });
+  await mkdir(projectPaths.supervisorDir, { recursive: true });
   await writeIfMissing(
     projectPaths.config,
     renderProjectConfigTemplate(input.projectName, input.repoPath),
