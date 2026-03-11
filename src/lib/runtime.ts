@@ -5,10 +5,170 @@ import { StringDecoder } from "node:string_decoder";
 import { UsageError } from "./errors";
 import { PlanAgent, TeamAgent } from "./project";
 
-export type RuntimeName = "codex" | "claude";
+// --- Runtime Adapter Interface ---
+
+export type RuntimeAdapter = {
+  name: string;
+  aliases: string[];
+  command: string;
+  buildLaunchArgs: (input: {
+    model: string | null;
+    repoPath: string;
+    hiveHome: string;
+    prompt: string;
+  }) => string[];
+  buildInteractiveArgs: (input: {
+    model: string | null;
+    repoPath: string;
+    hiveHome: string;
+    systemPrompt: string;
+  }) => string[];
+  suppressLine: (line: string) => boolean;
+  detectInstalled: () => Promise<boolean>;
+};
+
+// --- Built-in Adapters ---
+
+const claudeAdapter: RuntimeAdapter = {
+  name: "claude",
+  aliases: ["claude-code"],
+  command: "claude",
+  buildLaunchArgs: ({ model, hiveHome, prompt }) => [
+    "--print",
+    "--permission-mode",
+    "bypassPermissions",
+    "--add-dir",
+    hiveHome,
+    ...(model ? ["--model", model] : []),
+    prompt,
+  ],
+  buildInteractiveArgs: ({ model, hiveHome, systemPrompt }) => [
+    "--permission-mode",
+    "bypassPermissions",
+    "--add-dir",
+    hiveHome,
+    ...(model ? ["--model", model] : []),
+    "--system-prompt",
+    systemPrompt,
+  ],
+  suppressLine: () => false,
+  detectInstalled: () => commandExists("claude"),
+};
+
+const codexAdapter: RuntimeAdapter = {
+  name: "codex",
+  aliases: ["openai"],
+  command: "codex",
+  buildLaunchArgs: ({ model, repoPath, hiveHome, prompt }) => [
+    "exec",
+    "--full-auto",
+    "-C",
+    repoPath,
+    "--add-dir",
+    hiveHome,
+    ...(model ? ["--model", model] : []),
+    prompt,
+  ],
+  buildInteractiveArgs: ({ model, repoPath, hiveHome, systemPrompt }) => [
+    "--full-auto",
+    "-C",
+    repoPath,
+    "--add-dir",
+    hiveHome,
+    ...(model ? ["--model", model] : []),
+    systemPrompt,
+  ],
+  suppressLine: (line: string) => {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      return false;
+    }
+
+    return (
+      trimmed === "mcp startup: no servers" ||
+      /WARN codex_core::state_db: state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back\b/.test(
+        trimmed,
+      ) ||
+      /ERROR codex_core::rollout::list: state db missing rollout path for thread\b/.test(
+        trimmed,
+      )
+    );
+  },
+  detectInstalled: () => commandExists("codex"),
+};
+
+const geminiAdapter: RuntimeAdapter = {
+  name: "gemini",
+  aliases: ["gemini-cli", "google"],
+  command: "gemini",
+  buildLaunchArgs: ({ model, repoPath, prompt }) => [
+    "-C",
+    repoPath,
+    ...(model ? ["--model", model] : []),
+    prompt,
+  ],
+  buildInteractiveArgs: ({ model, repoPath }) => [
+    "-C",
+    repoPath,
+    ...(model ? ["--model", model] : []),
+  ],
+  suppressLine: () => false,
+  detectInstalled: () => commandExists("gemini"),
+};
+
+// --- Registry ---
+
+const builtinAdapters: RuntimeAdapter[] = [claudeAdapter, codexAdapter, geminiAdapter];
+
+function buildRegistry(adapters: RuntimeAdapter[]): Map<string, RuntimeAdapter> {
+  const map = new Map<string, RuntimeAdapter>();
+
+  for (const adapter of adapters) {
+    map.set(adapter.name, adapter);
+
+    for (const alias of adapter.aliases) {
+      map.set(alias, adapter);
+    }
+  }
+
+  return map;
+}
+
+const registry = buildRegistry(builtinAdapters);
+
+// --- Public Registry API ---
+
+export function getAdapter(name: string): RuntimeAdapter | null {
+  return registry.get(name.trim().toLowerCase()) ?? null;
+}
+
+export function listRuntimeAdapters(): RuntimeAdapter[] {
+  return [...builtinAdapters];
+}
+
+// --- Utility ---
+
+async function commandExists(cmd: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["which", cmd], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const code = await proc.exited;
+
+    return code === 0;
+  } catch {
+    return false;
+  }
+}
+
+// --- Types (backward compatible) ---
+
+export type RuntimeName = string;
 
 export type LaunchSpec = {
-  runtime: RuntimeName;
+  runtime: string;
   model: string | null;
   command: string;
   args: string[];
@@ -41,7 +201,7 @@ type LaunchHandleOptions = {
 };
 
 export type RuntimeHints = {
-  runtime: RuntimeName;
+  runtime: string;
   model: string | null;
 };
 
@@ -52,6 +212,8 @@ type ResolveHintsInput = {
   runtimeOverride?: string | null;
   modelOverride?: string | null;
 };
+
+// --- Config / Descriptor Helpers ---
 
 function extractConfigValue(input: string, key: string): string | null {
   const match = input.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
@@ -65,26 +227,17 @@ function extractBodyValue(input: string, key: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-function normalizeRuntimeName(value: string | null | undefined): RuntimeName | null {
+function normalizeRuntimeName(value: string | null | undefined): string | null {
   if (!value) {
     return null;
   }
 
-  const normalized = value.trim().toLowerCase();
+  const adapter = getAdapter(value);
 
-  switch (normalized) {
-    case "codex":
-    case "openai":
-      return "codex";
-    case "claude":
-    case "claude-code":
-      return "claude";
-    default:
-      return null;
-  }
+  return adapter ? adapter.name : null;
 }
 
-function extractRuntimeFromDescriptor(descriptor: string): RuntimeName | null {
+function extractRuntimeFromDescriptor(descriptor: string): string | null {
   const match = descriptor.match(/\bvia\s+([a-z0-9._-]+)\b/i);
 
   return normalizeRuntimeName(match ? match[1] : null);
@@ -123,7 +276,7 @@ function selectRuntime(
   teamAgent?: TeamAgent | null,
   planAgent?: PlanAgent | null,
   runtimeOverride?: string | null,
-): RuntimeName {
+): string {
   const candidates = [
     runtimeOverride,
     planAgent ? extractBodyValue(planAgent.body, "runtime") : null,
@@ -140,10 +293,14 @@ function selectRuntime(
     }
   }
 
+  const available = builtinAdapters.map((a) => a.name).join("|");
+
   throw new UsageError(
-    "Unsupported or missing runtime. Use `--runtime codex|claude` or set `runtime:` in ~/.hive/config.md or the project team descriptor.",
+    `Unsupported or missing runtime. Use \`--runtime ${available}\` or set \`runtime:\` in ~/.hive/config.md or the project team descriptor.`,
   );
 }
+
+// --- Public API ---
 
 export function resolveRuntimeHints(input: ResolveHintsInput): RuntimeHints {
   return {
@@ -163,86 +320,55 @@ export function resolveRuntimeHints(input: ResolveHintsInput): RuntimeHints {
 }
 
 export function buildLaunchSpec(input: {
-  runtime: RuntimeName;
+  runtime: string;
   model: string | null;
   repoPath: string;
   hiveHome: string;
   prompt: string;
 }): LaunchSpec {
-  switch (input.runtime) {
-    case "codex":
-      return {
-        runtime: input.runtime,
-        model: input.model,
-        command: "codex",
-        args: [
-          "exec",
-          "--full-auto",
-          "-C",
-          input.repoPath,
-          "--add-dir",
-          input.hiveHome,
-          ...(input.model ? ["--model", input.model] : []),
-          input.prompt,
-        ],
-      };
-    case "claude":
-      return {
-        runtime: input.runtime,
-        model: input.model,
-        command: "claude",
-        args: [
-          "--print",
-          "--permission-mode",
-          "bypassPermissions",
-          "--add-dir",
-          input.hiveHome,
-          ...(input.model ? ["--model", input.model] : []),
-          input.prompt,
-        ],
-      };
+  const adapter = getAdapter(input.runtime);
+
+  if (!adapter) {
+    throw new UsageError(`Unknown runtime: ${input.runtime}`);
   }
+
+  return {
+    runtime: adapter.name,
+    model: input.model,
+    command: adapter.command,
+    args: adapter.buildLaunchArgs({
+      model: input.model,
+      repoPath: input.repoPath,
+      hiveHome: input.hiveHome,
+      prompt: input.prompt,
+    }),
+  };
 }
 
 export function buildInteractiveLaunchSpec(input: {
-  runtime: RuntimeName;
+  runtime: string;
   model: string | null;
   repoPath: string;
   hiveHome: string;
   systemPrompt: string;
 }): LaunchSpec {
-  switch (input.runtime) {
-    case "codex":
-      return {
-        runtime: input.runtime,
-        model: input.model,
-        command: "codex",
-        args: [
-          "--full-auto",
-          "-C",
-          input.repoPath,
-          "--add-dir",
-          input.hiveHome,
-          ...(input.model ? ["--model", input.model] : []),
-          input.systemPrompt,
-        ],
-      };
-    case "claude":
-      return {
-        runtime: input.runtime,
-        model: input.model,
-        command: "claude",
-        args: [
-          "--permission-mode",
-          "bypassPermissions",
-          "--add-dir",
-          input.hiveHome,
-          ...(input.model ? ["--model", input.model] : []),
-          "--system-prompt",
-          input.systemPrompt,
-        ],
-      };
+  const adapter = getAdapter(input.runtime);
+
+  if (!adapter) {
+    throw new UsageError(`Unknown runtime: ${input.runtime}`);
   }
+
+  return {
+    runtime: adapter.name,
+    model: input.model,
+    command: adapter.command,
+    args: adapter.buildInteractiveArgs({
+      model: input.model,
+      repoPath: input.repoPath,
+      hiveHome: input.hiveHome,
+      systemPrompt: input.systemPrompt,
+    }),
+  };
 }
 
 export function startInteractiveSession(
@@ -278,30 +404,24 @@ export function renderLaunchPreview(spec: LaunchSpec): string {
   ].join(" ");
 }
 
-export function shouldSuppressRuntimeLine(runtime: RuntimeName, line: string): boolean {
+export function shouldSuppressRuntimeLine(runtime: string, line: string): boolean {
   const trimmed = line.trim();
 
   if (!trimmed) {
     return false;
   }
 
-  if (runtime === "codex") {
-    return (
-      trimmed === "mcp startup: no servers" ||
-      /WARN codex_core::state_db: state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back\b/.test(
-        trimmed,
-      ) ||
-      /ERROR codex_core::rollout::list: state db missing rollout path for thread\b/.test(
-        trimmed,
-      )
-    );
+  const adapter = getAdapter(runtime);
+
+  if (!adapter) {
+    return false;
   }
 
-  return false;
+  return adapter.suppressLine(trimmed);
 }
 
 function createForwarder(
-  runtime: RuntimeName,
+  runtime: string,
   stream: NodeJS.WriteStream | null,
   onLine: (line: string) => void,
 ) {

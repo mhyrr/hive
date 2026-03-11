@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter";
 import { ensureDirectory, ProjectPaths } from "./paths";
 import { parseScopeRoots } from "./project";
-import { RuntimeName } from "./runtime";
+import { getAdapter, RuntimeName } from "./runtime";
 import { now, toCompactTimestamp, toDateParts, toIsoTimestamp } from "./time";
 
 export type RunStatus = "starting" | "active" | "exited" | "failed" | "cancelled";
@@ -151,7 +151,7 @@ function toRunRecord(path: string, raw: string): RunRecord | null {
     !projectId ||
     !agentId ||
     !status ||
-    (runtime !== "codex" && runtime !== "claude") ||
+    (!runtime || !getAdapter(runtime)) ||
     !started ||
     !promptPath ||
     !source

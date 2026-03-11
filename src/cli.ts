@@ -13,6 +13,7 @@ import { msgCommand, nudgeCommand } from "./commands/msg";
 import { orchestrateCommand } from "./commands/orchestrate";
 import { psCommand } from "./commands/ps";
 import { projectCommand } from "./commands/project";
+import { runtimesCommand } from "./commands/runtimes";
 import { promptCommand } from "./commands/prompt";
 import { runCommand } from "./commands/run";
 import { sayCommand } from "./commands/say";
@@ -76,6 +77,8 @@ export async function runCli(args: string[]): Promise<string> {
       return nudgeCommand(rest);
     case "prompt":
       return promptCommand(rest);
+    case "runtimes":
+      return runtimesCommand();
     case "archive":
       return archiveCommand();
     case "sync":

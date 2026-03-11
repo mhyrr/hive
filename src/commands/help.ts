@@ -35,6 +35,7 @@ Usage:
   hive msg close <message> <actor> [note]
   hive nudge <message>
   hive prompt <agent-id>
+  hive runtimes                        # List available runtimes
   hive archive
   hive sync
   hive help
