@@ -119,7 +119,7 @@ export async function askCommand(args: string[]): Promise<string> {
     prompt,
   });
 
-  const result = await runLaunchSpec(spec, repoPath);
+  const result = await runLaunchSpec(spec, repoPath, { quiet: true });
 
   if (result.code !== null && result.code !== 0) {
     throw new UsageError(`Ask runtime exited with status ${result.code}`);

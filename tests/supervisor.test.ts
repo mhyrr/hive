@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { assessStewardLaunch, scopesConflict, selectWorkerLaunches } from "../src/lib/supervisor";
+import { assessRecoveredRuns, assessStewardLaunch, scopesConflict, selectWorkerLaunches } from "../src/lib/supervisor";
 
 beforeEach(() => {
   process.env.HIVE_FIXED_NOW = "2026-03-10T14:12:00Z";
@@ -390,6 +390,57 @@ Task: Review the change.
 
     // maxParallel is 1, but console shouldn't count — alpha should still launch
     expect(assessment.launches.map((l) => l.agentId)).toEqual(["alpha"]);
+  });
+});
+
+describe("run recovery", () => {
+  test("assessRecoveredRuns skips console sessions even when process is dead", () => {
+    const recovered = assessRecoveredRuns([
+      {
+        runId: "20260310-140000Z-console",
+        projectId: "dealsplit",
+        agentId: "console",
+        status: "active",
+        runtime: "claude",
+        model: null,
+        started: "2026-03-10T14:00:00Z",
+        ended: null,
+        exitCode: null,
+        pid: 999999,
+        promptPath: "/tmp/console.prompt.md",
+        source: "console",
+        sourceMessage: null,
+        taskId: null,
+        scope: null,
+        stopRequestedAt: null,
+        stopRequestedBy: null,
+        path: "/tmp/console/run.md",
+      },
+      {
+        runId: "20260310-140000Z-alpha",
+        projectId: "dealsplit",
+        agentId: "alpha",
+        status: "active",
+        runtime: "codex",
+        model: null,
+        started: "2026-03-10T14:00:00Z",
+        ended: null,
+        exitCode: null,
+        pid: 999998,
+        promptPath: "/tmp/alpha.prompt.md",
+        source: "hive supervise",
+        sourceMessage: null,
+        taskId: null,
+        scope: ["src/api"],
+        stopRequestedAt: null,
+        stopRequestedBy: null,
+        path: "/tmp/alpha/run.md",
+      },
+    ]);
+
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].run.agentId).toBe("alpha");
+    expect(recovered[0].status).toBe("failed");
   });
 });
 

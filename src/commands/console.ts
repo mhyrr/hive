@@ -12,6 +12,7 @@ import {
 import { extractRepoPath } from "../lib/project";
 import {
   createRunDraft,
+  createRunPromptArtifact,
   finalizeRun,
   markRunActive,
   readActiveRun,
@@ -277,6 +278,16 @@ export async function consoleCommand(args: string[]): Promise<string> {
     systemPrompt: prompt,
   });
 
+  if (options.dryRun) {
+    const artifact = await createRunPromptArtifact(projectPaths, "console", prompt);
+    return `Console dry run
+Project: ${activeProject}
+Runtime: ${spec.runtime}
+Model: ${spec.model ?? "(default)"}
+Prompt: ${artifact.promptPath}
+Command: ${renderLaunchPreview(spec)}`;
+  }
+
   let run = await createRunDraft({
     projectId: activeProject,
     projectPaths,
@@ -286,16 +297,6 @@ export async function consoleCommand(args: string[]): Promise<string> {
     prompt,
     source: "console",
   });
-
-  if (options.dryRun) {
-    await finalizeRun({ projectPaths, run, status: "cancelled", exitCode: null });
-    return `Console dry run
-Project: ${activeProject}
-Runtime: ${spec.runtime}
-Model: ${spec.model ?? "(default)"}
-Prompt: ${run.promptPath}
-Command: ${renderLaunchPreview(spec)}`;
-  }
 
   await appendLogEntry(projectPaths.log, "human → hive console", "Interactive session started");
   await appendFeedEntry(paths, {
@@ -308,9 +309,7 @@ Command: ${renderLaunchPreview(spec)}`;
   run = await markRunActive(projectPaths, run, handle.pid);
   const result = await handle.wait();
 
-  const stopRequested = Boolean(
-    (await Bun.file(run.path).text()).includes("stop-requested-at:"),
-  );
+  const stopRequested = (await Bun.file(run.path).text()).includes("stop-requested-at:");
 
   await finalizeRun({
     projectPaths,
