@@ -441,3 +441,154 @@ describe("Gateway CLI wiring", () => {
     expect(result).toContain("gateway stop");
   });
 });
+
+describe("Gateway session endpoints", () => {
+  test("POST /api/console/new creates a session", async () => {
+    const port = randomPort();
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const state = startGateway({ port, hivePaths: context.paths });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/api/console/new`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(200);
+
+      const data = await res.json() as { sessionId: string };
+      expect(data).toHaveProperty("sessionId");
+      expect(typeof data.sessionId).toBe("string");
+      expect(data.sessionId.length).toBeGreaterThan(0);
+    } finally {
+      stopGateway(state);
+    }
+  });
+
+  test("GET /api/sessions lists sessions after creating one", async () => {
+    const port = randomPort();
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const state = startGateway({ port, hivePaths: context.paths });
+
+    try {
+      // Create a session first
+      const createRes = await fetch(`http://localhost:${port}/api/console/new`, {
+        method: "POST",
+      });
+      const createData = await createRes.json() as { sessionId: string };
+      const sessionId = createData.sessionId;
+
+      // List sessions
+      const listRes = await fetch(`http://localhost:${port}/api/sessions`);
+      expect(listRes.status).toBe(200);
+
+      const listData = await listRes.json() as { sessions: Array<{ sessionId: string }> };
+      expect(listData).toHaveProperty("sessions");
+      expect(Array.isArray(listData.sessions)).toBe(true);
+      expect(listData.sessions.length).toBeGreaterThanOrEqual(1);
+
+      // The created session should be in the list
+      const found = listData.sessions.some((s) => s.sessionId === sessionId);
+      expect(found).toBe(true);
+    } finally {
+      stopGateway(state);
+    }
+  });
+
+  test("GET /api/sessions/:id returns session details and turns", async () => {
+    const port = randomPort();
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const state = startGateway({ port, hivePaths: context.paths });
+
+    try {
+      // Create a session
+      const createRes = await fetch(`http://localhost:${port}/api/console/new`, {
+        method: "POST",
+      });
+      const createData = await createRes.json() as { sessionId: string };
+      const sessionId = createData.sessionId;
+
+      // Get session details
+      const detailRes = await fetch(`http://localhost:${port}/api/sessions/${sessionId}`);
+      expect(detailRes.status).toBe(200);
+
+      const detailData = await detailRes.json() as { session: { sessionId: string }; turns: unknown[] };
+      expect(detailData).toHaveProperty("session");
+      expect(detailData).toHaveProperty("turns");
+      expect(detailData.session.sessionId).toBe(sessionId);
+      expect(Array.isArray(detailData.turns)).toBe(true);
+    } finally {
+      stopGateway(state);
+    }
+  });
+
+  test("GET /api/sessions/:id returns 404 for unknown session", async () => {
+    const port = randomPort();
+    const state = startGateway({ port, hivePaths: context.paths });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/api/sessions/nonexistent-session`);
+      expect(res.status).toBe(404);
+
+      const data = await res.json() as { error: string };
+      expect(data).toHaveProperty("error");
+    } finally {
+      stopGateway(state);
+    }
+  });
+
+  test("POST /api/console/send with missing message returns 400", async () => {
+    const port = randomPort();
+    const state = startGateway({ port, hivePaths: context.paths });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/api/console/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(400);
+
+      const data = await res.json() as { error: string };
+      expect(data.error).toContain("Missing");
+    } finally {
+      stopGateway(state);
+    }
+  });
+
+  test("GET /api/console/history returns turns and sessionId", async () => {
+    const port = randomPort();
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const state = startGateway({ port, hivePaths: context.paths });
+
+    try {
+      // Initially no session — should return empty
+      const res1 = await fetch(`http://localhost:${port}/api/console/history`);
+      expect(res1.status).toBe(200);
+      const data1 = await res1.json() as { turns: unknown[]; sessionId: string | null };
+      expect(data1).toHaveProperty("turns");
+      expect(data1).toHaveProperty("sessionId");
+
+      // Create a session
+      await fetch(`http://localhost:${port}/api/console/new`, { method: "POST" });
+
+      // Now history should return the session
+      const res2 = await fetch(`http://localhost:${port}/api/console/history`);
+      expect(res2.status).toBe(200);
+      const data2 = await res2.json() as { turns: unknown[]; sessionId: string };
+      expect(data2.sessionId).toBeTruthy();
+    } finally {
+      stopGateway(state);
+    }
+  });
+});

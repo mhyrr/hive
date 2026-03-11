@@ -168,4 +168,6 @@ docs/
 - Console run-ledger integration: console tracked as session in run ledger, supervisor ignores for scope/parallel, stop advisory, LLM-powered ask — implemented
 - Phase 5 Step 1: runtime adapter registry — claude/codex/gemini adapters, `hive runtimes` — implemented
 - Phase 5 Steps 2-4: Gateway HTTP server, WebSocket feed streaming, web UI shell — implemented
-- Next: Phase 5 Steps 5-6 (console session persistence, full web console with real-time agent visibility)
+- Phase 5 Step 5: console session persistence — file-backed sessions, /api/console/send, /api/console/new, /api/sessions — implemented
+- Phase 5 Step 6: full web console — session controls, agent overview dropdown, textarea input, thinking animation, keyboard shortcuts, session list sidebar — implemented
+- Phase 5: complete

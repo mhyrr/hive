@@ -6,25 +6,28 @@
 
 // --- State ---
 
-const state = {
+var state = {
   project: null,
   supervisorStatus: null,
   agentCount: 0,
+  agents: [],
   ws: null,
   wsConnected: false,
   wsReconnectDelay: 1000,
   wsMaxReconnectDelay: 30000,
   feedEntries: [],
   consoleHistory: [],
+  sessionId: null,
+  sending: false,
 };
 
 
 // --- API Client ---
 
-const API_BASE = '';  // same origin
+var API_BASE = '';  // same origin
 
 async function apiGet(path) {
-  const res = await fetch(API_BASE + '/api' + path);
+  var res = await fetch(API_BASE + '/api' + path);
   if (!res.ok) {
     throw new Error('API ' + res.status + ': ' + (await res.text()));
   }
@@ -32,7 +35,7 @@ async function apiGet(path) {
 }
 
 async function apiPost(path, body) {
-  const res = await fetch(API_BASE + '/api' + path, {
+  var res = await fetch(API_BASE + '/api' + path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -71,6 +74,10 @@ function nowISO() {
 
 function nowTimeString() {
   return formatTime(nowISO());
+}
+
+function isMac() {
+  return navigator.platform && navigator.platform.indexOf('Mac') !== -1;
 }
 
 
@@ -166,10 +173,12 @@ function handleWsEvent(event) {
     case 'run-completed':
     case 'supervisor-tick':
       refreshStatus();
+      refreshAgentOverview();
       break;
     case 'console-response':
     case 'session-message':
       if (event.data && event.data.content) {
+        removeThinkingIndicator();
         addConsoleTurn('assistant', event.data.content);
       }
       break;
@@ -266,6 +275,10 @@ function addConsoleTurn(role, content, timestamp) {
   var welcome = container.querySelector('.console-welcome');
   if (welcome) welcome.remove();
 
+  // Remove loading state
+  var loading = container.querySelector('.console-loading');
+  if (loading) loading.remove();
+
   var ts = timestamp || nowISO();
 
   var div = document.createElement('div');
@@ -283,6 +296,275 @@ function addConsoleTurn(role, content, timestamp) {
   container.scrollTop = container.scrollHeight;
 
   state.consoleHistory.push({ role: role, content: content, ts: ts });
+}
+
+function showThinkingIndicator() {
+  var container = document.getElementById('console-history');
+  if (!container) return;
+
+  var div = document.createElement('div');
+  div.className = 'turn turn-thinking';
+  div.id = 'thinking-indicator';
+
+  var html = '';
+  html += '<div class="turn-role">thinking</div>';
+  html += '<div class="turn-content"><span class="thinking-dots">';
+  html += '<span></span><span></span><span></span>';
+  html += '</span></div>';
+
+  div.innerHTML = html;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeThinkingIndicator() {
+  var indicator = document.getElementById('thinking-indicator');
+  if (indicator) indicator.remove();
+}
+
+function clearConsoleHistory() {
+  var container = document.getElementById('console-history');
+  if (!container) return;
+
+  container.innerHTML = '';
+  state.consoleHistory = [];
+
+  var welcome = document.createElement('div');
+  welcome.className = 'console-welcome';
+  welcome.innerHTML = '<p>Welcome to HIVE. Type a message to talk to the hive mind.</p>' +
+    '<p class="console-welcome-hint">The console is your steering wheel. The feed is your dashboard.</p>';
+  container.appendChild(welcome);
+}
+
+
+// --- Session Management ---
+
+function updateSessionIndicator(sessionId) {
+  state.sessionId = sessionId;
+  var el = document.getElementById('session-id');
+  if (!el) return;
+
+  if (sessionId) {
+    el.textContent = 'session: ' + sessionId;
+    el.title = sessionId;
+  } else {
+    el.textContent = '\u2014';
+    el.title = '';
+  }
+}
+
+async function createNewSession() {
+  try {
+    var data = await apiPost('/console/new', {});
+    updateSessionIndicator(data.sessionId);
+    clearConsoleHistory();
+  } catch (e) {
+    console.error('Failed to create new session:', e);
+    addConsoleTurn('error', 'Failed to create new session: ' + e.message);
+  }
+}
+
+async function loadSession(sessionId) {
+  try {
+    var data = await apiGet('/sessions/' + sessionId);
+
+    // Clear and load new history
+    var container = document.getElementById('console-history');
+    if (container) {
+      container.innerHTML = '';
+      state.consoleHistory = [];
+    }
+
+    updateSessionIndicator(sessionId);
+
+    if (data.turns && Array.isArray(data.turns)) {
+      for (var i = 0; i < data.turns.length; i++) {
+        var turn = data.turns[i];
+        addConsoleTurn(turn.role || 'assistant', turn.content || '', turn.ts);
+      }
+    }
+
+    if (state.consoleHistory.length === 0) {
+      clearConsoleHistory();
+    }
+
+    // Close the sessions dropdown
+    closeSessionsDropdown();
+  } catch (e) {
+    console.error('Failed to load session:', e);
+    addConsoleTurn('error', 'Failed to load session: ' + e.message);
+  }
+}
+
+
+// --- Sessions Dropdown ---
+
+function toggleSessionsDropdown() {
+  var dropdown = document.getElementById('sessions-dropdown');
+  if (!dropdown) return;
+
+  var isOpen = dropdown.classList.contains('sessions-dropdown--open');
+  if (isOpen) {
+    closeSessionsDropdown();
+  } else {
+    openSessionsDropdown();
+  }
+}
+
+function closeSessionsDropdown() {
+  var dropdown = document.getElementById('sessions-dropdown');
+  if (dropdown) dropdown.classList.remove('sessions-dropdown--open');
+}
+
+async function openSessionsDropdown() {
+  var dropdown = document.getElementById('sessions-dropdown');
+  var list = document.getElementById('sessions-dropdown-list');
+  if (!dropdown || !list) return;
+
+  dropdown.classList.add('sessions-dropdown--open');
+
+  // Fetch sessions
+  try {
+    var data = await apiGet('/sessions');
+    var sessions = data.sessions || [];
+
+    list.innerHTML = '';
+
+    if (sessions.length === 0) {
+      list.innerHTML = '<div class="sessions-dropdown-empty">No sessions</div>';
+      return;
+    }
+
+    for (var i = 0; i < sessions.length; i++) {
+      var session = sessions[i];
+      var item = document.createElement('div');
+      item.className = 'sessions-dropdown-item';
+      if (session.sessionId === state.sessionId) {
+        item.className += ' sessions-dropdown-item--active';
+      }
+
+      var started = session.started ? formatTime(session.started) : '';
+      var turns = session.turns || 0;
+      item.innerHTML =
+        '<div class="sessions-dropdown-item-id">' + escapeHtml(session.sessionId) + '</div>' +
+        '<div class="sessions-dropdown-item-meta">' +
+        escapeHtml(started) + ' \u00b7 ' + turns + ' turn' + (turns !== 1 ? 's' : '') +
+        '</div>';
+
+      // Closure for click handler
+      (function (sid) {
+        item.addEventListener('click', function () {
+          loadSession(sid);
+        });
+      })(session.sessionId);
+
+      list.appendChild(item);
+    }
+  } catch (e) {
+    list.innerHTML = '<div class="sessions-dropdown-empty">Failed to load sessions</div>';
+    console.error('Failed to load sessions:', e);
+  }
+}
+
+
+// --- Agent Overview ---
+
+function parseAgentInfo(psText) {
+  if (!psText || typeof psText !== 'string') return [];
+
+  var agents = [];
+  var lines = psText.split('\n');
+  var inActiveSection = false;
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+
+    if (line.indexOf('Active runs:') !== -1) {
+      inActiveSection = true;
+      continue;
+    }
+
+    if (inActiveSection) {
+      // End of active section
+      if (line.trim() === '' || line.indexOf('No ') !== -1 || line.indexOf('Recent ') !== -1) {
+        inActiveSection = false;
+        continue;
+      }
+
+      // Parse agent line: "  alpha  steward   claude  pid:12345  2m ago"
+      var parts = line.trim().split(/\s{2,}/);
+      if (parts.length >= 3) {
+        agents.push({
+          name: parts[0],
+          persona: parts[1] || '',
+          runtime: parts[2] || '',
+          age: parts.length >= 5 ? parts[4] : (parts.length >= 4 ? parts[3] : ''),
+        });
+      }
+    }
+  }
+
+  return agents;
+}
+
+function updateAgentOverview(agents) {
+  state.agents = agents;
+  state.agentCount = agents.length;
+
+  var labelEl = document.querySelector('.topbar-agents-label');
+  if (labelEl) {
+    if (agents.length > 0) {
+      labelEl.textContent = agents.length + ' agent' + (agents.length !== 1 ? 's' : '');
+    } else {
+      labelEl.textContent = '\u2014';
+    }
+  }
+
+  // Update dropdown content
+  var list = document.getElementById('agent-dropdown-list');
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  if (agents.length === 0) {
+    list.innerHTML = '<div class="agent-dropdown-empty">No active agents</div>';
+    return;
+  }
+
+  for (var i = 0; i < agents.length; i++) {
+    var agent = agents[i];
+    var item = document.createElement('div');
+    item.className = 'agent-dropdown-item';
+    item.innerHTML =
+      '<span class="agent-dropdown-name">' + escapeHtml(agent.name) + '</span>' +
+      '<span class="agent-dropdown-persona">' + escapeHtml(agent.persona) + '</span>' +
+      '<span class="agent-dropdown-runtime">' + escapeHtml(agent.runtime) + '</span>' +
+      '<span class="agent-dropdown-age">' + escapeHtml(agent.age) + '</span>';
+    list.appendChild(item);
+  }
+}
+
+function toggleAgentDropdown() {
+  var dropdown = document.getElementById('agent-dropdown');
+  if (!dropdown) return;
+  dropdown.classList.toggle('agent-dropdown--open');
+}
+
+function closeAgentDropdown() {
+  var dropdown = document.getElementById('agent-dropdown');
+  if (dropdown) dropdown.classList.remove('agent-dropdown--open');
+}
+
+async function refreshAgentOverview() {
+  try {
+    var data = await apiGet('/ps');
+    var text = data.result || '';
+    var agents = parseAgentInfo(text);
+    updateAgentOverview(agents);
+  } catch (e) {
+    console.error('Agent overview refresh failed:', e);
+    updateAgentOverview([]);
+  }
 }
 
 
@@ -319,17 +601,6 @@ function updateTopBar(data) {
   } else if (labelEl) {
     labelEl.textContent = '\u2014';
   }
-
-  // Agent count
-  var agentEl = document.getElementById('agent-count');
-  if (agentEl) {
-    var count = data.agents || data.agentCount || 0;
-    if (typeof count === 'number' && count > 0) {
-      agentEl.textContent = count + ' agent' + (count !== 1 ? 's' : '');
-    } else {
-      agentEl.textContent = '\u2014';
-    }
-  }
 }
 
 async function refreshStatus() {
@@ -340,7 +611,6 @@ async function refreshStatus() {
     var parsed = {
       project: null,
       supervisor: null,
-      agents: 0,
     };
 
     if (data.result && typeof data.result === 'string') {
@@ -357,12 +627,6 @@ async function refreshStatus() {
 
     if (data.supervisor) {
       parsed.supervisor = data.supervisor;
-    }
-
-    if (data.agents !== undefined) {
-      parsed.agents = data.agents;
-    } else if (data.agentCount !== undefined) {
-      parsed.agents = data.agentCount;
     }
 
     updateTopBar(parsed);
@@ -435,6 +699,23 @@ function parseFeedText(text) {
 }
 
 
+// --- Loading State ---
+
+function setSendingState(sending) {
+  state.sending = sending;
+  var input = document.getElementById('console-input');
+  var btn = document.getElementById('console-send-btn');
+
+  if (input) {
+    input.disabled = sending;
+  }
+  if (btn) {
+    btn.disabled = sending;
+    btn.textContent = sending ? 'Sending...' : 'Send';
+  }
+}
+
+
 // --- Console Input ---
 
 function setupConsoleInput() {
@@ -448,30 +729,47 @@ function setupConsoleInput() {
     sendConsoleMessage();
   });
 
-  // Enter to send (no shift), Shift+Enter for newline (if we ever switch to textarea)
+  // Enter to send (no shift), Shift+Enter for newline
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendConsoleMessage();
     }
   });
+
+  // Auto-resize textarea
+  input.addEventListener('input', function () {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  });
 }
 
 async function sendConsoleMessage() {
   var input = document.getElementById('console-input');
-  if (!input) return;
+  if (!input || state.sending) return;
 
   var message = input.value.trim();
   if (!message) return;
 
   input.value = '';
-  input.focus();
+  input.style.height = 'auto';
 
   // Show human turn immediately
   addConsoleTurn('human', message);
 
+  // Show thinking indicator and loading state
+  setSendingState(true);
+  showThinkingIndicator();
+
   try {
-    var data = await apiPost('/say', { message: message });
+    var data = await apiPost('/console/send', { message: message });
+
+    removeThinkingIndicator();
+
+    // Update session ID from response
+    if (data.sessionId) {
+      updateSessionIndicator(data.sessionId);
+    }
 
     // Response may come via WebSocket (console-response event) or
     // directly in the response body
@@ -479,7 +777,11 @@ async function sendConsoleMessage() {
       addConsoleTurn('assistant', data.result);
     }
   } catch (e) {
+    removeThinkingIndicator();
     addConsoleTurn('error', 'Error: ' + e.message);
+  } finally {
+    setSendingState(false);
+    input.focus();
   }
 }
 
@@ -487,19 +789,116 @@ async function sendConsoleMessage() {
 // --- Console History Load ---
 
 async function loadConsoleHistory() {
+  var container = document.getElementById('console-history');
+
+  // Show loading state
+  if (container) {
+    var welcome = container.querySelector('.console-welcome');
+    if (welcome) {
+      welcome.innerHTML = '<p>Loading session...</p>';
+      welcome.className = 'console-loading';
+    }
+  }
+
   try {
     var data = await apiGet('/console/history');
 
-    if (data.turns && Array.isArray(data.turns)) {
+    if (data.sessionId) {
+      updateSessionIndicator(data.sessionId);
+    }
+
+    if (data.turns && Array.isArray(data.turns) && data.turns.length > 0) {
+      // Remove loading state
+      if (container) {
+        var loading = container.querySelector('.console-loading');
+        if (loading) loading.remove();
+      }
+
       for (var i = 0; i < data.turns.length; i++) {
         var turn = data.turns[i];
         addConsoleTurn(turn.role || 'assistant', turn.content || '', turn.ts);
+      }
+    } else {
+      // No history — show welcome
+      if (container) {
+        var loadingEl = container.querySelector('.console-loading');
+        if (loadingEl) {
+          loadingEl.className = 'console-welcome';
+          loadingEl.innerHTML = '<p>Welcome to HIVE. Type a message to talk to the hive mind.</p>' +
+            '<p class="console-welcome-hint">The console is your steering wheel. The feed is your dashboard.</p>';
+        }
       }
     }
   } catch (e) {
     // Console history endpoint may not exist yet — that is fine
     console.log('Console history not available:', e.message);
+    if (container) {
+      var loadingFallback = container.querySelector('.console-loading');
+      if (loadingFallback) {
+        loadingFallback.className = 'console-welcome';
+        loadingFallback.innerHTML = '<p>Welcome to HIVE. Type a message to talk to the hive mind.</p>' +
+          '<p class="console-welcome-hint">The console is your steering wheel. The feed is your dashboard.</p>';
+      }
+    }
   }
+}
+
+
+// --- Session Toolbar Setup ---
+
+function setupSessionToolbar() {
+  var newBtn = document.getElementById('new-session-btn');
+  var sessionsBtn = document.getElementById('sessions-btn');
+
+  if (newBtn) {
+    newBtn.addEventListener('click', function () {
+      createNewSession();
+    });
+  }
+
+  if (sessionsBtn) {
+    sessionsBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggleSessionsDropdown();
+    });
+  }
+}
+
+
+// --- Agent Dropdown Setup ---
+
+function setupAgentDropdown() {
+  var agentsEl = document.getElementById('agent-count');
+  if (agentsEl) {
+    agentsEl.addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggleAgentDropdown();
+    });
+  }
+}
+
+
+// --- Keyboard Shortcuts ---
+
+function setupKeyboardShortcuts() {
+  document.addEventListener('keydown', function (e) {
+    // Ctrl+N (or Cmd+N on Mac): new session
+    var modKey = isMac() ? e.metaKey : e.ctrlKey;
+    if (modKey && e.key === 'n') {
+      e.preventDefault();
+      createNewSession();
+    }
+  });
+}
+
+
+// --- Close dropdowns on outside click ---
+
+function setupGlobalClickHandler() {
+  document.addEventListener('click', function () {
+    closeAgentDropdown();
+    closeSessionsDropdown();
+  });
 }
 
 
@@ -508,6 +907,18 @@ async function loadConsoleHistory() {
 async function init() {
   // Set up console input handler
   setupConsoleInput();
+
+  // Set up session toolbar
+  setupSessionToolbar();
+
+  // Set up agent dropdown
+  setupAgentDropdown();
+
+  // Set up keyboard shortcuts
+  setupKeyboardShortcuts();
+
+  // Close dropdowns on outside click
+  setupGlobalClickHandler();
 
   // Connect WebSocket for real-time updates
   connectWebSocket();
@@ -518,6 +929,7 @@ async function init() {
   // Load initial data from API (non-blocking, graceful on failure)
   refreshStatus();
   refreshFeed();
+  refreshAgentOverview();
   loadConsoleHistory();
 }
 
