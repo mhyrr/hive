@@ -36,6 +36,9 @@ Usage:
   hive nudge <message>
   hive prompt <agent-id>
   hive runtimes                        # List available runtimes
+  hive gateway [--port <port>] [--open] # Start the Gateway server
+  hive gateway status                   # Show Gateway state
+  hive gateway stop                     # Stop the Gateway server
   hive archive
   hive sync
   hive help
