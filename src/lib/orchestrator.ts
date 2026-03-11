@@ -201,7 +201,7 @@ export function buildOrchestratorPrompt(input: {
   options: OrchestrateOptions;
 }): string {
   const signals = summarizeSignals(input.board, input.openMessages, input.activeRuns);
-  const essentialSkills = ["state-efficient-ops"];
+  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
   const essentialSkillPaths = essentialSkills
     .filter((name) => input.availableSkillNames.includes(name))
     .map((name) => `${input.skillsDir}/${name}.md`);
@@ -237,10 +237,13 @@ ${renderList([
 ## Signals
 ${renderList(signals)}
 
+## Before Your First Action
+Read these skills — they define how you think:
+${essentialSkillPaths.map((p) => `- ${p}`).join("\n") || "- (none)"}
+Read operational protocols: ${input.pathsAgents}
+
 ## Steward Rules
 - BOARD.md is yours to maintain. Other agents should update you via msg/.
-- Read ${input.pathsAgents} for full operational protocols.
-- Read essential skills before starting work: ${essentialSkillPaths.join(", ") || "(none)"}
 - The authoritative hive files are not in the repo root. Use the absolute paths below instead of repo-relative guesses like \`BOARD.md\` or \`LOG.md\`.
 - Answer human nudges before anything else.
 - Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\` or \`./hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\` or \`./hive msg close <message> orchestrator [note]\`.
@@ -249,6 +252,9 @@ ${renderList(signals)}
 - When a task is done, update the board, unblock dependents, and assign the next task.
 - When an agent is stale or blocked, either unblock it or reassign the work. Do not let ambiguity linger.
 - If everything is healthy and in progress, wait. Do not micro-manage.
+
+## Initiative
+You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Don't batch these — record them as you go. Don't announce them — just do them.
 
 ## Hive Identity
 project: ${input.projectId}

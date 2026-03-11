@@ -105,7 +105,7 @@ function buildChatPrompt(input: {
   openMessages: Awaited<ReturnType<typeof listOpenProjectMessages>>;
   message: string;
 }): string {
-  const essentialSkills = ["state-efficient-ops"];
+  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
   const essentialSkillPaths = essentialSkills
     .filter((name) => input.availableSkillNames.includes(name))
     .map((name) => `${input.skillsDir}/${name}.md`);

@@ -102,7 +102,7 @@ export async function promptCommand(args: string[]): Promise<string> {
       : "No active assignment in PLAN.md. Default to the project configuration and the live board.";
 
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
-  const essentialSkills = ["state-efficient-ops"];
+  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
   const essentialSkillPaths = essentialSkills
     .filter((name) => availableSkillNames.includes(name))
     .map((name) => `${paths.skillsDir}/${name}.md`);
@@ -114,16 +114,21 @@ You are ${agentId} for project ${activeProject}. Operate from the files below, n
 ## Identity
 ${soul.trim()}
 
+## Before Your First Action
+Read these skills — they define how you think:
+${essentialSkillPaths.map((p) => `- ${p}`).join("\n") || "- (none)"}
+Read operational protocols: ${paths.agents}
+
 ## Runtime Rules
-- Read ${paths.agents} for full operational protocols before starting work.
-- Read essential skills before starting work: ${essentialSkillPaths.join(", ") || "(none)"}
 - Read ${projectPaths.board} before acting — it's the shared state snapshot.
 - The authoritative hive files are not in the repo root. Use the absolute paths below.
 - Check \`hive inbox ${agentId}\` between major steps. Use \`./hive inbox ${agentId}\` when the binary is built locally but not installed on PATH.
 - When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or \`./hive msg resolve <message> ${agentId} <answer>\`.
 - Close obsolete threads with \`hive msg close <message> ${agentId} [note]\` or \`./hive msg close <message> ${agentId} [note]\`.
-- Write durable decisions and learnings to LOG.md before ending the session.
 - Stay inside your stated scope unless the orchestrator or human reassigns you.
+
+## Initiative
+You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Before ending your session, flush everything important to memory and LOG.md. Don't batch — record as you go.
 
 ## Agent
 id: ${agentId}
