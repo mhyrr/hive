@@ -11,6 +11,12 @@ import {
 } from "../lib/paths";
 import { extractRepoPath } from "../lib/project";
 import {
+  createRunDraft,
+  finalizeRun,
+  markRunActive,
+  readActiveRun,
+} from "../lib/runs";
+import {
   buildInteractiveLaunchSpec,
   renderLaunchPreview,
   resolveRuntimeHints,
@@ -18,7 +24,6 @@ import {
 } from "../lib/runtime";
 import { UsageError } from "../lib/errors";
 import { appendFeedEntry } from "../lib/feed";
-import { toCompactTimestamp } from "../lib/time";
 
 type ConsoleOptions = {
   runtimeOverride: string | null;
@@ -206,6 +211,13 @@ export async function consoleCommand(args: string[]): Promise<string> {
     throw new UsageError("Project config is missing `path:` in the repo section.");
   }
 
+  const existingConsole = await readActiveRun(projectPaths, "console");
+  if (existingConsole) {
+    throw new UsageError(
+      `A console session is already active (${existingConsole.runId}). Use \`hive ps\` to inspect it.`,
+    );
+  }
+
   const board = await Bun.file(projectPaths.board).text();
   const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
@@ -265,19 +277,23 @@ export async function consoleCommand(args: string[]): Promise<string> {
     systemPrompt: prompt,
   });
 
-  const promptPath = join(
-    projectPaths.runsDir,
-    `${toCompactTimestamp()}-console.prompt.md`,
-  );
-
-  await Bun.write(promptPath, `${prompt.trim()}\n`);
+  let run = await createRunDraft({
+    projectId: activeProject,
+    projectPaths,
+    agentId: "console",
+    runtime: spec.runtime,
+    model: spec.model,
+    prompt,
+    source: "console",
+  });
 
   if (options.dryRun) {
+    await finalizeRun({ projectPaths, run, status: "cancelled", exitCode: null });
     return `Console dry run
 Project: ${activeProject}
 Runtime: ${spec.runtime}
 Model: ${spec.model ?? "(default)"}
-Prompt: ${promptPath}
+Prompt: ${run.promptPath}
 Command: ${renderLaunchPreview(spec)}`;
   }
 
@@ -289,7 +305,23 @@ Command: ${renderLaunchPreview(spec)}`;
   });
 
   const handle = startInteractiveSession(spec, repoPath);
+  run = await markRunActive(projectPaths, run, handle.pid);
   const result = await handle.wait();
+
+  const stopRequested = Boolean(
+    (await Bun.file(run.path).text()).includes("stop-requested-at:"),
+  );
+
+  await finalizeRun({
+    projectPaths,
+    run,
+    status: stopRequested
+      ? "cancelled"
+      : result.signal || (result.code !== null && result.code !== 0)
+        ? "failed"
+        : "exited",
+    exitCode: result.code,
+  });
 
   await appendFeedEntry(paths, {
     project: activeProject,
