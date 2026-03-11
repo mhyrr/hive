@@ -13,6 +13,7 @@ import planTemplate from "../../templates/PLAN.md" with { type: "text" };
 import boardTemplate from "../../templates/BOARD.md" with { type: "text" };
 import logTemplate from "../../templates/LOG.md" with { type: "text" };
 import stateEfficientOpsSkill from "../../templates/skills/state-efficient-ops.md" with { type: "text" };
+import autonomousOpsSkill from "../../templates/skills/autonomous-ops.md" with { type: "text" };
 
 export const baseTemplates = {
   "SOUL.md": soulTemplate.trim(),
@@ -34,6 +35,7 @@ export const personaTemplates: Record<string, string> = {
 
 export const skillTemplates: Record<string, string> = {
   "state-efficient-ops": stateEfficientOpsSkill.trim(),
+  "autonomous-ops": autonomousOpsSkill.trim(),
 };
 
 function renderTemplate(
