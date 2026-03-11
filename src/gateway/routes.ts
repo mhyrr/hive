@@ -1,3 +1,6 @@
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { GatewayOptions } from "./server";
 
 import { feedCommand } from "../commands/feed";
@@ -7,8 +10,16 @@ import { msgCommand, nudgeCommand } from "../commands/msg";
 import { psCommand } from "../commands/ps";
 import { sayCommand } from "../commands/say";
 import { statusCommand } from "../commands/status";
-import { listProjects } from "../lib/paths";
+import { getActiveProject, listProjects } from "../lib/paths";
 import { runtimesCommand } from "../commands/runtimes";
+import {
+  createSession,
+  getActiveSession,
+  getSessionHistory,
+  listSessions,
+  getSession,
+  appendTurn,
+} from "../lib/sessions";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -93,6 +104,30 @@ const getRoutes: Record<string, RouteHandler> = {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
   },
+
+  "/api/console/history": async (_req, _url, options) => {
+    try {
+      const sessionsDir = join(options.hivePaths.home, "sessions");
+      const session = await getActiveSession(sessionsDir);
+      if (!session) {
+        return jsonOk({ turns: [], sessionId: null });
+      }
+      const turns = await getSessionHistory(sessionsDir, session.sessionId);
+      return jsonOk({ turns, sessionId: session.sessionId });
+    } catch (err) {
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/sessions": async (_req, _url, options) => {
+    try {
+      const sessionsDir = join(options.hivePaths.home, "sessions");
+      const sessions = await listSessions(sessionsDir);
+      return jsonOk({ sessions });
+    } catch (err) {
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
 };
 
 const postRoutes: Record<string, RouteHandler> = {
@@ -108,6 +143,85 @@ const postRoutes: Record<string, RouteHandler> = {
       if (err instanceof SyntaxError) {
         return jsonError(400, "Invalid JSON body");
       }
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/console/send": async (req, _url, options) => {
+    try {
+      const body = await req.json() as { message?: string };
+      if (!body.message) {
+        return jsonError(400, "Missing 'message' field");
+      }
+
+      const sessionsDir = join(options.hivePaths.home, "sessions");
+      await mkdir(sessionsDir, { recursive: true });
+
+      let session = await getActiveSession(sessionsDir);
+      if (!session) {
+        const activeProject = await getActiveProject(options.hivePaths);
+        session = await createSession({
+          sessionsDir,
+          project: activeProject || "default",
+          runtime: "claude",
+          model: null,
+          systemPrompt: "HIVE console session",
+        });
+      }
+
+      // Record human turn
+      await appendTurn({
+        sessionsDir,
+        sessionId: session.sessionId,
+        role: "human",
+        content: body.message,
+      });
+
+      // Get hive response
+      try {
+        const result = await sayCommand([body.message]);
+
+        // Record assistant turn
+        await appendTurn({
+          sessionsDir,
+          sessionId: session.sessionId,
+          role: "assistant",
+          content: result,
+        });
+
+        return jsonOk({ result, sessionId: session.sessionId });
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "Unknown error";
+        await appendTurn({
+          sessionsDir,
+          sessionId: session.sessionId,
+          role: "assistant",
+          content: `Error: ${errorMsg}`,
+        });
+        return jsonError(500, errorMsg);
+      }
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        return jsonError(400, "Invalid JSON body");
+      }
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/console/new": async (_req, _url, options) => {
+    try {
+      const sessionsDir = join(options.hivePaths.home, "sessions");
+      await mkdir(sessionsDir, { recursive: true });
+      const activeProject = await getActiveProject(options.hivePaths);
+      const session = await createSession({
+        sessionsDir,
+        project: activeProject || "default",
+        runtime: "claude",
+        model: null,
+        systemPrompt: "HIVE console session",
+      });
+      return jsonOk({ sessionId: session.sessionId });
+    } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
   },
@@ -172,6 +286,12 @@ function matchInboxRoute(pathname: string): string | null {
   return match[1] ?? "";
 }
 
+function matchSessionsRoute(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (!match) return null;
+  return match[1];
+}
+
 export async function handleApi(req: Request, url: URL, options: GatewayOptions): Promise<Response> {
   const pathname = url.pathname;
 
@@ -183,6 +303,22 @@ export async function handleApi(req: Request, url: URL, options: GatewayOptions)
         const args = inboxAgent ? [inboxAgent] : [];
         const result = await inboxCommand(args);
         return jsonOk(result);
+      } catch (err) {
+        return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+      }
+    }
+
+    // Check sessions/:id route
+    const sessionId = matchSessionsRoute(pathname);
+    if (sessionId !== null) {
+      try {
+        const sessionsDir = join(options.hivePaths.home, "sessions");
+        const session = await getSession(sessionsDir, sessionId);
+        if (!session) {
+          return jsonError(404, `Session not found: ${sessionId}`);
+        }
+        const turns = await getSessionHistory(sessionsDir, sessionId);
+        return jsonOk({ session, turns });
       } catch (err) {
         return jsonError(500, err instanceof Error ? err.message : "Unknown error");
       }
