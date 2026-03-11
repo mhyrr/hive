@@ -41,6 +41,12 @@ hive status                             # BOARD.md + open msgs
 hive feed [count]                       # Recent feed entries
 hive ps                                 # Active-run and recent-run inspection
 
+# Gateway — web interface
+hive gateway [--port] [--open]         # Start Gateway server (localhost:4200)
+hive gateway status                    # Show Gateway state
+hive gateway stop                      # Stop Gateway server
+hive runtimes                          # List installed runtime adapters
+
 # Operator escape hatches
 hive supervise [--max-parallel] [--once|--detach]
 hive supervise status|stop|logs
@@ -87,6 +93,17 @@ src/
     stop.ts                  # hive stop — signal active runs
     inbox.ts                 # hive inbox — agent message queue
     help.ts                  # hive help — usage text
+    gateway.ts               # hive gateway — start/stop/status Gateway server
+    runtimes.ts              # hive runtimes — list installed runtime adapters
+    memory.ts                # hive memory — project memory management
+  gateway/
+    server.ts                # Bun.serve() HTTP + WebSocket server
+    routes.ts                # REST API handlers → existing command functions
+    watcher.ts               # File watcher → WebSocket event broadcast
+    static/
+      index.html             # Three-pane web UI layout
+      style.css              # Dark terminal aesthetic, CSS custom properties
+      app.js                 # REST client, WebSocket, DOM rendering
   lib/
     paths.ts                 # ~/.hive/ path resolution + active project
     board.ts                 # BOARD.md signal parsing for orchestration
@@ -96,7 +113,7 @@ src/
     format.ts                # Terminal formatting (colors, tables)
     log.ts                   # Shared LOG.md append helper
     orchestrator.ts          # Steward prompt assembly + orchestration signals
-    runtime.ts               # Runtime/model resolution + launcher adapters
+    runtime.ts               # Runtime adapter registry + launcher dispatch
     time.ts                  # Timestamp helpers
 templates/
   SOUL.md                    # Hive soul — identity and culture
@@ -149,4 +166,6 @@ docs/
 - Phase 4 validation: scope conflict tests, one-run-per-assignment safety, manual launch adoption — implemented
 - Autonomous initiative: autonomous-ops skill, initiative-driven prompts, console as hive mind — implemented
 - Console run-ledger integration: console tracked as session in run ledger, supervisor ignores for scope/parallel, stop advisory, LLM-powered ask — implemented
-- Next: Phase 5 Gateway (multi-runtime, localhost server, web UI)
+- Phase 5 Step 1: runtime adapter registry — claude/codex/gemini adapters, `hive runtimes` — implemented
+- Phase 5 Steps 2-4: Gateway HTTP server, WebSocket feed streaming, web UI shell — implemented
+- Next: Phase 5 Steps 5-6 (console session persistence, full web console with real-time agent visibility)
