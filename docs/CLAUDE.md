@@ -104,6 +104,7 @@ templates/
   AGENTS.md                  # Operational protocols (complement to SOUL)
   skills/
     state-efficient-ops.md   # Skill #1: token/state management patterns
+    autonomous-ops.md        # Skill #2: initiative patterns for autonomous operation
   feed.md                    # Default human event feed scaffold
   config.md                  # Global config template
   project-config.md          # Per-project config template
@@ -128,8 +129,11 @@ docs/
   1. Identity (SOUL.md inlined — always loaded)
   2. Doctrine (AGENTS.md, persona, skills — path-referenced)
   3. Context (board/message/run digests — generated fresh per prompt)
-  Only SOUL.md, assignment, board digest, and agent-specific messages are inlined.
+  Only SOUL.md, assignment, board digest, project memory, and agent-specific messages are inlined.
   Everything else is a path the agent reads on demand.
+- Prompts encode INITIATIVE, not just capability. Agents record decisions,
+  conventions, and facts as they work — without being told. The console
+  prompt positions the agent as the hive mind, not a tool.
 - Tests: `bun test`. End-to-end: create temp ~/.hive-test/, run commands,
   assert file contents.
 
@@ -143,4 +147,5 @@ docs/
 - Skills system: `~/.hive/skills/` with `state-efficient-ops` as skill #1 — implemented
 - Interactive console: `hive console` — persistent LLM session with full hive context — implemented
 - Phase 4 validation: scope conflict tests, one-run-per-assignment safety, manual launch adoption — implemented
-- Next: notifications (Channel 3), transport adapters, curate, memory intelligence
+- Autonomous initiative: autonomous-ops skill, initiative-driven prompts, console as hive mind — implemented
+- Next: Phase 5 Gateway (multi-runtime, localhost server, web UI)
