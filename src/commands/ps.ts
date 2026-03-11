@@ -21,7 +21,8 @@ function formatActiveRuns(runs: RunRecord[]): string {
       [
         `- ${run.agentId} | ${run.status} | ${run.runId}`,
         `  runtime: ${run.runtime} | model: ${formatModel(run)} | pid: ${run.pid ?? "unknown"}`,
-        `  started: ${run.started} | scope: ${run.scope?.join(", ") || "*"}`,
+        `  started: ${run.started} | task: ${run.taskId ?? "(none)"} | source: ${run.source}`,
+        `  scope: ${run.scope?.join(", ") || "*"}`,
       ].join("\n"),
     )
     .join("\n\n");
@@ -37,7 +38,8 @@ function formatRecentRuns(runs: RunRecord[]): string {
       [
         `- ${run.agentId} | ${run.status} | ${run.runId}`,
         `  runtime: ${run.runtime} | model: ${formatModel(run)} | exit: ${run.exitCode ?? "unknown"}`,
-        `  started: ${run.started}${run.ended ? ` | ended: ${run.ended}` : ""} | scope: ${run.scope?.join(", ") || "*"}`,
+        `  started: ${run.started}${run.ended ? ` | ended: ${run.ended}` : ""} | task: ${run.taskId ?? "(none)"}`,
+        `  scope: ${run.scope?.join(", ") || "*"}`,
       ].join("\n"),
     )
     .join("\n\n");

@@ -105,6 +105,11 @@ function buildChatPrompt(input: {
   openMessages: Awaited<ReturnType<typeof listOpenProjectMessages>>;
   message: string;
 }): string {
+  const essentialSkills = ["state-efficient-ops"];
+  const essentialSkillPaths = essentialSkills
+    .filter((name) => input.availableSkillNames.includes(name))
+    .map((name) => `${input.skillsDir}/${name}.md`);
+
   return `# HIVE Chat Prompt
 
 You are HIVE itself for project ${input.projectId}. You are the human-facing interface over the hive's files.
@@ -113,6 +118,7 @@ You are HIVE itself for project ${input.projectId}. You are the human-facing int
 ${input.soul}
 
 ## Operating Rules
+- Read essential skills before acting: ${essentialSkillPaths.join(", ") || "(none)"}
 - Answer the human directly and concretely.
 - When the human changes priorities, scope, or team behavior, update the relevant files instead of only describing the change.
 - Use msg/ for work handoffs or nudges to agents.

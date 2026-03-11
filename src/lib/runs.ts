@@ -70,6 +70,7 @@ type StoredRunPaths = {
   runFile: string;
   promptFile: string;
   resultFile: string;
+  outputFile: string;
 };
 
 type PromptArtifact = {
@@ -121,6 +122,7 @@ function getRunPaths(
     runFile: join(root, "run.md"),
     promptFile: join(root, "prompt.md"),
     resultFile: join(root, "result.md"),
+    outputFile: join(root, "output.log"),
   };
 }
 
@@ -350,8 +352,34 @@ export async function createRunDraft(input: CreateRunInput): Promise<RunRecord> 
   };
 
   await writeRunRecord(runPaths.runFile, record);
+  await Bun.write(runPaths.outputFile, "");
 
   return record;
+}
+
+export function getRunOutputPath(run: RunRecord): string {
+  return join(run.path.replace(/run\.md$/, ""), "output.log");
+}
+
+export async function readRunOutputTail(
+  run: RunRecord,
+  limit = 8,
+): Promise<string[]> {
+  const path = getRunOutputPath(run);
+  const file = Bun.file(path);
+
+  if (!(await file.exists())) {
+    return [];
+  }
+
+  const text = await file.text();
+
+  return text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .slice(-limit);
 }
 
 export async function markRunActive(

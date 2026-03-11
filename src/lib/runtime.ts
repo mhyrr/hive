@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
 import { UsageError } from "./errors";
@@ -22,6 +23,10 @@ export type LaunchResult = {
 export type LaunchHandle = {
   pid: number | null;
   wait: () => Promise<LaunchResult>;
+};
+
+type LaunchHandleOptions = {
+  outputPath?: string | null;
 };
 
 export type RuntimeHints = {
@@ -265,18 +270,24 @@ function createForwarder(
 export function startLaunchSpec(
   spec: LaunchSpec,
   repoPath: string,
+  options: LaunchHandleOptions = {},
 ): LaunchHandle {
   const child = spawn(spec.command, spec.args, {
     cwd: repoPath,
     stdio: ["inherit", "pipe", "pipe"],
   });
   const visibleLines: string[] = [];
+  const outputStream = options.outputPath
+    ? createWriteStream(options.outputPath, { flags: "a" })
+    : null;
   const captureLine = (line: string) => {
     visibleLines.push(line);
 
     if (visibleLines.length > 40) {
       visibleLines.shift();
     }
+
+    outputStream?.write(`${line}\n`);
   };
   const stdoutForwarder = createForwarder(spec.runtime, process.stdout, captureLine);
   const stderrForwarder = createForwarder(spec.runtime, process.stderr, captureLine);
@@ -299,6 +310,7 @@ export function startLaunchSpec(
 
       stdoutForwarder.end();
       stderrForwarder.end();
+      outputStream?.end();
 
       return {
         code,

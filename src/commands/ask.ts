@@ -13,6 +13,7 @@ import {
 } from "../lib/paths";
 
 export async function askCommand(args: string[]): Promise<string> {
+  const question = args.join(" ").trim();
   const paths = await ensureHiveScaffold();
   const activeProject = await getActiveProject(paths);
 
@@ -49,6 +50,7 @@ export async function askCommand(args: string[]): Promise<string> {
 
   const parts = [
     `Project: ${activeProject}`,
+    ...(question ? [section("Question", question)] : []),
     section("Supervisor", supervisorSection),
     section("Board", boardText.trim() ? digestBoard(boardText) : "(no board yet)"),
     section("Active Runs", digestRuns(activeRuns)),

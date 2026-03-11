@@ -9,8 +9,10 @@ import { ensureHiveScaffold, getProjectPaths } from "../src/lib/paths";
 import {
   createRunDraft,
   finalizeRun,
+  getRunOutputPath,
   listRecentRunResults,
   markRunActive,
+  readRunOutputTail,
   writeRunResult,
 } from "../src/lib/runs";
 
@@ -179,5 +181,39 @@ describe("run state", () => {
     expect(exit.signal).toBe("SIGTERM");
     expect(runRaw).toContain("stop-requested-by: human");
     expect(runRaw).toContain("stop-requested-at: 2026-03-09T15:08:00Z");
+  });
+
+  test("hive watch renders active agents and their visible output tail", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "DealSplit", context.repo]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "dealsplit");
+    let run = await createRunDraft({
+      projectId: "dealsplit",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: null,
+      prompt: "# Active Prompt",
+      source: "hive supervise",
+      taskId: "HIVE-123",
+      scope: ["src/api"],
+    });
+
+    run = await markRunActive(projectPaths, run, 81234);
+    await Bun.write(
+      getRunOutputPath(run),
+      ["thinking", "reading PLAN.md", "editing src/api/auth.ts"].join("\n"),
+    );
+
+    const outputTail = await readRunOutputTail(run, 2);
+    const output = await runCli(["watch", "2", "--once"]);
+
+    expect(outputTail).toEqual(["reading PLAN.md", "editing src/api/auth.ts"]);
+    expect(output).toContain("active-agents: 1");
+    expect(output).toContain("alpha | active | codex");
+    expect(output).toContain("task: HIVE-123");
+    expect(output).toContain("editing src/api/auth.ts");
   });
 });

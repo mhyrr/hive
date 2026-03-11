@@ -48,11 +48,75 @@ function parseSectionLines(board: string, heading: string): string[] {
     .filter((line) => line.trim().length > 0);
 }
 
+function parseTaskLines(board: string): string[] {
+  return parseSectionLines(board, "Tasks").filter((line) => line.trimStart().startsWith("- "));
+}
+
+function parsePipeRow(line: string): string[] | null {
+  const trimmed = line.trim();
+
+  if (!trimmed.startsWith("- ")) {
+    return null;
+  }
+
+  const body = trimmed.slice(2).trim();
+
+  if (!body.includes("|")) {
+    return null;
+  }
+
+  return body
+    .split("|")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
 function parseAgentSections(board: string): BoardAgent[] {
   const agentLines = splitSections(board).get("Agents");
 
   if (!agentLines) {
     return [];
+  }
+
+  const pipeAgents = agentLines
+    .map((line) => parsePipeRow(line))
+    .filter((segments): segments is string[] => Boolean(segments))
+    .flatMap((segments) => {
+      const [id, ...rest] = segments;
+
+      if (!id) {
+        return [];
+      }
+
+      const fields: Record<string, string> = {};
+      let descriptor = "";
+
+      for (const segment of rest) {
+        const separatorIndex = segment.indexOf(":");
+
+        if (separatorIndex === -1) {
+          if (!fields.status) {
+            fields.status = segment;
+          } else if (!descriptor) {
+            descriptor = segment;
+          }
+
+          continue;
+        }
+
+        const key = segment.slice(0, separatorIndex).trim();
+        const value = segment.slice(separatorIndex + 1).trim();
+
+        if (key) {
+          fields[key] = value;
+        }
+      }
+
+      return [{ id, descriptor, fields }];
+    });
+
+  if (pipeAgents.length > 0) {
+    return pipeAgents;
   }
 
   const lines = agentLines;
@@ -136,7 +200,7 @@ function parseTimeOfDay(value: string): Date | null {
 
 export function parseBoard(board: string): ParsedBoard {
   return {
-    tasks: parseSectionLines(board, "Tasks"),
+    tasks: parseTaskLines(board),
     agents: parseAgentSections(board),
     blockers: parseSectionLines(board, "Blockers"),
     decisions: parseSectionLines(board, "Decisions"),
