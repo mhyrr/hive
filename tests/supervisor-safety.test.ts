@@ -111,7 +111,7 @@ function makeMessage(overrides: Partial<HiveMessage> & { filename: string }): Hi
       to: "alpha",
       type: "assign",
       status: "open",
-      project: "dealsplit",
+      project: "myproject",
       task: "HIVE-100",
       ...overrides.attributes,
     },
@@ -123,7 +123,7 @@ function makeMessage(overrides: Partial<HiveMessage> & { filename: string }): Hi
 function makeRun(overrides: Partial<RunRecord>): RunRecord {
   return {
     runId: "20260310-140000Z-alpha",
-    projectId: "dealsplit",
+    projectId: "myproject",
     agentId: "alpha",
     status: "active",
     runtime: "codex",
@@ -160,7 +160,7 @@ describe("one-run-per-assignment safety", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-100",
           },
         }),
@@ -193,7 +193,7 @@ describe("one-run-per-assignment safety", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-100",
             ts: "2026-03-10T14:00:00Z",
           },
@@ -205,7 +205,7 @@ describe("one-run-per-assignment safety", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-101",
             ts: "2026-03-10T14:01:00Z",
           },
@@ -234,7 +234,7 @@ describe("one-run-per-assignment safety", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-100",
           },
         }),
@@ -269,7 +269,7 @@ describe("one-run-per-assignment safety", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-100",
           },
         }),
@@ -302,7 +302,7 @@ describe("one-run-per-assignment safety", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-100",
           },
         }),
@@ -336,7 +336,7 @@ describe("one-run-per-assignment safety", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-100",
             ts: "2026-03-10T14:00:00Z",
           },
@@ -348,7 +348,7 @@ describe("one-run-per-assignment safety", () => {
             to: "beta",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-101",
             ts: "2026-03-10T14:01:00Z",
           },
@@ -360,7 +360,7 @@ describe("one-run-per-assignment safety", () => {
             to: "gamma",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-102",
             ts: "2026-03-10T14:02:00Z",
           },
@@ -390,7 +390,7 @@ describe("one-run-per-assignment safety", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-100",
             ts: "2026-03-10T14:00:00Z",
           },
@@ -402,7 +402,7 @@ describe("one-run-per-assignment safety", () => {
             to: "beta",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-101",
             ts: "2026-03-10T14:01:00Z",
           },
@@ -457,14 +457,14 @@ describe("manual launch adoption", () => {
 
   test("a manually created run record in runs/active/ is recognized by listActiveRuns", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     // Simulate what `hive launch` does: create a run draft and mark it active
     let manualRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -490,14 +490,14 @@ describe("manual launch adoption", () => {
 
   test("supervisor does not try to launch a duplicate for an agent with an existing active run", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     // Create a manual run for alpha (simulating `hive launch alpha`)
     let manualRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -527,7 +527,7 @@ describe("manual launch adoption", () => {
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-200",
             launch: "auto",
             scope: "src/api",
@@ -548,11 +548,11 @@ describe("manual launch adoption", () => {
 
   test("supervisor adopts manual run and allows other non-conflicting agents to launch", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     await Bun.write(
-      join(context.hiveHome, "projects", "dealsplit", "PLAN.md"),
-      `# Plan: DealSplit
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
 
 ## Goal
 Ship it.
@@ -570,11 +570,11 @@ Task: Build the UI.
     );
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     // Create a manual run for alpha
     let manualRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -602,7 +602,7 @@ Task: Build the UI.
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-200",
             launch: "auto",
             scope: "src/api",
@@ -615,7 +615,7 @@ Task: Build the UI.
             to: "beta",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-201",
             launch: "auto",
             scope: "src/web",
@@ -638,11 +638,11 @@ Task: Build the UI.
 
   test("scope conflict from manual run blocks conflicting auto-launch", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     await Bun.write(
-      join(context.hiveHome, "projects", "dealsplit", "PLAN.md"),
-      `# Plan: DealSplit
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
 
 ## Goal
 Ship it.
@@ -660,11 +660,11 @@ Task: Extend shared.
     );
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     // Manual run for alpha with scope src/lib
     let manualRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -692,7 +692,7 @@ Task: Extend shared.
             to: "beta",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-301",
             launch: "auto",
             scope: "src/lib/foo",
@@ -711,14 +711,14 @@ Task: Extend shared.
 
   test("finalized manual run clears active pointer so future launches can proceed", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     // Create and complete a manual run
     let manualRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -763,7 +763,7 @@ Task: Extend shared.
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-401",
             launch: "auto",
             scope: "src/api",

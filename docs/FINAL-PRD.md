@@ -20,8 +20,8 @@ that can read and write files is on the team.
 
 ### The Hive Is a Persistent Entity
 HIVE isn't project-scoped. It lives in your home directory and works on
-many projects. When it works on DealSplit, it loads that project's context.
-When it switches to Matreas, it loads that one. Memory, personas, and
+many projects. When it works on MyApp, it loads that project's context.
+When it switches to SideProject, it loads that one. Memory, personas, and
 identity carry across everything.
 
 ### Agents Are Transient
@@ -71,8 +71,8 @@ memory, adjust behavior — conversationally.
 │   ├── knowledge.md             # Curated cross-project durable facts
 │   ├── decisions.md             # Architecture decisions (append-only)
 │   ├── projects/                # Per-project learnings
-│   │   ├── dealsplit.md
-│   │   └── matreas.md
+│   │   ├── myapp.md
+│   │   └── sideproject.md
 │   ├── personas/                # Per-persona accumulated learnings
 │   │   ├── craftsman.md
 │   │   └── architect.md
@@ -114,7 +114,7 @@ Who the hive serves. The user's preferences, working style, values.
 # Self
 
 ## Who I Serve
-Greg — founder, builder-behind-experts. 20+ years software development.
+The user — founder, builder-behind-experts.
 
 ## Preferences
 - Elixir/Phoenix for backend. React for frontend when needed.
@@ -130,7 +130,7 @@ Greg — founder, builder-behind-experts. 20+ years software development.
 - If something is wrong, say it's wrong. Don't soften.
 
 ## Working Patterns
-- Often works across DealSplit and Matreas in the same day.
+- Often works across MyApp and SideProject in the same day.
 - Likes to set direction and let agents execute.
 - Nudges via quick messages, not long briefings.
 - Values the overnight build: set up work in the evening, review in morning.
@@ -139,10 +139,10 @@ Greg — founder, builder-behind-experts. 20+ years software development.
 ### Project config.md
 Per-project configuration.
 ```markdown
-# Project: DealSplit
+# Project: MyApp
 
 ## Repo
-path: /Users/greg/code/dealsplit
+path: /Users/you/code/myapp
 
 ## Stack
 Elixir/Phoenix 1.8, PostgreSQL 16, React 19, Vite
@@ -273,7 +273,7 @@ to: alpha
 type: question
 status: open
 ts: 2026-03-09T15:08:00Z
-project: dealsplit
+project: myapp
 ---
 
 Is the JWT `expires_at` in epoch seconds or ISO 8601?
@@ -290,7 +290,7 @@ type: question
 status: resolved
 ts: 2026-03-09T15:08:00Z
 resolved: 2026-03-09T15:10:00Z
-project: dealsplit
+project: myapp
 ---
 
 Is the JWT `expires_at` in epoch seconds or ISO 8601?
@@ -407,7 +407,7 @@ Use cases:
 - "What projects are you tracking?"
 - "What did you learn last week?"
 - "Add a persona for database optimization."
-- "For Matreas, default to two craftsmen and one critic."
+- "For SideProject, default to two craftsmen and one critic."
 - "Curate your memory."
 - "What's the status across all projects?"
 

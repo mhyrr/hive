@@ -34,7 +34,7 @@ last-active: 14:52
       recentRuns: [
         {
           runId: "20260310-140000Z-orchestrator",
-          projectId: "dealsplit",
+          projectId: "myproject",
           agentId: "orchestrator",
           status: "exited",
           runtime: "codex",
@@ -98,7 +98,7 @@ last-active: 15:07
       recentRuns: [
         {
           runId: "20260309-150800Z-orchestrator",
-          projectId: "dealsplit",
+          projectId: "myproject",
           agentId: "orchestrator",
           status: "exited",
           runtime: "codex",
@@ -146,7 +146,7 @@ Task: Build the settings screen.
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-006",
           },
           body: "Build the API contract.",
@@ -160,7 +160,7 @@ Task: Build the settings screen.
             to: "beta",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-007",
           },
           body: "Build the settings screen.",
@@ -203,7 +203,7 @@ Task: Review the change.
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-008",
             launch: "manual",
           },
@@ -218,7 +218,7 @@ Task: Review the change.
             to: "beta",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-009",
           },
           body: "Extend the shared library.",
@@ -232,7 +232,7 @@ Task: Review the change.
             to: "gamma",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-010",
           },
           body: "Review the change.",
@@ -242,7 +242,7 @@ Task: Review the change.
       activeRuns: [
         {
           runId: "20260310-140000Z-delta",
-          projectId: "dealsplit",
+          projectId: "myproject",
           agentId: "delta",
           status: "active",
           runtime: "codex",
@@ -262,7 +262,7 @@ Task: Review the change.
       historicalRuns: [
         {
           runId: "20260310-135000Z-gamma",
-          projectId: "dealsplit",
+          projectId: "myproject",
           agentId: "gamma",
           status: "exited",
           runtime: "codex",
@@ -305,7 +305,7 @@ Task: Review the change.
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-011",
           },
           body: "Build the API.",
@@ -315,7 +315,7 @@ Task: Review the change.
       activeRuns: [
         {
           runId: "20260310-140000Z-console",
-          projectId: "dealsplit",
+          projectId: "myproject",
           agentId: "console",
           status: "active",
           runtime: "claude",
@@ -355,7 +355,7 @@ Task: Review the change.
             to: "alpha",
             type: "assign",
             status: "open",
-            project: "dealsplit",
+            project: "myproject",
             task: "HIVE-012",
           },
           body: "Build the API.",
@@ -365,7 +365,7 @@ Task: Review the change.
       activeRuns: [
         {
           runId: "20260310-140000Z-console",
-          projectId: "dealsplit",
+          projectId: "myproject",
           agentId: "console",
           status: "active",
           runtime: "claude",
@@ -398,7 +398,7 @@ describe("run recovery", () => {
     const recovered = assessRecoveredRuns([
       {
         runId: "20260310-140000Z-console",
-        projectId: "dealsplit",
+        projectId: "myproject",
         agentId: "console",
         status: "active",
         runtime: "claude",
@@ -418,7 +418,7 @@ describe("run recovery", () => {
       },
       {
         runId: "20260310-140000Z-alpha",
-        projectId: "dealsplit",
+        projectId: "myproject",
         agentId: "alpha",
         status: "active",
         runtime: "codex",

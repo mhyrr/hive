@@ -91,7 +91,7 @@ Write up your findings. Ship the recommendation. Move on.
 - "The docs say the default token expiry is 1 hour, but I checked
   the source code and it's actually 3600 seconds with no default.
   We need to set it explicitly."
-- "We solved a similar problem in the DealSplit auth module last
+- "We solved a similar problem in the MyApp auth module last
   month. The pattern was X. Want to reuse it?"
 - "I've spent 20 minutes and can't find a clear answer on connection
   pool behavior under load. I recommend we write a quick load test

@@ -343,7 +343,7 @@ Event format:
 {
   "type": "feed",
   "ts": "2026-03-10T14:11:05Z",
-  "project": "dealsplit",
+  "project": "myapp",
   "data": {
     "headline": "alpha: Task 001 complete",
     "details": ["4 tests passing", "API contract posted"]
@@ -378,7 +378,7 @@ for the browser:
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  HIVE  │  dealsplit ▾  │  ● supervisor running  │  3 agents  │
+│  HIVE  │  myapp ▾  │  ● supervisor running  │  3 agents  │
 ├────────────────────────────┬─────────────────────────────┤
 │                            │                             │
 │   Console                  │   Feed                      │
@@ -471,7 +471,7 @@ new session.
 ```markdown
 ---
 session: 20260310-141105Z
-project: dealsplit
+project: myapp
 runtime: claude
 started: 2026-03-10T14:11:05Z
 ---
@@ -482,7 +482,7 @@ started: 2026-03-10T14:11:05Z
 ```markdown
 ---
 session: 20260310-141105Z
-project: dealsplit
+project: myapp
 runtime: claude
 model: claude-sonnet-4
 started: 2026-03-10T14:11:05Z

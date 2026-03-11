@@ -278,13 +278,13 @@ describe("digestMessages", () => {
     const messages = [
       {
         filename: "msg1.md",
-        attributes: { from: "beta", to: "alpha", type: "question", status: "open", ts: "2026-03-09T15:08:00Z", project: "dealsplit" },
+        attributes: { from: "beta", to: "alpha", type: "question", status: "open", ts: "2026-03-09T15:08:00Z", project: "myapp" },
         body: "Need the auth contract shape.\nMore details here.",
         raw: "---\nfrom: beta\n---\nNeed the auth contract shape.",
       },
       {
         filename: "msg2.md",
-        attributes: { from: "orchestrator", to: "alpha", type: "assign", status: "open", ts: "2026-03-09T15:10:00Z", project: "dealsplit" },
+        attributes: { from: "orchestrator", to: "alpha", type: "assign", status: "open", ts: "2026-03-09T15:10:00Z", project: "myapp" },
         body: "Build the login endpoint.\nDetails follow.",
         raw: "---\nfrom: orchestrator\n---\nBuild the login endpoint.",
       },
@@ -445,8 +445,8 @@ test("prompt assembles compact identity, assignment, digest, and agent messages"
   await addProject();
 
   await Bun.write(
-    join(context.hiveHome, "projects", "dealsplit", "PLAN.md"),
-    `# Plan: DealSplit
+    join(context.hiveHome, "projects", "myapp", "PLAN.md"),
+    `# Plan: MyApp
 
 ## Goal
 Ship the login flow.
@@ -464,7 +464,7 @@ Task: Build the auth endpoint and publish the contract.
   );
 
   await Bun.write(
-    join(context.hiveHome, "projects", "dealsplit", "BOARD.md"),
+    join(context.hiveHome, "projects", "myapp", "BOARD.md"),
     `# Board
 
 ## Tasks
@@ -498,14 +498,14 @@ status: active on 001
   const prompt = await runCli(["prompt", "alpha"]);
 
   // Identity and orientation
-  expect(prompt).toContain("You are alpha for project dealsplit.");
+  expect(prompt).toContain("You are alpha for project myapp.");
   expect(prompt).toContain("# HIVE Soul");
   expect(prompt).toContain("We are craftsmen");
 
   // File paths (path-first)
   expect(prompt).toContain("AGENTS.md:");
-  expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "dealsplit", "BOARD.md")}`);
-  expect(prompt).toContain(`LOG.md: ${join(context.hiveHome, "projects", "dealsplit", "LOG.md")}`);
+  expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myapp", "BOARD.md")}`);
+  expect(prompt).toContain(`LOG.md: ${join(context.hiveHome, "projects", "myapp", "LOG.md")}`);
   expect(prompt).toContain("persona:");
 
   // Operating rules
@@ -655,7 +655,7 @@ test("orchestrate kickoff records a human goal and prints a steward prompt", asy
 
   const prompt = await runCli(["orchestrate", "Build", "the", "auth", "flow"]);
   const log = await Bun.file(
-    join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+    join(context.hiveHome, "projects", "myapp", "LOG.md"),
   ).text();
   const msgDirEntries = await readdir(join(context.hiveHome, "msg"));
   const messageText = await Bun.file(join(context.hiveHome, "msg", msgDirEntries[0])).text();
@@ -666,7 +666,7 @@ test("orchestrate kickoff records a human goal and prints a steward prompt", asy
   expect(prompt).toContain("Human nudge pending: Build the auth flow");
   expect(prompt).toContain("The authoritative hive files are not in the repo root.");
   expect(prompt).toContain("AGENTS.md:");
-  expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "dealsplit", "BOARD.md")}`);
+  expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myapp", "BOARD.md")}`);
   expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
   expect(prompt).toContain("./hive msg resolve <message> orchestrator <answer>");
   expect(prompt).toContain("Board Summary");
@@ -965,7 +965,7 @@ test("run starts detached supervision idempotently", async () => {
   // Test the command structure and error handling
   const output = await runCli(["run"]);
 
-  expect(output).toContain("dealsplit");
+  expect(output).toContain("myapp");
   // Should mention supervisor state
   expect(output.toLowerCase()).toMatch(/running|started|supervisor/);
 });
@@ -1263,7 +1263,7 @@ test("ask shows synthesized project status", async () => {
   await addProject();
 
   await Bun.write(
-    join(context.hiveHome, "projects", "dealsplit", "BOARD.md"),
+    join(context.hiveHome, "projects", "myapp", "BOARD.md"),
     `# Board
 
 ## Tasks
@@ -1287,7 +1287,7 @@ status: active on 002
 
   const output = await runCli(["ask"]);
 
-  expect(output).toContain("dealsplit");
+  expect(output).toContain("myapp");
   expect(output).toContain("2 tasks");
   expect(output).toContain("alpha: idle");
   expect(output).toContain("beta: active on 002");
@@ -1416,7 +1416,7 @@ test("supervise logs shows log content when available", async () => {
   await initHive();
   await addProject();
 
-  const projectPaths = join(context.hiveHome, "projects", "dealsplit");
+  const projectPaths = join(context.hiveHome, "projects", "myapp");
   const supervisorDir = join(projectPaths, "supervisor");
   const logPath = join(supervisorDir, "detached.log");
 
@@ -1425,7 +1425,7 @@ test("supervise logs shows log content when available", async () => {
   await Bun.write(
     join(supervisorDir, "detached.md"),
     `---
-project: dealsplit
+project: myapp
 status: stopped
 mode: detached
 interval: 30

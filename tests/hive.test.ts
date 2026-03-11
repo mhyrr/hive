@@ -18,7 +18,7 @@ async function initHive(): Promise<string> {
 }
 
 async function addProject(): Promise<string> {
-  return runCli(["project", "add", "DealSplit", context.repo]);
+  return runCli(["project", "add", "MyProject", context.repo]);
 }
 
 async function setupContext(): Promise<TestContext> {
@@ -62,12 +62,12 @@ describe("HIVE CLI", () => {
     const output = await addProject();
     const feed = await Bun.file(join(context.hiveHome, "feed.md")).text();
 
-    expect(output).toContain("Registered project dealsplit");
+    expect(output).toContain("Registered project myproject");
     expect((await Bun.file(join(context.hiveHome, "active-project.txt")).text()).trim()).toBe(
-      "dealsplit",
+      "myproject",
     );
-    expect(await Bun.file(join(context.hiveHome, "projects", "dealsplit", "PLAN.md")).exists()).toBeTrue();
-    expect(feed).toContain("Registered project dealsplit");
+    expect(await Bun.file(join(context.hiveHome, "projects", "myproject", "PLAN.md")).exists()).toBeTrue();
+    expect(feed).toContain("Registered project myproject");
     expect(feed).toContain(`repo: ${context.repo}`);
   });
 
@@ -79,7 +79,7 @@ describe("HIVE CLI", () => {
     const feed = await runCli(["feed", "2"]);
 
     expect(feed).toContain("# HIVE Feed");
-    expect(feed).toContain("Registered project dealsplit");
+    expect(feed).toContain("Registered project myproject");
     expect(feed).toContain("Human nudge");
     expect(feed).toContain("Auth takes priority");
   });
@@ -102,10 +102,10 @@ describe("HIVE CLI", () => {
 
     const status = await runCli(["status"]);
     const log = await Bun.file(
-      join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+      join(context.hiveHome, "projects", "myproject", "LOG.md"),
     ).text();
 
-    expect(status).toContain("Project: dealsplit");
+    expect(status).toContain("Project: myproject");
     expect(status).toContain("BOARD.md");
     expect(status).toContain("Need the auth contract");
     expect(log).toContain("Session kickoff");
@@ -120,7 +120,7 @@ describe("HIVE CLI", () => {
     ).text();
 
     await Bun.write(
-      join(context.hiveHome, "projects", "dealsplit", "BOARD.md"),
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
       liveBoard,
     );
 
@@ -227,8 +227,8 @@ describe("HIVE CLI", () => {
     await addProject();
 
     await Bun.write(
-      join(context.hiveHome, "projects", "dealsplit", "PLAN.md"),
-      `# Plan: DealSplit
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
 
 ## Goal
 Ship the login flow.
@@ -260,13 +260,13 @@ Task: Build the auth endpoint and publish the contract.
 
     const prompt = await runCli(["prompt", "alpha"]);
 
-    expect(prompt).toContain("You are alpha for project dealsplit.");
+    expect(prompt).toContain("You are alpha for project myproject.");
     expect(prompt).toContain("# HIVE Soul");
     expect(prompt).toContain("persona: craftsman");
     expect(prompt).toContain("The authoritative hive files are not in the repo root.");
     expect(prompt).toContain("## Files");
-    expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "dealsplit", "BOARD.md")}`);
-    expect(prompt).toContain(`LOG.md: ${join(context.hiveHome, "projects", "dealsplit", "LOG.md")}`);
+    expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myproject", "BOARD.md")}`);
+    expect(prompt).toContain(`LOG.md: ${join(context.hiveHome, "projects", "myproject", "LOG.md")}`);
     expect(prompt).toContain("hive inbox alpha");
     expect(prompt).toContain("./hive inbox alpha");
     expect(prompt).toContain("hive msg resolve <message> alpha <answer>");
@@ -290,12 +290,12 @@ Task: Build the auth endpoint and publish the contract.
     const archiveOutput = await runCli(["archive"]);
     const archivedEntries = await readdir(join(context.hiveHome, "archive", "2026", "03"));
     const refreshedLog = await Bun.file(
-      join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+      join(context.hiveHome, "projects", "myproject", "LOG.md"),
     ).text();
 
     expect(archiveOutput).toContain(join(context.hiveHome, "archive", "2026", "03"));
-    expect(archivedEntries.some((entry) => entry.endsWith("-dealsplit.md"))).toBeTrue();
-    expect(refreshedLog).toContain("# Log: 2026-03-09 dealsplit");
+    expect(archivedEntries.some((entry) => entry.endsWith("-myproject.md"))).toBeTrue();
+    expect(refreshedLog).toContain("# Log: 2026-03-09 myproject");
     expect(refreshedLog).not.toContain("Captured session context");
   });
 
@@ -305,7 +305,7 @@ Task: Build the auth endpoint and publish the contract.
 
     const prompt = await runCli(["orchestrate", "Build", "the", "auth", "flow"]);
     const log = await Bun.file(
-      join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+      join(context.hiveHome, "projects", "myproject", "LOG.md"),
     ).text();
     const msgDirEntries = await readdir(join(context.hiveHome, "msg"));
     const messageText = await Bun.file(join(context.hiveHome, "msg", msgDirEntries[0])).text();
@@ -317,7 +317,7 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("When you fully handle a message, resolve it or close it so the open queue stays clean.");
     expect(prompt).toContain("The authoritative hive files are not in the repo root.");
     expect(prompt).toContain("## Files");
-    expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "dealsplit", "BOARD.md")}`);
+    expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myproject", "BOARD.md")}`);
     expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
     expect(prompt).toContain("./hive msg resolve <message> orchestrator <answer>");
     expect(prompt).toContain("hive inbox <agent>");
@@ -332,7 +332,7 @@ Task: Build the auth endpoint and publish the contract.
     await addProject();
 
     await Bun.write(
-      join(context.hiveHome, "projects", "dealsplit", "BOARD.md"),
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
       `# Board
 
 ## Tasks
@@ -363,7 +363,7 @@ to: alpha
 type: question
 status: open
 ts: 2026-03-09T14:40:00Z
-project: dealsplit
+project: myproject
 ---
 
 Need the auth contract shape.
@@ -371,11 +371,11 @@ Need the auth contract shape.
     );
 
     const beforeLog = await Bun.file(
-      join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+      join(context.hiveHome, "projects", "myproject", "LOG.md"),
     ).text();
     const prompt = await runCli(["orchestrate", "--mode", "loop", "--interval", "30"]);
     const afterLog = await Bun.file(
-      join(context.hiveHome, "projects", "dealsplit", "LOG.md"),
+      join(context.hiveHome, "projects", "myproject", "LOG.md"),
     ).text();
 
     expect(prompt).toContain("Loop mode. Run one assessment/action cycle, then pause 30 seconds");
@@ -404,8 +404,8 @@ archive-curation: deferred
     );
 
     await Bun.write(
-      join(context.hiveHome, "projects", "dealsplit", "config.md"),
-      `# Project: DealSplit
+      join(context.hiveHome, "projects", "myproject", "config.md"),
+      `# Project: MyProject
 
 ## Repo
 path: ${context.repo}
@@ -440,7 +440,7 @@ path: ${context.repo}
 
     expect(
       await Bun.file(
-        join(context.hiveHome, "projects", "dealsplit", "runs", "20260309-150800Z-chat.prompt.md"),
+        join(context.hiveHome, "projects", "myproject", "runs", "20260309-150800Z-chat.prompt.md"),
       ).exists(),
     ).toBeTrue();
     expect(
@@ -448,7 +448,7 @@ path: ${context.repo}
         join(
           context.hiveHome,
           "projects",
-          "dealsplit",
+          "myproject",
           "runs",
           "2026",
           "03",
@@ -462,7 +462,7 @@ path: ${context.repo}
         join(
           context.hiveHome,
           "projects",
-          "dealsplit",
+          "myproject",
           "runs",
           "2026",
           "03",

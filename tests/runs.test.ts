@@ -50,12 +50,12 @@ afterEach(async () => {
 describe("run state", () => {
   test("run helpers write lifecycle records and clear the active pointer on finalize", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
     let run = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -104,12 +104,12 @@ describe("run state", () => {
 
   test("hive ps shows active and recent runs for the active project", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
     const activeRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -121,7 +121,7 @@ describe("run state", () => {
     await markRunActive(projectPaths, activeRun, 81234);
 
     let recentRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "beta",
       runtime: "claude",
@@ -139,7 +139,7 @@ describe("run state", () => {
 
     const output = await runCli(["ps"]);
 
-    expect(output).toContain("Project: dealsplit");
+    expect(output).toContain("Project: myproject");
     expect(output).toContain("Active runs: 1");
     expect(output).toContain("alpha | active");
     expect(output).toContain("pid: 81234");
@@ -150,7 +150,7 @@ describe("run state", () => {
 
   test("hive stop signals an active run by agent id", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const child = spawn("sleep", ["30"], { stdio: "ignore" });
     const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
@@ -159,9 +159,9 @@ describe("run state", () => {
       },
     );
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
     let run = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -185,13 +185,13 @@ describe("run state", () => {
 
   test("console session creates a tracked run record and cleans up on finalize", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     let run = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "console",
       runtime: "claude",
@@ -223,13 +223,13 @@ describe("run state", () => {
 
   test("hive ps shows console sessions alongside agent runs", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     const consoleRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "console",
       runtime: "claude",
@@ -240,7 +240,7 @@ describe("run state", () => {
     await markRunActive(projectPaths, consoleRun, 88888);
 
     const agentRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -260,13 +260,13 @@ describe("run state", () => {
 
   test("hive stop returns advisory message for console sessions", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     let run = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "console",
       runtime: "claude",
@@ -283,12 +283,12 @@ describe("run state", () => {
 
   test("hive watch renders active agents and their visible output tail", async () => {
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
     let run = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
