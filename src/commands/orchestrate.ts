@@ -118,7 +118,7 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
     // leave as default
   }
 
-  return buildOrchestratorPrompt({
+  return await buildOrchestratorPrompt({
     projectId: activeProject,
     pathsHome: paths.home,
     repoPath,
