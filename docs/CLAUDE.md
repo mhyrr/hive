@@ -30,6 +30,7 @@ hive run [--interval] [--max-parallel]  # Start supervision (idempotent)
 hive say <message>                      # Nudge + auto-start supervision
 hive ask [question]                     # Synthesized status snapshot (no LLM)
 hive watch [count] [--interval] [--once]  # Live operator console
+hive console [--runtime] [--model]      # Interactive session with the hive
 hive stop <agent|run>                   # Signal an active supervised run
 
 # Setup
@@ -67,6 +68,7 @@ src/
     run.ts                   # hive run — idempotent supervision start
     say.ts                   # hive say — nudge + auto-start supervision
     ask.ts                   # hive ask — synthesized status (no LLM)
+    console.ts               # hive console — interactive LLM session
     init.ts                  # hive init — scaffold ~/.hive/
     project.ts               # hive project add — register project state
     work.ts                  # hive work — set/show active project
@@ -113,6 +115,7 @@ templates/
 docs/
   FINAL-PRD.md
   PHASE-4-AUTO-LAUNCH.md
+  interaction.md
   CLAUDE.md
 ```
 
@@ -138,4 +141,6 @@ docs/
 - Prompt compaction: path-first assembly with digests, SOUL/AGENTS split, skills infrastructure — implemented
 - Front door: `hive run`, `hive say`, `hive ask` — implemented
 - Skills system: `~/.hive/skills/` with `state-efficient-ops` as skill #1 — implemented
-- Next: deeper supervision ergonomics, richer human modes, transport adapters, curate, memory intelligence
+- Interactive console: `hive console` — persistent LLM session with full hive context — implemented
+- Phase 4 validation: scope conflict tests, one-run-per-assignment safety, manual launch adoption — implemented
+- Next: notifications (Channel 3), transport adapters, curate, memory intelligence
