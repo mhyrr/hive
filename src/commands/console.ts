@@ -88,6 +88,7 @@ function buildConsolePrompt(input: {
   boardPath: string;
   logPath: string;
   projectMemoryPath: string;
+  projectMemory: string;
   messagesDir: string;
   skillsDir: string;
   availableSkillNames: string[];
@@ -151,6 +152,9 @@ ${listSkills(input.skillsDir, input.availableSkillNames)}
 ## Board Summary
 ${digestBoard(input.board)}
 
+## Project Memory
+${input.projectMemory}
+
 ## Open Project Messages
 ${digestMessages(input.openMessages)}`;
 }
@@ -178,6 +182,22 @@ export async function consoleCommand(args: string[]): Promise<string> {
   const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
 
+  let projectMemory = "(none yet)";
+
+  try {
+    const memoryFile = Bun.file(projectPaths.memory);
+
+    if (await memoryFile.exists()) {
+      const content = (await memoryFile.text()).trim();
+
+      if (content) {
+        projectMemory = content;
+      }
+    }
+  } catch {
+    // leave as default
+  }
+
   const prompt = buildConsolePrompt({
     projectId: activeProject,
     repoPath,
@@ -194,6 +214,7 @@ export async function consoleCommand(args: string[]): Promise<string> {
     boardPath: projectPaths.board,
     logPath: projectPaths.log,
     projectMemoryPath: projectPaths.memory,
+    projectMemory,
     messagesDir: paths.msgDir,
     skillsDir: paths.skillsDir,
     availableSkillNames,

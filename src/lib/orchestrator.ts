@@ -189,6 +189,7 @@ export function buildOrchestratorPrompt(input: {
   boardPath: string;
   logPath: string;
   projectMemoryPath: string;
+  projectMemory: string;
   messagesDir: string;
   skillsDir: string;
   availableSkillNames: string[];
@@ -271,6 +272,9 @@ ${listSkills(input.skillsDir, input.availableSkillNames)}
 
 ## Board Summary
 ${digestBoard(input.board)}
+
+## Project Memory
+${input.projectMemory}
 
 ## Active Runs
 ${renderActiveRuns(input.activeRuns)}

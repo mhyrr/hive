@@ -34,6 +34,22 @@ async function listAvailableSkills(skillsDir: string): Promise<string[]> {
   }
 }
 
+async function readProjectMemory(memoryPath: string): Promise<string> {
+  try {
+    const file = Bun.file(memoryPath);
+
+    if (!(await file.exists())) {
+      return "(none yet)";
+    }
+
+    const content = (await file.text()).trim();
+
+    return content || "(none yet)";
+  } catch {
+    return "(none yet)";
+  }
+}
+
 export async function promptCommand(args: string[]): Promise<string> {
   const agentId = args[0];
 
@@ -52,6 +68,7 @@ export async function promptCommand(args: string[]): Promise<string> {
   const soul = await Bun.file(paths.soul).text();
   const projectConfig = await Bun.file(projectPaths.config).text();
   const board = await Bun.file(projectPaths.board).text();
+  const projectMemory = await readProjectMemory(projectPaths.memory);
   const plan = await Bun.file(projectPaths.plan).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
   const planAgent = findPlanAgent(plan, agentId);
@@ -136,6 +153,9 @@ ${assignment}
 
 ## Board Summary
 ${digestBoard(board)}
+
+## Project Memory
+${projectMemory}
 
 ## Open Messages For You
 ${renderMessages(messages)}`;

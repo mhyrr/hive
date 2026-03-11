@@ -102,6 +102,22 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
   );
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
 
+  let projectMemory = "(none yet)";
+
+  try {
+    const memoryFile = Bun.file(projectPaths.memory);
+
+    if (await memoryFile.exists()) {
+      const content = (await memoryFile.text()).trim();
+
+      if (content) {
+        projectMemory = content;
+      }
+    }
+  } catch {
+    // leave as default
+  }
+
   return buildOrchestratorPrompt({
     projectId: activeProject,
     pathsHome: paths.home,
@@ -115,6 +131,7 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
     boardPath: projectPaths.board,
     logPath: projectPaths.log,
     projectMemoryPath: projectPaths.memory,
+    projectMemory,
     messagesDir: paths.msgDir,
     skillsDir: paths.skillsDir,
     availableSkillNames,

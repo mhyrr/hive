@@ -27,4 +27,26 @@ The `state-efficient-ops` skill is essential — read it first.
 3. Read BOARD.md for current state
 4. Check inbox for messages
 5. Execute your assignment
-6. Before ending: flush learnings to LOG.md, update the board via message
+6. Before ending:
+   - Flush learnings to LOG.md via `hive log`
+   - Record durable decisions: `hive memory decision "<what and why>"`
+   - Record new conventions: `hive memory convention "<pattern>"`
+   - Record facts that future agents need: `hive memory fact "<fact>"`
+   - Update the board via message to orchestrator
+
+## Memory
+Project memory is your team's accumulated knowledge — decisions, conventions, and facts
+that persist across sessions. Read it at session start. Update it when you learn something
+durable.
+
+Commands:
+- `hive memory` — show project memory
+- `hive memory decision "<what we decided and why>"` — log a decision
+- `hive memory convention "<pattern the team follows>"` — log a convention
+- `hive memory fact "<something always true about this project>"` — log a fact
+- `hive memory question "<unresolved item>"` — log an open question
+
+Good memory entries are:
+- Specific enough to be actionable ("Use Joken for JWT, not Guardian — API-only app")
+- Stable across sessions (not "currently working on task 003")
+- Non-obvious (don't record what's already in PLAN.md or config)

@@ -81,6 +81,9 @@ export function renderProjectMemoryTemplate(projectName: string): string {
 ## Conventions
 (none yet)
 
+## Decisions
+(none yet)
+
 ## Open Questions
 (none yet)`;
 }
