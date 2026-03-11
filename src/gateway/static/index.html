@@ -15,7 +15,15 @@
       <span class="status-dot" id="supervisor-dot"></span>
       <span id="supervisor-label">&mdash;</span>
     </div>
-    <div class="topbar-agents" id="agent-count">&mdash;</div>
+    <div class="topbar-agents" id="agent-count">
+      <span class="topbar-agents-label">&mdash;</span>
+      <div class="agent-dropdown" id="agent-dropdown">
+        <div class="agent-dropdown-header">Active Agents</div>
+        <div class="agent-dropdown-list" id="agent-dropdown-list">
+          <div class="agent-dropdown-empty">No active agents</div>
+        </div>
+      </div>
+    </div>
     <div class="topbar-connection" id="connection-status">
       <span class="status-dot status-dot--disconnected"></span>
       <span>disconnected</span>
@@ -24,6 +32,22 @@
 
   <!-- Console panel -->
   <main class="console">
+    <!-- Session toolbar -->
+    <div class="session-toolbar" id="session-toolbar">
+      <span class="session-id" id="session-id">&mdash;</span>
+      <div class="session-toolbar-actions">
+        <button class="session-btn" id="sessions-btn" title="Browse sessions">Sessions</button>
+        <button class="session-btn" id="new-session-btn" title="New session (Ctrl+N)">+ New</button>
+      </div>
+      <!-- Sessions dropdown -->
+      <div class="sessions-dropdown" id="sessions-dropdown">
+        <div class="sessions-dropdown-header">Recent Sessions</div>
+        <div class="sessions-dropdown-list" id="sessions-dropdown-list">
+          <div class="sessions-dropdown-empty">No sessions</div>
+        </div>
+      </div>
+    </div>
+
     <div class="console-history" id="console-history">
       <div class="console-welcome">
         <p>Welcome to HIVE. Type a message to talk to the hive mind.</p>
@@ -31,8 +55,8 @@
       </div>
     </div>
     <form class="console-input" id="console-form">
-      <input type="text" id="console-input" placeholder="Talk to the hive..." autocomplete="off" autofocus>
-      <button type="submit">Send</button>
+      <textarea id="console-input" placeholder="Talk to the hive... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
+      <button type="submit" id="console-send-btn">Send</button>
     </form>
   </main>
 
