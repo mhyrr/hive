@@ -183,6 +183,81 @@ describe("run state", () => {
     expect(runRaw).toContain("stop-requested-at: 2026-03-09T15:08:00Z");
   });
 
+  test("console session creates a tracked run record and cleans up on finalize", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "DealSplit", context.repo]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "dealsplit");
+
+    let run = await createRunDraft({
+      projectId: "dealsplit",
+      projectPaths,
+      agentId: "console",
+      runtime: "claude",
+      model: null,
+      prompt: "# Console Session",
+      source: "console",
+    });
+
+    expect(run.source).toBe("console");
+    expect(run.agentId).toBe("console");
+    expect(await Bun.file(run.path).text()).toContain("status: starting");
+
+    run = await markRunActive(projectPaths, run, 99999);
+
+    const activeRaw = await Bun.file(join(projectPaths.runsActiveDir, "console.md")).text();
+    expect(activeRaw).toContain("status: active");
+    expect(activeRaw).toContain("source: console");
+
+    run = await finalizeRun({
+      projectPaths,
+      run,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    expect(await Bun.file(join(projectPaths.runsActiveDir, "console.md")).exists()).toBeFalse();
+    expect(await Bun.file(run.path).text()).toContain("status: exited");
+  });
+
+  test("hive ps shows console sessions alongside agent runs", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "DealSplit", context.repo]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "dealsplit");
+
+    const consoleRun = await createRunDraft({
+      projectId: "dealsplit",
+      projectPaths,
+      agentId: "console",
+      runtime: "claude",
+      model: null,
+      prompt: "# Console",
+      source: "console",
+    });
+    await markRunActive(projectPaths, consoleRun, 88888);
+
+    const agentRun = await createRunDraft({
+      projectId: "dealsplit",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: null,
+      prompt: "# Agent",
+      source: "hive launch",
+    });
+    await markRunActive(projectPaths, agentRun, 77777);
+
+    const output = await runCli(["ps"]);
+
+    expect(output).toContain("console | active");
+    expect(output).toContain("source: console");
+    expect(output).toContain("alpha | active");
+    expect(output).toContain("Active runs: 2");
+  });
+
   test("hive watch renders active agents and their visible output tail", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "DealSplit", context.repo]);
