@@ -30,6 +30,7 @@ export type HivePaths = {
   projectsDir: string;
   msgDir: string;
   archiveDir: string;
+  sessionsDir: string;
   activeProjectFile: string;
 };
 
@@ -66,6 +67,7 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     projectsDir: join(home, "projects"),
     msgDir: join(home, "msg"),
     archiveDir: join(home, "archive"),
+    sessionsDir: join(home, "sessions"),
     activeProjectFile: join(home, "active-project.txt"),
   };
 }
@@ -93,6 +95,7 @@ export async function ensureHiveScaffold(
   await mkdir(paths.projectsDir, { recursive: true });
   await mkdir(paths.msgDir, { recursive: true });
   await mkdir(paths.archiveDir, { recursive: true });
+  await mkdir(paths.sessionsDir, { recursive: true });
 
   for (const [relativePath, template] of Object.entries(baseTemplates)) {
     await writeIfMissing(join(paths.home, relativePath), template);
