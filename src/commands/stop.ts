@@ -58,6 +58,10 @@ export async function stopCommand(args: string[]): Promise<string> {
     throw new UsageError(`Run ${run.runId} does not have a live pid to stop.`);
   }
 
+  if (run.source === "console") {
+    return `Console session is interactive — exit from within the session. (${run.runId}, pid ${run.pid})`;
+  }
+
   await markRunStopRequested(run, "human");
   process.kill(run.pid, "SIGTERM");
   await appendFeedEntry(paths, {

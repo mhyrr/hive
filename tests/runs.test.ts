@@ -258,6 +258,29 @@ describe("run state", () => {
     expect(output).toContain("Active runs: 2");
   });
 
+  test("hive stop returns advisory message for console sessions", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "DealSplit", context.repo]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "dealsplit");
+
+    let run = await createRunDraft({
+      projectId: "dealsplit",
+      projectPaths,
+      agentId: "console",
+      runtime: "claude",
+      model: null,
+      prompt: "# Console",
+      source: "console",
+    });
+    run = await markRunActive(projectPaths, run, 88888);
+
+    const output = await runCli(["stop", "console"]);
+
+    expect(output).toContain("Console session is interactive");
+  });
+
   test("hive watch renders active agents and their visible output tail", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "DealSplit", context.repo]);
