@@ -29,7 +29,7 @@ Agents are transient. The hive persists.
 hive run [--interval] [--max-parallel]  # Start supervision (idempotent)
 hive say <message>                      # Nudge + auto-start supervision
 hive ask [question]                     # Synthesized status snapshot (no LLM)
-hive watch [count]                      # Live tail of feed.md
+hive watch [count] [--interval] [--once]  # Live operator console
 hive stop <agent|run>                   # Signal an active supervised run
 
 # Setup
@@ -72,7 +72,7 @@ src/
     work.ts                  # hive work — set/show active project
     orchestrate.ts           # hive orchestrate — steward kickoff/resume prompt
     chat.ts                  # hive chat — one-shot human interface runtime call
-    feed.ts                  # hive feed/watch — human event stream
+    feed.ts                  # hive feed + live watch console
     supervise.ts             # hive supervise — autonomous supervisor loop
     launch.ts                # hive launch — one-shot agent runtime call
     status.ts                # hive status — read BOARD + msg, format for terminal

@@ -26,6 +26,7 @@ import {
   createRunDraft,
   createRunPromptArtifact,
   finalizeRun,
+  getRunOutputPath,
   markRunActive,
   readActiveRun,
   readRunRecord,
@@ -197,7 +198,9 @@ Command: ${renderLaunchPreview(spec)}`;
     details: [`runtime: ${spec.runtime}`, `model: ${spec.model ?? "(default)"}`],
   });
 
-  const handle = startLaunchSpec(spec, repoPath);
+  const handle = startLaunchSpec(spec, repoPath, {
+    outputPath: getRunOutputPath(run),
+  });
 
   run = await markRunActive(projectPaths, run, handle.pid);
 

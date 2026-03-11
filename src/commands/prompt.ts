@@ -85,6 +85,10 @@ export async function promptCommand(args: string[]): Promise<string> {
       : "No active assignment in PLAN.md. Default to the project configuration and the live board.";
 
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
+  const essentialSkills = ["state-efficient-ops"];
+  const essentialSkillPaths = essentialSkills
+    .filter((name) => availableSkillNames.includes(name))
+    .map((name) => `${paths.skillsDir}/${name}.md`);
 
   return `# HIVE Agent Prompt
 
@@ -95,6 +99,7 @@ ${soul.trim()}
 
 ## Runtime Rules
 - Read ${paths.agents} for full operational protocols before starting work.
+- Read essential skills before starting work: ${essentialSkillPaths.join(", ") || "(none)"}
 - Read ${projectPaths.board} before acting — it's the shared state snapshot.
 - The authoritative hive files are not in the repo root. Use the absolute paths below.
 - Check \`hive inbox ${agentId}\` between major steps. Use \`./hive inbox ${agentId}\` when the binary is built locally but not installed on PATH.

@@ -9,6 +9,8 @@ import {
 import type { HiveMessage } from "../src/lib/messages";
 import type { RunRecord } from "../src/lib/runs";
 
+const liveBoard = await Bun.file(new URL("./fixtures/hive-live-board.md", import.meta.url)).text();
+
 function makeMessage(overrides: Partial<HiveMessage> & { body: string }): HiveMessage {
   return {
     path: overrides.path ?? "/tmp/messages/test.md",
@@ -43,6 +45,18 @@ function makeRun(overrides: Partial<RunRecord>): RunRecord {
 }
 
 describe("digestBoard", () => {
+  test("summarises the live pipe-delimited board format and includes agent state", () => {
+    const result = digestBoard(liveBoard);
+
+    expect(result).toContain("4 tasks:");
+    expect(result).toContain("1 active");
+    expect(result).toContain("2 done");
+    expect(result).toContain("1 waiting/queued");
+    expect(result).toContain("orchestrator: active");
+    expect(result).toContain("gamma: idle");
+    expect(result).not.toContain("Blockers:");
+  });
+
   test("summarises a board with tasks, agents, and no blockers", () => {
     const board = [
       "## Tasks",
@@ -154,6 +168,12 @@ describe("digestBoard", () => {
     const result = digestBoard(board);
 
     expect(result).toContain("gamma: unknown");
+  });
+
+  test("does not count task detail lines as separate tasks", () => {
+    const result = digestBoard(liveBoard);
+
+    expect(result).not.toContain("8 tasks:");
   });
 });
 

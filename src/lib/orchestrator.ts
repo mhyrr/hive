@@ -200,6 +200,10 @@ export function buildOrchestratorPrompt(input: {
   options: OrchestrateOptions;
 }): string {
   const signals = summarizeSignals(input.board, input.openMessages, input.activeRuns);
+  const essentialSkills = ["state-efficient-ops"];
+  const essentialSkillPaths = essentialSkills
+    .filter((name) => input.availableSkillNames.includes(name))
+    .map((name) => `${input.skillsDir}/${name}.md`);
   const recentGoal =
     input.options.goal?.trim() ||
     input.openMessages.find(
@@ -235,6 +239,7 @@ ${renderList(signals)}
 ## Steward Rules
 - BOARD.md is yours to maintain. Other agents should update you via msg/.
 - Read ${input.pathsAgents} for full operational protocols.
+- Read essential skills before starting work: ${essentialSkillPaths.join(", ") || "(none)"}
 - The authoritative hive files are not in the repo root. Use the absolute paths below instead of repo-relative guesses like \`BOARD.md\` or \`LOG.md\`.
 - Answer human nudges before anything else.
 - Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\` or \`./hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\` or \`./hive msg close <message> orchestrator [note]\`.

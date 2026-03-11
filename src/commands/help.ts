@@ -5,7 +5,7 @@ Usage:
   hive run [--interval <seconds>] [--max-parallel <count>]
   hive say <message>
   hive ask [question]
-  hive watch [count]
+  hive watch [count] [--interval <seconds>] [--once]
   hive stop <agent-id|run-id>
 
   hive init

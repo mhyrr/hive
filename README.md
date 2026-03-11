@@ -43,7 +43,7 @@ Available commands:
 - `hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]`
 - `hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>`
 - `hive feed [count]`
-- `hive watch [count]`
+- `hive watch [count] [--interval <seconds>] [--once]`
 - `hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]`
 - `hive supervise status`
 - `hive supervise stop`
@@ -427,11 +427,25 @@ Notes:
 
 Prints the most recent high-signal entries from `~/.hive/feed.md`.
 
-### `hive watch [count]`
+### `hive watch [count] [--interval <seconds>] [--once]`
 
-Tails `~/.hive/feed.md` live.
+Renders a live operator console for the active project.
 
-This is the passive observation surface for the hive.
+It shows:
+
+- detached supervisor state
+- active agent count
+- active runs with task/source/scope
+- the last visible runtime output lines captured for each active run
+- recent completed runs
+- recent high-signal feed entries
+
+Notes:
+
+- `count` controls how many output/feed lines are shown per section
+- `--interval` controls refresh cadence; default is 2 seconds
+- `--once` renders one snapshot and exits
+- this is not hidden model chain-of-thought; it only shows visible runtime output HIVE can observe
 
 ### `hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]`
 
