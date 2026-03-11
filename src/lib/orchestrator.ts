@@ -5,6 +5,7 @@ import { HiveMessage, createMessage } from "./messages";
 import { HivePaths, ProjectPaths } from "./paths";
 import { parseBoard, minutesSince } from "./board";
 import { RunRecord, RunResult } from "./runs";
+import { listRuntimeAdapters } from "./runtime";
 
 export type OrchestrateMode = "interactive" | "loop";
 
@@ -28,6 +29,24 @@ function renderList(items: string[]): string {
   }
 
   return items.map((item) => `- ${item}`).join("\n");
+}
+
+async function renderAvailableRuntimes(): Promise<string> {
+  const adapters = listRuntimeAdapters();
+  const lines: string[] = [];
+
+  for (const adapter of adapters) {
+    const installed = await adapter.detectInstalled();
+    const status = installed ? "installed" : "not installed";
+    const aliases = adapter.aliases.length ? ` (aliases: ${adapter.aliases.join(", ")})` : "";
+    lines.push(`- ${adapter.name}: ${status}${aliases}`);
+  }
+
+  lines.push("");
+  lines.push("To assign a specific runtime to an agent, include `runtime: <name>` in the assignment message frontmatter.");
+  lines.push("The team config may also specify runtimes via `agent: persona via <runtime>` syntax.");
+
+  return lines.join("\n");
 }
 
 function renderActiveRuns(runs: RunRecord[]): string {
@@ -176,7 +195,7 @@ export async function enqueueGoalForOrchestrator(
   return message.filename;
 }
 
-export function buildOrchestratorPrompt(input: {
+export async function buildOrchestratorPrompt(input: {
   projectId: string;
   pathsHome: string;
   repoPath: string;
@@ -199,8 +218,9 @@ export function buildOrchestratorPrompt(input: {
   recentRunResults: RunResult[];
   openMessages: HiveMessage[];
   options: OrchestrateOptions;
-}): string {
+}): Promise<string> {
   const signals = summarizeSignals(input.board, input.openMessages, input.activeRuns);
+  const runtimesInfo = await renderAvailableRuntimes();
   const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
   const essentialSkillPaths = essentialSkills
     .filter((name) => input.availableSkillNames.includes(name))
@@ -252,6 +272,9 @@ Read operational protocols: ${input.pathsAgents}
 - When a task is done, update the board, unblock dependents, and assign the next task.
 - When an agent is stale or blocked, either unblock it or reassign the work. Do not let ambiguity linger.
 - If everything is healthy and in progress, wait. Do not micro-manage.
+
+## Available Runtimes
+${runtimesInfo}
 
 ## Initiative
 You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Don't batch these — record them as you go. Don't announce them — just do them.

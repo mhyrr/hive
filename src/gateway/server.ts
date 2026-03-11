@@ -1,8 +1,8 @@
 import { type Server, type ServerWebSocket } from "bun";
-import { join } from "node:path";
 
 import type { HivePaths } from "../lib/paths";
 
+import { serveStaticAsset } from "./assets";
 import { handleApi, handleOptions } from "./routes";
 import { startWatcher } from "./watcher";
 
@@ -17,51 +17,12 @@ type GatewayState = {
   stopWatcher: () => void;
 };
 
-const MIME_TYPES: Record<string, string> = {
-  ".html": "text/html",
-  ".css": "text/css",
-  ".js": "text/javascript",
-  ".json": "application/json",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-};
-
-function getMimeType(path: string): string {
-  const ext = path.slice(path.lastIndexOf("."));
-  return MIME_TYPES[ext] ?? "application/octet-stream";
-}
-
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   };
-}
-
-async function serveStatic(pathname: string): Promise<Response> {
-  const staticDir = join(import.meta.dir, "static");
-  const safePath = pathname === "/" ? "/index.html" : pathname;
-  const filePath = join(staticDir, safePath);
-
-  // Prevent path traversal
-  if (!filePath.startsWith(staticDir)) {
-    return new Response("Forbidden", { status: 403, headers: corsHeaders() });
-  }
-
-  const file = Bun.file(filePath);
-
-  if (!(await file.exists())) {
-    return new Response("Not Found", { status: 404, headers: corsHeaders() });
-  }
-
-  return new Response(file, {
-    headers: {
-      "Content-Type": getMimeType(filePath),
-      ...corsHeaders(),
-    },
-  });
 }
 
 export function startGateway(options: GatewayOptions): GatewayState {
@@ -115,7 +76,7 @@ export function startGateway(options: GatewayOptions): GatewayState {
       }
 
       // Static files
-      return serveStatic(url.pathname);
+      return serveStaticAsset(url.pathname);
     },
     websocket: {
       open(ws) {
