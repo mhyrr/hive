@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HIVE</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="topbar-brand">HIVE</div>
+    <div class="topbar-project" id="project-name">&mdash;</div>
+    <div class="topbar-status">
+      <span class="status-dot" id="supervisor-dot"></span>
+      <span id="supervisor-label">&mdash;</span>
+    </div>
+    <div class="topbar-agents" id="agent-count">&mdash;</div>
+    <div class="topbar-connection" id="connection-status">
+      <span class="status-dot status-dot--disconnected"></span>
+      <span>disconnected</span>
+    </div>
+  </header>
+
+  <!-- Console panel -->
+  <main class="console">
+    <div class="console-history" id="console-history">
+      <div class="console-welcome">
+        <p>Welcome to HIVE. Type a message to talk to the hive mind.</p>
+        <p class="console-welcome-hint">The console is your steering wheel. The feed is your dashboard.</p>
+      </div>
+    </div>
+    <form class="console-input" id="console-form">
+      <input type="text" id="console-input" placeholder="Talk to the hive..." autocomplete="off" autofocus>
+      <button type="submit">Send</button>
+    </form>
+  </main>
+
+  <!-- Feed panel -->
+  <aside class="feed">
+    <div class="feed-header">Feed</div>
+    <div class="feed-entries" id="feed-entries">
+      <!-- Feed entries appear here -->
+    </div>
+  </aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>

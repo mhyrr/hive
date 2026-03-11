@@ -3,6 +3,7 @@ import { askCommand } from "./commands/ask";
 import { chatCommand } from "./commands/chat";
 import { consoleCommand } from "./commands/console";
 import { feedCommand, watchCommand } from "./commands/feed";
+import { gatewayCommand } from "./commands/gateway";
 import { helpCommand } from "./commands/help";
 import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
@@ -79,6 +80,8 @@ export async function runCli(args: string[]): Promise<string> {
       return promptCommand(rest);
     case "runtimes":
       return runtimesCommand();
+    case "gateway":
+      return gatewayCommand(rest);
     case "archive":
       return archiveCommand();
     case "sync":
