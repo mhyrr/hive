@@ -20,6 +20,16 @@ export type LaunchResult = {
   visibleOutput: string;
 };
 
+export type InteractiveResult = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+};
+
+export type InteractiveHandle = {
+  pid: number | null;
+  wait: () => Promise<InteractiveResult>;
+};
+
 export type LaunchHandle = {
   pid: number | null;
   wait: () => Promise<LaunchResult>;
@@ -191,6 +201,67 @@ export function buildLaunchSpec(input: {
         ],
       };
   }
+}
+
+export function buildInteractiveLaunchSpec(input: {
+  runtime: RuntimeName;
+  model: string | null;
+  repoPath: string;
+  hiveHome: string;
+  systemPrompt: string;
+}): LaunchSpec {
+  switch (input.runtime) {
+    case "codex":
+      return {
+        runtime: input.runtime,
+        model: input.model,
+        command: "codex",
+        args: [
+          "--full-auto",
+          "-C",
+          input.repoPath,
+          "--add-dir",
+          input.hiveHome,
+          ...(input.model ? ["--model", input.model] : []),
+          input.systemPrompt,
+        ],
+      };
+    case "claude":
+      return {
+        runtime: input.runtime,
+        model: input.model,
+        command: "claude",
+        args: [
+          "--permission-mode",
+          "bypassPermissions",
+          "--add-dir",
+          input.hiveHome,
+          ...(input.model ? ["--model", input.model] : []),
+          "--system-prompt",
+          input.systemPrompt,
+        ],
+      };
+  }
+}
+
+export function startInteractiveSession(
+  spec: LaunchSpec,
+  repoPath: string,
+): InteractiveHandle {
+  const child = spawn(spec.command, spec.args, {
+    stdio: "inherit",
+    cwd: repoPath,
+    env: { ...process.env },
+  });
+
+  return {
+    pid: child.pid ?? null,
+    wait: () =>
+      new Promise((resolve) => {
+        child.on("exit", (code, signal) => resolve({ code, signal }));
+        child.on("error", () => resolve({ code: 1, signal: null }));
+      }),
+  };
 }
 
 export function renderLaunchPreview(spec: LaunchSpec): string {

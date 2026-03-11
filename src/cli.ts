@@ -1,6 +1,7 @@
 import { archiveCommand } from "./commands/archive";
 import { askCommand } from "./commands/ask";
 import { chatCommand } from "./commands/chat";
+import { consoleCommand } from "./commands/console";
 import { feedCommand, watchCommand } from "./commands/feed";
 import { helpCommand } from "./commands/help";
 import { inboxCommand } from "./commands/inbox";
@@ -46,6 +47,8 @@ export async function runCli(args: string[]): Promise<string> {
       return orchestrateCommand(rest);
     case "chat":
       return chatCommand(rest);
+    case "console":
+      return consoleCommand(rest);
     case "feed":
       return feedCommand(rest);
     case "watch":
