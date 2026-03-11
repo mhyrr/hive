@@ -28,10 +28,10 @@ Agents are transient. The hive persists.
 # Front door — talk to the hive like a team
 hive run [--interval] [--max-parallel]  # Start supervision (idempotent)
 hive say <message>                      # Nudge + auto-start supervision
-hive ask [question]                     # Synthesized status snapshot (no LLM)
+hive ask [question]                     # Status digest (no args) or LLM-powered answer (with question)
 hive watch [count] [--interval] [--once]  # Live operator console
-hive console [--runtime] [--model]      # Interactive session with the hive
-hive stop <agent|run>                   # Signal an active supervised run
+hive console [--runtime] [--model]      # Interactive session with the hive (tracked in run ledger)
+hive stop <agent|run>                   # Signal an active supervised run (advisory for console)
 
 # Setup
 hive init                               # Bootstrap ~/.hive/
@@ -148,4 +148,5 @@ docs/
 - Interactive console: `hive console` — persistent LLM session with full hive context — implemented
 - Phase 4 validation: scope conflict tests, one-run-per-assignment safety, manual launch adoption — implemented
 - Autonomous initiative: autonomous-ops skill, initiative-driven prompts, console as hive mind — implemented
+- Console run-ledger integration: console tracked as session in run ledger, supervisor ignores for scope/parallel, stop advisory, LLM-powered ask — implemented
 - Next: Phase 5 Gateway (multi-runtime, localhost server, web UI)

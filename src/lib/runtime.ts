@@ -37,6 +37,7 @@ export type LaunchHandle = {
 
 type LaunchHandleOptions = {
   outputPath?: string | null;
+  quiet?: boolean;
 };
 
 export type RuntimeHints = {
@@ -301,7 +302,7 @@ export function shouldSuppressRuntimeLine(runtime: RuntimeName, line: string): b
 
 function createForwarder(
   runtime: RuntimeName,
-  stream: NodeJS.WriteStream,
+  stream: NodeJS.WriteStream | null,
   onLine: (line: string) => void,
 ) {
   const decoder = new StringDecoder("utf8");
@@ -309,7 +310,7 @@ function createForwarder(
 
   const flushLine = (line: string) => {
     if (!shouldSuppressRuntimeLine(runtime, line)) {
-      stream.write(`${line}\n`);
+      stream?.write(`${line}\n`);
       onLine(line);
     }
   };
@@ -360,8 +361,8 @@ export function startLaunchSpec(
 
     outputStream?.write(`${line}\n`);
   };
-  const stdoutForwarder = createForwarder(spec.runtime, process.stdout, captureLine);
-  const stderrForwarder = createForwarder(spec.runtime, process.stderr, captureLine);
+  const stdoutForwarder = createForwarder(spec.runtime, options.quiet ? null : process.stdout, captureLine);
+  const stderrForwarder = createForwarder(spec.runtime, options.quiet ? null : process.stderr, captureLine);
 
   child.stdout?.on("data", (chunk: Buffer) => {
     stdoutForwarder.write(chunk);
@@ -395,6 +396,7 @@ export function startLaunchSpec(
 export async function runLaunchSpec(
   spec: LaunchSpec,
   repoPath: string,
+  options?: LaunchHandleOptions,
 ): Promise<LaunchResult> {
-  return startLaunchSpec(spec, repoPath).wait();
+  return startLaunchSpec(spec, repoPath, options).wait();
 }
