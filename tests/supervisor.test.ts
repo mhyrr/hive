@@ -291,6 +291,106 @@ Task: Review the change.
       "gamma.md: assignment already consumed its current launch attempt",
     );
   });
+
+  test("console session does not block worker launches via scope conflict", () => {
+    const assessment = selectWorkerLaunches({
+      projectConfig: `# Project\n\nlaunch-default: auto\n`,
+      plan: `# Plan\n\n## Agents\n### alpha (craftsman -> src/api/**)\nTask: Build the API.\n`,
+      openMessages: [
+        {
+          path: "/tmp/alpha.md",
+          filename: "alpha.md",
+          attributes: {
+            from: "orchestrator",
+            to: "alpha",
+            type: "assign",
+            status: "open",
+            project: "dealsplit",
+            task: "HIVE-011",
+          },
+          body: "Build the API.",
+          raw: "",
+        },
+      ],
+      activeRuns: [
+        {
+          runId: "20260310-140000Z-console",
+          projectId: "dealsplit",
+          agentId: "console",
+          status: "active",
+          runtime: "claude",
+          model: null,
+          started: "2026-03-10T14:00:00Z",
+          ended: null,
+          exitCode: null,
+          pid: 99999,
+          promptPath: "/tmp/console.prompt.md",
+          source: "console",
+          sourceMessage: null,
+          taskId: null,
+          scope: null,
+          stopRequestedAt: null,
+          stopRequestedBy: null,
+          path: "/tmp/console/run.md",
+        },
+      ],
+      historicalRuns: [],
+      maxParallel: 2,
+    });
+
+    expect(assessment.launches.map((l) => l.agentId)).toEqual(["alpha"]);
+    expect(assessment.skipped).toEqual([]);
+  });
+
+  test("console session does not count toward parallel worker limit", () => {
+    const assessment = selectWorkerLaunches({
+      projectConfig: `# Project\n\nlaunch-default: auto\n`,
+      plan: `# Plan\n\n## Agents\n### alpha (craftsman -> src/api/**)\nTask: Build the API.\n`,
+      openMessages: [
+        {
+          path: "/tmp/alpha.md",
+          filename: "alpha.md",
+          attributes: {
+            from: "orchestrator",
+            to: "alpha",
+            type: "assign",
+            status: "open",
+            project: "dealsplit",
+            task: "HIVE-012",
+          },
+          body: "Build the API.",
+          raw: "",
+        },
+      ],
+      activeRuns: [
+        {
+          runId: "20260310-140000Z-console",
+          projectId: "dealsplit",
+          agentId: "console",
+          status: "active",
+          runtime: "claude",
+          model: null,
+          started: "2026-03-10T14:00:00Z",
+          ended: null,
+          exitCode: null,
+          pid: 99999,
+          promptPath: "/tmp/console.prompt.md",
+          source: "console",
+          sourceMessage: null,
+          taskId: null,
+          scope: null,
+          stopRequestedAt: null,
+          stopRequestedBy: null,
+          path: "/tmp/console/run.md",
+        },
+      ],
+      historicalRuns: [],
+      maxParallel: 1,
+    });
+
+    // maxParallel is 1, but console shouldn't count — alpha should still launch
+    expect(assessment.launches.map((l) => l.agentId)).toEqual(["alpha"]);
+  });
 });
 
 describe("scope conflicts", () => {

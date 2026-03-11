@@ -145,7 +145,9 @@ export function assessStewardLaunch(input: {
   const messagesToOrchestrator = input.openMessages.filter(
     (message) => message.attributes.to === "orchestrator",
   );
-  const workerActiveRuns = input.activeRuns.filter((run) => run.agentId !== "orchestrator");
+  const workerActiveRuns = input.activeRuns.filter(
+    (run) => run.agentId !== "orchestrator" && run.source !== "console",
+  );
   const boardActiveAgents = board.agents.filter((agent) =>
     (agent.fields.status ?? "").toLowerCase().includes("active"),
   );
@@ -198,7 +200,9 @@ export function selectWorkerLaunches(input: {
 }): WorkerLaunchAssessment {
   const launches: WorkerLaunchCandidate[] = [];
   const skipped: string[] = [];
-  const activeWorkerRuns = input.activeRuns.filter((run) => run.agentId !== "orchestrator");
+  const activeWorkerRuns = input.activeRuns.filter(
+    (run) => run.agentId !== "orchestrator" && run.source !== "console",
+  );
   const activeOrchestratorRun = input.activeRuns.find((run) => run.agentId === "orchestrator");
 
   if (activeOrchestratorRun) {
@@ -287,6 +291,10 @@ export function assessRecoveredRuns(
   const recovered: RecoveredRun[] = [];
 
   for (const run of activeRuns) {
+    if (run.source === "console") {
+      continue;
+    }
+
     if (isProcessAlive(run.pid)) {
       continue;
     }
