@@ -8,6 +8,7 @@ import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
 import { launchCommand } from "./commands/launch";
 import { logCommand } from "./commands/log";
+import { memoryCommand } from "./commands/memory";
 import { msgCommand, nudgeCommand } from "./commands/msg";
 import { orchestrateCommand } from "./commands/orchestrate";
 import { psCommand } from "./commands/ps";
@@ -67,6 +68,8 @@ export async function runCli(args: string[]): Promise<string> {
       return statusCommand();
     case "log":
       return logCommand(rest);
+    case "memory":
+      return memoryCommand(rest);
     case "msg":
       return msgCommand(rest);
     case "nudge":

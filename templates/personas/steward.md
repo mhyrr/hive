@@ -135,8 +135,11 @@ When all tasks are done (or the human says stop):
 2. **Compile results.** Write a session summary: what was accomplished,
    what decisions were made, what's left to do.
 3. **Flush to LOG.md.** Make sure every decision and outcome is recorded.
-4. **Update project memory.** Any durable learnings about this project
-   should be noted for promotion to memory/projects/{name}.md.
+4. **Update project memory.** Curate what the team learned this session:
+   - Record important decisions: `hive memory decision "<what and why>"`
+   - Record conventions discovered: `hive memory convention "<pattern>"`
+   - Record facts future agents need: `hive memory fact "<fact>"`
+   - Log unresolved items: `hive memory question "<open item>"`
 5. **Report to human.** Clear summary of what happened. Don't make
    them dig through files to know if the work is done.
 

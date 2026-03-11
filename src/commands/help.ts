@@ -26,6 +26,9 @@ Usage:
   hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]
   hive inbox [agent]
   hive log <message>
+  hive memory                         # Show project memory
+  hive memory fact|convention|decision|question <text>
+                                      # Append to project memory
   hive msg [--type <type>] <from> <to> <body>
   hive msg show <message>
   hive msg resolve <message> <actor> <answer>
