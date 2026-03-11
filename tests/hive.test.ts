@@ -111,7 +111,7 @@ describe("HIVE CLI", () => {
     expect(log).toContain("Session kickoff");
   });
 
-  test("ask includes the user question and digests the live board format", async () => {
+  test("ask with no question returns fast status digest of the live board", async () => {
     await initHive();
     await addProject();
 
@@ -124,10 +124,8 @@ describe("HIVE CLI", () => {
       liveBoard,
     );
 
-    const output = await runCli(["ask", "What", "needs", "attention?"]);
+    const output = await runCli(["ask"]);
 
-    expect(output).toContain("Question");
-    expect(output).toContain("What needs attention?");
     expect(output).toContain("4 tasks: 1 active, 2 done, 1 waiting/queued");
     expect(output).toContain("orchestrator: active");
     expect(output).toContain("gamma: idle");
