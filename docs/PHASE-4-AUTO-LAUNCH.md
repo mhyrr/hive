@@ -68,7 +68,7 @@ from: orchestrator
 to: alpha
 type: assign
 status: open
-project: dealsplit
+project: myapp
 task: HIVE-005
 launch: auto
 scope: src/commands,tests,README.md
@@ -153,7 +153,7 @@ Example:
 ```md
 ---
 run: 20260310-141105Z-alpha
-project: dealsplit
+project: myapp
 agent: alpha
 status: active
 pid: 81234
@@ -163,7 +163,7 @@ task: HIVE-005
 source-message: 20260310-141105Z-orchestrator-to-alpha-HIVE-005.md
 scope: src/commands,tests
 started: 2026-03-10T14:11:05Z
-prompt: /Users/greg/.hive/projects/dealsplit/runs/2026/03/20260310-141105Z-alpha/prompt.md
+prompt: /Users/you/.hive/projects/myapp/runs/2026/03/20260310-141105Z-alpha/prompt.md
 ---
 ```
 
@@ -176,7 +176,7 @@ Example:
 ```md
 ---
 run: 20260310-141105Z-alpha
-project: dealsplit
+project: myapp
 agent: alpha
 status: exited
 runtime: codex

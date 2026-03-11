@@ -34,14 +34,14 @@ describe("session management", () => {
   test("create a session produces correct directory structure with meta.md, history.md, prompt.md", async () => {
     const session = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: "claude-sonnet-4",
       systemPrompt: "You are the hive mind.",
     });
 
     expect(session.sessionId).toBe("20260311-141105Z");
-    expect(session.project).toBe("dealsplit");
+    expect(session.project).toBe("myproject");
     expect(session.runtime).toBe("claude");
     expect(session.model).toBe("claude-sonnet-4");
     expect(session.turns).toBe(0);
@@ -55,7 +55,7 @@ describe("session management", () => {
     const metaContent = await Bun.file(join(sessionDir, "meta.md")).text();
     const { attributes } = parseFrontmatter(metaContent);
     expect(attributes.session).toBe("20260311-141105Z");
-    expect(attributes.project).toBe("dealsplit");
+    expect(attributes.project).toBe("myproject");
     expect(attributes.runtime).toBe("claude");
     expect(attributes.model).toBe("claude-sonnet-4");
     expect(attributes.turns).toBe("0");
@@ -74,7 +74,7 @@ describe("session management", () => {
   test("append turns updates history.md format and meta.md turns count", async () => {
     const session = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "HIVE console session",
@@ -114,7 +114,7 @@ describe("session management", () => {
   test("parse history roundtrip: write turns then read them back", async () => {
     const session = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "HIVE console session",
@@ -164,7 +164,7 @@ describe("session management", () => {
   test("active session pointer: create session and verify active.md points to it", async () => {
     const session = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "HIVE console session",
@@ -173,20 +173,20 @@ describe("session management", () => {
     const activeContent = await Bun.file(join(sessionsDir, "active.md")).text();
     const { attributes } = parseFrontmatter(activeContent);
     expect(attributes.session).toBe(session.sessionId);
-    expect(attributes.project).toBe("dealsplit");
+    expect(attributes.project).toBe("myproject");
     expect(attributes.runtime).toBe("claude");
 
     const active = await getActiveSession(sessionsDir);
     expect(active).not.toBeNull();
     expect(active!.sessionId).toBe(session.sessionId);
-    expect(active!.project).toBe("dealsplit");
+    expect(active!.project).toBe("myproject");
   });
 
   test("list sessions: create multiple and verify list returns all with correct metadata", async () => {
     process.env.HIVE_FIXED_NOW = "2026-03-11T14:11:05Z";
     await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: "claude-sonnet-4",
       systemPrompt: "First session",
@@ -207,7 +207,7 @@ describe("session management", () => {
     // Sorted by started descending (newest first)
     expect(sessions[0].project).toBe("webapp");
     expect(sessions[0].runtime).toBe("codex");
-    expect(sessions[1].project).toBe("dealsplit");
+    expect(sessions[1].project).toBe("myproject");
     expect(sessions[1].model).toBe("claude-sonnet-4");
   });
 
@@ -215,7 +215,7 @@ describe("session management", () => {
     process.env.HIVE_FIXED_NOW = "2026-03-11T14:11:05Z";
     const first = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "First",
@@ -239,7 +239,7 @@ describe("session management", () => {
   test("empty session: get history for session with no turns returns empty array", async () => {
     const session = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "HIVE console session",
@@ -253,7 +253,7 @@ describe("session management", () => {
     process.env.HIVE_FIXED_NOW = "2026-03-11T14:11:05Z";
     const session1 = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "test",
@@ -268,7 +268,7 @@ describe("session management", () => {
 
     const session2 = await createSession({
       sessionsDir: otherSessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "test",
@@ -324,7 +324,7 @@ Got it. Sending correction to alpha.
   test("getSessionPrompt returns the stored system prompt", async () => {
     const session = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "You are the hive mind.\n\nManage agents effectively.",
@@ -337,7 +337,7 @@ Got it. Sending correction to alpha.
   test("model null is handled correctly in meta.md", async () => {
     const session = await createSession({
       sessionsDir,
-      project: "dealsplit",
+      project: "myproject",
       runtime: "claude",
       model: null,
       systemPrompt: "test",

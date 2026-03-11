@@ -78,7 +78,7 @@ describe("hive supervise", () => {
   test("detached supervisor start/status/stop persists state on disk", async () => {
     await installFakeCodex();
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
     await Bun.write(
       join(context.hiveHome, "config.md"),
       `# Hive Config
@@ -97,12 +97,12 @@ runtime: codex
       "2",
     ]);
 
-    expect(startOutput).toContain("Started detached supervisor for dealsplit");
+    expect(startOutput).toContain("Started detached supervisor for myproject");
     expect(startOutput).toContain("interval: 1s");
     expect(startOutput).toContain("max-parallel: 2");
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
 
     let state = await readDetachedSupervisorState(projectPaths);
     let attempts = 0;
@@ -148,7 +148,7 @@ runtime: codex
   test("detached supervisor start works outside the repo-root cwd", async () => {
     await installFakeCodex();
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
     await Bun.write(
       join(context.hiveHome, "config.md"),
       `# Hive Config
@@ -168,10 +168,10 @@ runtime: codex
       "1",
     ]);
 
-    expect(startOutput).toContain("Started detached supervisor for dealsplit");
+    expect(startOutput).toContain("Started detached supervisor for myproject");
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
     let state = await readDetachedSupervisorState(projectPaths);
     let attempts = 0;
 
@@ -190,7 +190,7 @@ runtime: codex
   test("auto-launches ready worker assignments and records the consumed run", async () => {
     await installFakeCodex();
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
     await Bun.write(
       join(context.hiveHome, "config.md"),
       `# Hive Config
@@ -200,8 +200,8 @@ runtime: codex
 `,
     );
     await Bun.write(
-      join(context.hiveHome, "projects", "dealsplit", "PLAN.md"),
-      `# Plan: DealSplit
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
 
 ## Goal
 Ship the auth flow.
@@ -221,7 +221,7 @@ from: orchestrator
 to: alpha
 type: assign
 status: open
-project: dealsplit
+project: myproject
 task: HIVE-006
 launch: auto
 scope: src/api,tests
@@ -233,9 +233,9 @@ Build the auth endpoint.
     );
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
     let stewardRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "orchestrator",
       runtime: "codex",
@@ -256,7 +256,7 @@ Build the auth endpoint.
     const allRuns = await listAllRuns(projectPaths);
     const alphaRuns = allRuns.filter((run) => run.agentId === "alpha");
 
-    expect(output).toContain("Project: dealsplit");
+    expect(output).toContain("Project: myproject");
     expect(output).toContain("Worker Launches");
     expect(output).toContain("Completed alpha via codex");
     expect(output).toContain("max-parallel: 2");
@@ -278,7 +278,7 @@ Build the auth endpoint.
   test("recovers stale and cancelled active runs from on-disk state", async () => {
     await installFakeCodex();
     await runCli(["init"]);
-    await runCli(["project", "add", "DealSplit", context.repo]);
+    await runCli(["project", "add", "MyProject", context.repo]);
     await Bun.write(
       join(context.hiveHome, "config.md"),
       `# Hive Config
@@ -288,8 +288,8 @@ runtime: codex
 `,
     );
     await Bun.write(
-      join(context.hiveHome, "projects", "dealsplit", "PLAN.md"),
-      `# Plan: DealSplit
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
 
 ## Goal
 Recover stale runs.
@@ -301,9 +301,9 @@ Task: Keep the board current.
     );
 
     const paths = await ensureHiveScaffold();
-    const projectPaths = getProjectPaths(paths, "dealsplit");
+    const projectPaths = getProjectPaths(paths, "myproject");
     let stewardRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "orchestrator",
       runtime: "codex",
@@ -321,7 +321,7 @@ Task: Keep the board current.
     });
 
     let alphaRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "alpha",
       runtime: "codex",
@@ -334,7 +334,7 @@ Task: Keep the board current.
     alphaRun = await markRunActive(projectPaths, alphaRun, 999999);
 
     let betaRun = await createRunDraft({
-      projectId: "dealsplit",
+      projectId: "myproject",
       projectPaths,
       agentId: "beta",
       runtime: "codex",

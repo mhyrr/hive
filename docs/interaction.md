@@ -52,7 +52,7 @@ Not every file write — just the events a human would care about.
 ```markdown
 # HIVE Feed
 
-[14:00] 🚀 Session started: DealSplit auth feature
+[14:00] 🚀 Session started: MyApp auth feature
         3 tasks, 2 agents active
 
 [14:15] 💡 alpha: Chose Joken over Guardian for JWT
@@ -126,7 +126,7 @@ interface.
 ```bash
 $ hive console
 
-HIVE [dealsplit] ▸ Session active. 2/3 tasks complete.
+HIVE [myapp] ▸ Session active. 2/3 tasks complete.
 
 you: how's auth going?
 HIVE: Alpha finished the endpoint at 14:52 with Joken for JWT.
@@ -142,16 +142,16 @@ you: let beta finish, then alpha fixes
 HIVE: Noted. I'll assign the fix to alpha after beta completes.
       Updated PLAN with the new requirement.
 
-you: actually, for matreas, I want to use a data-modeler persona
+you: actually, for sideproject, I want to use a data-modeler persona
 HIVE: I don't have a data-modeler persona yet. Want me to create
       one? I'd base it on someone who thinks in schemas,
       relationships, and query patterns before writing code.
 
 you: yes, do that
-HIVE: Created ~/.hive/personas/data-modeler.md. Updated Matreas
+HIVE: Created ~/.hive/personas/data-modeler.md. Updated SideProject
       default team to include data-modeler. Want to review it?
 
-you: looks good. back to dealsplit — show me what beta built
+you: looks good. back to myapp — show me what beta built
 HIVE: Beta has created:
       - src/web/components/LoginForm.tsx (new)
       - src/web/hooks/useAuth.ts (new)

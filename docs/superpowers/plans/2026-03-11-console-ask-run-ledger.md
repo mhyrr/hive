@@ -40,13 +40,13 @@ Add to `tests/runs.test.ts` inside the `"run state"` describe block:
 ```typescript
 test("console session creates a tracked run record and cleans up on finalize", async () => {
   await runCli(["init"]);
-  await runCli(["project", "add", "DealSplit", context.repo]);
+  await runCli(["project", "add", "MyApp", context.repo]);
 
   const paths = await ensureHiveScaffold();
-  const projectPaths = getProjectPaths(paths, "dealsplit");
+  const projectPaths = getProjectPaths(paths, "myapp");
 
   let run = await createRunDraft({
-    projectId: "dealsplit",
+    projectId: "myapp",
     projectPaths,
     agentId: "console",
     runtime: "claude",
@@ -89,13 +89,13 @@ Add to `tests/runs.test.ts`:
 ```typescript
 test("hive ps shows console sessions alongside agent runs", async () => {
   await runCli(["init"]);
-  await runCli(["project", "add", "DealSplit", context.repo]);
+  await runCli(["project", "add", "MyApp", context.repo]);
 
   const paths = await ensureHiveScaffold();
-  const projectPaths = getProjectPaths(paths, "dealsplit");
+  const projectPaths = getProjectPaths(paths, "myapp");
 
   const consoleRun = await createRunDraft({
-    projectId: "dealsplit",
+    projectId: "myapp",
     projectPaths,
     agentId: "console",
     runtime: "claude",
@@ -106,7 +106,7 @@ test("hive ps shows console sessions alongside agent runs", async () => {
   await markRunActive(projectPaths, consoleRun, 88888);
 
   const agentRun = await createRunDraft({
-    projectId: "dealsplit",
+    projectId: "myapp",
     projectPaths,
     agentId: "alpha",
     runtime: "codex",
@@ -287,7 +287,7 @@ test("console session does not block worker launches via scope conflict", () => 
           to: "alpha",
           type: "assign",
           status: "open",
-          project: "dealsplit",
+          project: "myapp",
           task: "HIVE-011",
         },
         body: "Build the API.",
@@ -297,7 +297,7 @@ test("console session does not block worker launches via scope conflict", () => 
     activeRuns: [
       {
         runId: "20260310-140000Z-console",
-        projectId: "dealsplit",
+        projectId: "myapp",
         agentId: "console",
         status: "active",
         runtime: "claude",
@@ -348,7 +348,7 @@ test("console session does not count toward parallel worker limit", () => {
           to: "alpha",
           type: "assign",
           status: "open",
-          project: "dealsplit",
+          project: "myapp",
           task: "HIVE-012",
         },
         body: "Build the API.",
@@ -358,7 +358,7 @@ test("console session does not count toward parallel worker limit", () => {
     activeRuns: [
       {
         runId: "20260310-140000Z-console",
-        projectId: "dealsplit",
+        projectId: "myapp",
         agentId: "console",
         status: "active",
         runtime: "claude",
@@ -469,13 +469,13 @@ Add to `tests/runs.test.ts`:
 ```typescript
 test("hive stop returns advisory message for console sessions", async () => {
   await runCli(["init"]);
-  await runCli(["project", "add", "DealSplit", context.repo]);
+  await runCli(["project", "add", "MyApp", context.repo]);
 
   const paths = await ensureHiveScaffold();
-  const projectPaths = getProjectPaths(paths, "dealsplit");
+  const projectPaths = getProjectPaths(paths, "myapp");
 
   let run = await createRunDraft({
-    projectId: "dealsplit",
+    projectId: "myapp",
     projectPaths,
     agentId: "console",
     runtime: "claude",

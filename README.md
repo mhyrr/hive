@@ -77,12 +77,12 @@ OpenClaw's coordination intelligence scales with engineering effort.
 ### 4. Multi-Project Memory
 
 OpenClaw is one workspace, one agent, one memory system. It doesn't have the
-concept of "I worked on DealSplit this morning and I'm switching to Matreas
+concept of "I worked on MyApp this morning and I'm switching to SideProject
 this afternoon."
 
 HIVE tracks multiple projects with per-project memory, team configurations,
 and context switching. Crucially, it accumulates cross-project learnings:
-"this Ecto pattern worked in DealSplit, apply it to Matreas." "Greg always
+"this Ecto pattern worked in MyApp, apply it to SideProject." "The user always
 prefers Joken over Guardian — don't ask again." The hive gets smarter across
 its entire surface area, not just within one workspace.
 
@@ -171,15 +171,15 @@ This is where your hive stops being a template and starts becoming yours.
 ### 4. Register a project
 
 ```bash
-hive project add dealsplit /absolute/path/to/dealsplit
+hive project add myapp /absolute/path/to/myapp
 ```
 
-This creates the project workspace under `~/.hive/projects/dealsplit/`
+This creates the project workspace under `~/.hive/projects/myapp/`
 with its own config, plan, board, log, and memory files.
 
 ### 5. Write the mission
 
-Edit the files in `~/.hive/projects/dealsplit/`:
+Edit the files in `~/.hive/projects/myapp/`:
 
 - `config.md` — team composition, runtime defaults
 - `PLAN.md` — what you're building and how
@@ -273,7 +273,7 @@ to: alpha
 type: question
 status: open
 ts: 2026-03-09T15:08:00Z
-project: dealsplit
+project: myapp
 ---
 
 Need the auth contract for the login form.
@@ -324,9 +324,16 @@ Message types: `question`, `notify`, `handoff`, `status`, `assign`,
 
 | Command | Description |
 |---------|-------------|
+| `hive gateway [--open]` | Start the web UI at localhost:4200 |
+| `hive gateway status` | Check if Gateway is running |
+| `hive gateway stop` | Stop the Gateway |
+| `hive console` | Interactive terminal session with the hive |
 | `hive chat <message>` | One-shot conversation with the hive |
+| `hive say <message>` | Send a message + auto-start supervision |
+| `hive ask [question]` | Status digest or LLM-powered answer |
 | `hive feed [count]` | Show recent high-signal events |
 | `hive watch [count]` | Live operator console |
+| `hive runtimes` | List installed runtime adapters |
 
 ## Design Constraints
 
@@ -353,19 +360,23 @@ Environment variables:
 
 ## Documentation
 
+- [USAGE.md](./docs/USAGE.md) — practical guide to using HIVE day-to-day
 - [FINAL-PRD.md](./docs/FINAL-PRD.md) — full product requirements
-- [PHASE-4-AUTO-LAUNCH.md](./docs/PHASE-4-AUTO-LAUNCH.md) — supervisor and auto-launch design
+- [PHASE-5-GATEWAY.md](./docs/PHASE-5-GATEWAY.md) — Gateway and multi-runtime design
 - [CLAUDE.md](./docs/CLAUDE.md) — implementation constraints and scope
 - [SOUL.md](./templates/SOUL.md) — default hive culture template
 
 ## Current Status
 
-Phase 1 through Phase 4 are implemented: file model, CLI primitives,
-orchestration prompts, event feed, one-shot chat, agent launch, run records,
-supervisor with auto-launch, and detached background supervision.
+Phases 1 through 5 are implemented:
+
+- **Phase 1-2:** File model, CLI primitives, orchestration prompts
+- **Phase 3:** Event feed, one-shot chat, agent launch
+- **Phase 4:** Run records, supervisor with auto-launch, detached background supervision
+- **Phase 5:** Multi-runtime adapters (claude/codex/gemini), Gateway web UI at localhost:4200,
+  WebSocket feed streaming, persistent console sessions
 
 Not yet implemented:
 
-- `hive curate` — memory curation
-- Runtime adapters beyond `codex` and `claude`
-- Full long-running supervision ergonomics
+- Memory intelligence and curation automation
+- External transport adapters (Slack, Discord, notifications)
