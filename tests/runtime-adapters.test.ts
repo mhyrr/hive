@@ -133,6 +133,34 @@ describe("claude adapter", () => {
     expect(adapter.suppressLine("anything")).toBe(false);
     expect(adapter.suppressLine("mcp startup: no servers")).toBe(false);
   });
+
+  test("parses structured usage metadata from json output", () => {
+    const parsed = adapter.parseOutput?.(
+      JSON.stringify({
+        result: "Completed successfully.",
+        duration_ms: 14600,
+        num_turns: 2,
+        cost_usd: 0.0775,
+        usage: {
+          input_tokens: 1200,
+          output_tokens: 220,
+          cache_creation_input_tokens: 300,
+          cache_read_input_tokens: 80,
+        },
+      }),
+    );
+
+    expect(parsed?.text).toBe("Completed successfully.");
+    expect(parsed?.metadata?.authMode).toBe("subscription");
+    expect(parsed?.metadata?.durationMs).toBe(14600);
+    expect(parsed?.metadata?.numTurns).toBe(2);
+    expect(parsed?.metadata?.costUsd).toBe(0.0775);
+    expect(parsed?.metadata?.inputTokens).toBe(1200);
+    expect(parsed?.metadata?.outputTokens).toBe(220);
+    expect(parsed?.metadata?.cacheCreationInputTokens).toBe(300);
+    expect(parsed?.metadata?.cacheReadInputTokens).toBe(80);
+    expect(parsed?.metadata?.totalTokens).toBe(1800);
+  });
 });
 
 // --- Codex adapter arg building ---

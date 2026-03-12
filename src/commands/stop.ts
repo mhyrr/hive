@@ -6,7 +6,7 @@ import {
   getActiveProject,
   getProjectPaths,
 } from "../lib/paths";
-import { listActiveRuns, markRunStopRequested } from "../lib/runs";
+import { listActiveRuns, markRunStopRequested, reconcileActiveConsoleRun } from "../lib/runs";
 
 function findTargetRun(
   target: string,
@@ -47,6 +47,7 @@ export async function stopCommand(args: string[]): Promise<string> {
   }
 
   const projectPaths = getProjectPaths(paths, activeProject);
+  await reconcileActiveConsoleRun(projectPaths);
   const activeRuns = await listActiveRuns(projectPaths);
   const run = findTargetRun(target, activeRuns);
 

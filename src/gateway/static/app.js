@@ -19,6 +19,8 @@ var state = {
   processLogsRefreshTimer: null,
   feedEntries: [],
   consoleHistory: [],
+  consoleStream: null,
+  consoleDetailPayloads: [],
   sessionId: null,
   sending: false,
 };
@@ -190,7 +192,24 @@ function handleWsEvent(event) {
         }
         scheduleProcessLogsRefresh();
         removeThinkingIndicator();
-        addConsoleTurn(event.data.role || 'assistant', event.data.content);
+        addConsoleTurn(
+          event.data.role || 'assistant',
+          event.data.content,
+          event.data.ts || event.ts,
+          event.data.source || null,
+          event.data.details || null
+        );
+      }
+      break;
+    case 'session-stream':
+      if (event.data) {
+        if (event.data.sessionId && state.sessionId && event.data.sessionId !== state.sessionId) {
+          break;
+        }
+        if (event.project) {
+          updateSessionProject(event.project);
+        }
+        updateThinkingIndicator(event.data.content || '');
       }
       break;
   }
@@ -201,7 +220,7 @@ function handleWsEvent(event) {
 
 function classifyFeedStatus(entry) {
   if (!entry) return '';
-  var text = ((entry.data && entry.data.raw) || entry.type || '').toLowerCase();
+  var text = ((entry.data && (entry.data.headline || entry.data.raw)) || entry.type || '').toLowerCase();
   if (text.indexOf('error') !== -1 || text.indexOf('fail') !== -1 || text.indexOf('crash') !== -1) {
     return 'error';
   }
@@ -230,8 +249,15 @@ function renderFeedEntry(entry) {
   html += '</div>';
 
   if (details) {
-    var detailText = Array.isArray(details) ? details.join(', ') : String(details);
-    html += '<div class="feed-entry-details">' + escapeHtml(detailText) + '</div>';
+    if (Array.isArray(details)) {
+      html += '<div class="feed-entry-details">';
+      for (var i = 0; i < details.length; i++) {
+        html += '<div>' + escapeHtml(String(details[i])) + '</div>';
+      }
+      html += '</div>';
+    } else {
+      html += '<div class="feed-entry-details">' + escapeHtml(String(details)) + '</div>';
+    }
   }
 
   div.innerHTML = html;
@@ -278,73 +304,440 @@ function renderFeedEntries(entries) {
 
 // --- DOM: Console Panel ---
 
-function addConsoleTurn(role, content, timestamp) {
+function getTurnPresentation(role, source) {
+  if (role === 'error') {
+    return { cssRole: 'error', label: 'error' };
+  }
+
+  if (role === 'assistant' && source === 'system') {
+    return { cssRole: 'system', label: 'status' };
+  }
+
+  return { cssRole: role, label: role };
+}
+
+function formatInteger(value) {
+  if (value === null || value === undefined || value === '') return '';
+  var number = Number(value);
+  if (!isFinite(number)) return '';
+  return number.toLocaleString('en-US');
+}
+
+function buildTokenSummary(details) {
+  if (!details) return '';
+
+  var parts = [];
+  if (details.inputTokens !== null && details.inputTokens !== undefined) {
+    parts.push('in ' + formatInteger(details.inputTokens));
+  }
+  if (details.outputTokens !== null && details.outputTokens !== undefined) {
+    parts.push('out ' + formatInteger(details.outputTokens));
+  }
+  if (details.cacheCreationInputTokens !== null && details.cacheCreationInputTokens !== undefined) {
+    parts.push('cache write ' + formatInteger(details.cacheCreationInputTokens));
+  }
+  if (details.cacheReadInputTokens !== null && details.cacheReadInputTokens !== undefined) {
+    parts.push('cache read ' + formatInteger(details.cacheReadInputTokens));
+  }
+  if (details.totalTokens !== null && details.totalTokens !== undefined) {
+    parts.push('total ' + formatInteger(details.totalTokens));
+  }
+  return parts.join(' · ');
+}
+
+function normalizeStatusNote(note) {
+  return (note || '').replace(/\r\n/g, '\n').trim();
+}
+
+function pushUniqueNote(notes, note) {
+  var normalized = normalizeStatusNote(note);
+  if (!normalized) return;
+  if (notes.indexOf(normalized) === -1) {
+    notes.push(normalized);
+  }
+}
+
+function mergeTurnDetails(baseDetails, systemTurns) {
+  var details = baseDetails ? Object.assign({}, baseDetails) : {};
+  var statusNotes = [];
+  var baseNotes = details.statusNotes || [];
+
+  for (var i = 0; i < baseNotes.length; i++) {
+    pushUniqueNote(statusNotes, baseNotes[i]);
+  }
+
+  for (var j = 0; j < systemTurns.length; j++) {
+    var systemTurn = systemTurns[j];
+    pushUniqueNote(statusNotes, systemTurn.content);
+
+    if (systemTurn.details && systemTurn.details.statusNotes) {
+      for (var k = 0; k < systemTurn.details.statusNotes.length; k++) {
+        pushUniqueNote(statusNotes, systemTurn.details.statusNotes[k]);
+      }
+    }
+  }
+
+  if (statusNotes.length > 0) {
+    details.statusNotes = statusNotes;
+  } else if ('statusNotes' in details) {
+    delete details.statusNotes;
+  }
+
+  return details;
+}
+
+function hasTurnDetails(details) {
+  if (!details) return false;
+
+  return Boolean(
+    details.project ||
+    details.runId ||
+    details.runtime ||
+    details.model ||
+    details.authMode ||
+    details.durationMs !== null && details.durationMs !== undefined ||
+    details.numTurns !== null && details.numTurns !== undefined ||
+    details.costUsd !== null && details.costUsd !== undefined ||
+    details.inputTokens !== null && details.inputTokens !== undefined ||
+    details.outputTokens !== null && details.outputTokens !== undefined ||
+    details.totalTokens !== null && details.totalTokens !== undefined ||
+    details.board ||
+    details.messages ||
+    details.runs ||
+    details.statusNotes && details.statusNotes.length > 0
+  );
+}
+
+function summarizeSystemTurn(content) {
+  var trimmed = (content || '').trim();
+  if (!trimmed) return 'Status update';
+  return trimmed.split('\n')[0];
+}
+
+function buildStatusDisplayItem(systemTurns) {
+  var latestTurn = systemTurns[systemTurns.length - 1];
+  return {
+    itemType: 'status',
+    role: 'assistant',
+    source: 'system',
+    ts: latestTurn.ts,
+    content: summarizeSystemTurn(latestTurn.content),
+    fullText: systemTurns.map(function (turn) {
+      return normalizeStatusNote(turn.content);
+    }).filter(Boolean).join('\n\n'),
+    details: mergeTurnDetails(latestTurn.details || null, systemTurns),
+  };
+}
+
+function buildConsoleDisplayItems(turns) {
+  var items = [];
+  var pendingSystemTurns = [];
+
+  for (var i = 0; i < turns.length; i++) {
+    var turn = turns[i];
+
+    if (turn.role === 'assistant' && turn.source === 'system') {
+      pendingSystemTurns.push(turn);
+      continue;
+    }
+
+    if (turn.role === 'human' && pendingSystemTurns.length > 0) {
+      items.push(buildStatusDisplayItem(pendingSystemTurns));
+      pendingSystemTurns = [];
+    }
+
+    items.push({
+      itemType: 'turn',
+      role: turn.role,
+      source: turn.source || null,
+      ts: turn.ts,
+      content: turn.content || '',
+      details: mergeTurnDetails(turn.details || null, pendingSystemTurns),
+    });
+    pendingSystemTurns = [];
+  }
+
+  if (pendingSystemTurns.length > 0) {
+    items.push(buildStatusDisplayItem(pendingSystemTurns));
+  }
+
+  return items;
+}
+
+function renderDetailSection(title, rows) {
+  if (!rows || rows.length === 0) return '';
+
+  var html = '<section class="turn-detail-section">';
+  html += '<div class="turn-detail-section-title">' + escapeHtml(title) + '</div>';
+  html += '<div class="turn-detail-section-body">';
+  for (var i = 0; i < rows.length; i++) {
+    html += '<div class="turn-detail-row">' + escapeHtml(rows[i]) + '</div>';
+  }
+  html += '</div></section>';
+  return html;
+}
+
+function buildDetailPayload(item) {
+  return {
+    title: item.itemType === 'status' ? 'Status Detail' : 'Reply Detail',
+    content: item.content || '',
+    fullText: item.fullText || null,
+    details: item.details || null,
+  };
+}
+
+function registerDetailPayload(item) {
+  if (!hasTurnDetails(item.details) && !item.fullText) return null;
+  var index = state.consoleDetailPayloads.length;
+  state.consoleDetailPayloads.push(buildDetailPayload(item));
+  return index;
+}
+
+function renderDetailChip(item) {
+  var index = registerDetailPayload(item);
+  if (index === null) return '';
+
+  return '<button class="turn-detail-chip" type="button" data-detail-index="' + index + '">' +
+    '<span class="turn-detail-chip-label">detail</span>' +
+    '</button>';
+}
+
+function renderConsoleItem(item) {
+  var presentation = getTurnPresentation(item.role, item.source);
+  var classes = ['turn', 'turn-' + presentation.cssRole];
+  if (item.itemType === 'status') {
+    classes.push('turn-collapsed-status');
+  }
+  if (item.itemType === 'draft') {
+    classes.push('turn-draft');
+  }
+
+  var html = '<div class="' + classes.join(' ') + '">';
+  html += '<div class="turn-header">';
+  html += '<div class="turn-role">' + escapeHtml(presentation.label) + '</div>';
+  html += '<div class="turn-header-right">';
+  html += renderDetailChip(item);
+  html += '<span class="turn-time">' + escapeHtml(formatTime(item.ts || nowISO())) + '</span>';
+  html += '</div></div>';
+
+  if (item.itemType === 'draft' && !item.content) {
+    html += '<div class="turn-content"><span class="thinking-dots">';
+    html += '<span></span><span></span><span></span>';
+    html += '</span></div>';
+  } else {
+    html += '<div class="turn-content">' + escapeHtml(item.content || '') + '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function renderConsoleHistory() {
   var container = document.getElementById('console-history');
   if (!container) return;
 
-  // Remove welcome message on first turn
-  var welcome = container.querySelector('.console-welcome');
-  if (welcome) welcome.remove();
+  var items = buildConsoleDisplayItems(state.consoleHistory);
+  state.consoleDetailPayloads = [];
 
-  // Remove loading state
-  var loading = container.querySelector('.console-loading');
-  if (loading) loading.remove();
+  if (state.consoleStream) {
+    items.push({
+      itemType: 'draft',
+      role: 'assistant',
+      source: 'system',
+      ts: state.consoleStream.ts || nowISO(),
+      content: state.consoleStream.content || '',
+      details: null,
+    });
+  }
 
-  var ts = timestamp || nowISO();
-
-  var div = document.createElement('div');
-  div.className = 'turn turn-' + role;
+  if (items.length === 0) {
+    container.innerHTML = '<div class="console-welcome">' +
+      '<p>Speak to the swarm.</p>' +
+      '<p class="console-welcome-hint">Console steers. Feed watches.</p>' +
+      '</div>';
+    return;
+  }
 
   var html = '';
-  html += '<span class="turn-time">' + escapeHtml(formatTime(ts)) + '</span>';
-  html += '<div class="turn-role">' + escapeHtml(role) + '</div>';
-  html += '<div class="turn-content">' + escapeHtml(content) + '</div>';
+  for (var i = 0; i < items.length; i++) {
+    html += renderConsoleItem(items[i]);
+  }
 
-  div.innerHTML = html;
-  container.appendChild(div);
-
-  // Scroll to bottom
+  container.innerHTML = html;
   container.scrollTop = container.scrollHeight;
+}
 
-  state.consoleHistory.push({ role: role, content: content, ts: ts });
+function setConsoleHistory(turns) {
+  state.consoleHistory = Array.isArray(turns) ? turns.slice() : [];
+  state.consoleStream = null;
+  renderConsoleHistory();
+}
+
+function addConsoleTurn(role, content, timestamp, source, details) {
+  state.consoleHistory.push({
+    role: role,
+    source: source || null,
+    content: content || '',
+    ts: timestamp || nowISO(),
+    details: details || null,
+  });
+  renderConsoleHistory();
 }
 
 function showThinkingIndicator() {
-  var container = document.getElementById('console-history');
-  if (!container) return;
+  state.consoleStream = {
+    ts: nowISO(),
+    content: '',
+  };
+  renderConsoleHistory();
+}
 
-  var div = document.createElement('div');
-  div.className = 'turn turn-thinking';
-  div.id = 'thinking-indicator';
-
-  var html = '';
-  html += '<div class="turn-role">thinking</div>';
-  html += '<div class="turn-content"><span class="thinking-dots">';
-  html += '<span></span><span></span><span></span>';
-  html += '</span></div>';
-
-  div.innerHTML = html;
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
+function updateThinkingIndicator(content) {
+  state.consoleStream = {
+    ts: (state.consoleStream && state.consoleStream.ts) || nowISO(),
+    content: content || '',
+  };
+  renderConsoleHistory();
 }
 
 function removeThinkingIndicator() {
-  var indicator = document.getElementById('thinking-indicator');
-  if (indicator) indicator.remove();
+  if (!state.consoleStream) return;
+  state.consoleStream = null;
+  renderConsoleHistory();
 }
 
 function clearConsoleHistory() {
-  var container = document.getElementById('console-history');
-  if (!container) return;
-
-  container.innerHTML = '';
   state.consoleHistory = [];
+  state.consoleStream = null;
+  renderConsoleHistory();
+}
 
-  var welcome = document.createElement('div');
-  welcome.className = 'console-welcome';
-  welcome.innerHTML = '<p>Speak to the swarm.</p>' +
-    '<p class="console-welcome-hint">Console steers. Feed watches.</p>';
-  container.appendChild(welcome);
+function openConsoleDetailModal(index) {
+  var payload = state.consoleDetailPayloads[index];
+  var modal = document.getElementById('turn-detail-modal');
+  var title = document.getElementById('turn-detail-title');
+  var body = document.getElementById('turn-detail-body');
+
+  if (!payload || !modal || !title || !body) return;
+
+  var details = payload.details || {};
+  var usageRows = [];
+  var contextRows = [];
+  var statusRows = [];
+  var tokenSummary = buildTokenSummary(details);
+
+  if (details.runtime) usageRows.push('runtime: ' + details.runtime);
+  if (details.model) usageRows.push('model: ' + details.model);
+  if (details.authMode) usageRows.push('auth: ' + details.authMode);
+  if (details.durationMs !== null && details.durationMs !== undefined) {
+    usageRows.push('duration: ' + (Number(details.durationMs) / 1000).toFixed(1) + 's');
+  }
+  if (details.numTurns !== null && details.numTurns !== undefined) {
+    usageRows.push('turns: ' + formatInteger(details.numTurns));
+  }
+  if (tokenSummary) usageRows.push('tokens: ' + tokenSummary);
+  if (details.costUsd !== null && details.costUsd !== undefined) {
+    usageRows.push('cost equivalent: $' + Number(details.costUsd).toFixed(4));
+  }
+
+  if (details.project) contextRows.push('project: ' + details.project);
+  if (details.runId) contextRows.push('run: ' + details.runId);
+  if (details.board) {
+    contextRows.push(
+      'board: ' +
+      formatInteger(details.board.taskCount) + ' total · ' +
+      formatInteger(details.board.activeCount) + ' active · ' +
+      formatInteger(details.board.waitingCount) + ' waiting · ' +
+      formatInteger(details.board.doneCount) + ' done'
+    );
+    if (details.board.blockers && details.board.blockers.length > 0) {
+      contextRows.push('blockers: ' + details.board.blockers.join(' | '));
+    }
+  }
+  if (details.messages) {
+    contextRows.push(
+      'messages: ' +
+      formatInteger(details.messages.openCount) + ' open · ' +
+      formatInteger(details.messages.pendingHumanMessages) + ' waiting on human · ' +
+      formatInteger(details.messages.pendingHumanReplies) + ' human replies pending'
+    );
+  }
+  if (details.runs) {
+    contextRows.push('active runs: ' + formatInteger(details.runs.activeCount));
+  }
+
+  if (payload.fullText) {
+    statusRows.push(payload.fullText);
+  }
+  if (details.statusNotes) {
+    for (var i = 0; i < details.statusNotes.length; i++) {
+      pushUniqueNote(statusRows, details.statusNotes[i]);
+    }
+  }
+
+  title.textContent = payload.title;
+
+  var html = '';
+  if (payload.content) {
+    html += '<section class="turn-detail-section">';
+    html += '<div class="turn-detail-section-title">Visible Message</div>';
+    html += '<pre class="turn-detail-pre">' + escapeHtml(payload.content) + '</pre>';
+    html += '</section>';
+  }
+  html += renderDetailSection('Usage', usageRows);
+  html += renderDetailSection('Context', contextRows);
+  if (statusRows.length > 0) {
+    html += '<section class="turn-detail-section">';
+    html += '<div class="turn-detail-section-title">Hidden Ops</div>';
+    html += '<div class="turn-detail-section-body">';
+    for (var j = 0; j < statusRows.length; j++) {
+      html += '<pre class="turn-detail-pre">' + escapeHtml(statusRows[j]) + '</pre>';
+    }
+    html += '</div></section>';
+  }
+
+  body.innerHTML = html || '<div class="turn-detail-empty">No extra detail recorded for this turn.</div>';
+  modal.hidden = false;
+  document.body.classList.add('modal-open');
+}
+
+function closeConsoleDetailModal() {
+  var modal = document.getElementById('turn-detail-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
+function setupConsoleDetailModal() {
+  var container = document.getElementById('console-history');
+  var modal = document.getElementById('turn-detail-modal');
+  var backdrop = document.getElementById('turn-detail-backdrop');
+  var closeBtn = document.getElementById('turn-detail-close');
+
+  if (container) {
+    container.addEventListener('click', function (event) {
+      var button = event.target && event.target.closest
+        ? event.target.closest('[data-detail-index]')
+        : null;
+      if (!button) return;
+      var index = Number(button.getAttribute('data-detail-index'));
+      if (!isNaN(index)) {
+        openConsoleDetailModal(index);
+      }
+    });
+  }
+
+  if (backdrop) {
+    backdrop.addEventListener('click', closeConsoleDetailModal);
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeConsoleDetailModal);
+  }
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && modal && !modal.hidden) {
+      closeConsoleDetailModal();
+    }
+  });
 }
 
 
@@ -396,28 +789,12 @@ async function loadSession(sessionId) {
   try {
     var data = await apiGet('/sessions/' + sessionId);
 
-    // Clear and load new history
-    var container = document.getElementById('console-history');
-    if (container) {
-      container.innerHTML = '';
-      state.consoleHistory = [];
-    }
-
     updateSessionIndicator(
       sessionId,
       (data.session && (data.session.currentProject || data.session.project)) || null
     );
 
-    if (data.turns && Array.isArray(data.turns)) {
-      for (var i = 0; i < data.turns.length; i++) {
-        var turn = data.turns[i];
-        addConsoleTurn(turn.role || 'assistant', turn.content || '', turn.ts);
-      }
-    }
-
-    if (state.consoleHistory.length === 0) {
-      clearConsoleHistory();
-    }
+    setConsoleHistory(data.turns || []);
 
     // Close the sessions dropdown
     closeSessionsDropdown();
@@ -894,8 +1271,6 @@ async function sendConsoleMessage() {
   try {
     var data = await apiPost('/console/send', { message: message });
 
-    removeThinkingIndicator();
-
     // Update session ID from response
     if (data.sessionId) {
       updateSessionIndicator(data.sessionId, data.project);
@@ -904,7 +1279,8 @@ async function sendConsoleMessage() {
     // Response may come via WebSocket (console-response event) or
     // directly in the response body
     if (data.result) {
-      addConsoleTurn('assistant', data.result);
+      removeThinkingIndicator();
+      addConsoleTurn('assistant', data.result, null, data.resultSource || 'system', data.resultDetails || null);
     }
   } catch (e) {
     removeThinkingIndicator();
@@ -921,13 +1297,8 @@ async function sendConsoleMessage() {
 async function loadConsoleHistory() {
   var container = document.getElementById('console-history');
 
-  // Show loading state
   if (container) {
-    var welcome = container.querySelector('.console-welcome');
-    if (welcome) {
-      welcome.innerHTML = '<p>Loading session...</p>';
-      welcome.className = 'console-loading';
-    }
+    container.innerHTML = '<div class="console-loading">Loading session...</div>';
   }
 
   try {
@@ -938,38 +1309,14 @@ async function loadConsoleHistory() {
     }
 
     if (data.turns && Array.isArray(data.turns) && data.turns.length > 0) {
-      // Remove loading state
-      if (container) {
-        var loading = container.querySelector('.console-loading');
-        if (loading) loading.remove();
-      }
-
-      for (var i = 0; i < data.turns.length; i++) {
-        var turn = data.turns[i];
-        addConsoleTurn(turn.role || 'assistant', turn.content || '', turn.ts);
-      }
+      setConsoleHistory(data.turns);
     } else {
-      // No history — show welcome
-      if (container) {
-        var loadingEl = container.querySelector('.console-loading');
-        if (loadingEl) {
-          loadingEl.className = 'console-welcome';
-          loadingEl.innerHTML = '<p>Speak to the swarm.</p>' +
-            '<p class="console-welcome-hint">Console steers. Feed watches.</p>';
-        }
-      }
+      clearConsoleHistory();
     }
   } catch (e) {
     // Console history endpoint may not exist yet — that is fine
     console.log('Console history not available:', e.message);
-    if (container) {
-      var loadingFallback = container.querySelector('.console-loading');
-      if (loadingFallback) {
-        loadingFallback.className = 'console-welcome';
-        loadingFallback.innerHTML = '<p>Speak to the swarm.</p>' +
-          '<p class="console-welcome-hint">Console steers. Feed watches.</p>';
-      }
-    }
+    clearConsoleHistory();
   }
 }
 
@@ -1017,7 +1364,7 @@ async function restartSupervisor() {
   try {
     var data = await apiPost('/supervisor/restart', {});
     var msg = (data && data.message) || 'Supervisor restarted';
-    addConsoleTurn('assistant', msg);
+    addConsoleTurn('assistant', msg, null, 'system');
     refreshStatus();
     refreshAgentOverview();
   } catch (e) {
@@ -1078,6 +1425,9 @@ async function init() {
 
   // Set up process logs panel
   setupProcessLogs();
+
+  // Set up console detail modal
+  setupConsoleDetailModal();
 
   // Set up keyboard shortcuts
   setupKeyboardShortcuts();

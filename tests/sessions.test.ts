@@ -96,6 +96,7 @@ describe("session management", () => {
       sessionId: session.sessionId,
       role: "assistant",
       content: "Alpha finished the endpoint at 14:52 with Joken for JWT.",
+      source: "system",
     });
 
     // Verify history.md format
@@ -104,7 +105,7 @@ describe("session management", () => {
     ).text();
     expect(historyContent).toContain("## human (14:11:05)");
     expect(historyContent).toContain("how's auth going?");
-    expect(historyContent).toContain("## assistant (14:11:05)");
+    expect(historyContent).toContain("## assistant [system] (14:11:05)");
     expect(historyContent).toContain("Alpha finished the endpoint at 14:52 with Joken for JWT.");
 
     // Verify meta.md turns count
@@ -136,6 +137,38 @@ describe("session management", () => {
       sessionId: session.sessionId,
       role: "assistant",
       content: "Alpha finished the endpoint at 14:52 with Joken for JWT.",
+      source: "model",
+      details: {
+        project: "myproject",
+        runId: "run-123",
+        runtime: "claude",
+        model: "claude-opus-4-6",
+        authMode: "subscription",
+        durationMs: 14600,
+        numTurns: 2,
+        costUsd: 0.0775,
+        inputTokens: 1200,
+        outputTokens: 220,
+        cacheCreationInputTokens: 300,
+        cacheReadInputTokens: 80,
+        totalTokens: 1800,
+        board: {
+          taskCount: 12,
+          activeCount: 2,
+          doneCount: 6,
+          waitingCount: 4,
+          blockers: ["waiting on auth rollout"],
+        },
+        messages: {
+          openCount: 3,
+          pendingHumanMessages: 1,
+          pendingHumanReplies: 0,
+        },
+        runs: {
+          activeCount: 1,
+        },
+        statusNotes: ["Supervisor active (pid 1234)"],
+      },
     });
 
     await appendTurn({
@@ -150,6 +183,7 @@ describe("session management", () => {
       sessionId: session.sessionId,
       role: "assistant",
       content: "Got it. Sending correction to alpha.",
+      source: "system",
     });
 
     const turns = await getSessionHistory(sessionsDir, session.sessionId);
@@ -157,12 +191,18 @@ describe("session management", () => {
     expect(turns[0].role).toBe("human");
     expect(turns[0].content).toBe("how's auth going?");
     expect(turns[0].ts).toBe("14:11:05");
+    expect(turns[0].source).toBe("human");
     expect(turns[1].role).toBe("assistant");
     expect(turns[1].content).toBe("Alpha finished the endpoint at 14:52 with Joken for JWT.");
+    expect(turns[1].source).toBe("model");
+    expect(turns[1].details?.runId).toBe("run-123");
+    expect(turns[1].details?.totalTokens).toBe(1800);
+    expect(turns[1].details?.statusNotes).toEqual(["Supervisor active (pid 1234)"]);
     expect(turns[2].role).toBe("human");
     expect(turns[2].content).toBe("the token should expire in 1 hour, not 24");
     expect(turns[3].role).toBe("assistant");
     expect(turns[3].content).toBe("Got it. Sending correction to alpha.");
+    expect(turns[3].source).toBe("system");
   });
 
   test("active session pointer: create session and verify active.md points to it", async () => {
@@ -291,14 +331,14 @@ describe("session management", () => {
 ## human (14:11:05)
 how's auth going?
 
-## assistant (14:11:12)
+## assistant [model] (14:11:12)
 Alpha finished the endpoint at 14:52 with Joken for JWT. Beta is
 building the login form now, about 70% done. No blockers.
 
 ## human (14:15:30)
 the token should expire in 1 hour, not 24
 
-## assistant (14:15:38)
+## assistant [system] (14:15:38)
 Got it. Sending correction to alpha.
 `;
 
@@ -309,10 +349,12 @@ Got it. Sending correction to alpha.
     expect(turns[0].content).toBe("how's auth going?");
     expect(turns[1].role).toBe("assistant");
     expect(turns[1].ts).toBe("14:11:12");
+    expect(turns[1].source).toBe("model");
     expect(turns[1].content).toContain("Alpha finished the endpoint");
     expect(turns[1].content).toContain("Beta is\nbuilding the login form");
     expect(turns[2].content).toBe("the token should expire in 1 hour, not 24");
     expect(turns[3].content).toBe("Got it. Sending correction to alpha.");
+    expect(turns[3].source).toBe("system");
   });
 
   test("getSession returns null for nonexistent session", async () => {

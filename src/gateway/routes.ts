@@ -1,9 +1,10 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { GatewayBroadcast, GatewayOptions } from "./server";
 
 import { feedCommand } from "../commands/feed";
+import { parseStructuredFeedEntries } from "../lib/feed";
 import { inboxCommand } from "../commands/inbox";
 import { logCommand } from "../commands/log";
 import { msgCommand, nudgeCommand } from "../commands/msg";
@@ -12,7 +13,16 @@ import { sayCommand, sendGoalToProject } from "../commands/say";
 import { statusCommand } from "../commands/status";
 import { getActiveProject, getProjectPaths, listProjects, type HivePaths } from "../lib/paths";
 import { runtimesCommand } from "../commands/runtimes";
-import { getRunOutputPath, listActiveRuns, readRunOutputTail, type RunRecord } from "../lib/runs";
+import {
+  getRunOutputPath,
+  listActiveRuns,
+  readActiveRun,
+  readRunRecord,
+  readRunOutputTail,
+  reconcileActiveConsoleRun,
+  type RunRecord,
+  type RunResult,
+} from "../lib/runs";
 import {
   reconcileDetachedSupervisorState,
   startDetachedSupervisor,
@@ -27,8 +37,9 @@ import {
   getSession,
   appendTurn,
   switchSessionProject,
+  type SessionTurnDetails,
 } from "../lib/sessions";
-import { refreshProjectRuntimeState } from "../lib/state";
+import { refreshProjectRuntimeState, type ProjectRuntimeState } from "../lib/state";
 import { runDirectStewardTurn } from "../lib/steward";
 import { resolveRuntimeHints } from "../lib/runtime";
 import { normalizeProjectName } from "../lib/project";
@@ -76,24 +87,32 @@ async function appendSessionTurnAndBroadcast(input: {
   project: string;
   role: "human" | "assistant";
   content: string;
+  source?: "human" | "system" | "model" | null;
+  details?: SessionTurnDetails | null;
 }): Promise<void> {
   const sessionsDir = join(input.options.hivePaths.home, "sessions");
+  const eventTs = new Date().toISOString();
 
   await appendTurn({
     sessionsDir,
     sessionId: input.sessionId,
     role: input.role,
     content: input.content,
+    source: input.source ?? (input.role === "human" ? "human" : "system"),
+    details: input.details ?? null,
   });
 
   input.broadcast({
     type: "session-message",
-    ts: new Date().toISOString(),
+    ts: eventTs,
     project: input.project,
     data: {
       sessionId: input.sessionId,
       role: input.role,
       content: input.content,
+      source: input.source ?? (input.role === "human" ? "human" : "system"),
+      details: input.details ?? null,
+      ts: eventTs,
     },
   });
 
@@ -103,10 +122,93 @@ async function appendSessionTurnAndBroadcast(input: {
   });
 }
 
-function buildImmediateConsoleAck(message: string, project: string): string {
-  const firstLine = message.trim().split("\n")[0] ?? "";
+function broadcastSessionStream(input: {
+  broadcast: GatewayBroadcast;
+  sessionId: string;
+  project: string;
+  content: string;
+}): void {
+  const content = input.content.trim();
 
-  return `Heard. I'm on it.\n\nProject focus: ${project}\n\nFirst step: check the live board, active runs, and open messages, then decide whether this needs direct guidance, a board change, or new assignments.\n\nFocus: ${firstLine}`;
+  if (!content) {
+    return;
+  }
+
+  input.broadcast({
+    type: "session-stream",
+    ts: new Date().toISOString(),
+    project: input.project,
+    data: {
+      sessionId: input.sessionId,
+      content,
+    },
+  });
+}
+
+function normalizeStatusNote(note: string): string {
+  return note.replace(/\r\n/g, "\n").trim();
+}
+
+function pushStatusNote(notes: string[], note: string): void {
+  const normalized = normalizeStatusNote(note);
+
+  if (!normalized || notes.includes(normalized)) {
+    return;
+  }
+
+  notes.push(normalized);
+}
+
+function buildSessionTurnDetails(input: {
+  project: string;
+  state: ProjectRuntimeState;
+  runId?: string | null;
+  runtime?: string | null;
+  model?: string | null;
+  authMode?: SessionTurnDetails["authMode"];
+  durationMs?: number | null;
+  numTurns?: number | null;
+  costUsd?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
+  cacheReadInputTokens?: number | null;
+  totalTokens?: number | null;
+  statusNotes?: string[];
+}): SessionTurnDetails {
+  const uniqueNotes = [...new Set((input.statusNotes ?? []).map(normalizeStatusNote).filter(Boolean))];
+
+  return {
+    project: input.project,
+    runId: input.runId ?? null,
+    runtime: input.runtime ?? null,
+    model: input.model ?? null,
+    authMode: input.authMode ?? null,
+    durationMs: input.durationMs ?? null,
+    numTurns: input.numTurns ?? null,
+    costUsd: input.costUsd ?? null,
+    inputTokens: input.inputTokens ?? null,
+    outputTokens: input.outputTokens ?? null,
+    cacheCreationInputTokens: input.cacheCreationInputTokens ?? null,
+    cacheReadInputTokens: input.cacheReadInputTokens ?? null,
+    totalTokens: input.totalTokens ?? null,
+    board: {
+      taskCount: input.state.boardSummary.taskCount,
+      activeCount: input.state.boardSummary.activeCount,
+      doneCount: input.state.boardSummary.doneCount,
+      waitingCount: input.state.boardSummary.waitingCount,
+      blockers: input.state.boardSummary.blockers.slice(0, 8),
+    },
+    messages: {
+      openCount: input.state.openMessagesSummary.count,
+      pendingHumanMessages: input.state.humanInboxSummary.pendingHumanMessages,
+      pendingHumanReplies: input.state.humanInboxSummary.pendingHumanReplies,
+    },
+    runs: {
+      activeCount: input.state.activeRunsSummary.count,
+    },
+    statusNotes: uniqueNotes.length > 0 ? uniqueNotes : null,
+  };
 }
 
 type ScheduledProjectRefresh = {
@@ -232,6 +334,132 @@ async function readTextTail(path: string, limit = 50): Promise<string[]> {
     .slice(-limit);
 }
 
+function formatActivityTime(iso: string | null): string | null {
+  if (!iso) {
+    return null;
+  }
+
+  const date = new Date(iso);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function describeLeadRun(run: RunRecord): string {
+  if (run.agentId === "console") {
+    return "I'm already working on the current conversation";
+  }
+
+  if (run.agentId === "orchestrator") {
+    return "The hive is actively assessing the project and deciding the next moves";
+  }
+
+  return `${run.agentId} is actively working${run.taskId ? ` on ${run.taskId}` : ""}`;
+}
+
+function summarizeRecentResult(input: {
+  agentId: string;
+  status: string;
+  summary: string;
+}): string {
+  const base = input.agentId === "orchestrator"
+    ? "The last completed hive pass"
+    : `The last completed step from ${input.agentId}`;
+
+  if (input.summary.trim()) {
+    return `${base}: ${input.summary.trim()}`;
+  }
+
+  return `${base} finished with status ${input.status}.`;
+}
+
+async function buildCurrentActivitySummary(input: {
+  options: GatewayOptions;
+  project: string;
+  lead?: string;
+}): Promise<{ summary: string; state: ProjectRuntimeState }> {
+  const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
+  const state = await refreshProjectRuntimeState({
+    hivePaths: input.options.hivePaths,
+    projectId: input.project,
+    projectPaths,
+  });
+  const activeRuns = state.activeRuns;
+  const leadRun =
+    activeRuns.find((run) => run.agentId === "console") ??
+    activeRuns.find((run) => run.agentId === "orchestrator") ??
+    activeRuns[0] ??
+    null;
+  const lines: string[] = [];
+
+  if (input.lead?.trim()) {
+    lines.push(input.lead.trim());
+    lines.push("");
+  }
+
+  lines.push("Here's what the hive is doing right now:");
+
+  if (leadRun) {
+    const since = formatActivityTime(leadRun.started);
+    lines.push(
+      `- ${describeLeadRun(leadRun)}${since ? ` since ${since}` : ""}.`,
+    );
+
+    const leadTail = leadRun.agentId === "console"
+      ? []
+      : await readRunOutputTail(leadRun, 6);
+    const latestVisibleLine = leadTail[leadTail.length - 1] ?? null;
+
+    if (latestVisibleLine && leadRun.agentId !== "console") {
+      lines.push(`- Latest visible output: ${latestVisibleLine}`);
+    } else if (leadRun.agentId === "console") {
+      lines.push("- Live reply generation is still in progress.");
+    } else {
+      lines.push("- No visible output from that run yet.");
+    }
+  } else {
+    lines.push("- Nothing is actively running at the moment.");
+  }
+
+  const workerRuns = activeRuns.filter((run) => run.agentId !== "console" && run.agentId !== "orchestrator");
+
+  if (workerRuns.length > 0) {
+    lines.push(
+      `- Active workers: ${workerRuns.map((run) => run.taskId ? `${run.agentId} on ${run.taskId}` : run.agentId).join(", ")}.`,
+    );
+  } else if (activeRuns.some((run) => run.agentId === "orchestrator")) {
+    lines.push("- No worker handoffs have been launched yet.");
+  }
+
+  const waitingOnHuman = state.humanInboxSummary.items.find((item) => item.needsHumanReply);
+
+  if (waitingOnHuman) {
+    lines.push(`- Waiting on you: ${waitingOnHuman.summary}`);
+  }
+
+  const recentResult = state.recentResultsSummary.items[0] ?? null;
+
+  if (recentResult) {
+    lines.push(`- ${summarizeRecentResult(recentResult)}`);
+  }
+
+  if (activeRuns.length === 0 && state.openMessagesSummary.count > 0) {
+    lines.push(`- ${state.openMessagesSummary.count} queued coordination item(s) are still open.`);
+  }
+
+  return {
+    summary: lines.join("\n"),
+    state,
+  };
+}
+
 function joinNaturalList(items: string[]): string {
   if (items.length === 0) {
     return "";
@@ -246,6 +474,10 @@ function joinNaturalList(items: string[]): string {
   }
 
   return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+async function readRunRecordForResult(result: RunResult): Promise<RunRecord | null> {
+  return readRunRecord(join(dirname(result.path), "run.md"));
 }
 
 async function ensureSupervisorRunning(input: {
@@ -386,44 +618,16 @@ async function resolveSessionTurnTarget(input: {
   };
 }
 
-async function readRunOutputUpdate(
-  run: RunRecord,
-  seenLength: number,
-): Promise<{ nextLength: number; content: string | null }> {
-  const file = Bun.file(getRunOutputPath(run));
-
-  if (!(await file.exists())) {
-    return {
-      nextLength: seenLength,
-      content: null,
-    };
-  }
-
-  const raw = (await file.text()).replace(/\r\n/g, "\n");
-
-  if (raw.length <= seenLength) {
-    return {
-      nextLength: raw.length,
-      content: null,
-    };
-  }
-
-  const delta = raw.slice(seenLength).trim();
-
-  return {
-    nextLength: raw.length,
-    content: delta || null,
-  };
-}
-
 async function continueQueuedWorkflow(input: {
   options: GatewayOptions;
   broadcast: GatewayBroadcast;
   sessionId: string;
   project: string;
   message: string;
+  statusNotes?: string[];
 }): Promise<void> {
   const firedAt = new Date().toISOString();
+  const statusNotes = [...(input.statusNotes ?? [])];
 
   try {
     const sayResult = await sendGoalToProject({
@@ -434,14 +638,13 @@ async function continueQueuedWorkflow(input: {
     const supervisorLine =
       sayResult.split("\n").find((line) => /Supervisor/i.test(line)) ??
       "Supervisor state updated.";
-
-    await appendSessionTurnAndBroadcast({
-      options: input.options,
+    pushStatusNote(statusNotes, supervisorLine);
+    pushStatusNote(statusNotes, "Turn routed through queued orchestration.");
+    broadcastSessionStream({
       broadcast: input.broadcast,
       sessionId: input.sessionId,
       project: input.project,
-      role: "assistant",
-      content: `${supervisorLine}\n\nI'm reviewing the current state and I'll keep this session updated as work gets assigned or completed.`,
+      content: "Queued orchestration is assessing the project.",
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -464,10 +667,9 @@ async function continueQueuedWorkflow(input: {
   const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
   const announcedAssignmentFiles = new Set<string>();
   const announcedWorkerRuns = new Set<string>();
-  const outputOffsets = new Map<string, number>();
   let announcedOrchestratorRun = false;
-  let streamedOrchestratorOutput = "";
   const deadline = Date.now() + 180_000;
+  let lastKnownState: ProjectRuntimeState | null = null;
 
   while (Date.now() < deadline) {
     const state = await refreshProjectRuntimeState({
@@ -475,6 +677,7 @@ async function continueQueuedWorkflow(input: {
       projectId: input.project,
       projectPaths,
     });
+    lastKnownState = state;
     const { activeRuns, openMessages, recentResults } = state;
 
     const orchestratorRun = activeRuns.find(
@@ -483,48 +686,12 @@ async function continueQueuedWorkflow(input: {
 
     if (orchestratorRun && !announcedOrchestratorRun) {
       announcedOrchestratorRun = true;
-      await appendSessionTurnAndBroadcast({
-        options: input.options,
+      pushStatusNote(statusNotes, `Orchestrator run ${orchestratorRun.runId} started.`);
+      broadcastSessionStream({
         broadcast: input.broadcast,
         sessionId: input.sessionId,
         project: input.project,
-        role: "assistant",
-        content: "I'm actively assessing the board, open messages, and recent run results now.",
-      });
-    }
-
-    for (const run of activeRuns.filter((entry) => entry.started >= firedAt)) {
-      const seenLength = outputOffsets.get(run.runId) ?? 0;
-      const update = await readRunOutputUpdate(run, seenLength);
-      outputOffsets.set(run.runId, update.nextLength);
-
-      if (!update.content) {
-        continue;
-      }
-
-      if (run.agentId === "orchestrator") {
-        streamedOrchestratorOutput = streamedOrchestratorOutput
-          ? `${streamedOrchestratorOutput}\n${update.content.trim()}`
-          : update.content.trim();
-        await appendSessionTurnAndBroadcast({
-          options: input.options,
-          broadcast: input.broadcast,
-          sessionId: input.sessionId,
-          project: input.project,
-          role: "assistant",
-          content: update.content.trim(),
-        });
-        continue;
-      }
-
-      const label = run.taskId ? `${run.agentId} (${run.taskId})` : run.agentId;
-      await appendSessionTurnAndBroadcast({
-        options: input.options,
-        broadcast: input.broadcast,
-        sessionId: input.sessionId,
-        project: input.project,
-        role: "assistant",
-        content: `[${label}] ${update.content.trim()}`,
+        content: "The hive is checking current work and preparing the next response.",
       });
     }
 
@@ -552,13 +719,13 @@ async function continueQueuedWorkflow(input: {
       ];
       const taskSummary = tasks.length > 0 ? ` for ${joinNaturalList(tasks)}` : "";
 
-      await appendSessionTurnAndBroadcast({
-        options: input.options,
+      const assignmentNote = `I handed work to ${joinNaturalList(recipients)}${taskSummary}.`;
+      pushStatusNote(statusNotes, assignmentNote);
+      broadcastSessionStream({
         broadcast: input.broadcast,
         sessionId: input.sessionId,
         project: input.project,
-        role: "assistant",
-        content: `I handed work to ${joinNaturalList(recipients)}${taskSummary}.`,
+        content: assignmentNote,
       });
     }
 
@@ -579,13 +746,13 @@ async function continueQueuedWorkflow(input: {
         run.taskId ? `${run.agentId} on ${run.taskId}` : run.agentId,
       );
 
-      await appendSessionTurnAndBroadcast({
-        options: input.options,
+      const workerNote = `Active now: ${joinNaturalList(workers)}.`;
+      pushStatusNote(statusNotes, workerNote);
+      broadcastSessionStream({
         broadcast: input.broadcast,
         sessionId: input.sessionId,
         project: input.project,
-        role: "assistant",
-        content: `Active now: ${joinNaturalList(workers)}.`,
+        content: workerNote,
       });
     }
 
@@ -598,8 +765,41 @@ async function continueQueuedWorkflow(input: {
 
     if (finalResult) {
       const finalOutput = finalResult.finalVisibleOutput.trim();
+      const finalRun = await readRunRecordForResult(finalResult);
+      const finalState = await refreshProjectRuntimeState({
+        hivePaths: input.options.hivePaths,
+        projectId: input.project,
+        projectPaths,
+      });
+      lastKnownState = finalState;
 
-      if (!finalOutput || finalOutput === streamedOrchestratorOutput) {
+      if (!finalOutput) {
+        await appendSessionTurnAndBroadcast({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+          project: input.project,
+          role: "assistant",
+          content: "Queued orchestration finished without a visible reply.",
+          source: "system",
+          details: buildSessionTurnDetails({
+            project: input.project,
+            state: finalState,
+            runId: finalResult.runId,
+            runtime: finalRun?.runtime ?? null,
+            model: finalRun?.model ?? null,
+            authMode: finalResult.authMode,
+            durationMs: finalResult.durationMs,
+            numTurns: finalResult.numTurns,
+            costUsd: finalResult.costUsd,
+            inputTokens: finalResult.inputTokens,
+            outputTokens: finalResult.outputTokens,
+            cacheCreationInputTokens: finalResult.cacheCreationInputTokens,
+            cacheReadInputTokens: finalResult.cacheReadInputTokens,
+            totalTokens: finalResult.totalTokens,
+            statusNotes,
+          }),
+        });
         return;
       }
 
@@ -610,11 +810,37 @@ async function continueQueuedWorkflow(input: {
         project: input.project,
         role: "assistant",
         content: finalOutput,
+        source: "model",
+        details: buildSessionTurnDetails({
+          project: input.project,
+          state: finalState,
+          runId: finalResult.runId,
+          runtime: finalRun?.runtime ?? null,
+          model: finalRun?.model ?? null,
+          authMode: finalResult.authMode,
+          durationMs: finalResult.durationMs,
+          numTurns: finalResult.numTurns,
+          costUsd: finalResult.costUsd,
+          inputTokens: finalResult.inputTokens,
+          outputTokens: finalResult.outputTokens,
+          cacheCreationInputTokens: finalResult.cacheCreationInputTokens,
+          cacheReadInputTokens: finalResult.cacheReadInputTokens,
+          totalTokens: finalResult.totalTokens,
+          statusNotes,
+        }),
       });
       return;
     }
 
     await Bun.sleep(1_000);
+  }
+
+  if (!lastKnownState) {
+    lastKnownState = await refreshProjectRuntimeState({
+      hivePaths: input.options.hivePaths,
+      projectId: input.project,
+      projectPaths,
+    });
   }
 
   await appendSessionTurnAndBroadcast({
@@ -624,6 +850,12 @@ async function continueQueuedWorkflow(input: {
     project: input.project,
     role: "assistant",
     content: "This is still in motion. I’ll keep the board moving, and the next orchestration result will land here when it’s ready.",
+    source: "system",
+    details: buildSessionTurnDetails({
+      project: input.project,
+      state: lastKnownState,
+      statusNotes,
+    }),
   });
 }
 
@@ -639,12 +871,14 @@ async function continueConsoleWorkflow(input: {
   }
 
   let supervisorLine = "Supervisor state updated.";
+  const statusNotes: string[] = [];
 
   try {
     supervisorLine = await ensureSupervisorRunning({
       options: input.options,
       project: input.project,
     });
+    pushStatusNote(statusNotes, supervisorLine);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
@@ -659,62 +893,24 @@ async function continueConsoleWorkflow(input: {
     return;
   }
 
-  await appendSessionTurnAndBroadcast({
-    options: input.options,
+  broadcastSessionStream({
     broadcast: input.broadcast,
     sessionId: input.sessionId,
     project: input.project,
-    role: "assistant",
-    content: `${supervisorLine}\n\nI'm taking this turn directly and will stream back the steward response.`,
+    content: "Reviewing the current project state and preparing a response.",
   });
 
-  try {
-    const direct = await runDirectStewardTurn({
-      hivePaths: input.options.hivePaths,
-      projectId: input.project,
-      sessionId: input.sessionId,
-      humanMessage: input.message,
-      onOutput: async (content) => {
-        await appendSessionTurnAndBroadcast({
-          options: input.options,
-          broadcast: input.broadcast,
-          sessionId: input.sessionId,
-          project: input.project,
-          role: "assistant",
-          content,
-        });
-      },
+  const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
+  await reconcileActiveConsoleRun(projectPaths);
+  const existingConsoleRun = await readActiveRun(projectPaths, "console");
+
+  if (existingConsoleRun) {
+    pushStatusNote(statusNotes, `Live console run already active: ${existingConsoleRun.runId}.`);
+    const currentActivity = await buildCurrentActivitySummary({
+      options: input.options,
+      project: input.project,
+      lead: "I already have a live turn in progress, so I'm not starting another overlapping pass.",
     });
-
-    if (direct.mode === "fallback") {
-      await appendSessionTurnAndBroadcast({
-        options: input.options,
-        broadcast: input.broadcast,
-        sessionId: input.sessionId,
-        project: input.project,
-        role: "assistant",
-        content: `Direct steward turn unavailable (${direct.reason}). Falling back to queued orchestration.`,
-      });
-
-      await continueQueuedWorkflow(input);
-      return;
-    }
-
-    if (
-      direct.finalVisibleOutput &&
-      direct.finalVisibleOutput !== direct.streamedOutput
-    ) {
-      await appendSessionTurnAndBroadcast({
-        options: input.options,
-        broadcast: input.broadcast,
-        sessionId: input.sessionId,
-        project: input.project,
-        role: "assistant",
-        content: direct.finalVisibleOutput,
-      });
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
     await appendSessionTurnAndBroadcast({
       options: input.options,
@@ -722,10 +918,146 @@ async function continueConsoleWorkflow(input: {
       sessionId: input.sessionId,
       project: input.project,
       role: "assistant",
-      content: `Direct steward turn failed (${errorMessage}). Falling back to queued orchestration.`,
+      content: currentActivity.summary,
+      source: "system",
+      details: buildSessionTurnDetails({
+        project: input.project,
+        state: currentActivity.state,
+        runId: existingConsoleRun.runId,
+        runtime: existingConsoleRun.runtime,
+        model: existingConsoleRun.model,
+        statusNotes,
+      }),
+    });
+    return;
+  }
+
+  try {
+    const direct = await runDirectStewardTurn({
+      hivePaths: input.options.hivePaths,
+      projectId: input.project,
+      sessionId: input.sessionId,
+      humanMessage: input.message,
     });
 
-    await continueQueuedWorkflow(input);
+    if (direct.mode === "fallback") {
+      pushStatusNote(statusNotes, `Direct steward unavailable: ${direct.reason}`);
+
+      if (/console run already active/i.test(direct.reason)) {
+        const currentActivity = await buildCurrentActivitySummary({
+          options: input.options,
+          project: input.project,
+          lead: "I already have a live turn in progress, so I'm not starting another overlapping pass.",
+        });
+
+        await appendSessionTurnAndBroadcast({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+          project: input.project,
+          role: "assistant",
+          content: currentActivity.summary,
+          source: "system",
+          details: buildSessionTurnDetails({
+            project: input.project,
+            state: currentActivity.state,
+            statusNotes,
+          }),
+        });
+        return;
+      }
+
+      broadcastSessionStream({
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        content: "Direct reply path is unavailable, so the hive is continuing through orchestrated work.",
+      });
+
+      await continueQueuedWorkflow({
+        ...input,
+        statusNotes,
+      });
+      return;
+    }
+
+    pushStatusNote(statusNotes, `Direct steward run completed: ${direct.finalRun.runId}.`);
+    const finalState = await refreshProjectRuntimeState({
+      hivePaths: input.options.hivePaths,
+      projectId: input.project,
+      projectPaths,
+    });
+
+    if (direct.finalVisibleOutput.trim()) {
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: direct.finalVisibleOutput.trim(),
+        source: "model",
+        details: buildSessionTurnDetails({
+          project: input.project,
+          state: finalState,
+          runId: direct.finalRun.runId,
+          runtime: direct.finalRun.runtime,
+          model: direct.finalRun.model,
+          authMode: direct.result.metadata?.authMode ?? null,
+          durationMs: direct.result.metadata?.durationMs ?? null,
+          numTurns: direct.result.metadata?.numTurns ?? null,
+          costUsd: direct.result.metadata?.costUsd ?? null,
+          inputTokens: direct.result.metadata?.inputTokens ?? null,
+          outputTokens: direct.result.metadata?.outputTokens ?? null,
+          cacheCreationInputTokens: direct.result.metadata?.cacheCreationInputTokens ?? null,
+          cacheReadInputTokens: direct.result.metadata?.cacheReadInputTokens ?? null,
+          totalTokens: direct.result.metadata?.totalTokens ?? null,
+          statusNotes,
+        }),
+      });
+      return;
+    }
+
+    await appendSessionTurnAndBroadcast({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+      project: input.project,
+      role: "assistant",
+      content: "The direct turn finished without a visible reply.",
+      source: "system",
+      details: buildSessionTurnDetails({
+        project: input.project,
+        state: finalState,
+        runId: direct.finalRun.runId,
+        runtime: direct.finalRun.runtime,
+        model: direct.finalRun.model,
+        authMode: direct.result.metadata?.authMode ?? null,
+        durationMs: direct.result.metadata?.durationMs ?? null,
+        numTurns: direct.result.metadata?.numTurns ?? null,
+        costUsd: direct.result.metadata?.costUsd ?? null,
+        inputTokens: direct.result.metadata?.inputTokens ?? null,
+        outputTokens: direct.result.metadata?.outputTokens ?? null,
+        cacheCreationInputTokens: direct.result.metadata?.cacheCreationInputTokens ?? null,
+        cacheReadInputTokens: direct.result.metadata?.cacheReadInputTokens ?? null,
+        totalTokens: direct.result.metadata?.totalTokens ?? null,
+        statusNotes,
+      }),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    pushStatusNote(statusNotes, `Direct steward failed: ${errorMessage}`);
+    broadcastSessionStream({
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+      project: input.project,
+      content: "The direct reply path failed, so the hive is continuing through orchestrated work.",
+    });
+
+    await continueQueuedWorkflow({
+      ...input,
+      statusNotes,
+    });
   }
 }
 
@@ -750,7 +1082,7 @@ const getRoutes: Record<string, RouteHandler> = {
     try {
       const count = url.searchParams.get("count") ?? "20";
       const result = await feedCommand([count]);
-      return jsonOk(result);
+      return jsonOk({ result, entries: parseStructuredFeedEntries(result) });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
@@ -926,6 +1258,7 @@ const postRoutes: Record<string, RouteHandler> = {
         sessionId: session.sessionId,
         role: "human",
         content: body.message,
+        source: "human",
       });
 
       if (target.switchOnly) {
@@ -938,6 +1271,7 @@ const postRoutes: Record<string, RouteHandler> = {
           sessionId: session.sessionId,
           role: "assistant",
           content: result,
+          source: "system",
         });
 
         scheduleProjectRuntimeRefresh({
@@ -945,17 +1279,13 @@ const postRoutes: Record<string, RouteHandler> = {
           projectId: target.projectId,
         });
 
-        return jsonOk({ result, sessionId: session.sessionId, project: target.projectId });
+        return jsonOk({
+          result,
+          resultSource: "system",
+          sessionId: session.sessionId,
+          project: target.projectId,
+        });
       }
-
-      const result = buildImmediateConsoleAck(target.message || body.message, target.projectId);
-
-      await appendTurn({
-        sessionsDir,
-        sessionId: session.sessionId,
-        role: "assistant",
-        content: result,
-      });
 
       scheduleProjectRuntimeRefresh({
         hivePaths: options.hivePaths,
@@ -972,7 +1302,11 @@ const postRoutes: Record<string, RouteHandler> = {
         // Keep the request path fast; background session updates are best-effort.
       });
 
-      return jsonOk({ result, sessionId: session.sessionId, project: target.projectId });
+      return jsonOk({
+        accepted: true,
+        sessionId: session.sessionId,
+        project: target.projectId,
+      });
     } catch (err) {
       if (err instanceof SyntaxError) {
         return jsonError(400, "Invalid JSON body");

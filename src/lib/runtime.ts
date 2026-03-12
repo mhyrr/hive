@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, writeFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
 import { UsageError } from "./errors";
@@ -8,11 +8,17 @@ import { PlanAgent, TeamAgent } from "./project";
 // --- Runtime Adapter Interface ---
 
 export type RuntimeMetadata = {
+  authMode: "subscription" | "api" | "unknown";
   costUsd: number | null;
   durationMs: number | null;
   durationApiMs: number | null;
   numTurns: number | null;
   sessionId: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationInputTokens: number | null;
+  cacheReadInputTokens: number | null;
+  totalTokens: number | null;
 };
 
 export type ParsedOutput = {
@@ -40,6 +46,162 @@ export type RuntimeAdapter = {
   detectInstalled: () => Promise<boolean>;
   parseOutput?: (rawStdout: string) => ParsedOutput;
 };
+
+function toNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function readFirstNumber(
+  record: Record<string, unknown> | null,
+  keys: string[],
+): number | null {
+  if (!record) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = toNullableNumber(record[key]);
+
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function withDerivedTotalTokens(metadata: RuntimeMetadata): RuntimeMetadata {
+  if (metadata.totalTokens !== null) {
+    return metadata;
+  }
+
+  const parts = [
+    metadata.inputTokens,
+    metadata.outputTokens,
+    metadata.cacheCreationInputTokens,
+    metadata.cacheReadInputTokens,
+  ].filter((value): value is number => value !== null);
+
+  return {
+    ...metadata,
+    totalTokens: parts.length > 0 ? parts.reduce((sum, value) => sum + value, 0) : null,
+  };
+}
+
+function parseStructuredRuntimeMetadata(
+  runtime: string,
+  data: unknown,
+): RuntimeMetadata {
+  const root = toRecord(data);
+  const usage = toRecord(root?.usage);
+
+  return withDerivedTotalTokens({
+    authMode: inferRuntimeAuthMode(runtime),
+    costUsd:
+      readFirstNumber(root, ["cost_usd", "total_cost_usd"]) ??
+      readFirstNumber(usage, ["cost_usd", "total_cost_usd"]),
+    durationMs: readFirstNumber(root, ["duration_ms"]),
+    durationApiMs: readFirstNumber(root, ["duration_api_ms"]),
+    numTurns:
+      readFirstNumber(root, ["num_turns"]) ??
+      readFirstNumber(usage, ["num_turns"]),
+    sessionId: typeof root?.session_id === "string" ? root.session_id : null,
+    inputTokens:
+      readFirstNumber(root, ["input_tokens", "prompt_tokens"]) ??
+      readFirstNumber(usage, ["input_tokens", "prompt_tokens"]),
+    outputTokens:
+      readFirstNumber(root, ["output_tokens", "completion_tokens"]) ??
+      readFirstNumber(usage, ["output_tokens", "completion_tokens"]),
+    cacheCreationInputTokens:
+      readFirstNumber(root, ["cache_creation_input_tokens", "cache_creation_tokens"]) ??
+      readFirstNumber(usage, ["cache_creation_input_tokens", "cache_creation_tokens"]),
+    cacheReadInputTokens:
+      readFirstNumber(root, ["cache_read_input_tokens", "cache_read_tokens"]) ??
+      readFirstNumber(usage, ["cache_read_input_tokens", "cache_read_tokens"]),
+    totalTokens:
+      readFirstNumber(root, ["total_tokens"]) ??
+      readFirstNumber(usage, ["total_tokens"]),
+  });
+}
+
+function baseRuntimeMetadata(runtime: string): RuntimeMetadata {
+  return {
+    authMode: inferRuntimeAuthMode(runtime),
+    costUsd: null,
+    durationMs: null,
+    durationApiMs: null,
+    numTurns: null,
+    sessionId: null,
+    inputTokens: null,
+    outputTokens: null,
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens: null,
+    totalTokens: null,
+  };
+}
+
+function hasEnvValue(env: NodeJS.ProcessEnv, key: string): boolean {
+  return Boolean(env[key]?.trim());
+}
+
+export function inferRuntimeAuthMode(
+  runtime: string,
+  env: NodeJS.ProcessEnv = process.env,
+): RuntimeMetadata["authMode"] {
+  const normalized = runtime.trim().toLowerCase();
+
+  if (normalized === "claude" || normalized === "claude-code") {
+    return "subscription";
+  }
+
+  if (normalized === "codex" || normalized === "openai") {
+    return hasEnvValue(env, "OPENAI_API_KEY") ? "api" : "unknown";
+  }
+
+  if (normalized === "gemini" || normalized === "gemini-cli" || normalized === "google") {
+    return hasEnvValue(env, "GEMINI_API_KEY") || hasEnvValue(env, "GOOGLE_API_KEY")
+      ? "api"
+      : "unknown";
+  }
+
+  return "unknown";
+}
+
+export function formatRuntimeTokenSummary(metadata: RuntimeMetadata | null): string | null {
+  if (!metadata) {
+    return null;
+  }
+
+  const parts: string[] = [];
+
+  if (metadata.inputTokens !== null) {
+    parts.push(`in ${metadata.inputTokens}`);
+  }
+
+  if (metadata.outputTokens !== null) {
+    parts.push(`out ${metadata.outputTokens}`);
+  }
+
+  if (metadata.cacheCreationInputTokens !== null) {
+    parts.push(`cache write ${metadata.cacheCreationInputTokens}`);
+  }
+
+  if (metadata.cacheReadInputTokens !== null) {
+    parts.push(`cache read ${metadata.cacheReadInputTokens}`);
+  }
+
+  if (metadata.totalTokens !== null) {
+    parts.push(`total ${metadata.totalTokens}`);
+  }
+
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
 
 // --- Built-in Adapters ---
 
@@ -90,18 +252,7 @@ const claudeAdapter: RuntimeAdapter = {
 
       return {
         text: typeof data.result === "string" ? data.result : trimmed,
-        metadata: {
-          costUsd:
-            typeof data.cost_usd === "number"
-              ? data.cost_usd
-              : typeof data.total_cost_usd === "number"
-                ? data.total_cost_usd
-                : null,
-          durationMs: typeof data.duration_ms === "number" ? data.duration_ms : null,
-          durationApiMs: typeof data.duration_api_ms === "number" ? data.duration_api_ms : null,
-          numTurns: typeof data.num_turns === "number" ? data.num_turns : null,
-          sessionId: typeof data.session_id === "string" ? data.session_id : null,
-        },
+        metadata: parseStructuredRuntimeMetadata("claude", data),
       };
     } catch {
       return { text: trimmed, metadata: null };
@@ -446,7 +597,7 @@ export function startInteractiveSession(
   spec: LaunchSpec,
   repoPath: string,
 ): InteractiveHandle {
-  const child = spawn(spec.command, spec.args, {
+  const child = spawn(spec.command, launchArgs, {
     stdio: "inherit",
     cwd: repoPath,
     env: cleanEnvForRuntime(),
@@ -546,7 +697,25 @@ export function startLaunchSpec(
 ): LaunchHandle {
   const adapter = getAdapter(spec.runtime);
   const hasJsonOutput = !!adapter?.parseOutput;
-  const child = spawn(spec.command, spec.args, {
+  const codexLastMessagePath =
+    spec.runtime === "codex" && options.outputPath
+      ? `${options.outputPath}.last-message.txt`
+      : null;
+  const launchArgs =
+    codexLastMessagePath && spec.args.length > 0
+      ? [
+          ...spec.args.slice(0, -1),
+          "--output-last-message",
+          codexLastMessagePath,
+          spec.args[spec.args.length - 1]!,
+        ]
+      : spec.args;
+
+  if (codexLastMessagePath) {
+    writeFileSync(codexLastMessagePath, "");
+  }
+
+  const child = spawn(spec.command, launchArgs, {
     cwd: repoPath,
     stdio: ["inherit", "pipe", "pipe"],
     env: cleanEnvForRuntime(),
@@ -602,15 +771,37 @@ export function startLaunchSpec(
           code,
           signal: child.signalCode ?? null,
           visibleOutput: parsed.text,
-          metadata: parsed.metadata,
+          metadata: parsed.metadata
+            ? withDerivedTotalTokens({
+                ...baseRuntimeMetadata(spec.runtime),
+                ...parsed.metadata,
+              })
+            : baseRuntimeMetadata(spec.runtime),
         };
+      }
+
+      if (codexLastMessagePath) {
+        const lastMessageFile = Bun.file(codexLastMessagePath);
+
+        if (await lastMessageFile.exists()) {
+          const lastMessage = (await lastMessageFile.text()).trim();
+
+          if (lastMessage) {
+            return {
+              code,
+              signal: child.signalCode ?? null,
+              visibleOutput: lastMessage,
+              metadata: baseRuntimeMetadata(spec.runtime),
+            };
+          }
+        }
       }
 
       return {
         code,
         signal: child.signalCode ?? null,
         visibleOutput: visibleLines.join("\n").trim(),
-        metadata: null,
+        metadata: baseRuntimeMetadata(spec.runtime),
       };
     },
   };

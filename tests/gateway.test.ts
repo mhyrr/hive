@@ -9,7 +9,15 @@ import { startGateway, stopGateway } from "../src/gateway/server";
 import { writeDetachedSupervisorState } from "../src/lib/detached-supervisor";
 import { listProjectMessages } from "../src/lib/messages";
 import { ensureHiveScaffold, getProjectPaths, type HivePaths } from "../src/lib/paths";
-import { createRunDraft, getRunOutputPath, listActiveRuns, listAllRuns, markRunActive } from "../src/lib/runs";
+import {
+  createRunDraft,
+  getRunOutputPath,
+  listActiveRuns,
+  listAllRuns,
+  listRecentRunResults,
+  markRunActive,
+  readActiveRun,
+} from "../src/lib/runs";
 import { getSessionHistory } from "../src/lib/sessions";
 
 type TestContext = {
@@ -22,7 +30,7 @@ type TestContext = {
 let context: TestContext;
 
 function randomPort(): number {
-  return 10000 + Math.floor(Math.random() * 50000);
+  return 12000 + Math.floor(Math.random() * 30000);
 }
 
 async function setupContext(): Promise<TestContext> {
@@ -143,19 +151,20 @@ describe("Gateway REST API", () => {
   });
 
   test("GET /api/feed returns feed data", async () => {
-    const port = randomPort();
-    const state = startGateway({ port, hivePaths: context.paths });
+    const req = new Request("http://localhost/api/feed?count=5");
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
 
-    try {
-      const res = await fetch(`http://localhost:${port}/api/feed?count=5`);
-      expect(res.status).toBe(200);
-
-      const data = await res.json() as { result: string };
-      expect(data).toHaveProperty("result");
-      expect(typeof data.result).toBe("string");
-    } finally {
-      stopGateway(state);
-    }
+    const data = await res.json() as { result: string; entries: unknown[] };
+    expect(data).toHaveProperty("result");
+    expect(data).toHaveProperty("entries");
+    expect(typeof data.result).toBe("string");
+    expect(Array.isArray(data.entries)).toBe(true);
   });
 
   test("GET /api/status with active project returns status", async () => {
@@ -485,7 +494,7 @@ describe("Gateway session endpoints", () => {
     expect(sessionContext.activeSession?.sessionId).toBe(data.sessionId);
   });
 
-  test("handleApi console send returns immediate ack without a live server", async () => {
+  test("handleApi console send responds immediately without persisting a synthetic ack turn", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "TestProj", context.repo]);
     await runCli(["work", "testproj"]);
@@ -504,17 +513,25 @@ describe("Gateway session endpoints", () => {
 
     expect(res.status).toBe(200);
 
-    const data = await res.json() as { result: string; sessionId: string; project: string };
-    expect(data.result).toContain("Heard. I'm on it.");
+    const data = await res.json() as {
+      accepted: boolean;
+      sessionId: string;
+      project: string;
+    };
+    expect(data.accepted).toBe(true);
     expect(data.sessionId).toBeTruthy();
     expect(data.project).toBe("testproj");
 
     const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
-    expect(turns.length).toBeGreaterThanOrEqual(2);
+    expect(turns.length).toBeGreaterThanOrEqual(1);
     expect(turns[0]?.role).toBe("human");
     expect(turns[0]?.content).toContain("Give the hive more personality.");
-    expect(turns[1]?.role).toBe("assistant");
-    expect(turns[1]?.content).toContain("Heard. I'm on it.");
+    expect(turns[0]?.source).toBe("human");
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "system" &&
+      turn.content.includes("Heard. I'm on it.")
+    )).toBe(false);
 
     await Bun.sleep(150);
 
@@ -526,10 +543,8 @@ describe("Gateway session endpoints", () => {
 
     expect(sessionContext.activeSession?.sessionId).toBe(data.sessionId);
     expect(
-      sessionContext.recentTurns.some((turn) =>
-        turn.role === "assistant" && turn.content.includes("Heard. I'm on it."),
-      ),
-    ).toBe(true);
+      sessionContext.recentTurns.some((turn) => turn.content.includes("Heard. I'm on it.")),
+    ).toBe(false);
   });
 
   test("console send routes follow-up work to the session project, not the current active project", async () => {
@@ -806,6 +821,117 @@ describe("Gateway session endpoints", () => {
     )).toBe(true);
   });
 
+  test("active steward turn reports current activity instead of queueing another pass", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "testproj");
+    let run = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "console",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "# Prompt",
+      source: "gateway-test",
+    });
+    run = await markRunActive(projectPaths, run, process.pid);
+    await Bun.write(getRunOutputPath(run), "Inspecting recent progress\nChecking latest activity\n");
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "what's happening right now?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { sessionId: string };
+    await Bun.sleep(200);
+
+    const history = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(history.some((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "system" &&
+      turn.content.includes("I already have a live turn in progress")
+    )).toBe(true);
+    expect(history.some((turn) =>
+      turn.role === "assistant" &&
+      turn.content.includes("Live reply generation is still in progress")
+    )).toBe(true);
+    expect(history.some((turn) =>
+      turn.role === "assistant" &&
+      turn.details?.statusNotes?.some((note) => note.includes("Live console run already active"))
+    )).toBe(true);
+
+    const messages = await listProjectMessages(context.paths.msgDir, "testproj");
+    expect(messages.some((message) =>
+      message.attributes.type === "nudge" &&
+      message.body.includes("what's happening right now?")
+    )).toBe(false);
+  });
+
+  test("stale console run is cleared before gateway decides a turn is already in progress", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "testproj");
+    let run = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "console",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "# Prompt",
+      source: "console",
+    });
+    run = await markRunActive(projectPaths, run, 84567);
+    await Bun.write(getRunOutputPath(run), "Stale output\nLast visible line\n");
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "can you answer for real now?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { sessionId: string };
+    await Bun.sleep(250);
+
+    const [history, activeRun, recentResults] = await Promise.all([
+      getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId),
+      readActiveRun(projectPaths, "console"),
+      listRecentRunResults(projectPaths, 5),
+    ]);
+
+    expect(history.some((turn) =>
+      turn.role === "assistant" &&
+      turn.content.includes("I already have a live turn in progress")
+    )).toBe(false);
+    expect(activeRun?.agentId).toBe("console");
+    expect(activeRun?.runId).not.toBe(run.runId);
+    expect(recentResults.some((result) =>
+      result.agentId === "console" &&
+      result.status === "failed" &&
+      result.finalVisibleOutput.includes("Last visible line")
+    )).toBe(true);
+  });
+
   test("POST /api/console/new creates a session", async () => {
     const port = randomPort();
     await runCli(["init"]);
@@ -926,7 +1052,7 @@ describe("Gateway session endpoints", () => {
     }
   });
 
-  test("POST /api/console/send responds immediately and writes session turns", async () => {
+  test("POST /api/console/send responds immediately without writing a synthetic ack turn", async () => {
     const port = randomPort();
     const state = startGateway({ port, hivePaths: context.paths });
 
@@ -939,8 +1065,8 @@ describe("Gateway session endpoints", () => {
 
       expect(res.status).toBe(200);
 
-      const data = await res.json() as { result: string; sessionId: string };
-      expect(data.result).toContain("Heard. I'm on it.");
+      const data = await res.json() as { accepted: boolean; sessionId: string };
+      expect(data.accepted).toBe(true);
       expect(data.sessionId).toBeTruthy();
 
       const historyRes = await fetch(`http://localhost:${port}/api/console/history`);
@@ -952,11 +1078,10 @@ describe("Gateway session endpoints", () => {
       };
 
       expect(history.sessionId).toBe(data.sessionId);
-      expect(history.turns.length).toBeGreaterThanOrEqual(2);
+      expect(history.turns.length).toBeGreaterThanOrEqual(1);
       expect(history.turns[0]?.role).toBe("human");
       expect(history.turns[0]?.content).toContain("Give the hive more personality.");
-      expect(history.turns[1]?.role).toBe("assistant");
-      expect(history.turns[1]?.content).toContain("Heard. I'm on it.");
+      expect(history.turns.some((turn) => turn.content.includes("Heard. I'm on it."))).toBe(false);
     } finally {
       stopGateway(state);
     }

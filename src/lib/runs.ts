@@ -43,9 +43,15 @@ export type RunResult = {
   finalVisibleOutput: string;
   ended: string;
   path: string;
+  authMode: "subscription" | "api" | "unknown" | null;
   costUsd: number | null;
   durationMs: number | null;
   numTurns: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationInputTokens: number | null;
+  cacheReadInputTokens: number | null;
+  totalTokens: number | null;
 };
 
 type CreateRunInput = {
@@ -81,6 +87,29 @@ type PromptArtifact = {
   promptPath: string;
   runId: string;
 };
+
+function isProcessAlive(pid: number | null): boolean {
+  if (!pid || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : null;
+
+    if (code === "EPERM") {
+      return true;
+    }
+
+    if (code === "ESRCH") {
+      return false;
+    }
+
+    throw error;
+  }
+}
 
 function toNullableNumber(value: string | undefined): number | null {
   if (!value) {
@@ -224,9 +253,20 @@ function toRunResult(path: string, raw: string): RunResult | null {
     finalVisibleOutput: parsed.body.trim(),
     ended,
     path,
+    authMode:
+      attributes["auth-mode"] === "subscription" ||
+      attributes["auth-mode"] === "api" ||
+      attributes["auth-mode"] === "unknown"
+        ? attributes["auth-mode"]
+        : null,
     costUsd: toNullableNumber(attributes["cost-usd"]),
     durationMs: toNullableNumber(attributes["duration-ms"]),
     numTurns: toNullableNumber(attributes["num-turns"]),
+    inputTokens: toNullableNumber(attributes["input-tokens"]),
+    outputTokens: toNullableNumber(attributes["output-tokens"]),
+    cacheCreationInputTokens: toNullableNumber(attributes["cache-creation-input-tokens"]),
+    cacheReadInputTokens: toNullableNumber(attributes["cache-read-input-tokens"]),
+    totalTokens: toNullableNumber(attributes["total-tokens"]),
   };
 }
 
@@ -431,9 +471,15 @@ export async function writeRunResult(
     changedFiles?: string[];
     gitSummaryLines?: string[];
     finalVisibleOutput?: string;
+    authMode?: "subscription" | "api" | "unknown" | null;
     costUsd?: number | null;
     durationMs?: number | null;
     numTurns?: number | null;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    cacheCreationInputTokens?: number | null;
+    cacheReadInputTokens?: number | null;
+    totalTokens?: number | null;
   },
 ): Promise<RunResult> {
   const path = join(run.path.replace(/run\.md$/, ""), "result.md");
@@ -472,12 +518,36 @@ export async function writeRunResult(
     attributes["cost-usd"] = String(input.costUsd);
   }
 
+  if (input.authMode) {
+    attributes["auth-mode"] = input.authMode;
+  }
+
   if (input.durationMs != null) {
     attributes["duration-ms"] = String(input.durationMs);
   }
 
   if (input.numTurns != null) {
     attributes["num-turns"] = String(input.numTurns);
+  }
+
+  if (input.inputTokens != null) {
+    attributes["input-tokens"] = String(input.inputTokens);
+  }
+
+  if (input.outputTokens != null) {
+    attributes["output-tokens"] = String(input.outputTokens);
+  }
+
+  if (input.cacheCreationInputTokens != null) {
+    attributes["cache-creation-input-tokens"] = String(input.cacheCreationInputTokens);
+  }
+
+  if (input.cacheReadInputTokens != null) {
+    attributes["cache-read-input-tokens"] = String(input.cacheReadInputTokens);
+  }
+
+  if (input.totalTokens != null) {
+    attributes["total-tokens"] = String(input.totalTokens);
   }
 
   await Bun.write(
@@ -680,4 +750,37 @@ export async function listRecentRunResults(
   }
 
   return results;
+}
+
+export async function reconcileActiveConsoleRun(
+  projectPaths: ProjectPaths,
+): Promise<RunRecord | null> {
+  const run = await readActiveRun(projectPaths, "console");
+
+  if (!run || run.status !== "active") {
+    return run;
+  }
+
+  if (isProcessAlive(run.pid)) {
+    return run;
+  }
+
+  const status = run.stopRequestedAt ? "cancelled" : "failed";
+  const finalized = await finalizeRun({
+    projectPaths,
+    run,
+    status,
+    exitCode: null,
+  });
+  const outputTail = await readRunOutputTail(finalized, 20);
+
+  await writeRunResult(finalized, {
+    finalVisibleOutput:
+      outputTail.join("\n") ||
+      (status === "cancelled"
+        ? "Console turn was cancelled after its recorded process exited before cleanup."
+        : "Console turn was recovered after its recorded process exited before cleanup."),
+  });
+
+  return null;
 }

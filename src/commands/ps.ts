@@ -5,7 +5,7 @@ import {
   getActiveProject,
   getProjectPaths,
 } from "../lib/paths";
-import { listActiveRuns, listRecentRuns, RunRecord } from "../lib/runs";
+import { listActiveRuns, listRecentRuns, reconcileActiveConsoleRun, RunRecord } from "../lib/runs";
 
 function formatModel(run: RunRecord): string {
   return run.model ?? "(default)";
@@ -54,6 +54,7 @@ export async function psCommand(): Promise<string> {
   }
 
   const projectPaths = getProjectPaths(paths, activeProject);
+  await reconcileActiveConsoleRun(projectPaths);
   const activeRuns = await listActiveRuns(projectPaths);
   const recentRuns = await listRecentRuns(projectPaths, 5);
 
