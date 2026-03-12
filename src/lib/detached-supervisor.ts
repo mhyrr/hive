@@ -236,10 +236,15 @@ export async function startDetachedSupervisor(input: {
     "--max-parallel",
     String(input.maxParallel),
   ]);
+  // Clean env: strip CLAUDECODE to avoid nested-session detection in Claude Code
+  const env = { ...process.env };
+  delete env.CLAUDECODE;
+  delete env.ANTHROPIC_API_KEY;
+
   const child = spawn(invocation.command, invocation.args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env: process.env,
+    env,
   });
 
   closeSync(logFd);

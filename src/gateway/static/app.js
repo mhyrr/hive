@@ -331,8 +331,8 @@ function clearConsoleHistory() {
 
   var welcome = document.createElement('div');
   welcome.className = 'console-welcome';
-  welcome.innerHTML = '<p>Welcome to HIVE. Type a message to talk to the hive mind.</p>' +
-    '<p class="console-welcome-hint">The console is your steering wheel. The feed is your dashboard.</p>';
+  welcome.innerHTML = '<p>Speak to the swarm.</p>' +
+    '<p class="console-welcome-hint">Console steers. Feed watches.</p>';
   container.appendChild(welcome);
 }
 
@@ -824,8 +824,8 @@ async function loadConsoleHistory() {
         var loadingEl = container.querySelector('.console-loading');
         if (loadingEl) {
           loadingEl.className = 'console-welcome';
-          loadingEl.innerHTML = '<p>Welcome to HIVE. Type a message to talk to the hive mind.</p>' +
-            '<p class="console-welcome-hint">The console is your steering wheel. The feed is your dashboard.</p>';
+          loadingEl.innerHTML = '<p>Speak to the swarm.</p>' +
+            '<p class="console-welcome-hint">Console steers. Feed watches.</p>';
         }
       }
     }
@@ -836,8 +836,8 @@ async function loadConsoleHistory() {
       var loadingFallback = container.querySelector('.console-loading');
       if (loadingFallback) {
         loadingFallback.className = 'console-welcome';
-        loadingFallback.innerHTML = '<p>Welcome to HIVE. Type a message to talk to the hive mind.</p>' +
-          '<p class="console-welcome-hint">The console is your steering wheel. The feed is your dashboard.</p>';
+        loadingFallback.innerHTML = '<p>Speak to the swarm.</p>' +
+          '<p class="console-welcome-hint">Console steers. Feed watches.</p>';
       }
     }
   }
@@ -878,6 +878,35 @@ function setupAgentDropdown() {
 }
 
 
+// --- Supervisor Restart ---
+
+async function restartSupervisor() {
+  var btn = document.getElementById('restart-btn');
+  if (btn) btn.disabled = true;
+
+  try {
+    var data = await apiPost('/supervisor/restart', {});
+    var msg = (data && data.message) || 'Supervisor restarted';
+    addConsoleTurn('assistant', msg);
+    refreshStatus();
+    refreshAgentOverview();
+  } catch (e) {
+    addConsoleTurn('error', 'Restart failed: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function setupRestartButton() {
+  var btn = document.getElementById('restart-btn');
+  if (btn) {
+    btn.addEventListener('click', function () {
+      restartSupervisor();
+    });
+  }
+}
+
+
 // --- Keyboard Shortcuts ---
 
 function setupKeyboardShortcuts() {
@@ -913,6 +942,9 @@ async function init() {
 
   // Set up agent dropdown
   setupAgentDropdown();
+
+  // Set up restart button
+  setupRestartButton();
 
   // Set up keyboard shortcuts
   setupKeyboardShortcuts();

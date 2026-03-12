@@ -10,8 +10,14 @@ import { msgCommand, nudgeCommand } from "../commands/msg";
 import { psCommand } from "../commands/ps";
 import { sayCommand } from "../commands/say";
 import { statusCommand } from "../commands/status";
-import { getActiveProject, listProjects } from "../lib/paths";
+import { getActiveProject, getProjectPaths, listProjects } from "../lib/paths";
 import { runtimesCommand } from "../commands/runtimes";
+import { listRecentRunResults } from "../lib/runs";
+import {
+  reconcileDetachedSupervisorState,
+  startDetachedSupervisor,
+} from "../lib/detached-supervisor";
+import { isProcessAlive, DEFAULT_MAX_PARALLEL, DEFAULT_SUPERVISOR_INTERVAL_SECONDS } from "../lib/supervisor";
 import {
   createSession,
   getActiveSession,
@@ -54,6 +60,37 @@ export function handleOptions(): Response {
     status: 204,
     headers: corsHeaders(),
   });
+}
+
+async function pollForOrchestratorResponse(
+  options: GatewayOptions,
+  firedAt: string,
+  timeoutMs = 120_000,
+  intervalMs = 2_000,
+): Promise<string | null> {
+  const activeProject = await getActiveProject(options.hivePaths);
+  if (!activeProject) return null;
+
+  const projectPaths = getProjectPaths(options.hivePaths, activeProject);
+  const deadline = Date.now() + timeoutMs;
+
+  // Small initial delay — the supervisor needs time to launch
+  await Bun.sleep(3_000);
+
+  while (Date.now() < deadline) {
+    const results = await listRecentRunResults(projectPaths, 5);
+    const match = results.find(
+      (r) => r.agentId === "orchestrator" && r.ended > firedAt && r.finalVisibleOutput,
+    );
+
+    if (match) {
+      return match.finalVisibleOutput;
+    }
+
+    await Bun.sleep(intervalMs);
+  }
+
+  return null;
 }
 
 type RouteHandler = (req: Request, url: URL, options: GatewayOptions) => Promise<Response>;
@@ -177,19 +214,10 @@ const postRoutes: Record<string, RouteHandler> = {
         content: body.message,
       });
 
-      // Get hive response
+      // Fire the nudge and start the supervisor
+      const firedAt = new Date().toISOString();
       try {
-        const result = await sayCommand([body.message]);
-
-        // Record assistant turn
-        await appendTurn({
-          sessionsDir,
-          sessionId: session.sessionId,
-          role: "assistant",
-          content: result,
-        });
-
-        return jsonOk({ result, sessionId: session.sessionId });
+        await sayCommand([body.message]);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : "Unknown error";
         await appendTurn({
@@ -200,6 +228,19 @@ const postRoutes: Record<string, RouteHandler> = {
         });
         return jsonError(500, errorMsg);
       }
+
+      // Wait for the orchestrator to process and respond
+      const response = await pollForOrchestratorResponse(options, firedAt);
+      const result = response || "(orchestrator is still processing — check the feed for updates)";
+
+      await appendTurn({
+        sessionsDir,
+        sessionId: session.sessionId,
+        role: "assistant",
+        content: result,
+      });
+
+      return jsonOk({ result, sessionId: session.sessionId });
     } catch (err) {
       if (err instanceof SyntaxError) {
         return jsonError(400, "Invalid JSON body");
@@ -221,6 +262,46 @@ const postRoutes: Record<string, RouteHandler> = {
         systemPrompt: "HIVE console session",
       });
       return jsonOk({ sessionId: session.sessionId });
+    } catch (err) {
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/supervisor/restart": async (_req, _url, options) => {
+    try {
+      const activeProject = await getActiveProject(options.hivePaths);
+      if (!activeProject) {
+        return jsonError(400, "No active project");
+      }
+      const projectPaths = getProjectPaths(options.hivePaths, activeProject);
+
+      // Kill existing supervisor if alive
+      const existing = await reconcileDetachedSupervisorState(projectPaths);
+      if (existing?.status === "active" && existing.pid && isProcessAlive(existing.pid)) {
+        try {
+          process.kill(existing.pid, "SIGTERM");
+          // Brief wait for graceful shutdown
+          await Bun.sleep(1_000);
+          if (isProcessAlive(existing.pid)) {
+            process.kill(existing.pid, "SIGKILL");
+          }
+        } catch {
+          // process already dead
+        }
+      }
+
+      // Start fresh
+      const state = await startDetachedSupervisor({
+        projectPaths,
+        projectId: activeProject,
+        intervalSeconds: DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
+        maxParallel: DEFAULT_MAX_PARALLEL,
+      });
+
+      return jsonOk({
+        message: `Supervisor restarted (pid ${state.pid ?? "unknown"})`,
+        pid: state.pid,
+      });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }

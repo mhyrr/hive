@@ -42,7 +42,14 @@ function findStaticDir(): string | null {
   return null;
 }
 
-const staticDir = findStaticDir();
+let staticDir: string | null | undefined;
+
+function getStaticDir(): string | null {
+  if (staticDir === undefined) {
+    staticDir = findStaticDir();
+  }
+  return staticDir;
+}
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -51,7 +58,9 @@ const corsHeaders: Record<string, string> = {
 };
 
 export async function serveStaticAsset(pathname: string): Promise<Response> {
-  if (!staticDir) {
+  const dir = getStaticDir();
+
+  if (!dir) {
     return new Response("Static files not found. Run from the project root or dev mode.", {
       status: 500,
       headers: corsHeaders,
@@ -59,10 +68,10 @@ export async function serveStaticAsset(pathname: string): Promise<Response> {
   }
 
   const safePath = pathname === "/" ? "/index.html" : pathname;
-  const filePath = join(staticDir, safePath);
+  const filePath = join(dir, safePath);
 
   // Prevent path traversal
-  if (!filePath.startsWith(staticDir)) {
+  if (!filePath.startsWith(dir)) {
     return new Response("Forbidden", { status: 403, headers: corsHeaders });
   }
 
