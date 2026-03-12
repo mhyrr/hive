@@ -6,8 +6,10 @@ import { join } from "node:path";
 import { runCli } from "../src/cli";
 import { handleApi } from "../src/gateway/routes";
 import { startGateway, stopGateway } from "../src/gateway/server";
+import { writeDetachedSupervisorState } from "../src/lib/detached-supervisor";
 import { listProjectMessages } from "../src/lib/messages";
-import { ensureHiveScaffold, getHivePaths, type HivePaths } from "../src/lib/paths";
+import { ensureHiveScaffold, getProjectPaths, type HivePaths } from "../src/lib/paths";
+import { createRunDraft, getRunOutputPath, listActiveRuns, listAllRuns, markRunActive } from "../src/lib/runs";
 import { getSessionHistory } from "../src/lib/sessions";
 
 type TestContext = {
@@ -446,6 +448,43 @@ describe("Gateway CLI wiring", () => {
 });
 
 describe("Gateway session endpoints", () => {
+  test("handleApi console new creates a steward session without a live server", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { sessionId: string; project: string };
+    expect(data.sessionId).toBeTruthy();
+    expect(data.project).toBe("testproj");
+
+    const sessionDir = join(context.hiveHome, "sessions", data.sessionId);
+    expect(await Bun.file(join(sessionDir, "state.json")).exists()).toBeTrue();
+    const sessionState = await Bun.file(join(sessionDir, "state.json")).json() as {
+      currentProject: string;
+    };
+    expect(sessionState.currentProject).toBe("testproj");
+
+    await Bun.sleep(150);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    const sessionContext = await Bun.file(projectPaths.stateSessionContext).json() as {
+      activeSession: { sessionId: string } | null;
+    };
+    expect(sessionContext.activeSession?.sessionId).toBe(data.sessionId);
+  });
+
   test("handleApi console send returns immediate ack without a live server", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "TestProj", context.repo]);
@@ -465,9 +504,10 @@ describe("Gateway session endpoints", () => {
 
     expect(res.status).toBe(200);
 
-    const data = await res.json() as { result: string; sessionId: string };
+    const data = await res.json() as { result: string; sessionId: string; project: string };
     expect(data.result).toContain("Heard. I'm on it.");
     expect(data.sessionId).toBeTruthy();
+    expect(data.project).toBe("testproj");
 
     const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
     expect(turns.length).toBeGreaterThanOrEqual(2);
@@ -475,6 +515,21 @@ describe("Gateway session endpoints", () => {
     expect(turns[0]?.content).toContain("Give the hive more personality.");
     expect(turns[1]?.role).toBe("assistant");
     expect(turns[1]?.content).toContain("Heard. I'm on it.");
+
+    await Bun.sleep(150);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    const sessionContext = await Bun.file(projectPaths.stateSessionContext).json() as {
+      activeSession: { sessionId: string } | null;
+      recentTurns: Array<{ role: string; content: string }>;
+    };
+
+    expect(sessionContext.activeSession?.sessionId).toBe(data.sessionId);
+    expect(
+      sessionContext.recentTurns.some((turn) =>
+        turn.role === "assistant" && turn.content.includes("Heard. I'm on it."),
+      ),
+    ).toBe(true);
   });
 
   test("console send routes follow-up work to the session project, not the current active project", async () => {
@@ -512,23 +567,243 @@ describe("Gateway session endpoints", () => {
     );
     expect(sendRes.status).toBe(200);
 
-    await Bun.sleep(25);
+    await Bun.sleep(150);
 
     const testProjMessages = await listProjectMessages(context.paths.msgDir, "testproj");
     const otherProjMessages = await listProjectMessages(context.paths.msgDir, "otherproj");
+    const testProjPaths = getProjectPaths(context.paths, "testproj");
+    const otherProjPaths = getProjectPaths(context.paths, "otherproj");
+    const [testProjRuns, otherProjRuns, testProjActiveRuns, otherProjActiveRuns] = await Promise.all([
+      listAllRuns(testProjPaths),
+      listAllRuns(otherProjPaths),
+      listActiveRuns(testProjPaths),
+      listActiveRuns(otherProjPaths),
+    ]);
 
     expect(
       testProjMessages.some((message) =>
         message.attributes.type === "nudge" &&
         message.body.includes("Stay focused on the original project."),
-      ),
+      ) ||
+      testProjRuns.some((run) => run.agentId === "console") ||
+      testProjActiveRuns.some((run) => run.agentId === "console"),
     ).toBe(true);
     expect(
       otherProjMessages.some((message) =>
         message.attributes.type === "nudge" &&
         message.body.includes("Stay focused on the original project."),
-      ),
+      ) ||
+      otherProjRuns.some((run) => run.agentId === "console") ||
+      otherProjActiveRuns.some((run) => run.agentId === "console"),
     ).toBe(false);
+  });
+
+  test("session can switch project focus and route subsequent turns there", async () => {
+    const otherRepo = join(context.root, "other-repo");
+    await mkdir(otherRepo, { recursive: true });
+
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["project", "add", "OtherProj", otherRepo]);
+    await runCli(["work", "testproj"]);
+
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(createRes.status).toBe(200);
+
+    const switchReq = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "/project otherproj" }),
+    });
+    const switchRes = await handleApi(
+      switchReq,
+      new URL(switchReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(switchRes.status).toBe(200);
+
+    const switchData = await switchRes.json() as { result: string; sessionId: string; project: string };
+    expect(switchData.result).toContain("otherproj");
+    expect(switchData.project).toBe("otherproj");
+
+    const sendReq = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Stay focused here." }),
+    });
+    const sendRes = await handleApi(
+      sendReq,
+      new URL(sendReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(sendRes.status).toBe(200);
+    const sendData = await sendRes.json() as { project: string };
+    expect(sendData.project).toBe("otherproj");
+
+    await Bun.sleep(150);
+
+    const sessionState = await Bun.file(
+      join(context.hiveHome, "sessions", switchData.sessionId, "state.json"),
+    ).json() as {
+      currentProject: string;
+    };
+    expect(sessionState.currentProject).toBe("otherproj");
+
+    const testProjPaths = getProjectPaths(context.paths, "testproj");
+    const otherProjPaths = getProjectPaths(context.paths, "otherproj");
+    const [testProjRuns, otherProjRuns, testProjActiveRuns, otherProjActiveRuns, testProjMessages, otherProjMessages] = await Promise.all([
+      listAllRuns(testProjPaths),
+      listAllRuns(otherProjPaths),
+      listActiveRuns(testProjPaths),
+      listActiveRuns(otherProjPaths),
+      listProjectMessages(context.paths.msgDir, "testproj"),
+      listProjectMessages(context.paths.msgDir, "otherproj"),
+    ]);
+
+    expect(
+      otherProjRuns.some((run) => run.agentId === "console") ||
+      otherProjActiveRuns.some((run) => run.agentId === "console") ||
+      otherProjMessages.some((message) => message.body.includes("Stay focused here.")),
+    ).toBe(true);
+    expect(
+      testProjRuns.some((run) => run.agentId === "console") ||
+      testProjActiveRuns.some((run) => run.agentId === "console") ||
+      testProjMessages.some((message) => message.body.includes("Stay focused here.")),
+    ).toBe(false);
+  });
+
+  test("direct session APIs expose current project focus", async () => {
+    const otherRepo = join(context.root, "other-repo");
+    await mkdir(otherRepo, { recursive: true });
+
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["project", "add", "OtherProj", otherRepo]);
+    await runCli(["work", "testproj"]);
+
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    const createData = await createRes.json() as { sessionId: string };
+
+    const switchReq = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "/project otherproj" }),
+    });
+    const switchRes = await handleApi(
+      switchReq,
+      new URL(switchReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(switchRes.status).toBe(200);
+
+    const historyReq = new Request("http://localhost/api/console/history");
+    const historyRes = await handleApi(
+      historyReq,
+      new URL(historyReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(historyRes.status).toBe(200);
+
+    const historyData = await historyRes.json() as {
+      sessionId: string | null;
+      project: string | null;
+    };
+    expect(historyData.sessionId).toBe(createData.sessionId);
+    expect(historyData.project).toBe("otherproj");
+
+    const detailReq = new Request(`http://localhost/api/sessions/${createData.sessionId}`);
+    const detailRes = await handleApi(
+      detailReq,
+      new URL(detailReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(detailRes.status).toBe(200);
+
+    const detailData = await detailRes.json() as {
+      session: { currentProject: string };
+    };
+    expect(detailData.session.currentProject).toBe("otherproj");
+  });
+
+  test("process logs endpoint exposes supervisor and active run tails", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "testproj");
+    let run = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "# Prompt",
+      source: "gateway-test",
+    });
+    run = await markRunActive(projectPaths, run, 81234);
+    await Bun.write(getRunOutputPath(run), "booting\nchecking board\n");
+
+    await writeDetachedSupervisorState(projectPaths, {
+      projectId: "testproj",
+      pid: 99123,
+      status: "active",
+      mode: "detached",
+      intervalSeconds: 30,
+      maxParallel: 3,
+      startedAt: "2026-03-11T14:00:00Z",
+      updatedAt: "2026-03-11T14:00:00Z",
+      lastPassAt: "2026-03-11T14:00:00Z",
+      stoppedAt: null,
+      stopRequestedAt: null,
+      stopRequestedBy: null,
+      logPath: join(projectPaths.supervisorDir, "detached.log"),
+    });
+    await Bun.write(join(projectPaths.supervisorDir, "detached.log"), "tick one\ntick two\n");
+
+    const req = new Request("http://localhost/api/process-logs?project=testproj");
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      project: string | null;
+      supervisor: { status: string; tail: string[] } | null;
+      runs: Array<{ agentId: string; tail: string[] }>;
+    };
+
+    expect(data.project).toBe("testproj");
+    expect(data.supervisor?.status).toBe("exited");
+    expect(data.supervisor?.tail).toEqual(["tick one", "tick two"]);
+    expect(data.runs.some((entry) =>
+      entry.agentId === "alpha" &&
+      entry.tail.join("\n").includes("checking board")
+    )).toBe(true);
   });
 
   test("POST /api/console/new creates a session", async () => {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli";
-import { readDetachedSupervisorState } from "../src/lib/detached-supervisor";
+import { buildDetachedInvocation, readDetachedSupervisorState } from "../src/lib/detached-supervisor";
 import { ensureHiveScaffold, getProjectPaths } from "../src/lib/paths";
 import {
   createRunDraft,
@@ -75,6 +75,30 @@ exit 0
 }
 
 describe("hive supervise", () => {
+  test("detached supervisor invocation reuses the current script in Bun dev mode", () => {
+    const invocation = buildDetachedInvocation(["supervise", "--detach"], {
+      execPath: "/opt/homebrew/bin/bun",
+      argv: ["/opt/homebrew/bin/bun", "/Users/mhyrr/work/hive/bin/hive.ts", "gateway"],
+    });
+
+    expect(invocation).toEqual({
+      command: "/opt/homebrew/bin/bun",
+      args: ["/Users/mhyrr/work/hive/bin/hive.ts", "supervise", "--detach"],
+    });
+  });
+
+  test("detached supervisor invocation reuses the compiled binary in compiled mode", () => {
+    const invocation = buildDetachedInvocation(["supervise", "--detach"], {
+      execPath: "/Users/mhyrr/bin/hive",
+      argv: ["/Users/mhyrr/bin/hive", "gateway"],
+    });
+
+    expect(invocation).toEqual({
+      command: "/Users/mhyrr/bin/hive",
+      args: ["supervise", "--detach"],
+    });
+  });
+
   test("detached supervisor start/status/stop persists state on disk", async () => {
     await installFakeCodex();
     await runCli(["init"]);

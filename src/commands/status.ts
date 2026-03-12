@@ -7,6 +7,7 @@ import {
 } from "../lib/paths";
 import { extractRepoPath } from "../lib/project";
 import { UsageError } from "../lib/errors";
+import { refreshProjectRuntimeState } from "../lib/state";
 
 function formatMessages(messages: Awaited<ReturnType<typeof listOpenProjectMessages>>): string {
   if (messages.length === 0) {
@@ -35,15 +36,18 @@ export async function statusCommand(): Promise<string> {
   }
 
   const projectPaths = getProjectPaths(paths, activeProject);
-  const board = await Bun.file(projectPaths.board).text();
   const configText = await Bun.file(projectPaths.config).text();
   const repoPath = extractRepoPath(configText) ?? "(unknown)";
-  const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
+  const state = await refreshProjectRuntimeState({
+    hivePaths: paths,
+    projectId: activeProject,
+    projectPaths,
+  });
 
   return [
     `Project: ${activeProject}`,
     `Repo path: ${repoPath}`,
-    section("BOARD.md", board),
-    section("Open Messages", formatMessages(openMessages)),
+    section("BOARD.md", state.boardText),
+    section("Open Messages", formatMessages(state.openMessages)),
   ].join("\n\n");
 }

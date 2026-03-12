@@ -25,6 +25,7 @@ import {
 } from "../lib/runtime";
 import { UsageError } from "../lib/errors";
 import { appendFeedEntry } from "../lib/feed";
+import { refreshProjectRuntimeState } from "../lib/state";
 
 type ConsoleOptions = {
   runtimeOverride: string | null;
@@ -219,8 +220,11 @@ export async function consoleCommand(args: string[]): Promise<string> {
     );
   }
 
-  const board = await Bun.file(projectPaths.board).text();
-  const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
+  const state = await refreshProjectRuntimeState({
+    hivePaths: paths,
+    projectId: activeProject,
+    projectPaths,
+  });
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
 
   let projectMemory = "(none yet)";
@@ -260,8 +264,8 @@ export async function consoleCommand(args: string[]): Promise<string> {
     skillsDir: paths.skillsDir,
     availableSkillNames,
     soul: soul.trim(),
-    board: board.trim(),
-    openMessages,
+    board: state.boardText.trim(),
+    openMessages: state.openMessages,
   });
 
   const hints = resolveRuntimeHints({

@@ -10,10 +10,9 @@ import { msgCommand, nudgeCommand } from "../commands/msg";
 import { psCommand } from "../commands/ps";
 import { sayCommand, sendGoalToProject } from "../commands/say";
 import { statusCommand } from "../commands/status";
-import { listOpenProjectMessages } from "../lib/messages";
-import { getActiveProject, getProjectPaths, listProjects } from "../lib/paths";
+import { getActiveProject, getProjectPaths, listProjects, type HivePaths } from "../lib/paths";
 import { runtimesCommand } from "../commands/runtimes";
-import { getRunOutputPath, listActiveRuns, listRecentRunResults, type RunRecord } from "../lib/runs";
+import { getRunOutputPath, listActiveRuns, readRunOutputTail, type RunRecord } from "../lib/runs";
 import {
   reconcileDetachedSupervisorState,
   startDetachedSupervisor,
@@ -23,10 +22,17 @@ import {
   createSession,
   getActiveSession,
   getSessionHistory,
+  getSessionState,
   listSessions,
   getSession,
   appendTurn,
+  switchSessionProject,
 } from "../lib/sessions";
+import { refreshProjectRuntimeState } from "../lib/state";
+import { runDirectStewardTurn } from "../lib/steward";
+import { resolveRuntimeHints } from "../lib/runtime";
+import { normalizeProjectName } from "../lib/project";
+import { UsageError } from "../lib/errors";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -90,12 +96,140 @@ async function appendSessionTurnAndBroadcast(input: {
       content: input.content,
     },
   });
+
+  scheduleProjectRuntimeRefresh({
+    hivePaths: input.options.hivePaths,
+    projectId: input.project,
+  });
 }
 
-function buildImmediateConsoleAck(message: string): string {
+function buildImmediateConsoleAck(message: string, project: string): string {
   const firstLine = message.trim().split("\n")[0] ?? "";
 
-  return `Heard. I'm on it.\n\nFirst step: check the live board, active runs, and open messages, then decide whether this needs direct guidance, a board change, or new assignments.\n\nFocus: ${firstLine}`;
+  return `Heard. I'm on it.\n\nProject focus: ${project}\n\nFirst step: check the live board, active runs, and open messages, then decide whether this needs direct guidance, a board change, or new assignments.\n\nFocus: ${firstLine}`;
+}
+
+type ScheduledProjectRefresh = {
+  running: boolean;
+  queued: boolean;
+};
+
+const scheduledProjectRefreshes = new Map<string, ScheduledProjectRefresh>();
+
+function getProjectRefreshKey(hivePaths: HivePaths, projectId: string): string {
+  return `${hivePaths.home}:${projectId}`;
+}
+
+function scheduleProjectRuntimeRefresh(input: {
+  hivePaths: HivePaths;
+  projectId: string;
+  delayMs?: number;
+}): void {
+  if (!input.projectId || input.projectId === "default") {
+    return;
+  }
+
+  const key = getProjectRefreshKey(input.hivePaths, input.projectId);
+  let state = scheduledProjectRefreshes.get(key);
+
+  if (!state) {
+    state = {
+      running: false,
+      queued: false,
+    };
+    scheduledProjectRefreshes.set(key, state);
+  }
+
+  state.queued = true;
+
+  if (state.running) {
+    return;
+  }
+
+  state.running = true;
+
+  void (async () => {
+    try {
+      while (state?.queued) {
+        state.queued = false;
+        await Bun.sleep(input.delayMs ?? 50);
+
+        if (state.queued) {
+          continue;
+        }
+
+        const projectPaths = getProjectPaths(input.hivePaths, input.projectId);
+        await refreshProjectRuntimeState({
+          hivePaths: input.hivePaths,
+          projectId: input.projectId,
+          projectPaths,
+        });
+      }
+    } catch {
+      // Best-effort refresh for gateway responsiveness.
+    } finally {
+      if (state) {
+        state.running = false;
+
+        if (state.queued) {
+          scheduleProjectRuntimeRefresh(input);
+        } else if (scheduledProjectRefreshes.get(key) === state) {
+          scheduledProjectRefreshes.delete(key);
+        }
+      }
+    }
+  })();
+}
+
+async function getSessionProjectFocus(input: {
+  sessionsDir: string;
+  sessionId: string;
+  fallbackProject: string;
+}): Promise<string> {
+  return (
+    (await getSessionState(input.sessionsDir, input.sessionId))?.currentProject ||
+    input.fallbackProject
+  );
+}
+
+async function resolveGatewayProjectFocus(input: {
+  options: GatewayOptions;
+  requestedProject?: string | null;
+}): Promise<string | null> {
+  if (input.requestedProject?.trim()) {
+    return resolveProjectId({
+      options: input.options,
+      token: input.requestedProject,
+    });
+  }
+
+  const sessionsDir = join(input.options.hivePaths.home, "sessions");
+  const session = await getActiveSession(sessionsDir);
+
+  if (session) {
+    return getSessionProjectFocus({
+      sessionsDir,
+      sessionId: session.sessionId,
+      fallbackProject: session.project,
+    });
+  }
+
+  return (await getActiveProject(input.options.hivePaths)) ?? null;
+}
+
+async function readTextTail(path: string, limit = 50): Promise<string[]> {
+  const file = Bun.file(path);
+
+  if (!(await file.exists())) {
+    return [];
+  }
+
+  return (await file.text())
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .slice(-limit);
 }
 
 function joinNaturalList(items: string[]): string {
@@ -112,6 +246,144 @@ function joinNaturalList(items: string[]): string {
   }
 
   return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+async function ensureSupervisorRunning(input: {
+  options: GatewayOptions;
+  project: string;
+}): Promise<string> {
+  const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
+  const existing = await reconcileDetachedSupervisorState(projectPaths);
+
+  if (existing?.status === "active" && isProcessAlive(existing.pid)) {
+    return `Supervisor active (pid ${existing.pid})`;
+  }
+
+  const state = await startDetachedSupervisor({
+    projectPaths,
+    projectId: input.project,
+    intervalSeconds: DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
+    maxParallel: DEFAULT_MAX_PARALLEL,
+  });
+
+  return `Supervisor started (pid ${state.pid ?? "unknown"})`;
+}
+
+async function createGatewaySession(input: {
+  options: GatewayOptions;
+  project: string;
+}): Promise<Awaited<ReturnType<typeof createSession>>> {
+  const globalConfig = await Bun.file(input.options.hivePaths.config).text().catch(() => "");
+  let runtime = "claude";
+  let model: string | null = null;
+
+  try {
+    const hints = resolveRuntimeHints({ globalConfig });
+    runtime = hints.runtime;
+    model = hints.model;
+  } catch {
+    // fall back to legacy default
+  }
+
+  return createSession({
+    sessionsDir: input.options.hivePaths.sessionsDir,
+    project: input.project,
+    runtime,
+    model,
+    systemPrompt: "HIVE steward session",
+  });
+}
+
+async function resolveProjectId(input: {
+  options: GatewayOptions;
+  token: string;
+}): Promise<string> {
+  const normalized = normalizeProjectName(input.token);
+  const projects = await listProjects(input.options.hivePaths);
+  const match = projects.find((project) => project === normalized);
+
+  if (!match) {
+    throw new UsageError(`Unknown project: ${input.token}`);
+  }
+
+  return match;
+}
+
+async function resolveSessionTurnTarget(input: {
+  options: GatewayOptions;
+  sessionId: string;
+  sessionProject: string;
+  rawMessage: string;
+}): Promise<{
+  projectId: string;
+  message: string;
+  switchOnly: boolean;
+  switched: boolean;
+}> {
+  const trimmed = input.rawMessage.trim();
+  const sessionState = await getSessionState(input.options.hivePaths.sessionsDir, input.sessionId);
+  const currentProject =
+    sessionState?.currentProject ||
+    input.sessionProject ||
+    (await getActiveProject(input.options.hivePaths)) ||
+    "default";
+
+  const switchMatch = trimmed.match(/^\/project\s+([^\s]+)(?:\s+(.*))?$/is);
+
+  if (switchMatch) {
+    const projectId = await resolveProjectId({
+      options: input.options,
+      token: switchMatch[1]!,
+    });
+    const message = (switchMatch[2] ?? "").trim();
+
+    if (projectId !== currentProject) {
+      await switchSessionProject({
+        sessionsDir: input.options.hivePaths.sessionsDir,
+        sessionId: input.sessionId,
+        projectId,
+      });
+    }
+
+    return {
+      projectId,
+      message,
+      switchOnly: message.length === 0,
+      switched: projectId !== currentProject,
+    };
+  }
+
+  const inlineMatch = trimmed.match(/^@([^\s:]+):?\s*(.*)$/s);
+
+  if (inlineMatch) {
+    const projectId = await resolveProjectId({
+      options: input.options,
+      token: inlineMatch[1]!,
+    });
+    const message = (inlineMatch[2] ?? "").trim();
+
+    if (projectId !== currentProject) {
+      await switchSessionProject({
+        sessionsDir: input.options.hivePaths.sessionsDir,
+        sessionId: input.sessionId,
+        projectId,
+      });
+    }
+
+    return {
+      projectId,
+      message,
+      switchOnly: message.length === 0,
+      switched: projectId !== currentProject,
+    };
+  }
+
+  return {
+    projectId: currentProject,
+    message: trimmed,
+    switchOnly: false,
+    switched: false,
+  };
 }
 
 async function readRunOutputUpdate(
@@ -144,7 +416,7 @@ async function readRunOutputUpdate(
   };
 }
 
-async function continueConsoleWorkflow(input: {
+async function continueQueuedWorkflow(input: {
   options: GatewayOptions;
   broadcast: GatewayBroadcast;
   sessionId: string;
@@ -198,11 +470,12 @@ async function continueConsoleWorkflow(input: {
   const deadline = Date.now() + 180_000;
 
   while (Date.now() < deadline) {
-    const [activeRuns, openMessages, recentResults] = await Promise.all([
-      listActiveRuns(projectPaths),
-      listOpenProjectMessages(input.options.hivePaths.msgDir, input.project),
-      listRecentRunResults(projectPaths, 10),
-    ]);
+    const state = await refreshProjectRuntimeState({
+      hivePaths: input.options.hivePaths,
+      projectId: input.project,
+      projectPaths,
+    });
+    const { activeRuns, openMessages, recentResults } = state;
 
     const orchestratorRun = activeRuns.find(
       (run) => run.agentId === "orchestrator" && run.started >= firedAt,
@@ -354,6 +627,108 @@ async function continueConsoleWorkflow(input: {
   });
 }
 
+async function continueConsoleWorkflow(input: {
+  options: GatewayOptions;
+  broadcast: GatewayBroadcast;
+  sessionId: string;
+  project: string;
+  message: string;
+}): Promise<void> {
+  if (!input.project || input.project === "default") {
+    return;
+  }
+
+  let supervisorLine = "Supervisor state updated.";
+
+  try {
+    supervisorLine = await ensureSupervisorRunning({
+      options: input.options,
+      project: input.project,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+    await appendSessionTurnAndBroadcast({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+      project: input.project,
+      role: "assistant",
+      content: `I couldn't prepare the runtime infrastructure: ${errorMessage}`,
+    });
+    return;
+  }
+
+  await appendSessionTurnAndBroadcast({
+    options: input.options,
+    broadcast: input.broadcast,
+    sessionId: input.sessionId,
+    project: input.project,
+    role: "assistant",
+    content: `${supervisorLine}\n\nI'm taking this turn directly and will stream back the steward response.`,
+  });
+
+  try {
+    const direct = await runDirectStewardTurn({
+      hivePaths: input.options.hivePaths,
+      projectId: input.project,
+      sessionId: input.sessionId,
+      humanMessage: input.message,
+      onOutput: async (content) => {
+        await appendSessionTurnAndBroadcast({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+          project: input.project,
+          role: "assistant",
+          content,
+        });
+      },
+    });
+
+    if (direct.mode === "fallback") {
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: `Direct steward turn unavailable (${direct.reason}). Falling back to queued orchestration.`,
+      });
+
+      await continueQueuedWorkflow(input);
+      return;
+    }
+
+    if (
+      direct.finalVisibleOutput &&
+      direct.finalVisibleOutput !== direct.streamedOutput
+    ) {
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: direct.finalVisibleOutput,
+      });
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+    await appendSessionTurnAndBroadcast({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+      project: input.project,
+      role: "assistant",
+      content: `Direct steward turn failed (${errorMessage}). Falling back to queued orchestration.`,
+    });
+
+    await continueQueuedWorkflow(input);
+  }
+}
+
 type RouteHandler = (
   req: Request,
   url: URL,
@@ -399,6 +774,61 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
+  "/api/process-logs": async (_req, url, options, _broadcast) => {
+    try {
+      const projectId = await resolveGatewayProjectFocus({
+        options,
+        requestedProject: url.searchParams.get("project"),
+      });
+
+      if (!projectId || projectId === "default") {
+        return jsonOk({
+          project: null,
+          supervisor: null,
+          runs: [],
+        });
+      }
+
+      const projectPaths = getProjectPaths(options.hivePaths, projectId);
+      const [supervisor, activeRuns] = await Promise.all([
+        reconcileDetachedSupervisorState(projectPaths),
+        listActiveRuns(projectPaths),
+      ]);
+
+      const supervisorPayload = supervisor
+        ? {
+            status: supervisor.status,
+            pid: supervisor.pid,
+            logPath: supervisor.logPath,
+            tail: await readTextTail(supervisor.logPath, 50),
+          }
+        : null;
+
+      const runs = await Promise.all(
+        activeRuns.map(async (run) => ({
+          runId: run.runId,
+          agentId: run.agentId,
+          status: run.status,
+          started: run.started,
+          pid: run.pid,
+          outputPath: getRunOutputPath(run),
+          tail: await readRunOutputTail(run, 40),
+        })),
+      );
+
+      return jsonOk({
+        project: projectId,
+        supervisor: supervisorPayload,
+        runs,
+      });
+    } catch (err) {
+      if (err instanceof UsageError) {
+        return jsonError(400, err.message);
+      }
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
   "/api/runtimes": async (_req, _url, _options, _broadcast) => {
     try {
       const result = await runtimesCommand();
@@ -413,10 +843,15 @@ const getRoutes: Record<string, RouteHandler> = {
       const sessionsDir = join(options.hivePaths.home, "sessions");
       const session = await getActiveSession(sessionsDir);
       if (!session) {
-        return jsonOk({ turns: [], sessionId: null });
+        return jsonOk({ turns: [], sessionId: null, project: null });
       }
       const turns = await getSessionHistory(sessionsDir, session.sessionId);
-      return jsonOk({ turns, sessionId: session.sessionId });
+      const project = await getSessionProjectFocus({
+        sessionsDir,
+        sessionId: session.sessionId,
+        fallbackProject: session.project,
+      });
+      return jsonOk({ turns, sessionId: session.sessionId, project });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
@@ -426,7 +861,17 @@ const getRoutes: Record<string, RouteHandler> = {
     try {
       const sessionsDir = join(options.hivePaths.home, "sessions");
       const sessions = await listSessions(sessionsDir);
-      return jsonOk({ sessions });
+      const enrichedSessions = await Promise.all(
+        sessions.map(async (session) => ({
+          ...session,
+          currentProject: await getSessionProjectFocus({
+            sessionsDir,
+            sessionId: session.sessionId,
+            fallbackProject: session.project,
+          }),
+        })),
+      );
+      return jsonOk({ sessions: enrichedSessions });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
@@ -463,14 +908,18 @@ const postRoutes: Record<string, RouteHandler> = {
       let session = await getActiveSession(sessionsDir);
       if (!session) {
         const activeProject = await getActiveProject(options.hivePaths);
-        session = await createSession({
-          sessionsDir,
+        session = await createGatewaySession({
+          options,
           project: activeProject || "default",
-          runtime: "claude",
-          model: null,
-          systemPrompt: "HIVE console session",
         });
       }
+
+      const target = await resolveSessionTurnTarget({
+        options,
+        sessionId: session.sessionId,
+        sessionProject: session.project,
+        rawMessage: body.message,
+      });
 
       await appendTurn({
         sessionsDir,
@@ -479,7 +928,27 @@ const postRoutes: Record<string, RouteHandler> = {
         content: body.message,
       });
 
-      const result = buildImmediateConsoleAck(body.message);
+      if (target.switchOnly) {
+        const result = target.switched
+          ? `Switched context to ${target.projectId}.`
+          : `Already focused on ${target.projectId}.`;
+
+        await appendTurn({
+          sessionsDir,
+          sessionId: session.sessionId,
+          role: "assistant",
+          content: result,
+        });
+
+        scheduleProjectRuntimeRefresh({
+          hivePaths: options.hivePaths,
+          projectId: target.projectId,
+        });
+
+        return jsonOk({ result, sessionId: session.sessionId, project: target.projectId });
+      }
+
+      const result = buildImmediateConsoleAck(target.message || body.message, target.projectId);
 
       await appendTurn({
         sessionsDir,
@@ -488,17 +957,22 @@ const postRoutes: Record<string, RouteHandler> = {
         content: result,
       });
 
+      scheduleProjectRuntimeRefresh({
+        hivePaths: options.hivePaths,
+        projectId: target.projectId,
+      });
+
       void continueConsoleWorkflow({
         options,
         broadcast,
         sessionId: session.sessionId,
-        project: session.project,
-        message: body.message,
+        project: target.projectId,
+        message: target.message || body.message,
       }).catch(() => {
         // Keep the request path fast; background session updates are best-effort.
       });
 
-      return jsonOk({ result, sessionId: session.sessionId });
+      return jsonOk({ result, sessionId: session.sessionId, project: target.projectId });
     } catch (err) {
       if (err instanceof SyntaxError) {
         return jsonError(400, "Invalid JSON body");
@@ -512,14 +986,17 @@ const postRoutes: Record<string, RouteHandler> = {
       const sessionsDir = join(options.hivePaths.home, "sessions");
       await mkdir(sessionsDir, { recursive: true });
       const activeProject = await getActiveProject(options.hivePaths);
-      const session = await createSession({
-        sessionsDir,
+      const session = await createGatewaySession({
+        options,
         project: activeProject || "default",
-        runtime: "claude",
-        model: null,
-        systemPrompt: "HIVE console session",
       });
-      return jsonOk({ sessionId: session.sessionId });
+
+      scheduleProjectRuntimeRefresh({
+        hivePaths: options.hivePaths,
+        projectId: session.project,
+      });
+
+      return jsonOk({ sessionId: session.sessionId, project: session.project });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
@@ -662,7 +1139,18 @@ export async function handleApi(
           return jsonError(404, `Session not found: ${sessionId}`);
         }
         const turns = await getSessionHistory(sessionsDir, sessionId);
-        return jsonOk({ session, turns });
+        const currentProject = await getSessionProjectFocus({
+          sessionsDir,
+          sessionId,
+          fallbackProject: session.project,
+        });
+        return jsonOk({
+          session: {
+            ...session,
+            currentProject,
+          },
+          turns,
+        });
       } catch (err) {
         return jsonError(500, err instanceof Error ? err.message : "Unknown error");
       }

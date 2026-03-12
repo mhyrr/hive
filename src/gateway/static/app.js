@@ -8,6 +8,7 @@
 
 var state = {
   project: null,
+  sessionProject: null,
   supervisorStatus: null,
   agentCount: 0,
   agents: [],
@@ -15,6 +16,7 @@ var state = {
   wsConnected: false,
   wsReconnectDelay: 1000,
   wsMaxReconnectDelay: 30000,
+  processLogsRefreshTimer: null,
   feedEntries: [],
   consoleHistory: [],
   sessionId: null,
@@ -165,6 +167,7 @@ function handleWsEvent(event) {
   switch (event.type) {
     case 'feed':
       addFeedEntry(event);
+      scheduleProcessLogsRefresh();
       break;
     case 'board-changed':
     case 'run-changed':
@@ -174,6 +177,7 @@ function handleWsEvent(event) {
     case 'supervisor-tick':
       refreshStatus();
       refreshAgentOverview();
+      scheduleProcessLogsRefresh();
       break;
     case 'console-response':
     case 'session-message':
@@ -181,6 +185,10 @@ function handleWsEvent(event) {
         if (event.data.sessionId && state.sessionId && event.data.sessionId !== state.sessionId) {
           break;
         }
+        if (event.project) {
+          updateSessionProject(event.project);
+        }
+        scheduleProcessLogsRefresh();
         removeThinkingIndicator();
         addConsoleTurn(event.data.role || 'assistant', event.data.content);
       }
@@ -342,8 +350,25 @@ function clearConsoleHistory() {
 
 // --- Session Management ---
 
-function updateSessionIndicator(sessionId) {
+function renderProjectName() {
+  var projectEl = document.getElementById('project-name');
+  if (!projectEl) return;
+  projectEl.textContent = state.sessionProject || state.project || '\u2014';
+}
+
+function updateSessionProject(project) {
+  state.sessionProject = project || null;
+  renderProjectName();
+  scheduleProcessLogsRefresh(0);
+}
+
+function updateSessionIndicator(sessionId, project) {
   state.sessionId = sessionId;
+  if (project !== undefined) {
+    updateSessionProject(project);
+  } else if (!sessionId) {
+    updateSessionProject(null);
+  }
   var el = document.getElementById('session-id');
   if (!el) return;
 
@@ -359,7 +384,7 @@ function updateSessionIndicator(sessionId) {
 async function createNewSession() {
   try {
     var data = await apiPost('/console/new', {});
-    updateSessionIndicator(data.sessionId);
+    updateSessionIndicator(data.sessionId, data.project);
     clearConsoleHistory();
   } catch (e) {
     console.error('Failed to create new session:', e);
@@ -378,7 +403,10 @@ async function loadSession(sessionId) {
       state.consoleHistory = [];
     }
 
-    updateSessionIndicator(sessionId);
+    updateSessionIndicator(
+      sessionId,
+      (data.session && (data.session.currentProject || data.session.project)) || null
+    );
 
     if (data.turns && Array.isArray(data.turns)) {
       for (var i = 0; i < data.turns.length; i++) {
@@ -448,10 +476,12 @@ async function openSessionsDropdown() {
 
       var started = session.started ? formatTime(session.started) : '';
       var turns = session.turns || 0;
+      var project = session.currentProject || session.project || '';
       item.innerHTML =
         '<div class="sessions-dropdown-item-id">' + escapeHtml(session.sessionId) + '</div>' +
         '<div class="sessions-dropdown-item-meta">' +
         escapeHtml(started) + ' \u00b7 ' + turns + ' turn' + (turns !== 1 ? 's' : '') +
+        (project ? ' \u00b7 ' + escapeHtml(project) : '') +
         '</div>';
 
       // Closure for click handler
@@ -576,11 +606,11 @@ async function refreshAgentOverview() {
 function updateTopBar(data) {
   if (!data) return;
 
-  // Project name
-  var projectEl = document.getElementById('project-name');
-  if (projectEl) {
-    projectEl.textContent = data.project || state.project || '\u2014';
+  if (data.project) {
+    state.project = data.project;
   }
+  renderProjectName();
+  scheduleProcessLogsRefresh();
 
   // Supervisor status
   var dotEl = document.getElementById('supervisor-dot');
@@ -603,6 +633,106 @@ function updateTopBar(data) {
     }
   } else if (labelEl) {
     labelEl.textContent = '\u2014';
+  }
+}
+
+
+// --- Process Logs ---
+
+function scheduleProcessLogsRefresh(delay) {
+  if (state.processLogsRefreshTimer) {
+    clearTimeout(state.processLogsRefreshTimer);
+  }
+
+  state.processLogsRefreshTimer = setTimeout(function () {
+    state.processLogsRefreshTimer = null;
+    refreshProcessLogs();
+  }, typeof delay === 'number' ? delay : 200);
+}
+
+function renderProcessLogBlock(title, meta, tailLines) {
+  var tail = tailLines && tailLines.length > 0
+    ? escapeHtml(tailLines.join('\n'))
+    : '<span class="process-log-empty-line">(no output yet)</span>';
+
+  return '<div class="process-log-block">' +
+    '<div class="process-log-title">' + escapeHtml(title) + '</div>' +
+    '<div class="process-log-meta">' + escapeHtml(meta) + '</div>' +
+    '<pre class="process-log-tail">' + tail + '</pre>' +
+    '</div>';
+}
+
+function renderProcessLogs(data) {
+  var container = document.getElementById('process-logs-content');
+  if (!container) return;
+
+  if (!data || !data.project) {
+    container.innerHTML = '<div class="process-logs-empty">No project in focus yet. Start a session or switch project focus.</div>';
+    return;
+  }
+
+  var html = '';
+
+  if (data.supervisor) {
+    var supervisorMeta = 'status ' + (data.supervisor.status || 'unknown');
+    if (data.supervisor.pid) {
+      supervisorMeta += ' · pid ' + data.supervisor.pid;
+    }
+    html += renderProcessLogBlock(
+      'Supervisor · ' + data.project,
+      supervisorMeta,
+      data.supervisor.tail || []
+    );
+  }
+
+  if (data.runs && Array.isArray(data.runs)) {
+    for (var i = 0; i < data.runs.length; i++) {
+      var run = data.runs[i];
+      var meta = (run.status || 'active') + ' · ' + (run.runId || '');
+      if (run.pid) {
+        meta += ' · pid ' + run.pid;
+      }
+      html += renderProcessLogBlock(
+        (run.agentId || 'agent') + ' · ' + data.project,
+        meta,
+        run.tail || []
+      );
+    }
+  }
+
+  if (!html) {
+    container.innerHTML = '<div class="process-logs-empty">No active supervisor or run logs for ' + escapeHtml(data.project) + '.</div>';
+    return;
+  }
+
+  container.innerHTML = html;
+}
+
+async function refreshProcessLogs() {
+  var project = state.sessionProject || state.project;
+  var path = '/process-logs';
+  if (project) {
+    path += '?project=' + encodeURIComponent(project);
+  }
+
+  try {
+    var data = await apiGet(path);
+    renderProcessLogs(data);
+  } catch (e) {
+    console.error('Process logs refresh failed:', e);
+    var container = document.getElementById('process-logs-content');
+    if (container) {
+      container.innerHTML = '<div class="process-logs-empty">Failed to load process logs.</div>';
+    }
+  }
+}
+
+function setupProcessLogs() {
+  var btn = document.getElementById('process-logs-refresh');
+  if (btn) {
+    btn.addEventListener('click', function () {
+      refreshProcessLogs();
+    });
   }
 }
 
@@ -636,10 +766,7 @@ async function refreshStatus() {
   } catch (e) {
     // API unreachable — show degraded state
     console.error('Status refresh failed:', e);
-    var projectEl = document.getElementById('project-name');
-    if (projectEl && !state.project) {
-      projectEl.textContent = '\u2014';
-    }
+    renderProjectName();
   }
 }
 
@@ -771,7 +898,7 @@ async function sendConsoleMessage() {
 
     // Update session ID from response
     if (data.sessionId) {
-      updateSessionIndicator(data.sessionId);
+      updateSessionIndicator(data.sessionId, data.project);
     }
 
     // Response may come via WebSocket (console-response event) or
@@ -806,8 +933,8 @@ async function loadConsoleHistory() {
   try {
     var data = await apiGet('/console/history');
 
-    if (data.sessionId) {
-      updateSessionIndicator(data.sessionId);
+    if (data.sessionId || data.project === null) {
+      updateSessionIndicator(data.sessionId, data.project);
     }
 
     if (data.turns && Array.isArray(data.turns) && data.turns.length > 0) {
@@ -949,6 +1076,9 @@ async function init() {
   // Set up restart button
   setupRestartButton();
 
+  // Set up process logs panel
+  setupProcessLogs();
+
   // Set up keyboard shortcuts
   setupKeyboardShortcuts();
 
@@ -960,12 +1090,18 @@ async function init() {
 
   // Show initial empty feed state
   renderFeedEntries([]);
+  renderProcessLogs(null);
 
   // Load initial data from API (non-blocking, graceful on failure)
   refreshStatus();
   refreshFeed();
   refreshAgentOverview();
+  refreshProcessLogs();
   loadConsoleHistory();
+
+  setInterval(function () {
+    refreshProcessLogs();
+  }, 2500);
 }
 
 // Start when DOM is ready

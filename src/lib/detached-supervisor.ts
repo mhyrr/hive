@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { UsageError } from "./errors";
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter";
@@ -195,16 +194,29 @@ export async function reconcileDetachedSupervisorState(
   return state;
 }
 
-function buildDetachedInvocation(args: string[]): { command: string; args: string[] } {
-  const executable = process.execPath;
+export function buildDetachedInvocation(
+  args: string[],
+  current: {
+    execPath: string;
+    argv: string[];
+  } = {
+    execPath: process.execPath,
+    argv: process.argv,
+  },
+): { command: string; args: string[] } {
+  const executable = current.execPath;
   const executableName = basename(executable).toLowerCase();
+  const entrypoint = current.argv[1];
 
-  if (executableName === "bun" || executableName === "bun.exe") {
-    const scriptPath = fileURLToPath(new URL("../../bin/hive.ts", import.meta.url));
-
+  // Dev mode: re-run the same script Bun launched.
+  if (
+    (executableName === "bun" || executableName === "bun.exe") &&
+    entrypoint &&
+    /\.(?:[cm]?[jt]s|tsx?|jsx?)$/i.test(entrypoint)
+  ) {
     return {
       command: executable,
-      args: [scriptPath, ...args],
+      args: [entrypoint, ...args],
     };
   }
 

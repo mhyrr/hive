@@ -63,10 +63,21 @@
 
   <!-- Feed panel -->
   <aside class="feed">
-    <div class="feed-header">Feed</div>
-    <div class="feed-entries" id="feed-entries">
-      <!-- Feed entries appear here -->
-    </div>
+    <section class="process-logs">
+      <div class="process-logs-header">
+        <span>Process Logs</span>
+        <button class="process-logs-refresh" id="process-logs-refresh" title="Refresh process logs">Refresh</button>
+      </div>
+      <div class="process-logs-content" id="process-logs-content">
+        <div class="process-logs-empty">No live process logs yet.</div>
+      </div>
+    </section>
+    <section class="feed-section">
+      <div class="feed-header">Feed</div>
+      <div class="feed-entries" id="feed-entries">
+        <!-- Feed entries appear here -->
+      </div>
+    </section>
   </aside>
 
   <script src="/app.js"></script>
