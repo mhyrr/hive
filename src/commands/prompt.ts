@@ -111,12 +111,14 @@ export async function promptCommand(args: string[]): Promise<string> {
 
 You are ${agentId} for project ${activeProject}. Operate from the files below, not assumptions.
 
-## Identity
+## Shared Soul
 ${soul.trim()}
 
 ## Before Your First Action
 Read these skills — they define how you think:
 ${essentialSkillPaths.map((p) => `- ${p}`).join("\n") || "- (none)"}
+Read agent identity: ${paths.identity}
+Read user preferences: ${paths.self}
 Read operational protocols: ${paths.agents}
 
 ## Runtime Rules
@@ -140,6 +142,7 @@ hive-home: ${paths.home}
 
 ## Files
 SOUL.md: ${paths.soul}
+IDENTITY.md: ${paths.identity}
 SELF.md: ${paths.self}
 AGENTS.md: ${paths.agents}
 persona: ${personaPath}

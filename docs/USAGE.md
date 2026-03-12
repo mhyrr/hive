@@ -14,10 +14,12 @@ sudo mv hive /usr/local/bin/   # or wherever you keep binaries
 hive init
 ```
 
-This creates `~/.hive/` with default files. Edit these two first:
+This creates `~/.hive/` with default files. Edit these three first:
 
 - `~/.hive/SOUL.md` — the shared culture every agent carries. This is the
   voice and values of your hive. Make it yours.
+- `~/.hive/IDENTITY.md` — what the hive is. This is the self-concept and
+  working stance your agents share.
 - `~/.hive/SELF.md` — who you are. Preferences, standards, context about
   how you work. Agents read this to calibrate.
 

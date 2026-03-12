@@ -74,6 +74,7 @@ type StewardPromptContext = {
   deltaHistory: DeltaHistoryEntry[];
   recentTurns: string;
   soul: string;
+  identityPath: string;
   selfPath: string;
   agentsPath: string;
   boardDigest: string;
@@ -203,9 +204,10 @@ You are the live steward for project ${input.projectId}. This is a continuing co
 - current-revision: ${input.currentRevision}
 - last-revision-seen-in-session: ${input.sessionStateRevision}
 
-## Identity
+## Shared Soul
 ${input.soul}
 
+Read agent identity: ${input.identityPath}
 Read user preferences: ${input.selfPath}
 Read operational doctrine: ${input.agentsPath}
 
@@ -349,6 +351,7 @@ export async function runDirectStewardTurn(
     deltaHistory,
     recentTurns,
     soul: soul.trim(),
+    identityPath: input.hivePaths.identity,
     selfPath: input.hivePaths.self,
     agentsPath: input.hivePaths.agents,
     boardDigest: runtimeState.boardSummary.digest,

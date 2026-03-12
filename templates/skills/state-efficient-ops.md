@@ -32,10 +32,11 @@ Load this skill at the start of every session.
 ### What Belongs Inline (always loaded)
 - Your assignment or goal
 - Compact state digest (board summary, run status)
-- Identity (SOUL.md — keep this small)
+- Shared culture (SOUL.md — keep this small)
 - Messages addressed to you
 
 ### What Belongs Path-Referenced (read on demand)
+- IDENTITY.md (agent self-concept, read once at session start)
 - Full BOARD.md (use digest first, read full only when needed)
 - Full PLAN.md (read your section, not the whole plan)
 - Persona files (read once at session start)

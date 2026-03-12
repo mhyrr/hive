@@ -50,6 +50,7 @@ describe("HIVE CLI", () => {
 
     expect(output).toContain("Initialized hive home");
     expect(await Bun.file(join(context.hiveHome, "SOUL.md")).exists()).toBeTrue();
+    expect(await Bun.file(join(context.hiveHome, "IDENTITY.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "SELF.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "feed.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "personas", "steward.md")).exists()).toBeTrue();
@@ -262,9 +263,11 @@ Task: Build the auth endpoint and publish the contract.
 
     expect(prompt).toContain("You are alpha for project myproject.");
     expect(prompt).toContain("# HIVE Soul");
+    expect(prompt).toContain(`Read agent identity: ${join(context.hiveHome, "IDENTITY.md")}`);
     expect(prompt).toContain("persona: craftsman");
     expect(prompt).toContain("The authoritative hive files are not in the repo root.");
     expect(prompt).toContain("## Files");
+    expect(prompt).toContain(`IDENTITY.md: ${join(context.hiveHome, "IDENTITY.md")}`);
     expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myproject", "BOARD.md")}`);
     expect(prompt).toContain(`LOG.md: ${join(context.hiveHome, "projects", "myproject", "LOG.md")}`);
     expect(prompt).toContain("hive inbox alpha");
@@ -314,9 +317,11 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("Human-driven single-pass mode.");
     expect(prompt).toContain("Build the auth flow");
     expect(prompt).toContain("Human nudge pending: Build the auth flow");
+    expect(prompt).toContain(`Read agent identity: ${join(context.hiveHome, "IDENTITY.md")}`);
     expect(prompt).toContain("When you fully handle a message, resolve it or close it so the open queue stays clean.");
     expect(prompt).toContain("The authoritative hive files are not in the repo root.");
     expect(prompt).toContain("## File Paths");
+    expect(prompt).toContain(`IDENTITY.md: ${join(context.hiveHome, "IDENTITY.md")}`);
     expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myproject", "BOARD.md")}`);
     expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
     expect(prompt).toContain("./hive msg resolve <message> orchestrator <answer>");

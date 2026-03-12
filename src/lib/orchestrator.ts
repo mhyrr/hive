@@ -283,6 +283,7 @@ export async function buildOrchestratorPrompt(input: {
   pathsHome: string;
   repoPath: string;
   pathsSoul: string;
+  pathsIdentity: string;
   pathsSelf: string;
   pathsAgents: string;
   personaPath: string;
@@ -320,8 +321,11 @@ export async function buildOrchestratorPrompt(input: {
 
 You are the steward/orchestrator for project ${input.projectId}. All context you need is below — respond immediately without reading files first. Use the hive CLI for actions (resolving messages, logging, assigning work) not for reading state.
 
-## Identity
+## Shared Soul
 ${input.soul.trim()}
+
+Read agent identity: ${input.pathsIdentity}
+Read user preferences: ${input.pathsSelf}
 
 ${renderModeInstructions(input.options)}
 
@@ -371,6 +375,7 @@ hive-home: ${input.pathsHome}
 
 ## File Paths (for writes/actions only)
 SOUL.md: ${input.pathsSoul}
+IDENTITY.md: ${input.pathsIdentity}
 SELF.md: ${input.pathsSelf}
 AGENTS.md: ${input.pathsAgents}
 persona: ${input.personaPath}

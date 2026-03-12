@@ -30,10 +30,11 @@ OpenClaw is a single agent with one personality. SOUL.md defines that agent's
 identity. When it delegates to sub-agents, they get stripped-down context and
 run a single task — they're hands, not minds.
 
-HIVE is a team of minds. Each agent carries the shared culture (SOUL.md) but
-thinks through a different cognitive lens — a *persona*. The architect sees the
-system. The craftsman sees the code. The critic sees the risks. The scout sees
-the options. They don't agree. They're not supposed to.
+HIVE is a team of minds. Each agent carries the shared culture (`SOUL.md`), a
+shared self-concept (`IDENTITY.md`), and a different cognitive lens — a
+*persona*. The architect sees the system. The craftsman sees the code. The
+critic sees the risks. The scout sees the options. They don't agree. They're
+not supposed to.
 
 This isn't sub-agent delegation. It's multi-perspective reasoning on the same
 problem. An architect misses implementation details. A craftsman misses
@@ -117,7 +118,8 @@ shared files. No infrastructure. Just conventions and markdown.
 
 HIVE separates the persistent system from the transient agents:
 
-- **The hive persists:** identity, memory, personas, project state, history.
+- **The hive persists:** soul, identity, user context, memory, personas,
+  project state, history.
 - **Agents are disposable:** spin them up, give them a prompt, let them work,
   shut them down.
 - **Coordination happens through files:**
@@ -158,14 +160,16 @@ bun build --compile ./bin/hive.ts --outfile hive
 hive init
 ```
 
-This creates `~/.hive/` and scaffolds core files: `SOUL.md`, `SELF.md`,
-default personas, memory directories, and the base project structure.
+This creates `~/.hive/` and scaffolds core files: `SOUL.md`, `IDENTITY.md`,
+`SELF.md`, default personas, memory directories, and the base project
+structure.
 
 ### 3. Make it yours
 
 Edit these first:
 
 - `~/.hive/SOUL.md` — the shared culture every agent carries
+- `~/.hive/IDENTITY.md` — what the hive is in relation to you
 - `~/.hive/SELF.md` — who you are, what you care about
 
 This is where your hive stops being a template and starts becoming yours.
@@ -239,6 +243,7 @@ ones you don't need. They're prompts, not code.
 ```text
 ~/.hive/
 ├── SOUL.md                    # shared culture
+├── IDENTITY.md                # hive self-concept
 ├── SELF.md                    # human identity
 ├── config.md                  # global defaults
 ├── feed.md                    # event stream
@@ -367,6 +372,8 @@ Environment variables:
 - [PHASE-5-GATEWAY.md](./docs/PHASE-5-GATEWAY.md) — Gateway and multi-runtime design
 - [CLAUDE.md](./docs/CLAUDE.md) — implementation constraints and scope
 - [SOUL.md](./templates/SOUL.md) — default hive culture template
+- [IDENTITY.md](./templates/IDENTITY.md) — default hive identity template
+- [SELF.md](./templates/SELF.md) — default user-preferences template
 
 ## Current Status
 

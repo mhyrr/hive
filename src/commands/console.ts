@@ -85,6 +85,7 @@ function buildConsolePrompt(input: {
   repoPath: string;
   hiveHome: string;
   pathsSoul: string;
+  pathsIdentity: string;
   pathsSelf: string;
   pathsAgents: string;
   pathsConfig: string;
@@ -122,6 +123,7 @@ ${input.soul}
 Read these skills — they define how you think:
 ${essentialSkillPaths.map((p) => `- ${p}`).join("\n") || "- (none)"}
 
+Read your agent identity: ${input.pathsIdentity}
 Read operational protocols: ${input.pathsAgents}
 Read your user's preferences: ${input.pathsSelf}
 
@@ -169,6 +171,7 @@ hive-home: ${input.hiveHome}
 
 ## Files
 SOUL.md: ${input.pathsSoul}
+IDENTITY.md: ${input.pathsIdentity}
 SELF.md: ${input.pathsSelf}
 AGENTS.md: ${input.pathsAgents}
 config: ${input.pathsConfig}
@@ -250,6 +253,7 @@ export async function consoleCommand(args: string[]): Promise<string> {
     repoPath,
     hiveHome: paths.home,
     pathsSoul: paths.soul,
+    pathsIdentity: paths.identity,
     pathsSelf: paths.self,
     pathsAgents: paths.agents,
     pathsConfig: paths.config,
