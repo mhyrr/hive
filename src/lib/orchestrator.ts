@@ -195,6 +195,37 @@ export async function enqueueGoalForOrchestrator(
   return message.filename;
 }
 
+async function readFileOrDefault(path: string, fallback: string): Promise<string> {
+  try {
+    const file = Bun.file(path);
+    if (await file.exists()) {
+      const content = (await file.text()).trim();
+      return content || fallback;
+    }
+  } catch {
+    // fall through
+  }
+  return fallback;
+}
+
+async function loadEssentialSkills(
+  skillsDir: string,
+  availableSkillNames: string[],
+): Promise<string> {
+  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
+  const loaded: string[] = [];
+
+  for (const name of essentialSkills) {
+    if (!availableSkillNames.includes(name)) continue;
+    const content = await readFileOrDefault(`${skillsDir}/${name}.md`, "");
+    if (content) {
+      loaded.push(`### ${name}\n${content}`);
+    }
+  }
+
+  return loaded.length > 0 ? loaded.join("\n\n") : "(none)";
+}
+
 export async function buildOrchestratorPrompt(input: {
   projectId: string;
   pathsHome: string;
@@ -221,10 +252,6 @@ export async function buildOrchestratorPrompt(input: {
 }): Promise<string> {
   const signals = summarizeSignals(input.board, input.openMessages, input.activeRuns);
   const runtimesInfo = await renderAvailableRuntimes();
-  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
-  const essentialSkillPaths = essentialSkills
-    .filter((name) => input.availableSkillNames.includes(name))
-    .map((name) => `${input.skillsDir}/${name}.md`);
   const recentGoal =
     input.options.goal?.trim() ||
     input.openMessages.find(
@@ -233,9 +260,13 @@ export async function buildOrchestratorPrompt(input: {
     )?.body ||
     "(none)";
 
+  // Inline essential content so the agent can act immediately without file reads
+  const inlinedSkills = await loadEssentialSkills(input.skillsDir, input.availableSkillNames);
+  const inlinedAgents = await readFileOrDefault(input.pathsAgents, "(no AGENTS.md found)");
+
   return `# HIVE Steward Prompt
 
-You are the steward/orchestrator for project ${input.projectId}. Operate from the files below and keep BOARD.md as the single source of truth.
+You are the steward/orchestrator for project ${input.projectId}. All context you need is below — respond immediately without reading files first. Use the hive CLI for actions (resolving messages, logging, assigning work) not for reading state.
 
 ## Identity
 ${input.soul.trim()}
@@ -246,21 +277,20 @@ ${renderModeInstructions(input.options)}
 ${recentGoal}
 
 ## Immediate Priorities
-${renderList([
-  "Read the board, open messages, and recent log before acting.",
-  "If the goal is new or changed, decompose it into clear tasks and update PLAN.md and BOARD.md.",
-  "Send assignments or clarifications through message files. Do not rely on unrecorded context.",
-  "When you fully handle a message, resolve it or close it so the open queue stays clean.",
-  "Log every orchestration action you take.",
-])}
+- Answer human nudges before anything else. Respond directly and concisely.
+- If the goal is new or changed, decompose it into clear tasks and update PLAN.md and BOARD.md.
+- Send assignments or clarifications through message files. Do not rely on unrecorded context.
+- When you fully handle a message, resolve it or close it so the open queue stays clean.
+- Log every orchestration action you take.
 
 ## Signals
 ${renderList(signals)}
 
-## Before Your First Action
-Read these skills — they define how you think:
-${essentialSkillPaths.map((p) => `- ${p}`).join("\n") || "- (none)"}
-Read operational protocols: ${input.pathsAgents}
+## Operational Skills
+${inlinedSkills}
+
+## Operational Protocols
+${inlinedAgents}
 
 ## Steward Rules
 - BOARD.md is yours to maintain. Other agents should update you via msg/.
@@ -284,7 +314,7 @@ project: ${input.projectId}
 repo: ${input.repoPath}
 hive-home: ${input.pathsHome}
 
-## Files
+## File Paths (for writes/actions only)
 SOUL.md: ${input.pathsSoul}
 SELF.md: ${input.pathsSelf}
 AGENTS.md: ${input.pathsAgents}
