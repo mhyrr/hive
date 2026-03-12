@@ -44,6 +44,16 @@ export type ProjectPaths = {
   runsDir: string;
   runsActiveDir: string;
   supervisorDir: string;
+  stateDir: string;
+  stateRevision: string;
+  stateBoardSummary: string;
+  stateOpenMessages: string;
+  stateRecentResults: string;
+  stateActiveRuns: string;
+  stateHumanInbox: string;
+  stateStewardDelta: string;
+  stateDeltaHistory: string;
+  stateSessionContext: string;
 };
 
 export function resolveHiveHome(): string {
@@ -115,6 +125,7 @@ export async function ensureHiveScaffold(
 
 export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPaths {
   const root = join(paths.projectsDir, projectId);
+  const stateDir = join(root, "state");
 
   return {
     root,
@@ -126,6 +137,16 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     runsDir: join(root, "runs"),
     runsActiveDir: join(root, "runs", "active"),
     supervisorDir: join(root, "supervisor"),
+    stateDir,
+    stateRevision: join(stateDir, "revision.json"),
+    stateBoardSummary: join(stateDir, "board-summary.json"),
+    stateOpenMessages: join(stateDir, "open-messages.json"),
+    stateRecentResults: join(stateDir, "recent-results.json"),
+    stateActiveRuns: join(stateDir, "active-runs.json"),
+    stateHumanInbox: join(stateDir, "human-inbox.json"),
+    stateStewardDelta: join(stateDir, "steward-delta.json"),
+    stateDeltaHistory: join(stateDir, "delta-history.jsonl"),
+    stateSessionContext: join(stateDir, "session-context.json"),
   };
 }
 
@@ -143,6 +164,7 @@ export async function ensureProjectScaffold(
   await mkdir(projectPaths.runsDir, { recursive: true });
   await mkdir(projectPaths.runsActiveDir, { recursive: true });
   await mkdir(projectPaths.supervisorDir, { recursive: true });
+  await mkdir(projectPaths.stateDir, { recursive: true });
   await writeIfMissing(
     projectPaths.config,
     renderProjectConfigTemplate(input.projectName, input.repoPath),

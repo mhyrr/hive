@@ -12,6 +12,7 @@ import {
   getProjectPaths,
   type HivePaths,
 } from "../lib/paths";
+import { refreshProjectRuntimeState } from "../lib/state";
 
 export async function sendGoalToProject(input: {
   projectId: string;
@@ -53,6 +54,12 @@ export async function sendGoalToProject(input: {
       supervisorNote = "Supervisor not started (start manually with `hive run`)";
     }
   }
+
+  await refreshProjectRuntimeState({
+    hivePaths: paths,
+    projectId: input.projectId,
+    projectPaths,
+  });
 
   return [
     `Sent: ${message}`,

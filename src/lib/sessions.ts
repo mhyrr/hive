@@ -21,6 +21,22 @@ export type SessionTurn = {
   ts: string;
 };
 
+export type SessionState = {
+  currentProject: string;
+  projectStates: Record<string, {
+    lastRevisionSeen: number;
+    lastRunId: string | null;
+  }>;
+  updatedAt: string;
+};
+
+type LegacySessionState = {
+  project?: string;
+  lastRevisionSeen?: number;
+  lastRunId?: string | null;
+  updatedAt?: string;
+};
+
 function generateSessionId(date: Date = now()): string {
   const iso = toIsoTimestamp(date);
   // YYYYMMDD-HHmmssZ from 2026-03-11T14:11:05Z
@@ -63,6 +79,70 @@ function attributesToMeta(attrs: Record<string, string>): SessionMeta {
     turns: parseInt(attrs.turns ?? "0", 10),
     lastActive: attrs["last-active"] ?? attrs.started ?? "",
     status: (attrs.status as "active" | "archived") ?? "active",
+  };
+}
+
+function normalizeSessionState(
+  value: SessionState | LegacySessionState | null,
+  fallbackProject = "default",
+): SessionState {
+  const currentProject =
+    value && "currentProject" in value && typeof value.currentProject === "string" && value.currentProject.trim()
+      ? value.currentProject
+      : value && "project" in value && typeof value.project === "string" && value.project.trim()
+        ? value.project
+        : fallbackProject;
+
+  if (value && "projectStates" in value && value.projectStates && typeof value.projectStates === "object") {
+    return {
+      currentProject,
+      projectStates: Object.fromEntries(
+        Object.entries(value.projectStates)
+          .filter(([projectId]) => Boolean(projectId))
+          .map(([projectId, projectState]) => [
+            projectId,
+            {
+              lastRevisionSeen:
+                typeof projectState?.lastRevisionSeen === "number" ? projectState.lastRevisionSeen : 0,
+              lastRunId:
+                typeof projectState?.lastRunId === "string" ? projectState.lastRunId : null,
+            },
+          ]),
+      ),
+      updatedAt:
+        typeof value.updatedAt === "string" && value.updatedAt.trim()
+          ? value.updatedAt
+          : toIsoTimestamp(),
+    };
+  }
+
+  const legacy = value as LegacySessionState | null;
+
+  return {
+    currentProject,
+    projectStates: {
+      [currentProject]: {
+        lastRevisionSeen: typeof legacy?.lastRevisionSeen === "number" ? legacy.lastRevisionSeen : 0,
+        lastRunId: typeof legacy?.lastRunId === "string" ? legacy.lastRunId : null,
+      },
+    },
+    updatedAt:
+      typeof legacy?.updatedAt === "string" && legacy.updatedAt.trim()
+        ? legacy.updatedAt
+        : toIsoTimestamp(),
+  };
+}
+
+function createInitialSessionState(project: string, updatedAt: string): SessionState {
+  return {
+    currentProject: project,
+    projectStates: {
+      [project]: {
+        lastRevisionSeen: 0,
+        lastRunId: null,
+      },
+    },
+    updatedAt,
   };
 }
 
@@ -142,6 +222,11 @@ export async function createSession(input: {
 
   // Write prompt.md
   await Bun.write(join(sessionDir, "prompt.md"), `${input.systemPrompt}\n`);
+
+  await Bun.write(
+    join(sessionDir, "state.json"),
+    `${JSON.stringify(createInitialSessionState(input.project, started), null, 2)}\n`,
+  );
 
   // Update active.md pointer
   await Bun.write(
@@ -285,4 +370,162 @@ export async function getSessionPrompt(
   }
 
   return (await promptFile.text()).trim();
+}
+
+export async function getSessionState(
+  sessionsDir: string,
+  sessionId: string,
+): Promise<SessionState | null> {
+  const stateFile = Bun.file(join(sessionsDir, sessionId, "state.json"));
+
+  if (!(await stateFile.exists())) {
+    return null;
+  }
+
+  try {
+    return normalizeSessionState(await stateFile.json() as SessionState | LegacySessionState);
+  } catch {
+    return null;
+  }
+}
+
+export async function writeSessionState(input: {
+  sessionsDir: string;
+  sessionId: string;
+  state: SessionState;
+}): Promise<void> {
+  await Bun.write(
+    join(input.sessionsDir, input.sessionId, "state.json"),
+    `${JSON.stringify(input.state, null, 2)}\n`,
+  );
+}
+
+export async function updateSessionState(input: {
+  sessionsDir: string;
+  sessionId: string;
+  update: Partial<SessionState>;
+}): Promise<SessionState> {
+  const existing = normalizeSessionState(
+    await getSessionState(input.sessionsDir, input.sessionId),
+  );
+  const next: SessionState = normalizeSessionState({
+    ...existing,
+    ...input.update,
+    projectStates: {
+      ...existing.projectStates,
+      ...(input.update.projectStates ?? {}),
+    },
+    updatedAt: input.update.updatedAt ?? toIsoTimestamp(),
+  }, existing.currentProject);
+
+  await writeSessionState({
+    sessionsDir: input.sessionsDir,
+    sessionId: input.sessionId,
+    state: next,
+  });
+
+  return next;
+}
+
+export function getProjectSessionState(
+  state: SessionState | null,
+  projectId: string,
+): { lastRevisionSeen: number; lastRunId: string | null } {
+  return state?.projectStates[projectId] ?? {
+    lastRevisionSeen: 0,
+    lastRunId: null,
+  };
+}
+
+export async function switchSessionProject(input: {
+  sessionsDir: string;
+  sessionId: string;
+  projectId: string;
+}): Promise<SessionState> {
+  const existing = normalizeSessionState(
+    await getSessionState(input.sessionsDir, input.sessionId),
+    input.projectId,
+  );
+
+  const next = await updateSessionState({
+    sessionsDir: input.sessionsDir,
+    sessionId: input.sessionId,
+    update: {
+      currentProject: input.projectId,
+      projectStates: {
+        ...existing.projectStates,
+        [input.projectId]: existing.projectStates[input.projectId] ?? {
+          lastRevisionSeen: 0,
+          lastRunId: null,
+        },
+      },
+      updatedAt: toIsoTimestamp(),
+    },
+  });
+
+  const meta = await getSession(input.sessionsDir, input.sessionId);
+
+  if (meta) {
+    await Bun.write(
+      join(input.sessionsDir, input.sessionId, "meta.md"),
+      stringifyFrontmatter(
+        metaToAttributes({
+          ...meta,
+          project: input.projectId,
+        }),
+        "",
+      ),
+    );
+  }
+
+  const active = await getActiveSession(input.sessionsDir);
+
+  if (active?.sessionId === input.sessionId) {
+    await Bun.write(
+      join(input.sessionsDir, "active.md"),
+      stringifyFrontmatter(
+        {
+          session: input.sessionId,
+          project: input.projectId,
+          runtime: active.runtime,
+          started: active.started,
+        },
+        "",
+      ),
+    );
+  }
+
+  return next;
+}
+
+export async function updateSessionProjectState(input: {
+  sessionsDir: string;
+  sessionId: string;
+  projectId: string;
+  lastRevisionSeen?: number;
+  lastRunId?: string | null;
+}): Promise<SessionState> {
+  const existing = normalizeSessionState(
+    await getSessionState(input.sessionsDir, input.sessionId),
+    input.projectId,
+  );
+  const current = existing.projectStates[input.projectId] ?? {
+    lastRevisionSeen: 0,
+    lastRunId: null,
+  };
+
+  return updateSessionState({
+    sessionsDir: input.sessionsDir,
+    sessionId: input.sessionId,
+    update: {
+      projectStates: {
+        [input.projectId]: {
+          lastRevisionSeen: input.lastRevisionSeen ?? current.lastRevisionSeen,
+          lastRunId:
+            input.lastRunId !== undefined ? input.lastRunId : current.lastRunId,
+        },
+      },
+      updatedAt: toIsoTimestamp(),
+    },
+  });
 }

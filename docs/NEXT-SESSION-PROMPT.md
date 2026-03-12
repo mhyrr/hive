@@ -7,6 +7,7 @@ You are continuing work on HIVE in `/Users/mhyrr/work/hive`.
 
 Read first:
 - `docs/NEXT-SESSION-PROMPT.md`
+- `docs/PERSISTENT-STEWARD-RUNTIME.md`
 - `docs/FINAL-PRD.md`
 - `docs/PHASE-4-AUTO-LAUNCH.md`
 - `docs/CLAUDE.md`
@@ -23,7 +24,8 @@ Core thesis:
 - the hive persists across projects
 
 Current implementation is Bun + TypeScript, zero npm dependencies, markdown as
-the source of truth, and one-file-per-message coordination in `~/.hive/msg/`.
+the human-readable source of truth, and one-file-per-message coordination in
+`~/.hive/msg/`.
 
 ## Where We Are Right Now
 
@@ -181,35 +183,41 @@ fragile and expensive before it becomes broadly useful.
 
 ## Immediate Build Priorities
 
-Continue Phase 4, but do it in service of the actual product:
+The new first priority is the runtime architecture in
+`docs/PERSISTENT-STEWARD-RUNTIME.md`.
 
-### Phase 4 next
-1. Detached/background supervision refinements
-- add `hive supervise logs`
-- improve detached status visibility and quiet/debug modes
-- keep the current loop implementation; do not invent a separate daemon
+Do not optimize the old one-shot orchestrator path further as the primary human
+interface.
 
-2. Supervisor ergonomics
-- quiet/default operator mode
-- debug/log mode
-- better active run inspection
+### Now
+1. Derived state under `projects/<project>/state/`
+- add revision tracking
+- add compact board/message/run summaries
+- make this disposable machine state, not a new source of truth
+
+2. Deterministic state monitor
+- parse markdown once
+- compute steward deltas
+- stop making the steward rediscover unchanged state
+
+3. Persistent steward session contract
+- bootstrap once
+- refresh via deltas
+- make the steward the real head agent for human conversation
 
 ### Immediately after that
-3. Prompt compaction
-- split `SOUL.md` / `SELF.md` / `AGENTS.md`
-- add compact runtime digests
-- reduce inlined markdown drastically
+4. Rewire gateway and console to the live steward
+- the human talks directly to the steward
+- the session becomes the primary progress surface
+- feed remains a secondary durable event stream
 
-4. User-facing front door
-- introduce:
-  - `hive run`
-  - `hive say`
-  - `hive ask`
-- these should wrap the existing engine
-- `supervise`, `launch`, `prompt`, and `chat` become lower-level surfaces
+5. Prompt compaction
+- split `SOUL.md` / `SELF.md` / `AGENTS.md`
+- keep only compact curated identity/doctrine inline
+- move hot runtime state to derived summaries plus targeted reads
 
 ### Then
-5. Skills
+6. Skills
 - add HIVE-managed `skills/`
 - implement the first `state-efficient-ops` skill
 - make agents and the hive itself use it
@@ -221,7 +229,8 @@ Do not regress these architectural rules:
 - no database as a new source of truth
 - no background server requirement
 - one writer per file
-- markdown remains primary state representation
+- markdown remains the human source of truth
+- structured derived runtime state is allowed
 - zero npm deps unless there is a strong, explicit reason
 
 Do not optimize for framework cleverness.
@@ -241,11 +250,12 @@ The user is explicitly saying:
 
 ## Recommended Next Task
 
-Implement the next Phase 4 slice as:
+Implement the persistent runtime foundation as:
 
-1. background/detached supervision control plane
-2. then prompt compaction with the `SOUL.md` / `SELF.md` / `AGENTS.md` split
-3. then the first user-facing wrapper commands: `hive run`, `hive say`, `hive ask`
+1. project-local derived state under `state/`
+2. deterministic state monitor + steward deltas
+3. persistent steward session bootstrap + refresh contract
+4. then rewire gateway/console to talk to the live steward
 
 When in doubt, choose the path that makes HIVE feel less like a toolbox and
 more like a real team.

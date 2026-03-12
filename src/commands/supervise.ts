@@ -40,6 +40,7 @@ import {
   selectWorkerLaunches,
 } from "../lib/supervisor";
 import { toIsoTimestamp } from "../lib/time";
+import { refreshProjectRuntimeState } from "../lib/state";
 import { launchAgentPass } from "./launch";
 
 type SuperviseOptions = {
@@ -149,16 +150,21 @@ async function readProjectState(input: {
   paths: Awaited<ReturnType<typeof ensureHiveScaffold>>;
 }): Promise<ProjectState> {
   const projectPaths = getProjectPaths(input.paths, input.activeProject);
+  const runtimeState = await refreshProjectRuntimeState({
+    hivePaths: input.paths,
+    projectId: input.activeProject,
+    projectPaths,
+  });
 
   return {
     projectConfig: await Bun.file(projectPaths.config).text(),
     plan: await Bun.file(projectPaths.plan).text(),
-    boardText: await Bun.file(projectPaths.board).text(),
-    openMessages: await listOpenProjectMessages(input.paths.msgDir, input.activeProject),
-    activeRuns: await listActiveRuns(projectPaths),
+    boardText: runtimeState.boardText,
+    openMessages: runtimeState.openMessages,
+    activeRuns: runtimeState.activeRuns,
     recentRuns: await listRecentRuns(projectPaths, 10),
     allRuns: await listAllRuns(projectPaths),
-    recentRunResults: await listRecentRunResults(projectPaths, 10),
+    recentRunResults: runtimeState.recentResults,
   };
 }
 

@@ -11,8 +11,12 @@ import {
   getSession,
   getSessionHistory,
   getSessionPrompt,
+  getSessionState,
   listSessions,
   parseHistory,
+  switchSessionProject,
+  updateSessionState,
+  updateSessionProjectState,
 } from "../src/lib/sessions";
 
 let sessionsDir: string;
@@ -49,7 +53,7 @@ describe("session management", () => {
 
     const sessionDir = join(sessionsDir, session.sessionId);
     const entries = await readdir(sessionDir);
-    expect(entries.sort()).toEqual(["history.md", "meta.md", "prompt.md"]);
+    expect(entries.sort()).toEqual(["history.md", "meta.md", "prompt.md", "state.json"]);
 
     // Verify meta.md
     const metaContent = await Bun.file(join(sessionDir, "meta.md")).text();
@@ -332,6 +336,79 @@ Got it. Sending correction to alpha.
 
     const prompt = await getSessionPrompt(sessionsDir, session.sessionId);
     expect(prompt).toBe("You are the hive mind.\n\nManage agents effectively.");
+  });
+
+  test("session state tracks last seen revision and run id", async () => {
+    const session = await createSession({
+      sessionsDir,
+      project: "myproject",
+      runtime: "claude",
+      model: null,
+      systemPrompt: "test",
+    });
+
+    const initialState = await getSessionState(sessionsDir, session.sessionId);
+    expect(initialState).not.toBeNull();
+    expect(initialState!.currentProject).toBe("myproject");
+    expect(initialState!.projectStates.myproject?.lastRevisionSeen).toBe(0);
+    expect(initialState!.projectStates.myproject?.lastRunId).toBeNull();
+
+    await updateSessionState({
+      sessionsDir,
+      sessionId: session.sessionId,
+      update: {
+        currentProject: "otherproj",
+        projectStates: {
+          myproject: {
+            lastRevisionSeen: 7,
+            lastRunId: "20260311-141105Z-console",
+          },
+          otherproj: {
+            lastRevisionSeen: 2,
+            lastRunId: null,
+          },
+        },
+      },
+    });
+
+    const updatedState = await getSessionState(sessionsDir, session.sessionId);
+    expect(updatedState).not.toBeNull();
+    expect(updatedState!.currentProject).toBe("otherproj");
+    expect(updatedState!.projectStates.myproject?.lastRevisionSeen).toBe(7);
+    expect(updatedState!.projectStates.myproject?.lastRunId).toBe("20260311-141105Z-console");
+    expect(updatedState!.projectStates.otherproj?.lastRevisionSeen).toBe(2);
+  });
+
+  test("switchSessionProject updates current project and metadata", async () => {
+    const session = await createSession({
+      sessionsDir,
+      project: "myproject",
+      runtime: "claude",
+      model: null,
+      systemPrompt: "test",
+    });
+
+    await updateSessionProjectState({
+      sessionsDir,
+      sessionId: session.sessionId,
+      projectId: "myproject",
+      lastRevisionSeen: 4,
+      lastRunId: "run-a",
+    });
+
+    await switchSessionProject({
+      sessionsDir,
+      sessionId: session.sessionId,
+      projectId: "otherproj",
+    });
+
+    const state = await getSessionState(sessionsDir, session.sessionId);
+    expect(state?.currentProject).toBe("otherproj");
+    expect(state?.projectStates.myproject?.lastRevisionSeen).toBe(4);
+    expect(state?.projectStates.otherproj?.lastRevisionSeen).toBe(0);
+
+    const meta = await getSession(sessionsDir, session.sessionId);
+    expect(meta?.project).toBe("otherproj");
   });
 
   test("model null is handled correctly in meta.md", async () => {

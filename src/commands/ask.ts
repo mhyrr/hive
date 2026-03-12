@@ -17,6 +17,7 @@ import {
   runLaunchSpec,
 } from "../lib/runtime";
 import { extractRepoPath } from "../lib/project";
+import { refreshProjectRuntimeState } from "../lib/state";
 
 function buildStatusDigest(input: {
   activeProject: string;
@@ -61,11 +62,13 @@ export async function askCommand(args: string[]): Promise<string> {
 
   const projectPaths = getProjectPaths(paths, activeProject);
 
-  const [supervisorState, boardText, openMessages, activeRuns, feedText] = await Promise.all([
+  const [supervisorState, state, feedText] = await Promise.all([
     reconcileDetachedSupervisorState(projectPaths),
-    Bun.file(projectPaths.board).text().catch(() => ""),
-    listOpenProjectMessages(paths.msgDir, activeProject),
-    listActiveRuns(projectPaths),
+    refreshProjectRuntimeState({
+      hivePaths: paths,
+      projectId: activeProject,
+      projectPaths,
+    }),
     Bun.file(paths.feed).text().catch(() => ""),
   ]);
 
@@ -75,7 +78,7 @@ export async function askCommand(args: string[]): Promise<string> {
     ? `running (pid ${supervisorState.pid}, interval ${supervisorState.intervalSeconds}s, last-pass: ${supervisorState.lastPassAt ?? "none yet"})`
     : "not running";
 
-  const nonAssignMessages = openMessages.filter(
+  const nonAssignMessages = state.openMessages.filter(
     (m) => m.attributes.type !== "assign",
   );
 
@@ -89,8 +92,8 @@ export async function askCommand(args: string[]): Promise<string> {
   const digest = buildStatusDigest({
     activeProject,
     supervisorSection,
-    boardText,
-    activeRuns,
+    boardText: state.boardText,
+    activeRuns: state.activeRuns,
     nonAssignMessages,
     feedBody,
   });
