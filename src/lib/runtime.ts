@@ -319,6 +319,22 @@ export function resolveRuntimeHints(input: ResolveHintsInput): RuntimeHints {
   };
 }
 
+export async function validateRuntimeInstalled(runtime: string): Promise<void> {
+  const adapter = getAdapter(runtime);
+
+  if (!adapter) {
+    throw new UsageError(`Unknown runtime: ${runtime}`);
+  }
+
+  const installed = await adapter.detectInstalled();
+
+  if (!installed) {
+    throw new UsageError(
+      `Runtime '${runtime}' is not installed (command '${adapter.command}' not found). Run \`hive runtimes\` to see available runtimes.`,
+    );
+  }
+}
+
 export function buildLaunchSpec(input: {
   runtime: string;
   model: string | null;
@@ -378,7 +394,7 @@ export function startInteractiveSession(
   const child = spawn(spec.command, spec.args, {
     stdio: "inherit",
     cwd: repoPath,
-    env: { ...process.env },
+    env: cleanEnvForRuntime(),
   });
 
   return {
@@ -459,6 +475,15 @@ function createForwarder(
   };
 }
 
+function cleanEnvForRuntime(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  // Prevent nested-session detection in Claude Code
+  delete env.CLAUDECODE;
+  // Strip API key so Claude Code uses subscription auth (OAuth) instead of API credits
+  delete env.ANTHROPIC_API_KEY;
+  return env;
+}
+
 export function startLaunchSpec(
   spec: LaunchSpec,
   repoPath: string,
@@ -467,6 +492,7 @@ export function startLaunchSpec(
   const child = spawn(spec.command, spec.args, {
     cwd: repoPath,
     stdio: ["inherit", "pipe", "pipe"],
+    env: cleanEnvForRuntime(),
   });
   const visibleLines: string[] = [];
   const outputStream = options.outputPath

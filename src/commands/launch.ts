@@ -21,6 +21,7 @@ import {
   renderLaunchPreview,
   resolveRuntimeHints,
   startLaunchSpec,
+  validateRuntimeInstalled,
 } from "../lib/runtime";
 import {
   createRunDraft,
@@ -131,6 +132,10 @@ export async function launchAgentPass(input: LaunchAgentInput): Promise<string> 
     runtimeOverride: input.runtimeOverride,
     modelOverride: input.modelOverride,
   });
+  if (!input.dryRun) {
+    await validateRuntimeInstalled(hints.runtime);
+  }
+
   const spec = buildLaunchSpec({
     runtime: hints.runtime,
     model: hints.model,
