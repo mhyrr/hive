@@ -11,6 +11,15 @@ export type GatewayOptions = {
   hivePaths: HivePaths;
 };
 
+export type GatewayEvent = {
+  type: string;
+  ts: string;
+  project: string;
+  data?: Record<string, unknown>;
+};
+
+export type GatewayBroadcast = (event: GatewayEvent) => void;
+
 type GatewayState = {
   server: Server;
   clients: Set<ServerWebSocket<unknown>>;
@@ -28,7 +37,7 @@ function corsHeaders(): Record<string, string> {
 export function startGateway(options: GatewayOptions): GatewayState {
   const clients = new Set<ServerWebSocket<unknown>>();
 
-  const broadcast = (event: { type: string; ts: string; project: string; data?: Record<string, unknown> }) => {
+  const broadcast: GatewayBroadcast = (event) => {
     const payload = JSON.stringify(event);
     for (const ws of clients) {
       try {
@@ -72,7 +81,7 @@ export function startGateway(options: GatewayOptions): GatewayState {
 
       // API routes
       if (url.pathname.startsWith("/api/")) {
-        return handleApi(req, url, options);
+        return handleApi(req, url, options, broadcast);
       }
 
       // Static files
