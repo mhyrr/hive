@@ -74,8 +74,8 @@ function renderRunResults(results: RunResult[]): string {
   }
 
   return results
-    .map((result) =>
-      [
+    .map((result) => {
+      const lines = [
         `### ${result.runId} (${result.agentId})`,
         `status: ${result.status}`,
         `exit-code: ${result.exitCode ?? "unknown"}`,
@@ -84,10 +84,30 @@ function renderRunResults(results: RunResult[]): string {
         `assignment-resolved-by-worker: ${result.assignmentResolvedByWorker ? "yes" : "no"}`,
         `files-changed: ${result.changedFiles.join(", ") || "(none detected)"}`,
         `git-summary: ${result.gitSummaryLines.join("; ") || "(none detected)"}`,
-        "final-visible-output:",
-        result.finalVisibleOutput || "(none)",
-      ].join("\n"),
-    )
+      ];
+
+      if (result.durationMs || result.numTurns || result.costUsd) {
+        const usage: string[] = [];
+
+        if (result.durationMs) {
+          usage.push(`${(result.durationMs / 1000).toFixed(1)}s`);
+        }
+
+        if (result.numTurns) {
+          usage.push(`${result.numTurns} turns`);
+        }
+
+        if (result.costUsd) {
+          usage.push(`$${result.costUsd.toFixed(4)}`);
+        }
+
+        lines.push(`usage: ${usage.join(" | ")}`);
+      }
+
+      lines.push("final-visible-output:", result.finalVisibleOutput || "(none)");
+
+      return lines.join("\n");
+    })
     .join("\n\n");
 }
 
@@ -275,6 +295,9 @@ ${renderModeInstructions(input.options)}
 
 ## Current Goal
 ${recentGoal}
+
+## CRITICAL: You MUST produce text output
+Your stdout text is what the human sees. After taking any actions (resolving messages, logging, assigning work), you MUST end with a brief text summary. If you only make tool calls with no text, the human sees nothing. Always finish with visible text.
 
 ## Immediate Priorities
 - Answer human nudges before anything else. Respond directly and concisely.
