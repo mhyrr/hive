@@ -5,7 +5,7 @@ import { HiveMessage, createMessage } from "./messages";
 import { HivePaths, ProjectPaths } from "./paths";
 import { parseBoard, minutesSince } from "./board";
 import { RunRecord, RunResult } from "./runs";
-import { listRuntimeAdapters } from "./runtime";
+import { formatRuntimeTokenSummary, listRuntimeAdapters } from "./runtime";
 
 export type OrchestrateMode = "interactive" | "loop";
 
@@ -86,8 +86,22 @@ function renderRunResults(results: RunResult[]): string {
         `git-summary: ${result.gitSummaryLines.join("; ") || "(none detected)"}`,
       ];
 
-      if (result.durationMs || result.numTurns || result.costUsd) {
+      if (
+        result.authMode ||
+        result.durationMs ||
+        result.numTurns ||
+        result.costUsd ||
+        result.inputTokens ||
+        result.outputTokens ||
+        result.cacheCreationInputTokens ||
+        result.cacheReadInputTokens ||
+        result.totalTokens
+      ) {
         const usage: string[] = [];
+
+        if (result.authMode) {
+          usage.push(`auth ${result.authMode}`);
+        }
 
         if (result.durationMs) {
           usage.push(`${(result.durationMs / 1000).toFixed(1)}s`);
@@ -95,6 +109,24 @@ function renderRunResults(results: RunResult[]): string {
 
         if (result.numTurns) {
           usage.push(`${result.numTurns} turns`);
+        }
+
+        const tokenSummary = formatRuntimeTokenSummary({
+          authMode: result.authMode ?? "unknown",
+          costUsd: result.costUsd,
+          durationMs: result.durationMs,
+          durationApiMs: null,
+          numTurns: result.numTurns,
+          sessionId: null,
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+          cacheCreationInputTokens: result.cacheCreationInputTokens,
+          cacheReadInputTokens: result.cacheReadInputTokens,
+          totalTokens: result.totalTokens,
+        });
+
+        if (tokenSummary) {
+          usage.push(tokenSummary);
         }
 
         if (result.costUsd) {

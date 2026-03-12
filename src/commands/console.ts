@@ -16,6 +16,7 @@ import {
   finalizeRun,
   markRunActive,
   readActiveRun,
+  reconcileActiveConsoleRun,
 } from "../lib/runs";
 import {
   buildInteractiveLaunchSpec,
@@ -213,6 +214,7 @@ export async function consoleCommand(args: string[]): Promise<string> {
     throw new UsageError("Project config is missing `path:` in the repo section.");
   }
 
+  await reconcileActiveConsoleRun(projectPaths);
   const existingConsole = await readActiveRun(projectPaths, "console");
   if (existingConsole) {
     throw new UsageError(

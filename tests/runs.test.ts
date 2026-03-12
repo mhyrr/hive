@@ -12,7 +12,9 @@ import {
   getRunOutputPath,
   listRecentRunResults,
   markRunActive,
+  readActiveRun,
   readRunOutputTail,
+  reconcileActiveConsoleRun,
   writeRunResult,
 } from "../src/lib/runs";
 
@@ -93,13 +95,25 @@ describe("run state", () => {
       changedFiles: ["src/api/auth.ts"],
       gitSummaryLines: ["M src/api/auth.ts"],
       finalVisibleOutput: "Completed auth endpoint work.",
+      authMode: "subscription",
+      inputTokens: 1200,
+      outputTokens: 220,
+      cacheReadInputTokens: 80,
+      totalTokens: 1500,
     });
     const recentResults = await listRecentRunResults(projectPaths, 5);
 
     expect(result.assignmentStatusAfterExit).toBe("resolved");
     expect(result.assignmentResolvedByWorker).toBeTrue();
     expect(result.changedFiles).toEqual(["src/api/auth.ts"]);
+    expect(result.authMode).toBe("subscription");
+    expect(result.inputTokens).toBe(1200);
+    expect(result.outputTokens).toBe(220);
+    expect(result.cacheReadInputTokens).toBe(80);
+    expect(result.totalTokens).toBe(1500);
     expect(recentResults[0]?.finalVisibleOutput).toContain("Completed auth endpoint work.");
+    expect(recentResults[0]?.authMode).toBe("subscription");
+    expect(recentResults[0]?.totalTokens).toBe(1500);
   });
 
   test("hive ps shows active and recent runs for the active project", async () => {
@@ -221,6 +235,38 @@ describe("run state", () => {
     expect(await Bun.file(run.path).text()).toContain("status: exited");
   });
 
+  test("stale console sessions are reconciled and stop blocking new turns", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+
+    let run = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "console",
+      runtime: "claude",
+      model: null,
+      prompt: "# Console",
+      source: "console",
+    });
+    run = await markRunActive(projectPaths, run, 99999);
+    await Bun.write(getRunOutputPath(run), "Planning the reply\nChecking the latest context\n");
+
+    const reconciled = await reconcileActiveConsoleRun(projectPaths);
+    const recentResults = await listRecentRunResults(projectPaths, 5);
+    const activeRun = await readActiveRun(projectPaths, "console");
+
+    expect(reconciled).toBeNull();
+    expect(activeRun).toBeNull();
+    expect(await Bun.file(join(projectPaths.runsActiveDir, "console.md")).exists()).toBeFalse();
+    expect((await Bun.file(run.path).text())).toContain("status: failed");
+    expect(recentResults[0]?.agentId).toBe("console");
+    expect(recentResults[0]?.status).toBe("failed");
+    expect(recentResults[0]?.finalVisibleOutput).toContain("Checking the latest context");
+  });
+
   test("hive ps shows console sessions alongside agent runs", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "MyProject", context.repo]);
@@ -237,7 +283,7 @@ describe("run state", () => {
       prompt: "# Console",
       source: "console",
     });
-    await markRunActive(projectPaths, consoleRun, 88888);
+    await markRunActive(projectPaths, consoleRun, process.pid);
 
     const agentRun = await createRunDraft({
       projectId: "myproject",
@@ -274,7 +320,7 @@ describe("run state", () => {
       prompt: "# Console",
       source: "console",
     });
-    run = await markRunActive(projectPaths, run, 88888);
+    run = await markRunActive(projectPaths, run, process.pid);
 
     const output = await runCli(["stop", "console"]);
 

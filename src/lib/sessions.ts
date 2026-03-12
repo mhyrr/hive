@@ -19,6 +19,40 @@ export type SessionTurn = {
   role: "human" | "assistant";
   content: string;
   ts: string;
+  source: "human" | "system" | "model" | null;
+  details: SessionTurnDetails | null;
+};
+
+export type SessionTurnDetails = {
+  project: string | null;
+  runId: string | null;
+  runtime: string | null;
+  model: string | null;
+  authMode: "subscription" | "api" | "unknown" | null;
+  durationMs: number | null;
+  numTurns: number | null;
+  costUsd: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationInputTokens: number | null;
+  cacheReadInputTokens: number | null;
+  totalTokens: number | null;
+  board: {
+    taskCount: number;
+    activeCount: number;
+    doneCount: number;
+    waitingCount: number;
+    blockers: string[];
+  } | null;
+  messages: {
+    openCount: number;
+    pendingHumanMessages: number;
+    pendingHumanReplies: number;
+  } | null;
+  runs: {
+    activeCount: number;
+  } | null;
+  statusNotes?: string[] | null;
 };
 
 export type SessionState = {
@@ -148,34 +182,42 @@ function createInitialSessionState(project: string, updatedAt: string): SessionS
 
 export function parseHistory(content: string): SessionTurn[] {
   const turns: SessionTurn[] = [];
-  const regex = /^## (human|assistant) \(([^)]+)\)\n/gm;
+  const regex = /^## (human|assistant)(?: \[(human|system|model)\])? \(([^)]+)\)\n/gm;
   let match: RegExpExecArray | null;
   let lastIndex = 0;
   let lastRole: string | null = null;
+  let lastSource: SessionTurn["source"] = null;
   let lastTs: string | null = null;
 
   while ((match = regex.exec(content)) !== null) {
     if (lastRole !== null && lastTs !== null) {
-      const body = content.slice(lastIndex, match.index).trim();
+      const parsedTurn = parseTurnBody(content.slice(lastIndex, match.index).trim());
       turns.push({
         role: lastRole as "human" | "assistant",
-        content: body,
+        content: parsedTurn.content,
         ts: lastTs,
+        source: lastSource,
+        details: parsedTurn.details,
       });
     }
     lastRole = match[1];
-    lastTs = match[2];
+    lastSource =
+      (match[2] as SessionTurn["source"] | undefined) ??
+      (match[1] === "human" ? "human" : null);
+    lastTs = match[3];
     lastIndex = match.index + match[0].length;
   }
 
   // Capture the last turn
   if (lastRole !== null && lastTs !== null) {
-    const body = content.slice(lastIndex).trim();
-    if (body) {
+    const parsedTurn = parseTurnBody(content.slice(lastIndex).trim());
+    if (parsedTurn.content) {
       turns.push({
         role: lastRole as "human" | "assistant",
-        content: body,
+        content: parsedTurn.content,
         ts: lastTs,
+        source: lastSource,
+        details: parsedTurn.details,
       });
     }
   }
@@ -331,6 +373,8 @@ export async function appendTurn(input: {
   sessionId: string;
   role: "human" | "assistant";
   content: string;
+  source?: "human" | "system" | "model" | null;
+  details?: SessionTurnDetails | null;
 }): Promise<void> {
   const date = now();
   const timeStr = formatTimeOnly(date);
@@ -340,7 +384,14 @@ export async function appendTurn(input: {
   // Append to history.md
   const historyFile = Bun.file(historyPath);
   const existing = (await historyFile.exists()) ? await historyFile.text() : "";
-  const appendText = `\n## ${input.role} (${timeStr})\n${input.content}\n`;
+  const source = input.source ?? (input.role === "human" ? "human" : null);
+  const sourceLabel = source && !(input.role === "human" && source === "human")
+    ? ` [${source}]`
+    : "";
+  const detailsPrefix = input.details
+    ? `<!-- turn-meta: ${JSON.stringify(input.details)} -->\n`
+    : "";
+  const appendText = `\n## ${input.role}${sourceLabel} (${timeStr})\n${detailsPrefix}${input.content}\n`;
   await Bun.write(historyPath, existing + appendText);
 
   // Update meta.md: increment turns, update last-active
@@ -354,6 +405,34 @@ export async function appendTurn(input: {
     attributes.turns = String(currentTurns + 1);
     attributes["last-active"] = toIsoTimestamp(date);
     await Bun.write(metaPath, stringifyFrontmatter(attributes, ""));
+  }
+}
+
+function parseTurnBody(body: string): {
+  content: string;
+  details: SessionTurnDetails | null;
+} {
+  const metaMatch = body.match(/^<!-- turn-meta: (.+) -->\n?([\s\S]*)$/);
+
+  if (!metaMatch) {
+    return {
+      content: body,
+      details: null,
+    };
+  }
+
+  try {
+    const details = JSON.parse(metaMatch[1]!) as SessionTurnDetails;
+
+    return {
+      content: metaMatch[2]!.trim(),
+      details,
+    };
+  } catch {
+    return {
+      content: body,
+      details: null,
+    };
   }
 }
 

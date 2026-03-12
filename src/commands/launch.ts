@@ -17,6 +17,8 @@ import {
 } from "../lib/project";
 import {
   buildLaunchSpec,
+  formatRuntimeTokenSummary,
+  inferRuntimeAuthMode,
   LaunchResult,
   renderLaunchPreview,
   resolveRuntimeHints,
@@ -55,6 +57,35 @@ type LaunchAgentInput = {
   source: string;
   logActor?: string;
 };
+
+function buildUsageFeedDetails(
+  runtime: string,
+  metadata: LaunchResult["metadata"],
+): string[] {
+  const details: string[] = [];
+  const authMode = metadata?.authMode ?? inferRuntimeAuthMode(runtime);
+  const tokenSummary = formatRuntimeTokenSummary(metadata);
+
+  details.push(`auth: ${authMode}`);
+
+  if (metadata?.durationMs) {
+    details.push(`duration: ${(metadata.durationMs / 1000).toFixed(1)}s`);
+  }
+
+  if (metadata?.numTurns) {
+    details.push(`turns: ${metadata.numTurns}`);
+  }
+
+  if (tokenSummary) {
+    details.push(`tokens: ${tokenSummary}`);
+  }
+
+  if (metadata?.costUsd != null) {
+    details.push(`cost: $${metadata.costUsd.toFixed(4)}`);
+  }
+
+  return details;
+}
 
 function parseOptions(args: string[]): LaunchOptions {
   let runtimeOverride: string | null = null;
@@ -200,7 +231,11 @@ Command: ${renderLaunchPreview(spec)}`;
   await appendFeedEntry(input.paths, {
     project: input.activeProject,
     headline: `Launching ${input.agentId}`,
-    details: [`runtime: ${spec.runtime}`, `model: ${spec.model ?? "(default)"}`],
+    details: [
+      `runtime: ${spec.runtime}`,
+      `model: ${spec.model ?? "(default)"}`,
+      `auth: ${inferRuntimeAuthMode(spec.runtime)}`,
+    ],
   });
 
   const handle = startLaunchSpec(spec, repoPath, {
@@ -256,27 +291,22 @@ Command: ${renderLaunchPreview(spec)}`;
     changedFiles: gitDelta.changedFiles,
     gitSummaryLines: gitDelta.summaryLines,
     finalVisibleOutput: result.visibleOutput,
+    authMode: result.metadata?.authMode ?? inferRuntimeAuthMode(spec.runtime),
     costUsd: result.metadata?.costUsd ?? null,
     durationMs: result.metadata?.durationMs ?? null,
     numTurns: result.metadata?.numTurns ?? null,
+    inputTokens: result.metadata?.inputTokens ?? null,
+    outputTokens: result.metadata?.outputTokens ?? null,
+    cacheCreationInputTokens: result.metadata?.cacheCreationInputTokens ?? null,
+    cacheReadInputTokens: result.metadata?.cacheReadInputTokens ?? null,
+    totalTokens: result.metadata?.totalTokens ?? null,
   });
 
   const feedDetails = [
     `runtime: ${spec.runtime}`,
     `exit: ${result.code ?? "unknown"}${result.signal ? ` | signal: ${result.signal}` : ""}`,
   ];
-
-  if (result.metadata?.durationMs) {
-    feedDetails.push(`duration: ${(result.metadata.durationMs / 1000).toFixed(1)}s`);
-  }
-
-  if (result.metadata?.numTurns) {
-    feedDetails.push(`turns: ${result.metadata.numTurns}`);
-  }
-
-  if (result.metadata?.costUsd) {
-    feedDetails.push(`cost: $${result.metadata.costUsd.toFixed(4)}`);
-  }
+  feedDetails.push(...buildUsageFeedDetails(spec.runtime, result.metadata));
 
   await appendFeedEntry(input.paths, {
     project: input.activeProject,
