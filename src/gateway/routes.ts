@@ -1,18 +1,19 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { GatewayOptions } from "./server";
+import type { GatewayBroadcast, GatewayOptions } from "./server";
 
 import { feedCommand } from "../commands/feed";
 import { inboxCommand } from "../commands/inbox";
 import { logCommand } from "../commands/log";
 import { msgCommand, nudgeCommand } from "../commands/msg";
 import { psCommand } from "../commands/ps";
-import { sayCommand } from "../commands/say";
+import { sayCommand, sendGoalToProject } from "../commands/say";
 import { statusCommand } from "../commands/status";
+import { listOpenProjectMessages } from "../lib/messages";
 import { getActiveProject, getProjectPaths, listProjects } from "../lib/paths";
 import { runtimesCommand } from "../commands/runtimes";
-import { listRecentRunResults } from "../lib/runs";
+import { getRunOutputPath, listActiveRuns, listRecentRunResults, type RunRecord } from "../lib/runs";
 import {
   reconcileDetachedSupervisorState,
   startDetachedSupervisor,
@@ -62,41 +63,306 @@ export function handleOptions(): Response {
   });
 }
 
-async function pollForOrchestratorResponse(
-  options: GatewayOptions,
-  firedAt: string,
-  timeoutMs = 120_000,
-  intervalMs = 1_000,
-): Promise<string | null> {
-  const activeProject = await getActiveProject(options.hivePaths);
-  if (!activeProject) return null;
+async function appendSessionTurnAndBroadcast(input: {
+  options: GatewayOptions;
+  broadcast: GatewayBroadcast;
+  sessionId: string;
+  project: string;
+  role: "human" | "assistant";
+  content: string;
+}): Promise<void> {
+  const sessionsDir = join(input.options.hivePaths.home, "sessions");
 
-  const projectPaths = getProjectPaths(options.hivePaths, activeProject);
-  const deadline = Date.now() + timeoutMs;
+  await appendTurn({
+    sessionsDir,
+    sessionId: input.sessionId,
+    role: input.role,
+    content: input.content,
+  });
 
-  // Brief initial delay for supervisor to pick up the nudge
-  await Bun.sleep(1_000);
-
-  while (Date.now() < deadline) {
-    const results = await listRecentRunResults(projectPaths, 5);
-    const match = results.find(
-      (r) => r.agentId === "orchestrator" && r.ended > firedAt && r.finalVisibleOutput,
-    );
-
-    if (match) {
-      return match.finalVisibleOutput;
-    }
-
-    await Bun.sleep(intervalMs);
-  }
-
-  return null;
+  input.broadcast({
+    type: "session-message",
+    ts: new Date().toISOString(),
+    project: input.project,
+    data: {
+      sessionId: input.sessionId,
+      role: input.role,
+      content: input.content,
+    },
+  });
 }
 
-type RouteHandler = (req: Request, url: URL, options: GatewayOptions) => Promise<Response>;
+function buildImmediateConsoleAck(message: string): string {
+  const firstLine = message.trim().split("\n")[0] ?? "";
+
+  return `Heard. I'm on it.\n\nFirst step: check the live board, active runs, and open messages, then decide whether this needs direct guidance, a board change, or new assignments.\n\nFocus: ${firstLine}`;
+}
+
+function joinNaturalList(items: string[]): string {
+  if (items.length === 0) {
+    return "";
+  }
+
+  if (items.length === 1) {
+    return items[0]!;
+  }
+
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`;
+  }
+
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+async function readRunOutputUpdate(
+  run: RunRecord,
+  seenLength: number,
+): Promise<{ nextLength: number; content: string | null }> {
+  const file = Bun.file(getRunOutputPath(run));
+
+  if (!(await file.exists())) {
+    return {
+      nextLength: seenLength,
+      content: null,
+    };
+  }
+
+  const raw = (await file.text()).replace(/\r\n/g, "\n");
+
+  if (raw.length <= seenLength) {
+    return {
+      nextLength: raw.length,
+      content: null,
+    };
+  }
+
+  const delta = raw.slice(seenLength).trim();
+
+  return {
+    nextLength: raw.length,
+    content: delta || null,
+  };
+}
+
+async function continueConsoleWorkflow(input: {
+  options: GatewayOptions;
+  broadcast: GatewayBroadcast;
+  sessionId: string;
+  project: string;
+  message: string;
+}): Promise<void> {
+  const firedAt = new Date().toISOString();
+
+  try {
+    const sayResult = await sendGoalToProject({
+      projectId: input.project,
+      message: input.message,
+      paths: input.options.hivePaths,
+    });
+    const supervisorLine =
+      sayResult.split("\n").find((line) => /Supervisor/i.test(line)) ??
+      "Supervisor state updated.";
+
+    await appendSessionTurnAndBroadcast({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+      project: input.project,
+      role: "assistant",
+      content: `${supervisorLine}\n\nI'm reviewing the current state and I'll keep this session updated as work gets assigned or completed.`,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+    await appendSessionTurnAndBroadcast({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+      project: input.project,
+      role: "assistant",
+      content: `I couldn't hand this off cleanly: ${errorMessage}`,
+    });
+    return;
+  }
+
+  if (!input.project || input.project === "default") {
+    return;
+  }
+
+  const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
+  const announcedAssignmentFiles = new Set<string>();
+  const announcedWorkerRuns = new Set<string>();
+  const outputOffsets = new Map<string, number>();
+  let announcedOrchestratorRun = false;
+  let streamedOrchestratorOutput = "";
+  const deadline = Date.now() + 180_000;
+
+  while (Date.now() < deadline) {
+    const [activeRuns, openMessages, recentResults] = await Promise.all([
+      listActiveRuns(projectPaths),
+      listOpenProjectMessages(input.options.hivePaths.msgDir, input.project),
+      listRecentRunResults(projectPaths, 10),
+    ]);
+
+    const orchestratorRun = activeRuns.find(
+      (run) => run.agentId === "orchestrator" && run.started >= firedAt,
+    );
+
+    if (orchestratorRun && !announcedOrchestratorRun) {
+      announcedOrchestratorRun = true;
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: "I'm actively assessing the board, open messages, and recent run results now.",
+      });
+    }
+
+    for (const run of activeRuns.filter((entry) => entry.started >= firedAt)) {
+      const seenLength = outputOffsets.get(run.runId) ?? 0;
+      const update = await readRunOutputUpdate(run, seenLength);
+      outputOffsets.set(run.runId, update.nextLength);
+
+      if (!update.content) {
+        continue;
+      }
+
+      if (run.agentId === "orchestrator") {
+        streamedOrchestratorOutput = streamedOrchestratorOutput
+          ? `${streamedOrchestratorOutput}\n${update.content.trim()}`
+          : update.content.trim();
+        await appendSessionTurnAndBroadcast({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+          project: input.project,
+          role: "assistant",
+          content: update.content.trim(),
+        });
+        continue;
+      }
+
+      const label = run.taskId ? `${run.agentId} (${run.taskId})` : run.agentId;
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: `[${label}] ${update.content.trim()}`,
+      });
+    }
+
+    const freshAssignments = openMessages.filter(
+      (message) =>
+        message.attributes.type === "assign" &&
+        (message.attributes.ts ?? "") >= firedAt &&
+        !announcedAssignmentFiles.has(message.filename),
+    );
+
+    if (freshAssignments.length > 0) {
+      for (const message of freshAssignments) {
+        announcedAssignmentFiles.add(message.filename);
+      }
+
+      const recipients = [
+        ...new Set(freshAssignments.map((message) => message.attributes.to ?? "unknown")),
+      ];
+      const tasks = [
+        ...new Set(
+          freshAssignments
+            .map((message) => message.attributes.task)
+            .filter((task): task is string => Boolean(task)),
+        ),
+      ];
+      const taskSummary = tasks.length > 0 ? ` for ${joinNaturalList(tasks)}` : "";
+
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: `I handed work to ${joinNaturalList(recipients)}${taskSummary}.`,
+      });
+    }
+
+    const freshWorkerRuns = activeRuns.filter(
+      (run) =>
+        run.agentId !== "orchestrator" &&
+        run.agentId !== "console" &&
+        run.started >= firedAt &&
+        !announcedWorkerRuns.has(run.runId),
+    );
+
+    if (freshWorkerRuns.length > 0) {
+      for (const run of freshWorkerRuns) {
+        announcedWorkerRuns.add(run.runId);
+      }
+
+      const workers = freshWorkerRuns.map((run) =>
+        run.taskId ? `${run.agentId} on ${run.taskId}` : run.agentId,
+      );
+
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: `Active now: ${joinNaturalList(workers)}.`,
+      });
+    }
+
+    const finalResult = recentResults.find(
+      (result) =>
+        result.agentId === "orchestrator" &&
+        result.ended >= firedAt &&
+        result.finalVisibleOutput.trim().length > 0,
+    );
+
+    if (finalResult) {
+      const finalOutput = finalResult.finalVisibleOutput.trim();
+
+      if (!finalOutput || finalOutput === streamedOrchestratorOutput) {
+        return;
+      }
+
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: finalOutput,
+      });
+      return;
+    }
+
+    await Bun.sleep(1_000);
+  }
+
+  await appendSessionTurnAndBroadcast({
+    options: input.options,
+    broadcast: input.broadcast,
+    sessionId: input.sessionId,
+    project: input.project,
+    role: "assistant",
+    content: "This is still in motion. I’ll keep the board moving, and the next orchestration result will land here when it’s ready.",
+  });
+}
+
+type RouteHandler = (
+  req: Request,
+  url: URL,
+  options: GatewayOptions,
+  broadcast: GatewayBroadcast,
+) => Promise<Response>;
 
 const getRoutes: Record<string, RouteHandler> = {
-  "/api/status": async () => {
+  "/api/status": async (_req, _url, _options, _broadcast) => {
     try {
       const result = await statusCommand();
       return jsonOk(result);
@@ -105,7 +371,7 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/feed": async (_req, url) => {
+  "/api/feed": async (_req, url, _options, _broadcast) => {
     try {
       const count = url.searchParams.get("count") ?? "20";
       const result = await feedCommand([count]);
@@ -115,7 +381,7 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/ps": async () => {
+  "/api/ps": async (_req, _url, _options, _broadcast) => {
     try {
       const result = await psCommand();
       return jsonOk(result);
@@ -124,7 +390,7 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/projects": async (_req, _url, options) => {
+  "/api/projects": async (_req, _url, options, _broadcast) => {
     try {
       const projects = await listProjects(options.hivePaths);
       return jsonOk({ projects });
@@ -133,7 +399,7 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/runtimes": async () => {
+  "/api/runtimes": async (_req, _url, _options, _broadcast) => {
     try {
       const result = await runtimesCommand();
       return jsonOk(result);
@@ -142,7 +408,7 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/console/history": async (_req, _url, options) => {
+  "/api/console/history": async (_req, _url, options, _broadcast) => {
     try {
       const sessionsDir = join(options.hivePaths.home, "sessions");
       const session = await getActiveSession(sessionsDir);
@@ -156,7 +422,7 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/sessions": async (_req, _url, options) => {
+  "/api/sessions": async (_req, _url, options, _broadcast) => {
     try {
       const sessionsDir = join(options.hivePaths.home, "sessions");
       const sessions = await listSessions(sessionsDir);
@@ -168,7 +434,7 @@ const getRoutes: Record<string, RouteHandler> = {
 };
 
 const postRoutes: Record<string, RouteHandler> = {
-  "/api/say": async (req) => {
+  "/api/say": async (req, _url, _options, _broadcast) => {
     try {
       const body = await req.json() as { message?: string };
       if (!body.message) {
@@ -184,7 +450,7 @@ const postRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/console/send": async (req, _url, options) => {
+  "/api/console/send": async (req, _url, options, broadcast) => {
     try {
       const body = await req.json() as { message?: string };
       if (!body.message) {
@@ -206,7 +472,6 @@ const postRoutes: Record<string, RouteHandler> = {
         });
       }
 
-      // Record human turn
       await appendTurn({
         sessionsDir,
         sessionId: session.sessionId,
@@ -214,30 +479,23 @@ const postRoutes: Record<string, RouteHandler> = {
         content: body.message,
       });
 
-      // Fire the nudge and start the supervisor
-      const firedAt = new Date().toISOString();
-      try {
-        await sayCommand([body.message]);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : "Unknown error";
-        await appendTurn({
-          sessionsDir,
-          sessionId: session.sessionId,
-          role: "assistant",
-          content: `Error: ${errorMsg}`,
-        });
-        return jsonError(500, errorMsg);
-      }
-
-      // Wait for the orchestrator to process and respond
-      const response = await pollForOrchestratorResponse(options, firedAt);
-      const result = response || "(orchestrator is still processing — check the feed for updates)";
+      const result = buildImmediateConsoleAck(body.message);
 
       await appendTurn({
         sessionsDir,
         sessionId: session.sessionId,
         role: "assistant",
         content: result,
+      });
+
+      void continueConsoleWorkflow({
+        options,
+        broadcast,
+        sessionId: session.sessionId,
+        project: session.project,
+        message: body.message,
+      }).catch(() => {
+        // Keep the request path fast; background session updates are best-effort.
       });
 
       return jsonOk({ result, sessionId: session.sessionId });
@@ -249,7 +507,7 @@ const postRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/console/new": async (_req, _url, options) => {
+  "/api/console/new": async (_req, _url, options, _broadcast) => {
     try {
       const sessionsDir = join(options.hivePaths.home, "sessions");
       await mkdir(sessionsDir, { recursive: true });
@@ -267,7 +525,7 @@ const postRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/supervisor/restart": async (_req, _url, options) => {
+  "/api/supervisor/restart": async (_req, _url, options, _broadcast) => {
     try {
       const activeProject = await getActiveProject(options.hivePaths);
       if (!activeProject) {
@@ -307,7 +565,7 @@ const postRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/nudge": async (req) => {
+  "/api/nudge": async (req, _url, _options, _broadcast) => {
     try {
       const body = await req.json() as { message?: string };
       if (!body.message) {
@@ -323,7 +581,7 @@ const postRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/msg": async (req) => {
+  "/api/msg": async (req, _url, _options, _broadcast) => {
     try {
       const body = await req.json() as { type?: string; from?: string; to?: string; body?: string };
       if (!body.from || !body.to || !body.body) {
@@ -344,7 +602,7 @@ const postRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/log": async (req) => {
+  "/api/log": async (req, _url, _options, _broadcast) => {
     try {
       const body = await req.json() as { message?: string };
       if (!body.message) {
@@ -373,7 +631,12 @@ function matchSessionsRoute(pathname: string): string | null {
   return match[1];
 }
 
-export async function handleApi(req: Request, url: URL, options: GatewayOptions): Promise<Response> {
+export async function handleApi(
+  req: Request,
+  url: URL,
+  options: GatewayOptions,
+  broadcast: GatewayBroadcast,
+): Promise<Response> {
   const pathname = url.pathname;
 
   if (req.method === "GET") {
@@ -407,14 +670,14 @@ export async function handleApi(req: Request, url: URL, options: GatewayOptions)
 
     const handler = getRoutes[pathname];
     if (handler) {
-      return handler(req, url, options);
+      return handler(req, url, options, broadcast);
     }
   }
 
   if (req.method === "POST") {
     const handler = postRoutes[pathname];
     if (handler) {
-      return handler(req, url, options);
+      return handler(req, url, options, broadcast);
     }
   }
 

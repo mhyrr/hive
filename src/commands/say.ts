@@ -10,25 +10,24 @@ import {
   ensureHiveScaffold,
   getActiveProject,
   getProjectPaths,
+  type HivePaths,
 } from "../lib/paths";
 
-export async function sayCommand(args: string[]): Promise<string> {
-  const message = args.join(" ").trim();
+export async function sendGoalToProject(input: {
+  projectId: string;
+  message: string;
+  paths?: HivePaths;
+}): Promise<string> {
+  const message = input.message.trim();
 
   if (!message) {
     throw new UsageError('Usage: hive say <message>\nExample: hive say "build the auth system"');
   }
 
-  const paths = await ensureHiveScaffold();
-  const activeProject = await getActiveProject(paths);
+  const paths = input.paths ?? await ensureHiveScaffold();
+  const projectPaths = getProjectPaths(paths, input.projectId);
 
-  if (!activeProject) {
-    throw new UsageError("No active project. Run `hive work <project>` first.");
-  }
-
-  const projectPaths = getProjectPaths(paths, activeProject);
-
-  await enqueueGoalForOrchestrator(paths, projectPaths, activeProject, message);
+  await enqueueGoalForOrchestrator(paths, projectPaths, input.projectId, message);
 
   const existing = await reconcileDetachedSupervisorState(projectPaths);
   let supervisorNote: string;
@@ -39,7 +38,7 @@ export async function sayCommand(args: string[]): Promise<string> {
     try {
       const state = await startDetachedSupervisor({
         projectPaths,
-        projectId: activeProject,
+        projectId: input.projectId,
         intervalSeconds: DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
         maxParallel: DEFAULT_MAX_PARALLEL,
       });
@@ -59,4 +58,25 @@ export async function sayCommand(args: string[]): Promise<string> {
     `Sent: ${message}`,
     supervisorNote,
   ].join("\n");
+}
+
+export async function sayCommand(args: string[]): Promise<string> {
+  const message = args.join(" ").trim();
+
+  if (!message) {
+    throw new UsageError('Usage: hive say <message>\nExample: hive say "build the auth system"');
+  }
+
+  const paths = await ensureHiveScaffold();
+  const activeProject = await getActiveProject(paths);
+
+  if (!activeProject) {
+    throw new UsageError("No active project. Run `hive work <project>` first.");
+  }
+
+  return sendGoalToProject({
+    projectId: activeProject,
+    message,
+    paths,
+  });
 }

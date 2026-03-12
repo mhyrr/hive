@@ -178,8 +178,11 @@ function handleWsEvent(event) {
     case 'console-response':
     case 'session-message':
       if (event.data && event.data.content) {
+        if (event.data.sessionId && state.sessionId && event.data.sessionId !== state.sessionId) {
+          break;
+        }
         removeThinkingIndicator();
-        addConsoleTurn('assistant', event.data.content);
+        addConsoleTurn(event.data.role || 'assistant', event.data.content);
       }
       break;
   }

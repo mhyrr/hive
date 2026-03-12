@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli";
+import { handleApi } from "../src/gateway/routes";
 import { startGateway, stopGateway } from "../src/gateway/server";
+import { listProjectMessages } from "../src/lib/messages";
 import { ensureHiveScaffold, getHivePaths, type HivePaths } from "../src/lib/paths";
+import { getSessionHistory } from "../src/lib/sessions";
 
 type TestContext = {
   root: string;
@@ -443,6 +446,91 @@ describe("Gateway CLI wiring", () => {
 });
 
 describe("Gateway session endpoints", () => {
+  test("handleApi console send returns immediate ack without a live server", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Give the hive more personality." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { result: string; sessionId: string };
+    expect(data.result).toContain("Heard. I'm on it.");
+    expect(data.sessionId).toBeTruthy();
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(turns.length).toBeGreaterThanOrEqual(2);
+    expect(turns[0]?.role).toBe("human");
+    expect(turns[0]?.content).toContain("Give the hive more personality.");
+    expect(turns[1]?.role).toBe("assistant");
+    expect(turns[1]?.content).toContain("Heard. I'm on it.");
+  });
+
+  test("console send routes follow-up work to the session project, not the current active project", async () => {
+    const otherRepo = join(context.root, "other-repo");
+    await mkdir(otherRepo, { recursive: true });
+
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["project", "add", "OtherProj", otherRepo]);
+    await runCli(["work", "testproj"]);
+
+    const newReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const newRes = await handleApi(
+      newReq,
+      new URL(newReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(newRes.status).toBe(200);
+
+    await runCli(["work", "otherproj"]);
+
+    const sendReq = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Stay focused on the original project." }),
+    });
+    const sendRes = await handleApi(
+      sendReq,
+      new URL(sendReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(sendRes.status).toBe(200);
+
+    await Bun.sleep(25);
+
+    const testProjMessages = await listProjectMessages(context.paths.msgDir, "testproj");
+    const otherProjMessages = await listProjectMessages(context.paths.msgDir, "otherproj");
+
+    expect(
+      testProjMessages.some((message) =>
+        message.attributes.type === "nudge" &&
+        message.body.includes("Stay focused on the original project."),
+      ),
+    ).toBe(true);
+    expect(
+      otherProjMessages.some((message) =>
+        message.attributes.type === "nudge" &&
+        message.body.includes("Stay focused on the original project."),
+      ),
+    ).toBe(false);
+  });
+
   test("POST /api/console/new creates a session", async () => {
     const port = randomPort();
     await runCli(["init"]);
@@ -558,6 +646,42 @@ describe("Gateway session endpoints", () => {
 
       const data = await res.json() as { error: string };
       expect(data.error).toContain("Missing");
+    } finally {
+      stopGateway(state);
+    }
+  });
+
+  test("POST /api/console/send responds immediately and writes session turns", async () => {
+    const port = randomPort();
+    const state = startGateway({ port, hivePaths: context.paths });
+
+    try {
+      const res = await fetch(`http://localhost:${port}/api/console/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "Give the hive more personality." }),
+      });
+
+      expect(res.status).toBe(200);
+
+      const data = await res.json() as { result: string; sessionId: string };
+      expect(data.result).toContain("Heard. I'm on it.");
+      expect(data.sessionId).toBeTruthy();
+
+      const historyRes = await fetch(`http://localhost:${port}/api/console/history`);
+      expect(historyRes.status).toBe(200);
+
+      const history = await historyRes.json() as {
+        turns: Array<{ role: string; content: string }>;
+        sessionId: string | null;
+      };
+
+      expect(history.sessionId).toBe(data.sessionId);
+      expect(history.turns.length).toBeGreaterThanOrEqual(2);
+      expect(history.turns[0]?.role).toBe("human");
+      expect(history.turns[0]?.content).toContain("Give the hive more personality.");
+      expect(history.turns[1]?.role).toBe("assistant");
+      expect(history.turns[1]?.content).toContain("Heard. I'm on it.");
     } finally {
       stopGateway(state);
     }
