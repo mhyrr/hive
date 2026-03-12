@@ -1,4 +1,5 @@
 import soulTemplate from "../../templates/SOUL.md" with { type: "text" };
+import identityTemplate from "../../templates/IDENTITY.md" with { type: "text" };
 import agentsTemplate from "../../templates/AGENTS.md" with { type: "text" };
 import architectTemplate from "../../templates/personas/architect.md" with { type: "text" };
 import craftsmanTemplate from "../../templates/personas/craftsman.md" with { type: "text" };
@@ -17,6 +18,7 @@ import autonomousOpsSkill from "../../templates/skills/autonomous-ops.md" with {
 
 export const baseTemplates = {
   "SOUL.md": soulTemplate.trim(),
+  "IDENTITY.md": identityTemplate.trim(),
   "SELF.md": selfTemplate.trim(),
   "AGENTS.md": agentsTemplate.trim(),
   "config.md": configTemplate.trim(),

@@ -86,6 +86,7 @@ function buildChatPrompt(input: {
   repoPath: string;
   hiveHome: string;
   pathsSoul: string;
+  pathsIdentity: string;
   pathsSelf: string;
   pathsAgents: string;
   pathsConfig: string;
@@ -114,8 +115,12 @@ function buildChatPrompt(input: {
 
 You are HIVE itself for project ${input.projectId}. You are the human-facing interface over the hive's files.
 
-## Identity
+## Shared Soul
 ${input.soul}
+
+Read agent identity: ${input.pathsIdentity}
+Read user preferences: ${input.pathsSelf}
+Read operational doctrine: ${input.pathsAgents}
 
 ## Operating Rules
 - Read essential skills before acting: ${essentialSkillPaths.join(", ") || "(none)"}
@@ -137,6 +142,7 @@ hive-home: ${input.hiveHome}
 
 ## Files
 SOUL.md: ${input.pathsSoul}
+IDENTITY.md: ${input.pathsIdentity}
 SELF.md: ${input.pathsSelf}
 AGENTS.md: ${input.pathsAgents}
 config: ${input.pathsConfig}
@@ -188,6 +194,7 @@ export async function chatCommand(args: string[]): Promise<string> {
     repoPath,
     hiveHome: paths.home,
     pathsSoul: paths.soul,
+    pathsIdentity: paths.identity,
     pathsSelf: paths.self,
     pathsAgents: paths.agents,
     pathsConfig: paths.config,

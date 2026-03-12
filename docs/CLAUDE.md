@@ -11,7 +11,7 @@ Agents are transient. The hive persists.
 
 ## Philosophy
 - One home (`~/.hive/`), no split brain. Projects are subdirectories.
-- SOUL.md is culture. SELF.md is the user. Personas are mindsets.
+- SOUL.md is culture. IDENTITY.md is the hive. SELF.md is the user. Personas are mindsets.
 - BOARD.md is orchestrator-owned. Agents read it, write to msg/.
 - Small models coordinate, big models create.
 - `hive chat` is the meta-interface: talk to the hive about itself.
@@ -117,7 +117,8 @@ src/
     runtime.ts               # Runtime adapter registry + launcher dispatch
     time.ts                  # Timestamp helpers
 templates/
-  SOUL.md                    # Hive soul — identity and culture
+  SOUL.md                    # Hive soul — shared culture and standards
+  IDENTITY.md                # Hive identity — what the hive is
   SELF.md                    # User preferences and context
   AGENTS.md                  # Operational protocols (complement to SOUL)
   skills/
@@ -144,8 +145,8 @@ docs/
 - YAML frontmatter: split on `---`, parse `key: value` lines. No yaml lib.
 - Markdown is the data model. Don't parse it into objects.
 - Prompt assembly is path-first with digests. Three layers:
-  1. Identity (SOUL.md inlined — always loaded)
-  2. Doctrine (AGENTS.md, persona, skills — path-referenced)
+  1. Shared culture (SOUL.md inlined — always loaded)
+  2. Identity and doctrine (IDENTITY.md, AGENTS.md, persona, skills — path-referenced)
   3. Context (board/message/run digests — generated fresh per prompt)
   Only SOUL.md, assignment, board digest, project memory, and agent-specific messages are inlined.
   Everything else is a path the agent reads on demand.

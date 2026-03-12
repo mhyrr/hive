@@ -1,13 +1,14 @@
 # HIVE Agent Operations
 
 Read this file at the start of every session for HIVE-specific operating protocols.
-SOUL.md covers who we are. This file covers how we use the infrastructure.
+SOUL.md is shared culture. IDENTITY.md is what a HIVE agent is. SELF.md is the
+human. This file covers how we use the infrastructure.
 
 ## File Protocol
-- BOARD.md is orchestrator-owned. Agents read it, never write it directly.
-- If you need the board updated, send a message to the orchestrator via msg/.
+- BOARD.md is steward-owned. In the default team, that means the orchestrator.
+  Everyone else reads it and requests changes via msg/.
 - LOG.md is append-only. Use `hive log` to add entries.
-- feed.md is append-only. The system manages it; don't edit directly.
+- feed.md is append-only. Keep it high signal; don't use it as a scratchpad.
 - One writer per file. If you don't own it, message the owner.
 
 ## Message Protocol
@@ -19,20 +20,23 @@ SOUL.md covers who we are. This file covers how we use the infrastructure.
 ## Skills
 Load relevant skills from the skills directory before starting work.
 Skills encode reusable operational patterns that make agents more effective.
-The `state-efficient-ops` skill is essential — read it first.
+If `state-efficient-ops.md` is present, read it first for steward or
+supervision work.
 
 ## Session Lifecycle
-1. Read SOUL.md, SELF.md, this file, and your persona
-2. Load relevant skills from skills/
-3. Read BOARD.md for current state
-4. Check inbox for messages
-5. Execute your assignment
+1. Read compact runtime state first when it exists; use raw file reads
+   selectively.
+2. Read SOUL.md, IDENTITY.md, SELF.md, this file, and your persona.
+3. Load the skills that fit the task.
+4. Read the board, plan, memory, and inbox sections you actually need.
+5. Execute your assignment.
 6. Before ending:
    - Flush learnings to LOG.md via `hive log`
    - Record durable decisions: `hive memory decision "<what and why>"`
    - Record new conventions: `hive memory convention "<pattern>"`
    - Record facts that future agents need: `hive memory fact "<fact>"`
-   - Update the board via message to orchestrator
+   - Update the board directly if you own it; otherwise route the change to
+     the steward via msg/
 
 ## Memory
 Project memory is your team's accumulated knowledge — decisions, conventions, and facts

@@ -17,6 +17,7 @@ import { toDateLabel } from "./time";
 export type HivePaths = {
   home: string;
   soul: string;
+  identity: string;
   self: string;
   agents: string;
   config: string;
@@ -64,6 +65,7 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
   return {
     home,
     soul: join(home, "SOUL.md"),
+    identity: join(home, "IDENTITY.md"),
     self: join(home, "SELF.md"),
     agents: join(home, "AGENTS.md"),
     config: join(home, "config.md"),
