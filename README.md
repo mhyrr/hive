@@ -2,6 +2,10 @@
 
 ![HIVE Gateway](hive.png)
 
+![Console session with the steward](hive1.png)
+
+![Process logs and run details](hive2.png)
+
 A team orchestration layer for AI coding agents. Multiple minds, different
 cognitive styles, coordinating through shared files across multiple projects.
 
