@@ -52,8 +52,11 @@ describe("HIVE CLI", () => {
     expect(await Bun.file(join(context.hiveHome, "SOUL.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "IDENTITY.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "SELF.md")).exists()).toBeTrue();
+    expect(await Bun.file(join(context.hiveHome, "TRUST.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "feed.md")).exists()).toBeTrue();
     expect(await Bun.file(join(context.hiveHome, "personas", "steward.md")).exists()).toBeTrue();
+    expect((await readdir(join(context.hiveHome, "approvals"))).sort()).toEqual(["pending", "resolved"]);
+    expect((await readdir(join(context.hiveHome, "events"))).sort()).toEqual(["external", "internal"]);
     expect(await Bun.file(join(context.hiveHome, "active-project.txt")).exists()).toBeFalse();
   });
 

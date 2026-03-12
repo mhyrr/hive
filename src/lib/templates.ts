@@ -1,6 +1,7 @@
 import soulTemplate from "../../templates/SOUL.md" with { type: "text" };
 import identityTemplate from "../../templates/IDENTITY.md" with { type: "text" };
 import agentsTemplate from "../../templates/AGENTS.md" with { type: "text" };
+import trustTemplate from "../../templates/TRUST.md" with { type: "text" };
 import architectTemplate from "../../templates/personas/architect.md" with { type: "text" };
 import craftsmanTemplate from "../../templates/personas/craftsman.md" with { type: "text" };
 import criticTemplate from "../../templates/personas/critic.md" with { type: "text" };
@@ -21,6 +22,7 @@ export const baseTemplates = {
   "IDENTITY.md": identityTemplate.trim(),
   "SELF.md": selfTemplate.trim(),
   "AGENTS.md": agentsTemplate.trim(),
+  "TRUST.md": trustTemplate.trim(),
   "config.md": configTemplate.trim(),
   "feed.md": feedTemplate.trim(),
   "memory/knowledge.md": "# Knowledge\n\n(none yet)",

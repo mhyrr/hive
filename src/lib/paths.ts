@@ -20,6 +20,7 @@ export type HivePaths = {
   identity: string;
   self: string;
   agents: string;
+  trust: string;
   config: string;
   feed: string;
   personasDir: string;
@@ -32,6 +33,12 @@ export type HivePaths = {
   msgDir: string;
   archiveDir: string;
   sessionsDir: string;
+  approvalsDir: string;
+  approvalsPendingDir: string;
+  approvalsResolvedDir: string;
+  eventsDir: string;
+  eventsInternalDir: string;
+  eventsExternalDir: string;
   activeProjectFile: string;
 };
 
@@ -68,6 +75,7 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     identity: join(home, "IDENTITY.md"),
     self: join(home, "SELF.md"),
     agents: join(home, "AGENTS.md"),
+    trust: join(home, "TRUST.md"),
     config: join(home, "config.md"),
     feed: join(home, "feed.md"),
     personasDir: join(home, "personas"),
@@ -80,6 +88,12 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     msgDir: join(home, "msg"),
     archiveDir: join(home, "archive"),
     sessionsDir: join(home, "sessions"),
+    approvalsDir: join(home, "approvals"),
+    approvalsPendingDir: join(home, "approvals", "pending"),
+    approvalsResolvedDir: join(home, "approvals", "resolved"),
+    eventsDir: join(home, "events"),
+    eventsInternalDir: join(home, "events", "internal"),
+    eventsExternalDir: join(home, "events", "external"),
     activeProjectFile: join(home, "active-project.txt"),
   };
 }
@@ -108,6 +122,10 @@ export async function ensureHiveScaffold(
   await mkdir(paths.msgDir, { recursive: true });
   await mkdir(paths.archiveDir, { recursive: true });
   await mkdir(paths.sessionsDir, { recursive: true });
+  await mkdir(paths.approvalsPendingDir, { recursive: true });
+  await mkdir(paths.approvalsResolvedDir, { recursive: true });
+  await mkdir(paths.eventsInternalDir, { recursive: true });
+  await mkdir(paths.eventsExternalDir, { recursive: true });
 
   for (const [relativePath, template] of Object.entries(baseTemplates)) {
     await writeIfMissing(join(paths.home, relativePath), template);

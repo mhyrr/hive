@@ -9,6 +9,7 @@
 
 # Bun build artifacts
 *.bun-build
+.*.bun-build
 /hive
 /hive.exe
 coverage/
