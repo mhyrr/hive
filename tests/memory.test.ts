@@ -205,4 +205,106 @@ describe("hive memory", () => {
     expect(feed).toContain("Memory updated: fact");
     expect(feed).toContain("Uses Bun runtime");
   });
+
+  test("memory extract writes journal, derived state, and project entity summary", async () => {
+    await initAndAddProject();
+    await runCli(["memory", "fact", "Uses Bun runtime"]);
+    await runCli(["memory", "convention", "Keep state on disk"]);
+    await runCli(["memory", "decision", "Ship a persistent steward"]);
+    await runCli(["approval", "request", "deploy", "Promote the latest build"]);
+
+    const output = await runCli(["memory", "extract"]);
+
+    expect(output).toContain("Extracted memory");
+
+    const journal = await Bun.file(
+      join(context.hiveHome, "memory", "journal", "2026", "03", "09.md"),
+    ).text();
+    const summary = JSON.parse(
+      await Bun.file(join(context.hiveHome, "memory", "state", "memory-summary.json")).text(),
+    ) as {
+      knowledge: string[];
+      projects: Array<{ id: string; facts: string[]; conventions: string[] }>;
+    };
+    const recentDecisions = JSON.parse(
+      await Bun.file(join(context.hiveHome, "memory", "state", "recent-decisions.json")).text(),
+    ) as {
+      items: Array<{ project: string | null; text: string }>;
+    };
+    const projectEntitySummary = await Bun.file(
+      join(context.hiveHome, "memory", "entities", "projects", "testproject", "summary.md"),
+    ).text();
+
+    expect(journal).toContain("# Journal: 2026-03-09");
+    expect(journal).toContain("approval.requested [testproject] Promote the latest build");
+    expect(summary.projects[0]?.id).toBe("testproject");
+    expect(summary.projects[0]?.facts).toContain("Uses Bun runtime");
+    expect(summary.projects[0]?.conventions).toContain("Keep state on disk");
+    expect(recentDecisions.items.some((item) => item.text === "Ship a persistent steward")).toBeTrue();
+    expect(projectEntitySummary).toContain("# Entity Memory: project/testproject");
+    expect(projectEntitySummary).toContain("Uses Bun runtime");
+  });
+
+  test("entity memory supports durable person notes", async () => {
+    await initAndAddProject();
+
+    const first = await runCli([
+      "memory",
+      "entity",
+      "person",
+      "greg",
+      "fact",
+      "Prefers direct, high-signal updates",
+    ]);
+    const second = await runCli([
+      "memory",
+      "entity",
+      "person",
+      "greg",
+      "note",
+      "Re-check gateway UX before adding more automation",
+    ]);
+    const summaryUpdate = await runCli([
+      "memory",
+      "entity",
+      "person",
+      "greg",
+      "summary",
+      "Founder and primary operator for HIVE.",
+    ]);
+    const detail = await runCli(["memory", "entity", "person", "greg"]);
+    const items = await Bun.file(
+      join(context.hiveHome, "memory", "entities", "people", "greg", "items.jsonl"),
+    ).text();
+
+    expect(first).toContain("Recorded fact for person/greg");
+    expect(second).toContain("Recorded note for person/greg");
+    expect(summaryUpdate).toContain("Recorded summary for person/greg");
+    expect(detail).toContain("Founder and primary operator for HIVE.");
+    expect(detail).toContain("Prefers direct, high-signal updates");
+    expect(detail).toContain("Re-check gateway UX before adding more automation");
+    expect(items).toContain("\"type\":\"fact\"");
+    expect(items).toContain("\"type\":\"note\"");
+  });
+
+  test("prompt includes compact durable memory digests", async () => {
+    await initAndAddProject();
+    await runCli(["memory", "fact", "Uses Bun runtime"]);
+    await runCli(["memory", "decision", "Use file-backed events"]);
+
+    const prompt = await runCli(["prompt", "alpha"]);
+    const heat = JSON.parse(
+      await Bun.file(join(context.hiveHome, "memory", "state", "memory-heat.json")).text(),
+    ) as {
+      projects: Array<{ id: string; accessCount: number; lastAccessed: string | null }>;
+    };
+
+    expect(prompt).toContain("## Durable Memory");
+    expect(prompt).toContain("Uses Bun runtime");
+    expect(prompt).toContain("Use file-backed events");
+    expect(heat.projects.find((project) => project.id === "testproject")?.accessCount).toBe(1);
+    expect(heat.projects.find((project) => project.id === "testproject")?.lastAccessed).toBe(
+      "2026-03-09T15:08:00Z",
+    );
+  });
 });

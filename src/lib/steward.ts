@@ -2,6 +2,7 @@ import { UsageError } from "./errors";
 import { appendFeedEntry } from "./feed";
 import { captureGitStatusSnapshot, diffGitStatusSnapshots } from "./git";
 import { appendLogEntry } from "./log";
+import { loadPromptMemoryContext } from "./memory";
 import { HivePaths, getProjectPaths, ProjectPaths } from "./paths";
 import { extractRepoPath } from "./project";
 import {
@@ -77,11 +78,19 @@ type StewardPromptContext = {
   identityPath: string;
   selfPath: string;
   agentsPath: string;
+  memorySummaryPath: string;
+  memoryHeatPath: string;
+  recentDecisionsPath: string;
+  projectEntitySummaryPath: string;
+  journalPath: string;
   boardDigest: string;
   openMessagesDigest: string;
   activeRunsDigest: string;
   recentResultsDigest: string;
   humanInboxDigest: string;
+  knowledgeDigest: string;
+  recentDecisionsDigest: string;
+  projectEntityDigest: string;
   humanMessage: string;
 };
 
@@ -227,6 +236,11 @@ Read operational doctrine: ${input.agentsPath}
 - BOARD.md: ${input.projectPaths.board}
 - LOG.md: ${input.projectPaths.log}
 - project-memory: ${input.projectPaths.memory}
+- memory-summary-json: ${input.memorySummaryPath}
+- memory-heat-json: ${input.memoryHeatPath}
+- recent-decisions-json: ${input.recentDecisionsPath}
+- project-entity-summary: ${input.projectEntitySummaryPath}
+- journal: ${input.journalPath}
 - messages-dir: ${input.hivePaths.msgDir}
 - state-dir: ${input.projectPaths.stateDir}
 - board-summary-json: ${input.projectPaths.stateBoardSummary}
@@ -252,6 +266,16 @@ ${input.recentResultsDigest}
 
 ### Human Inbox
 ${input.humanInboxDigest}
+
+## Durable Memory
+### Global Knowledge
+${input.knowledgeDigest}
+
+### Recent Decisions
+${input.recentDecisionsDigest}
+
+### Project Entity Memory
+${input.projectEntityDigest}
 
 ## Delta Since Last Seen
 ${renderDeltaHistory(input.deltaHistory, input.sessionStateRevision)}
@@ -336,6 +360,7 @@ export async function runDirectStewardTurn(
     lastSeenRevision: getProjectSessionState(sessionState, input.projectId).lastRevisionSeen,
   });
   const soul = await Bun.file(input.hivePaths.soul).text().catch(() => "");
+  const memoryContext = await loadPromptMemoryContext(input.hivePaths, input.projectId);
   const recentTurns = renderRecentTurns(
     await getSessionHistory(input.hivePaths.sessionsDir, input.sessionId),
   );
@@ -354,11 +379,19 @@ export async function runDirectStewardTurn(
     identityPath: input.hivePaths.identity,
     selfPath: input.hivePaths.self,
     agentsPath: input.hivePaths.agents,
+    memorySummaryPath: memoryContext.memorySummaryPath,
+    memoryHeatPath: memoryContext.memoryHeatPath,
+    recentDecisionsPath: memoryContext.recentDecisionsPath,
+    projectEntitySummaryPath: memoryContext.projectEntitySummaryPath,
+    journalPath: memoryContext.journalPath,
     boardDigest: runtimeState.boardSummary.digest,
     openMessagesDigest: runtimeState.openMessagesSummary.digest,
     activeRunsDigest: runtimeState.activeRunsSummary.digest,
     recentResultsDigest: renderRecentResultsDigest(runtimeState.recentResultsSummary.items),
     humanInboxDigest: renderHumanInboxDigest(runtimeState.humanInboxSummary.items),
+    knowledgeDigest: memoryContext.globalKnowledgeDigest,
+    recentDecisionsDigest: memoryContext.recentDecisionsDigest,
+    projectEntityDigest: memoryContext.projectEntityDigest,
     humanMessage: input.humanMessage,
   });
 

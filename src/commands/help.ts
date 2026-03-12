@@ -14,6 +14,7 @@ Usage:
   hive status
   hive feed [count]
   hive events [count] [--scope internal|external]
+  hive events record <internal|external> <kind> [--source <source>] [--project <project>] [--severity info|warning|error] [--detail <text>] [--route] <summary>
   hive ps
 
   hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]
@@ -30,6 +31,9 @@ Usage:
   hive memory                         # Show project memory
   hive memory fact|convention|decision|question <text>
                                       # Append to project memory
+  hive memory extract                 # Build journal and derived memory state
+  hive memory entity <person|company> <id>
+  hive memory entity <person|company> <id> summary|fact|note <text>
   hive approval                       # Show pending approvals
   hive approval request <kind> <summary>
   hive approval show <id>

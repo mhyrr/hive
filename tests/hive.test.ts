@@ -57,6 +57,15 @@ describe("HIVE CLI", () => {
     expect(await Bun.file(join(context.hiveHome, "personas", "steward.md")).exists()).toBeTrue();
     expect((await readdir(join(context.hiveHome, "approvals"))).sort()).toEqual(["pending", "resolved"]);
     expect((await readdir(join(context.hiveHome, "events"))).sort()).toEqual(["external", "internal"]);
+    expect((await readdir(join(context.hiveHome, "memory"))).sort()).toEqual([
+      "decisions.md",
+      "entities",
+      "journal",
+      "knowledge.md",
+      "personas",
+      "projects",
+      "state",
+    ]);
     expect(await Bun.file(join(context.hiveHome, "active-project.txt")).exists()).toBeFalse();
   });
 

@@ -93,4 +93,42 @@ describe("hive events", () => {
     expect(output).toContain("Promote the staging build after review");
     expect(output).toContain("source: approval");
   });
+
+  test("external events can be recorded and routed to the orchestrator", async () => {
+    await initAndAddProject();
+
+    const output = await runCli([
+      "events",
+      "record",
+      "external",
+      "sentry.issue.created",
+      "--source",
+      "sentry",
+      "--severity",
+      "error",
+      "--detail",
+      "fingerprint: auth-null-001",
+      "--route",
+      "Null pointer in auth flow",
+    ]);
+
+    expect(output).toContain("Recorded external event");
+    expect(output).toContain("Kind: sentry.issue.created");
+    expect(output).toContain("Source: sentry");
+    expect(output).toContain("Severity: error");
+    expect(output).toContain("Project: testproject");
+    expect(output).toContain("Message:");
+
+    const eventsOutput = await runCli(["events", "5", "--scope", "external"]);
+    const inbox = await runCli(["inbox", "orchestrator"]);
+    const feed = await runCli(["feed", "10"]);
+
+    expect(eventsOutput).toContain("External events: 1");
+    expect(eventsOutput).toContain("sentry.issue.created");
+    expect(eventsOutput).toContain("Null pointer in auth flow");
+    expect(inbox).toContain("Open messages: 1");
+    expect(inbox).toContain("event: sentry.issue.created");
+    expect(feed).toContain("External event: sentry.issue.created");
+    expect(feed).toContain("Event routed: sentry.issue.created");
+  });
 });

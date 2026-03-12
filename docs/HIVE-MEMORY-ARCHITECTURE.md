@@ -137,3 +137,15 @@ The next major memory slice should be:
 
 That gives HIVE compounding memory without prematurely adopting a heavy search
 backend.
+
+## Current Implementation Slice
+
+The first memory slice now has a concrete shape:
+
+- `hive memory extract` builds the daily journal and derived summary JSON
+- project entity summaries are generated under `memory/entities/projects/<id>/`
+- person and company memory can be updated explicitly through `hive memory entity`
+- prompt surfaces read compact memory digests instead of only raw project memory
+
+This is still file-first and deterministic. There is no vector backend, hidden
+memory daemon, or opaque retrieval layer.

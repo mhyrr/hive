@@ -120,6 +120,8 @@ The first event slice should stay small and deterministic:
 - append normalized JSONL event records
 - emit approval lifecycle events first
 - expose `hive events` for direct inspection
+- allow explicit external/internal event intake with `hive events record`
+- route severe external events into the orchestrator message queue
 
 That gives HIVE a durable event kernel before adding HTTP hooks, transforms, or
 incident automation.

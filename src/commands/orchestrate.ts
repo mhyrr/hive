@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { UsageError } from "../lib/errors";
 import { listOpenProjectMessages } from "../lib/messages";
+import { loadPromptMemoryContext } from "../lib/memory";
 import {
   buildOrchestratorPrompt,
   enqueueGoalForOrchestrator,
@@ -101,6 +102,7 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
     (result) => result.agentId !== "orchestrator",
   );
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
+  const memoryContext = await loadPromptMemoryContext(paths, activeProject);
 
   let projectMemory = "(none yet)";
 
@@ -133,6 +135,11 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
     logPath: projectPaths.log,
     projectMemoryPath: projectPaths.memory,
     projectMemory,
+    memorySummaryPath: memoryContext.memorySummaryPath,
+    memoryHeatPath: memoryContext.memoryHeatPath,
+    recentDecisionsPath: memoryContext.recentDecisionsPath,
+    projectEntitySummaryPath: memoryContext.projectEntitySummaryPath,
+    journalPath: memoryContext.journalPath,
     messagesDir: paths.msgDir,
     skillsDir: paths.skillsDir,
     availableSkillNames,
@@ -141,6 +148,9 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
     activeRuns,
     recentRunResults,
     openMessages,
+    knowledgeDigest: memoryContext.globalKnowledgeDigest,
+    recentDecisionsDigest: memoryContext.recentDecisionsDigest,
+    projectEntityDigest: memoryContext.projectEntityDigest,
     options,
   });
 }

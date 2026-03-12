@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { digestBoard, listSkills } from "../lib/digest";
 import { UsageError } from "../lib/errors";
+import { loadPromptMemoryContext } from "../lib/memory";
 import { listOpenProjectMessages } from "../lib/messages";
 import {
   ensureHiveScaffold,
@@ -69,6 +70,7 @@ export async function promptCommand(args: string[]): Promise<string> {
   const projectConfig = await Bun.file(projectPaths.config).text();
   const board = await Bun.file(projectPaths.board).text();
   const projectMemory = await readProjectMemory(projectPaths.memory);
+  const memoryContext = await loadPromptMemoryContext(paths, activeProject);
   const plan = await Bun.file(projectPaths.plan).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
   const planAgent = findPlanAgent(plan, agentId);
@@ -151,6 +153,11 @@ PLAN.md: ${projectPaths.plan}
 BOARD.md: ${projectPaths.board}
 LOG.md: ${projectPaths.log}
 project-memory: ${projectPaths.memory}
+memory-summary-json: ${memoryContext.memorySummaryPath}
+memory-heat-json: ${memoryContext.memoryHeatPath}
+recent-decisions-json: ${memoryContext.recentDecisionsPath}
+project-entity-summary: ${memoryContext.projectEntitySummaryPath}
+journal: ${memoryContext.journalPath}
 messages-dir: ${paths.msgDir}
 
 ## Available Skills
@@ -164,6 +171,16 @@ ${digestBoard(board)}
 
 ## Project Memory
 ${projectMemory}
+
+## Durable Memory
+### Global Knowledge
+${memoryContext.globalKnowledgeDigest}
+
+### Recent Decisions
+${memoryContext.recentDecisionsDigest}
+
+### Project Entity Memory
+${memoryContext.projectEntityDigest}
 
 ## Open Messages For You
 ${renderMessages(messages)}`;

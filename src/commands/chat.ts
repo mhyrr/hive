@@ -18,6 +18,7 @@ import {
 } from "../lib/runtime";
 import { UsageError } from "../lib/errors";
 import { appendFeedEntry } from "../lib/feed";
+import { loadPromptMemoryContext } from "../lib/memory";
 import { toCompactTimestamp } from "../lib/time";
 
 type ChatOptions = {
@@ -98,12 +99,20 @@ function buildChatPrompt(input: {
   boardPath: string;
   logPath: string;
   projectMemoryPath: string;
+  memorySummaryPath: string;
+  memoryHeatPath: string;
+  recentDecisionsPath: string;
+  projectEntitySummaryPath: string;
+  journalPath: string;
   messagesDir: string;
   skillsDir: string;
   availableSkillNames: string[];
   soul: string;
   board: string;
   openMessages: Awaited<ReturnType<typeof listOpenProjectMessages>>;
+  knowledgeDigest: string;
+  recentDecisionsDigest: string;
+  projectEntityDigest: string;
   message: string;
 }): string {
   const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
@@ -154,6 +163,11 @@ PLAN.md: ${input.planPath}
 BOARD.md: ${input.boardPath}
 LOG.md: ${input.logPath}
 project-memory: ${input.projectMemoryPath}
+memory-summary-json: ${input.memorySummaryPath}
+memory-heat-json: ${input.memoryHeatPath}
+recent-decisions-json: ${input.recentDecisionsPath}
+project-entity-summary: ${input.projectEntitySummaryPath}
+journal: ${input.journalPath}
 messages-dir: ${input.messagesDir}
 
 ## Available Skills
@@ -161,6 +175,16 @@ ${listSkills(input.skillsDir, input.availableSkillNames)}
 
 ## Board Summary
 ${digestBoard(input.board)}
+
+## Durable Memory
+### Global Knowledge
+${input.knowledgeDigest}
+
+### Recent Decisions
+${input.recentDecisionsDigest}
+
+### Project Entity Memory
+${input.projectEntityDigest}
 
 ## Open Project Messages
 ${digestMessages(input.openMessages)}`;
@@ -188,6 +212,7 @@ export async function chatCommand(args: string[]): Promise<string> {
   const board = await Bun.file(projectPaths.board).text();
   const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
+  const memoryContext = await loadPromptMemoryContext(paths, activeProject);
 
   const prompt = buildChatPrompt({
     projectId: activeProject,
@@ -206,12 +231,20 @@ export async function chatCommand(args: string[]): Promise<string> {
     boardPath: projectPaths.board,
     logPath: projectPaths.log,
     projectMemoryPath: projectPaths.memory,
+    memorySummaryPath: memoryContext.memorySummaryPath,
+    memoryHeatPath: memoryContext.memoryHeatPath,
+    recentDecisionsPath: memoryContext.recentDecisionsPath,
+    projectEntitySummaryPath: memoryContext.projectEntitySummaryPath,
+    journalPath: memoryContext.journalPath,
     messagesDir: paths.msgDir,
     skillsDir: paths.skillsDir,
     availableSkillNames,
     soul: soul.trim(),
     board: board.trim(),
     openMessages,
+    knowledgeDigest: memoryContext.globalKnowledgeDigest,
+    recentDecisionsDigest: memoryContext.recentDecisionsDigest,
+    projectEntityDigest: memoryContext.projectEntityDigest,
     message: options.message,
   });
   const hints = resolveRuntimeHints({
