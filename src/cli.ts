@@ -1,7 +1,9 @@
 import { archiveCommand } from "./commands/archive";
+import { approvalCommand } from "./commands/approval";
 import { askCommand } from "./commands/ask";
 import { chatCommand } from "./commands/chat";
 import { consoleCommand } from "./commands/console";
+import { eventsCommand } from "./commands/events";
 import { feedCommand, watchCommand } from "./commands/feed";
 import { gatewayCommand } from "./commands/gateway";
 import { helpCommand } from "./commands/help";
@@ -54,6 +56,8 @@ export async function runCli(args: string[]): Promise<string> {
       return consoleCommand(rest);
     case "feed":
       return feedCommand(rest);
+    case "events":
+      return eventsCommand(rest);
     case "watch":
       return watchCommand(rest);
     case "supervise":
@@ -72,6 +76,8 @@ export async function runCli(args: string[]): Promise<string> {
       return logCommand(rest);
     case "memory":
       return memoryCommand(rest);
+    case "approval":
+      return approvalCommand(rest);
     case "msg":
       return msgCommand(rest);
     case "nudge":

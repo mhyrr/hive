@@ -16,5 +16,6 @@ Hive home: ${paths.home}
 Next:
 - Customize ${paths.soul}
 - Customize ${paths.self}
+- Customize ${paths.trust}
 - Register a project with: hive project add <project> <path>`;
 }

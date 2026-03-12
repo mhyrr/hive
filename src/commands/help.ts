@@ -13,6 +13,7 @@ Usage:
   hive work [project]
   hive status
   hive feed [count]
+  hive events [count] [--scope internal|external]
   hive ps
 
   hive supervise [--interval <seconds>] [--max-parallel <count>] [--once|--detach]
@@ -29,6 +30,10 @@ Usage:
   hive memory                         # Show project memory
   hive memory fact|convention|decision|question <text>
                                       # Append to project memory
+  hive approval                       # Show pending approvals
+  hive approval request <kind> <summary>
+  hive approval show <id>
+  hive approval approve|reject <id> [note]
   hive msg [--type <type>] <from> <to> <body>
   hive msg show <message>
   hive msg resolve <message> <actor> <answer>
