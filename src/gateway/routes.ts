@@ -66,7 +66,7 @@ async function pollForOrchestratorResponse(
   options: GatewayOptions,
   firedAt: string,
   timeoutMs = 120_000,
-  intervalMs = 2_000,
+  intervalMs = 1_000,
 ): Promise<string | null> {
   const activeProject = await getActiveProject(options.hivePaths);
   if (!activeProject) return null;
@@ -74,8 +74,8 @@ async function pollForOrchestratorResponse(
   const projectPaths = getProjectPaths(options.hivePaths, activeProject);
   const deadline = Date.now() + timeoutMs;
 
-  // Small initial delay — the supervisor needs time to launch
-  await Bun.sleep(3_000);
+  // Brief initial delay for supervisor to pick up the nudge
+  await Bun.sleep(1_000);
 
   while (Date.now() < deadline) {
     const results = await listRecentRunResults(projectPaths, 5);

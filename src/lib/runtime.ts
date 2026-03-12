@@ -7,6 +7,19 @@ import { PlanAgent, TeamAgent } from "./project";
 
 // --- Runtime Adapter Interface ---
 
+export type RuntimeMetadata = {
+  costUsd: number | null;
+  durationMs: number | null;
+  durationApiMs: number | null;
+  numTurns: number | null;
+  sessionId: string | null;
+};
+
+export type ParsedOutput = {
+  text: string;
+  metadata: RuntimeMetadata | null;
+};
+
 export type RuntimeAdapter = {
   name: string;
   aliases: string[];
@@ -25,6 +38,7 @@ export type RuntimeAdapter = {
   }) => string[];
   suppressLine: (line: string) => boolean;
   detectInstalled: () => Promise<boolean>;
+  parseOutput?: (rawStdout: string) => ParsedOutput;
 };
 
 // --- Built-in Adapters ---
@@ -35,6 +49,8 @@ const claudeAdapter: RuntimeAdapter = {
   command: "claude",
   buildLaunchArgs: ({ model, hiveHome, prompt }) => [
     "--print",
+    "--output-format",
+    "json",
     "--permission-mode",
     "bypassPermissions",
     "--add-dir",
@@ -53,6 +69,44 @@ const claudeAdapter: RuntimeAdapter = {
   ],
   suppressLine: () => false,
   detectInstalled: () => commandExists("claude"),
+  parseOutput: (rawStdout: string) => {
+    const trimmed = rawStdout.trim();
+
+    // Try to parse the last non-empty line as JSON (Claude --print --output-format json)
+    const lines = trimmed.split("\n");
+    let jsonStr = trimmed;
+
+    // If there are multiple lines, try the last line first (JSON is usually on one line)
+    if (lines.length > 1) {
+      const lastLine = lines[lines.length - 1]!.trim();
+
+      if (lastLine.startsWith("{")) {
+        jsonStr = lastLine;
+      }
+    }
+
+    try {
+      const data = JSON.parse(jsonStr);
+
+      return {
+        text: typeof data.result === "string" ? data.result : trimmed,
+        metadata: {
+          costUsd:
+            typeof data.cost_usd === "number"
+              ? data.cost_usd
+              : typeof data.total_cost_usd === "number"
+                ? data.total_cost_usd
+                : null,
+          durationMs: typeof data.duration_ms === "number" ? data.duration_ms : null,
+          durationApiMs: typeof data.duration_api_ms === "number" ? data.duration_api_ms : null,
+          numTurns: typeof data.num_turns === "number" ? data.num_turns : null,
+          sessionId: typeof data.session_id === "string" ? data.session_id : null,
+        },
+      };
+    } catch {
+      return { text: trimmed, metadata: null };
+    }
+  },
 };
 
 const codexAdapter: RuntimeAdapter = {
@@ -178,6 +232,7 @@ export type LaunchResult = {
   code: number | null;
   signal: NodeJS.Signals | null;
   visibleOutput: string;
+  metadata: RuntimeMetadata | null;
 };
 
 export type InteractiveResult = {
@@ -489,12 +544,15 @@ export function startLaunchSpec(
   repoPath: string,
   options: LaunchHandleOptions = {},
 ): LaunchHandle {
+  const adapter = getAdapter(spec.runtime);
+  const hasJsonOutput = !!adapter?.parseOutput;
   const child = spawn(spec.command, spec.args, {
     cwd: repoPath,
     stdio: ["inherit", "pipe", "pipe"],
     env: cleanEnvForRuntime(),
   });
   const visibleLines: string[] = [];
+  const stdoutLines: string[] = [];
   const outputStream = options.outputPath
     ? createWriteStream(options.outputPath, { flags: "a" })
     : null;
@@ -507,8 +565,14 @@ export function startLaunchSpec(
 
     outputStream?.write(`${line}\n`);
   };
-  const stdoutForwarder = createForwarder(spec.runtime, options.quiet ? null : process.stdout, captureLine);
-  const stderrForwarder = createForwarder(spec.runtime, options.quiet ? null : process.stderr, captureLine);
+  const captureStdoutLine = (line: string) => {
+    stdoutLines.push(line);
+    captureLine(line);
+  };
+  // Suppress live stdout forwarding for JSON-output adapters (raw JSON isn't useful in terminal)
+  const suppressLive = options.quiet || hasJsonOutput;
+  const stdoutForwarder = createForwarder(spec.runtime, suppressLive ? null : process.stdout, captureStdoutLine);
+  const stderrForwarder = createForwarder(spec.runtime, suppressLive ? null : process.stderr, captureLine);
 
   child.stdout?.on("data", (chunk: Buffer) => {
     stdoutForwarder.write(chunk);
@@ -530,10 +594,23 @@ export function startLaunchSpec(
       stderrForwarder.end();
       outputStream?.end();
 
+      if (adapter?.parseOutput) {
+        const rawStdout = stdoutLines.join("\n").trim();
+        const parsed = adapter.parseOutput(rawStdout);
+
+        return {
+          code,
+          signal: child.signalCode ?? null,
+          visibleOutput: parsed.text,
+          metadata: parsed.metadata,
+        };
+      }
+
       return {
         code,
         signal: child.signalCode ?? null,
         visibleOutput: visibleLines.join("\n").trim(),
+        metadata: null,
       };
     },
   };

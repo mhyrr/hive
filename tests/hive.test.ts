@@ -316,7 +316,7 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("Human nudge pending: Build the auth flow");
     expect(prompt).toContain("When you fully handle a message, resolve it or close it so the open queue stays clean.");
     expect(prompt).toContain("The authoritative hive files are not in the repo root.");
-    expect(prompt).toContain("## Files");
+    expect(prompt).toContain("## File Paths");
     expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myproject", "BOARD.md")}`);
     expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
     expect(prompt).toContain("./hive msg resolve <message> orchestrator <answer>");

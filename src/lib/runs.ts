@@ -43,6 +43,9 @@ export type RunResult = {
   finalVisibleOutput: string;
   ended: string;
   path: string;
+  costUsd: number | null;
+  durationMs: number | null;
+  numTurns: number | null;
 };
 
 type CreateRunInput = {
@@ -221,6 +224,9 @@ function toRunResult(path: string, raw: string): RunResult | null {
     finalVisibleOutput: parsed.body.trim(),
     ended,
     path,
+    costUsd: toNullableNumber(attributes["cost-usd"]),
+    durationMs: toNullableNumber(attributes["duration-ms"]),
+    numTurns: toNullableNumber(attributes["num-turns"]),
   };
 }
 
@@ -425,6 +431,9 @@ export async function writeRunResult(
     changedFiles?: string[];
     gitSummaryLines?: string[];
     finalVisibleOutput?: string;
+    costUsd?: number | null;
+    durationMs?: number | null;
+    numTurns?: number | null;
   },
 ): Promise<RunResult> {
   const path = join(run.path.replace(/run\.md$/, ""), "result.md");
@@ -457,6 +466,18 @@ export async function writeRunResult(
 
   if (input.gitSummaryLines?.length) {
     attributes["git-summary"] = input.gitSummaryLines.join(" | ");
+  }
+
+  if (input.costUsd != null) {
+    attributes["cost-usd"] = String(input.costUsd);
+  }
+
+  if (input.durationMs != null) {
+    attributes["duration-ms"] = String(input.durationMs);
+  }
+
+  if (input.numTurns != null) {
+    attributes["num-turns"] = String(input.numTurns);
   }
 
   await Bun.write(

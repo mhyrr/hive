@@ -256,15 +256,32 @@ Command: ${renderLaunchPreview(spec)}`;
     changedFiles: gitDelta.changedFiles,
     gitSummaryLines: gitDelta.summaryLines,
     finalVisibleOutput: result.visibleOutput,
+    costUsd: result.metadata?.costUsd ?? null,
+    durationMs: result.metadata?.durationMs ?? null,
+    numTurns: result.metadata?.numTurns ?? null,
   });
+
+  const feedDetails = [
+    `runtime: ${spec.runtime}`,
+    `exit: ${result.code ?? "unknown"}${result.signal ? ` | signal: ${result.signal}` : ""}`,
+  ];
+
+  if (result.metadata?.durationMs) {
+    feedDetails.push(`duration: ${(result.metadata.durationMs / 1000).toFixed(1)}s`);
+  }
+
+  if (result.metadata?.numTurns) {
+    feedDetails.push(`turns: ${result.metadata.numTurns}`);
+  }
+
+  if (result.metadata?.costUsd) {
+    feedDetails.push(`cost: $${result.metadata.costUsd.toFixed(4)}`);
+  }
 
   await appendFeedEntry(input.paths, {
     project: input.activeProject,
     headline: `${input.agentId} ${run.status}`,
-    details: [
-      `runtime: ${spec.runtime}`,
-      `exit: ${result.code ?? "unknown"}${result.signal ? ` | signal: ${result.signal}` : ""}`,
-    ],
+    details: feedDetails,
   });
 
   if (run.status === "cancelled") {

@@ -59,6 +59,8 @@ describe("claude adapter", () => {
 
     expect(args).toEqual([
       "--print",
+      "--output-format",
+      "json",
       "--permission-mode",
       "bypassPermissions",
       "--add-dir",
@@ -77,6 +79,8 @@ describe("claude adapter", () => {
 
     expect(args).toEqual([
       "--print",
+      "--output-format",
+      "json",
       "--permission-mode",
       "bypassPermissions",
       "--add-dir",
@@ -362,7 +366,7 @@ describe("buildLaunchSpec backward compatibility", () => {
     });
   });
 
-  test("produces identical claude launch spec as before", () => {
+  test("produces claude launch spec with json output format", () => {
     const spec = buildLaunchSpec({
       runtime: "claude",
       model: "opus",
@@ -377,6 +381,8 @@ describe("buildLaunchSpec backward compatibility", () => {
       command: "claude",
       args: [
         "--print",
+        "--output-format",
+        "json",
         "--permission-mode",
         "bypassPermissions",
         "--add-dir",

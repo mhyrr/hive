@@ -1,5 +1,7 @@
 # HIVE
 
+![HIVE Gateway](hive.png)
+
 A team orchestration layer for AI coding agents. Multiple minds, different
 cognitive styles, coordinating through shared files across multiple projects.
 
