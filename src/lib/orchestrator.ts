@@ -293,6 +293,11 @@ export async function buildOrchestratorPrompt(input: {
   logPath: string;
   projectMemoryPath: string;
   projectMemory: string;
+  memorySummaryPath: string;
+  memoryHeatPath: string;
+  recentDecisionsPath: string;
+  projectEntitySummaryPath: string;
+  journalPath: string;
   messagesDir: string;
   skillsDir: string;
   availableSkillNames: string[];
@@ -301,6 +306,9 @@ export async function buildOrchestratorPrompt(input: {
   activeRuns: RunRecord[];
   recentRunResults: RunResult[];
   openMessages: HiveMessage[];
+  knowledgeDigest: string;
+  recentDecisionsDigest: string;
+  projectEntityDigest: string;
   options: OrchestrateOptions;
 }): Promise<string> {
   const signals = summarizeSignals(input.board, input.openMessages, input.activeRuns);
@@ -384,6 +392,11 @@ PLAN.md: ${input.planPath}
 BOARD.md: ${input.boardPath}
 LOG.md: ${input.logPath}
 project-memory: ${input.projectMemoryPath}
+memory-summary-json: ${input.memorySummaryPath}
+memory-heat-json: ${input.memoryHeatPath}
+recent-decisions-json: ${input.recentDecisionsPath}
+project-entity-summary: ${input.projectEntitySummaryPath}
+journal: ${input.journalPath}
 messages-dir: ${input.messagesDir}
 
 ## Available Skills
@@ -394,6 +407,16 @@ ${digestBoard(input.board)}
 
 ## Project Memory
 ${input.projectMemory}
+
+## Durable Memory
+### Global Knowledge
+${input.knowledgeDigest}
+
+### Recent Decisions
+${input.recentDecisionsDigest}
+
+### Project Entity Memory
+${input.projectEntityDigest}
 
 ## Active Runs
 ${renderActiveRuns(input.activeRuns)}

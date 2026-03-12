@@ -29,6 +29,14 @@ export type HivePaths = {
   memoryProjectsDir: string;
   memoryPersonasDir: string;
   journalDir: string;
+  memoryStateDir: string;
+  memorySummaryFile: string;
+  memoryHeatFile: string;
+  memoryRecentDecisionsFile: string;
+  memoryEntitiesDir: string;
+  memoryEntitiesProjectsDir: string;
+  memoryEntitiesPeopleDir: string;
+  memoryEntitiesCompaniesDir: string;
   projectsDir: string;
   msgDir: string;
   archiveDir: string;
@@ -84,6 +92,14 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     memoryProjectsDir: join(home, "memory", "projects"),
     memoryPersonasDir: join(home, "memory", "personas"),
     journalDir: join(home, "memory", "journal"),
+    memoryStateDir: join(home, "memory", "state"),
+    memorySummaryFile: join(home, "memory", "state", "memory-summary.json"),
+    memoryHeatFile: join(home, "memory", "state", "memory-heat.json"),
+    memoryRecentDecisionsFile: join(home, "memory", "state", "recent-decisions.json"),
+    memoryEntitiesDir: join(home, "memory", "entities"),
+    memoryEntitiesProjectsDir: join(home, "memory", "entities", "projects"),
+    memoryEntitiesPeopleDir: join(home, "memory", "entities", "people"),
+    memoryEntitiesCompaniesDir: join(home, "memory", "entities", "companies"),
     projectsDir: join(home, "projects"),
     msgDir: join(home, "msg"),
     archiveDir: join(home, "archive"),
@@ -118,6 +134,10 @@ export async function ensureHiveScaffold(
   await mkdir(paths.memoryProjectsDir, { recursive: true });
   await mkdir(paths.memoryPersonasDir, { recursive: true });
   await mkdir(paths.journalDir, { recursive: true });
+  await mkdir(paths.memoryStateDir, { recursive: true });
+  await mkdir(paths.memoryEntitiesProjectsDir, { recursive: true });
+  await mkdir(paths.memoryEntitiesPeopleDir, { recursive: true });
+  await mkdir(paths.memoryEntitiesCompaniesDir, { recursive: true });
   await mkdir(paths.projectsDir, { recursive: true });
   await mkdir(paths.msgDir, { recursive: true });
   await mkdir(paths.archiveDir, { recursive: true });

@@ -26,6 +26,7 @@ import {
 } from "../lib/runtime";
 import { UsageError } from "../lib/errors";
 import { appendFeedEntry } from "../lib/feed";
+import { loadPromptMemoryContext } from "../lib/memory";
 import { refreshProjectRuntimeState } from "../lib/state";
 
 type ConsoleOptions = {
@@ -98,12 +99,20 @@ function buildConsolePrompt(input: {
   logPath: string;
   projectMemoryPath: string;
   projectMemory: string;
+  memorySummaryPath: string;
+  memoryHeatPath: string;
+  recentDecisionsPath: string;
+  projectEntitySummaryPath: string;
+  journalPath: string;
   messagesDir: string;
   skillsDir: string;
   availableSkillNames: string[];
   soul: string;
   board: string;
   openMessages: Awaited<ReturnType<typeof listOpenProjectMessages>>;
+  knowledgeDigest: string;
+  recentDecisionsDigest: string;
+  projectEntityDigest: string;
 }): string {
   const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
   const essentialSkillPaths = essentialSkills
@@ -183,6 +192,11 @@ PLAN.md: ${input.planPath}
 BOARD.md: ${input.boardPath}
 LOG.md: ${input.logPath}
 project-memory: ${input.projectMemoryPath}
+memory-summary-json: ${input.memorySummaryPath}
+memory-heat-json: ${input.memoryHeatPath}
+recent-decisions-json: ${input.recentDecisionsPath}
+project-entity-summary: ${input.projectEntitySummaryPath}
+journal: ${input.journalPath}
 messages-dir: ${input.messagesDir}
 skills-dir: ${input.skillsDir}
 
@@ -193,6 +207,16 @@ ${digestBoard(input.board)}
 
 ### Project Memory
 ${input.projectMemory}
+
+### Durable Memory
+#### Global Knowledge
+${input.knowledgeDigest}
+
+#### Recent Decisions
+${input.recentDecisionsDigest}
+
+#### Project Entity Memory
+${input.projectEntityDigest}
 
 ### Open Messages
 ${digestMessages(input.openMessages)}`;
@@ -231,6 +255,7 @@ export async function consoleCommand(args: string[]): Promise<string> {
     projectPaths,
   });
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
+  const memoryContext = await loadPromptMemoryContext(paths, activeProject);
 
   let projectMemory = "(none yet)";
 
@@ -266,12 +291,20 @@ export async function consoleCommand(args: string[]): Promise<string> {
     logPath: projectPaths.log,
     projectMemoryPath: projectPaths.memory,
     projectMemory,
+    memorySummaryPath: memoryContext.memorySummaryPath,
+    memoryHeatPath: memoryContext.memoryHeatPath,
+    recentDecisionsPath: memoryContext.recentDecisionsPath,
+    projectEntitySummaryPath: memoryContext.projectEntitySummaryPath,
+    journalPath: memoryContext.journalPath,
     messagesDir: paths.msgDir,
     skillsDir: paths.skillsDir,
     availableSkillNames,
     soul: soul.trim(),
     board: state.boardText.trim(),
     openMessages: state.openMessages,
+    knowledgeDigest: memoryContext.globalKnowledgeDigest,
+    recentDecisionsDigest: memoryContext.recentDecisionsDigest,
+    projectEntityDigest: memoryContext.projectEntityDigest,
   });
 
   const hints = resolveRuntimeHints({

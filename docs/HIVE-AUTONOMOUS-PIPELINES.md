@@ -116,3 +116,14 @@ approval instead of stalling or silently doing it.
 
 Pipelines should grow from audited, narrow wins, not from broad autonomy
 claims.
+
+## Current Implementation Slice
+
+The first pipeline-adjacent slice is deliberately narrow:
+
+- external incidents can be recorded as structured events
+- warning/error events can be routed into the orchestrator queue
+- approvals, memory extraction, and routed incidents all leave a durable trail
+
+This is not full autonomous triage yet, but it creates the deterministic intake
+path those pipelines need.
