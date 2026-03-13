@@ -1,4 +1,4 @@
-# HIVE
+# HIVE — Hexagonal Intelligence, Very Efficient
 
 ![HIVE Gateway](hive.png)
 

@@ -36,6 +36,10 @@
     <!-- Session toolbar -->
     <div class="session-toolbar" id="session-toolbar">
       <span class="session-id" id="session-id">&mdash;</span>
+      <div class="session-view-toggle" id="session-view-toggle" role="group" aria-label="Transcript view">
+        <button class="session-view-btn session-view-btn--active" type="button" data-console-view="conversation">Conversation</button>
+        <button class="session-view-btn" type="button" data-console-view="all">Full Session</button>
+      </div>
       <div class="session-toolbar-actions">
         <button class="session-btn" id="sessions-btn" title="Browse sessions">Sessions</button>
         <button class="session-btn" id="new-session-btn" title="New session (Ctrl+N)">+ New</button>

@@ -26,6 +26,10 @@ export type ParsedOutput = {
   metadata: RuntimeMetadata | null;
 };
 
+type RuntimeOutputCapture = {
+  handleStdoutLine: (line: string) => string | null;
+};
+
 export type RuntimeAdapter = {
   name: string;
   aliases: string[];
@@ -45,6 +49,7 @@ export type RuntimeAdapter = {
   suppressLine: (line: string) => boolean;
   detectInstalled: () => Promise<boolean>;
   parseOutput?: (rawStdout: string) => ParsedOutput;
+  createOutputCapture?: () => RuntimeOutputCapture;
 };
 
 function toNullableNumber(value: unknown): number | null {
@@ -55,6 +60,10 @@ function toRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function toNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function readFirstNumber(
@@ -203,6 +212,100 @@ export function formatRuntimeTokenSummary(metadata: RuntimeMetadata | null): str
   return parts.length > 0 ? parts.join(" | ") : null;
 }
 
+function extractClaudeContentText(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const parts: string[] = [];
+
+  for (const item of value) {
+    if (typeof item === "string") {
+      parts.push(item);
+      continue;
+    }
+
+    const record = toRecord(item);
+
+    if (!record) {
+      continue;
+    }
+
+    const text = toNullableString(record.text);
+
+    if (text) {
+      parts.push(text);
+      continue;
+    }
+
+    const nested = extractClaudeContentText(record.content);
+
+    if (nested) {
+      parts.push(nested);
+    }
+  }
+
+  return parts.length > 0 ? parts.join("") : null;
+}
+
+function extractClaudeSnapshotText(data: unknown): string | null {
+  const root = toRecord(data);
+  const message = toRecord(root?.message);
+
+  return (
+    extractClaudeContentText(message?.content) ??
+    extractClaudeContentText(root?.content) ??
+    toNullableString(root?.result)
+  );
+}
+
+function createClaudeOutputCapture(): RuntimeOutputCapture {
+  let lastSnapshot = "";
+
+  return {
+    handleStdoutLine(line: string) {
+      let data: unknown;
+
+      try {
+        data = JSON.parse(line);
+      } catch {
+        return null;
+      }
+
+      const root = toRecord(data);
+
+      if (!root) {
+        return null;
+      }
+
+      const delta = toRecord(root.delta);
+      const deltaText = toNullableString(delta?.text);
+
+      if (toNullableString(root.type) === "content_block_delta" && deltaText) {
+        lastSnapshot += deltaText;
+        return deltaText;
+      }
+
+      const snapshot = extractClaudeSnapshotText(root);
+
+      if (!snapshot || snapshot === lastSnapshot) {
+        return null;
+      }
+
+      const chunk = snapshot.startsWith(lastSnapshot)
+        ? snapshot.slice(lastSnapshot.length)
+        : snapshot;
+
+      lastSnapshot = snapshot;
+      return chunk || null;
+    },
+  };
+}
+
 // --- Built-in Adapters ---
 
 const claudeAdapter: RuntimeAdapter = {
@@ -211,8 +314,10 @@ const claudeAdapter: RuntimeAdapter = {
   command: "claude",
   buildLaunchArgs: ({ model, hiveHome, prompt }) => [
     "--print",
+    "--verbose",
     "--output-format",
-    "json",
+    "stream-json",
+    "--include-partial-messages",
     "--permission-mode",
     "bypassPermissions",
     "--add-dir",
@@ -231,8 +336,13 @@ const claudeAdapter: RuntimeAdapter = {
   ],
   suppressLine: () => false,
   detectInstalled: () => commandExists("claude"),
+  createOutputCapture: () => createClaudeOutputCapture(),
   parseOutput: (rawStdout: string) => {
     const trimmed = rawStdout.trim();
+
+    if (!trimmed) {
+      return { text: "", metadata: null };
+    }
 
     // Try to parse the last non-empty line as JSON (Claude --print --output-format json)
     const lines = trimmed.split("\n");
@@ -255,7 +365,59 @@ const claudeAdapter: RuntimeAdapter = {
         metadata: parseStructuredRuntimeMetadata("claude", data),
       };
     } catch {
-      return { text: trimmed, metadata: null };
+      let assistantText = "";
+      let metadataSource: unknown = null;
+
+      for (const line of lines) {
+        const candidate = line.trim();
+
+        if (!candidate) {
+          continue;
+        }
+
+        try {
+          const data = JSON.parse(candidate);
+          const root = toRecord(data);
+
+          if (!root) {
+            continue;
+          }
+
+          const delta = toRecord(root.delta);
+          const deltaText = toNullableString(delta?.text);
+
+          if (toNullableString(root.type) === "content_block_delta" && deltaText) {
+            assistantText += deltaText;
+          } else {
+            const snapshot = extractClaudeSnapshotText(root);
+
+            if (snapshot) {
+              assistantText = snapshot;
+            }
+          }
+
+          if (
+            root.usage ||
+            root.duration_ms !== undefined ||
+            root.cost_usd !== undefined ||
+            root.total_cost_usd !== undefined ||
+            root.num_turns !== undefined ||
+            root.session_id !== undefined ||
+            root.input_tokens !== undefined ||
+            root.output_tokens !== undefined ||
+            root.total_tokens !== undefined
+          ) {
+            metadataSource = data;
+          }
+        } catch {
+          // Ignore malformed stream lines and fall back to the final raw output.
+        }
+      }
+
+      return {
+        text: assistantText || trimmed,
+        metadata: metadataSource ? parseStructuredRuntimeMetadata("claude", metadataSource) : null,
+      };
     }
   },
 };
@@ -597,7 +759,7 @@ export function startInteractiveSession(
   spec: LaunchSpec,
   repoPath: string,
 ): InteractiveHandle {
-  const child = spawn(spec.command, launchArgs, {
+  const child = spawn(spec.command, spec.args, {
     stdio: "inherit",
     cwd: repoPath,
     env: cleanEnvForRuntime(),
@@ -697,6 +859,7 @@ export function startLaunchSpec(
 ): LaunchHandle {
   const adapter = getAdapter(spec.runtime);
   const hasJsonOutput = !!adapter?.parseOutput;
+  const outputCapture = adapter?.createOutputCapture?.() ?? null;
   const codexLastMessagePath =
     spec.runtime === "codex" && options.outputPath
       ? `${options.outputPath}.last-message.txt`
@@ -721,10 +884,24 @@ export function startLaunchSpec(
     env: cleanEnvForRuntime(),
   });
   const visibleLines: string[] = [];
+  let visibleText = "";
   const stdoutLines: string[] = [];
   const outputStream = options.outputPath
     ? createWriteStream(options.outputPath, { flags: "a" })
     : null;
+  const appendVisibleText = (chunk: string) => {
+    if (!chunk) {
+      return;
+    }
+
+    visibleText += chunk;
+
+    if (!options.quiet) {
+      process.stdout.write(chunk);
+    }
+
+    outputStream?.write(chunk);
+  };
   const captureLine = (line: string) => {
     visibleLines.push(line);
 
@@ -736,6 +913,17 @@ export function startLaunchSpec(
   };
   const captureStdoutLine = (line: string) => {
     stdoutLines.push(line);
+
+    if (outputCapture) {
+      const chunk = outputCapture.handleStdoutLine(line);
+
+      if (chunk) {
+        appendVisibleText(chunk);
+      }
+
+      return;
+    }
+
     captureLine(line);
   };
   // Suppress live stdout forwarding for JSON-output adapters (raw JSON isn't useful in terminal)
@@ -770,7 +958,7 @@ export function startLaunchSpec(
         return {
           code,
           signal: child.signalCode ?? null,
-          visibleOutput: parsed.text,
+          visibleOutput: parsed.text || visibleText.trim(),
           metadata: parsed.metadata
             ? withDerivedTotalTokens({
                 ...baseRuntimeMetadata(spec.runtime),
@@ -800,7 +988,7 @@ export function startLaunchSpec(
       return {
         code,
         signal: child.signalCode ?? null,
-        visibleOutput: visibleLines.join("\n").trim(),
+        visibleOutput: visibleText.trim() || visibleLines.join("\n").trim(),
         metadata: baseRuntimeMetadata(spec.runtime),
       };
     },

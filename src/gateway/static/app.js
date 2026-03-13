@@ -23,6 +23,8 @@ var state = {
   consoleHistory: [],
   consoleStream: null,
   consoleDetailPayloads: [],
+  consoleExpanded: {},
+  consoleView: 'conversation',
   sessionId: null,
   sending: false,
   liveSnapshot: null,
@@ -104,6 +106,20 @@ function truncateMultilineText(text, max) {
   var limit = typeof max === 'number' ? max : 360;
   if (normalized.length <= limit) return normalized;
   return normalized.slice(0, limit - 1).trimEnd() + '\u2026';
+}
+
+function normalizeMultilineText(text) {
+  return String(text || '').replace(/\r\n/g, '\n').trim();
+}
+
+function splitDisplayLines(text) {
+  var normalized = normalizeMultilineText(text);
+  if (!normalized) return [];
+  return normalized.split('\n').map(function (line) {
+    return line.trimEnd();
+  }).filter(function (line) {
+    return line.trim().length > 0;
+  });
 }
 
 function formatRelativeAge(iso) {
@@ -665,6 +681,69 @@ function buildConsoleDisplayItems(turns) {
   return items;
 }
 
+function getConsoleItemKey(item, index) {
+  return [
+    item.itemType || 'turn',
+    item.role || '',
+    item.source || '',
+    item.ts || '',
+    index,
+  ].join(':');
+}
+
+function isConversationOnlyItem(item) {
+  return item.itemType === 'status' || item.itemType === 'draft' || item.source === 'system';
+}
+
+function getConsoleItemSourceText(item) {
+  if (item.itemType === 'status' && item.fullText) {
+    return item.fullText;
+  }
+
+  return item.content || '';
+}
+
+function shouldPreferLatestPreview(item) {
+  return item.role === 'assistant' || item.itemType === 'draft' || item.itemType === 'status' || item.source === 'system';
+}
+
+function buildCollapsedConsolePreview(item) {
+  var sourceText = getConsoleItemSourceText(item);
+  var lineLimit = item.itemType === 'draft' ? 5 : 4;
+  var charLimit = item.itemType === 'draft' ? 520 : 420;
+  var lines = splitDisplayLines(sourceText);
+  var normalized = normalizeMultilineText(sourceText);
+  var truncatedByLines = lines.length > lineLimit;
+  var truncatedByChars = normalized.length > charLimit;
+
+  if (!truncatedByLines && !truncatedByChars) {
+    return null;
+  }
+
+  var preferLatest = shouldPreferLatestPreview(item);
+  var previewLines = truncatedByLines
+    ? (preferLatest ? lines.slice(-lineLimit) : lines.slice(0, lineLimit))
+    : lines.slice();
+  var previewText = previewLines.join('\n');
+
+  if (previewText.length > charLimit) {
+    previewText = previewText.slice(0, charLimit - 1).trimEnd() + '\u2026';
+  }
+
+  return {
+    previewText: previewText,
+    totalLines: lines.length || 1,
+    shownLines: previewLines.length || 1,
+    preferLatest: preferLatest,
+  };
+}
+
+function getConsoleCollapseMeta(preview) {
+  if (!preview) return '';
+  var edge = preview.preferLatest ? 'latest' : 'first';
+  return 'Showing ' + edge + ' ' + countLabel(preview.shownLines, 'line') + ' of ' + countLabel(preview.totalLines, 'line');
+}
+
 function renderDetailSection(title, rows) {
   if (!rows || rows.length === 0) return '';
 
@@ -703,6 +782,18 @@ function renderDetailChip(item) {
     '</button>';
 }
 
+function renderConsoleExpandChip(item) {
+  var preview = buildCollapsedConsolePreview(item);
+  if (!preview) return '';
+
+  var expanded = Boolean(state.consoleExpanded[item.consoleKey]);
+  var label = expanded ? 'collapse' : 'expand';
+
+  return '<button class="turn-expand-chip" type="button" data-console-expand="' + escapeAttr(item.consoleKey) + '">' +
+    '<span class="turn-expand-chip-label">' + escapeHtml(label) + '</span>' +
+    '</button>';
+}
+
 function renderConsoleItem(item) {
   var presentation = getTurnPresentation(item.role, item.source);
   var classes = ['turn', 'turn-' + presentation.cssRole];
@@ -712,11 +803,17 @@ function renderConsoleItem(item) {
   if (item.itemType === 'draft') {
     classes.push('turn-draft');
   }
+  var preview = buildCollapsedConsolePreview(item);
+  var expanded = preview ? Boolean(state.consoleExpanded[item.consoleKey]) : false;
+  if (preview && !expanded) {
+    classes.push('turn-collapsed-preview');
+  }
 
   var html = '<div class="' + classes.join(' ') + '">';
   html += '<div class="turn-header">';
   html += '<div class="turn-role">' + escapeHtml(presentation.label) + '</div>';
   html += '<div class="turn-header-right">';
+  html += renderConsoleExpandChip(item);
   html += renderDetailChip(item);
   html += '<span class="turn-time">' + escapeHtml(formatTime(item.ts || nowISO())) + '</span>';
   html += '</div></div>';
@@ -726,7 +823,15 @@ function renderConsoleItem(item) {
     html += '<span></span><span></span><span></span>';
     html += '</span></div>';
   } else {
-    html += '<div class="turn-content">' + renderRichText(item.content || '') + '</div>';
+    html += '<div class="turn-content">' + renderRichText(preview && !expanded ? preview.previewText : getConsoleItemSourceText(item)) + '</div>';
+    if (preview) {
+      html += '<div class="turn-collapse-meta">';
+      html += '<span class="turn-collapse-note">' + escapeHtml(getConsoleCollapseMeta(preview)) + '</span>';
+      html += '<button class="turn-collapse-toggle" type="button" data-console-expand="' + escapeAttr(item.consoleKey) + '">' +
+        escapeHtml(expanded ? 'Show less' : 'Show more') +
+        '</button>';
+      html += '</div>';
+    }
   }
 
   html += '</div>';
@@ -751,15 +856,42 @@ function renderConsoleHistory() {
     });
   }
 
+  for (var idx = 0; idx < items.length; idx++) {
+    items[idx].consoleKey = getConsoleItemKey(items[idx], idx);
+  }
+
+  var hiddenCount = 0;
+  if (state.consoleView === 'conversation') {
+    items = items.filter(function (item) {
+      var hidden = isConversationOnlyItem(item);
+      if (hidden) hiddenCount += 1;
+      return !hidden;
+    });
+  }
+
   if (items.length === 0) {
-    container.innerHTML = '<div class="console-welcome">' +
-      '<p>Talk to the steward.</p>' +
-      '<p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>' +
-      '</div>';
+    if (hiddenCount > 0) {
+      container.innerHTML = '<div class="console-filter-empty">' +
+        '<p>The steward is working in the background.</p>' +
+        '<p class="console-filter-empty-hint">' + escapeHtml(countLabel(hiddenCount, 'internal update')) + ' hidden in Conversation view.</p>' +
+        '<button class="console-filter-link" type="button" data-console-view="all">Show full session</button>' +
+        '</div>';
+    } else {
+      container.innerHTML = '<div class="console-welcome">' +
+        '<p>Talk to the steward.</p>' +
+        '<p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>' +
+        '</div>';
+    }
     return;
   }
 
   var html = '';
+  if (hiddenCount > 0) {
+    html += '<div class="console-filter-banner">' +
+      '<span class="console-filter-banner-copy">' + escapeHtml(countLabel(hiddenCount, 'internal update')) + ' hidden in Conversation view.</span>' +
+      '<button class="console-filter-link" type="button" data-console-view="all">Show full session</button>' +
+      '</div>';
+  }
   for (var i = 0; i < items.length; i++) {
     html += renderConsoleItem(items[i]);
   }
@@ -810,6 +942,7 @@ function removeThinkingIndicator() {
 function clearConsoleHistory() {
   state.consoleHistory = [];
   state.consoleStream = null;
+  state.consoleExpanded = {};
   renderConsoleHistory();
 }
 
@@ -931,6 +1064,14 @@ function setupConsoleDetailModal() {
 
   if (container) {
     container.addEventListener('click', function (event) {
+      var viewButton = event.target && event.target.closest
+        ? event.target.closest('[data-console-view]')
+        : null;
+      if (viewButton) {
+        setConsoleView(viewButton.getAttribute('data-console-view') || 'conversation');
+        return;
+      }
+
       var link = event.target && event.target.closest
         ? event.target.closest('a[data-open-path]')
         : null;
@@ -943,6 +1084,14 @@ function setupConsoleDetailModal() {
           link.getAttribute('data-open-path') || '',
           link.getAttribute('data-open-line') || null
         );
+        return;
+      }
+
+      var expandButton = event.target && event.target.closest
+        ? event.target.closest('[data-console-expand]')
+        : null;
+      if (expandButton) {
+        toggleConsoleItemExpanded(expandButton.getAttribute('data-console-expand') || '');
         return;
       }
 
@@ -986,6 +1135,9 @@ function updateSessionProject(project) {
 }
 
 function updateSessionIndicator(sessionId, project) {
+  if (state.sessionId !== sessionId) {
+    state.consoleExpanded = {};
+  }
   state.sessionId = sessionId;
   if (project !== undefined) {
     updateSessionProject(project);
@@ -1317,7 +1469,10 @@ function renderLiveAgents(agents) {
     if (outputPreview) {
       html += '<div class="agent-card-output">' + escapeHtml(outputPreview) + '</div>';
     } else {
-      html += '<div class="agent-card-output agent-card-output--empty">No visible output yet.</div>';
+      var emptyOutput = agent.persona === 'steward'
+        ? 'Waiting for the first streamed update from the steward.'
+        : 'Waiting for the first visible update from this agent.';
+      html += '<div class="agent-card-output agent-card-output--empty">' + escapeHtml(emptyOutput) + '</div>';
     }
     html += '</div>';
   }
@@ -1732,9 +1887,38 @@ async function loadConsoleHistory() {
 
 // --- Session Toolbar Setup ---
 
+function renderConsoleViewToggle() {
+  var container = document.getElementById('session-view-toggle');
+  if (!container) return;
+
+  var buttons = container.querySelectorAll('[data-console-view]');
+  for (var i = 0; i < buttons.length; i++) {
+    var button = buttons[i];
+    var isActive = button.getAttribute('data-console-view') === state.consoleView;
+    if (isActive) {
+      button.classList.add('session-view-btn--active');
+    } else {
+      button.classList.remove('session-view-btn--active');
+    }
+  }
+}
+
+function setConsoleView(view) {
+  state.consoleView = view === 'all' ? 'all' : 'conversation';
+  renderConsoleViewToggle();
+  renderConsoleHistory();
+}
+
+function toggleConsoleItemExpanded(key) {
+  if (!key) return;
+  state.consoleExpanded[key] = !state.consoleExpanded[key];
+  renderConsoleHistory();
+}
+
 function setupSessionToolbar() {
   var newBtn = document.getElementById('new-session-btn');
   var sessionsBtn = document.getElementById('sessions-btn');
+  var viewToggle = document.getElementById('session-view-toggle');
 
   if (newBtn) {
     newBtn.addEventListener('click', function () {
@@ -1748,6 +1932,18 @@ function setupSessionToolbar() {
       toggleSessionsDropdown();
     });
   }
+
+  if (viewToggle) {
+    viewToggle.addEventListener('click', function (event) {
+      var button = event.target && event.target.closest
+        ? event.target.closest('[data-console-view]')
+        : null;
+      if (!button) return;
+      setConsoleView(button.getAttribute('data-console-view') || 'conversation');
+    });
+  }
+
+  renderConsoleViewToggle();
 }
 
 

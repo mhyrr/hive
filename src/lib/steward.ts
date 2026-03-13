@@ -136,7 +136,16 @@ async function readRunOutputDelta(
     };
   }
 
-  const raw = (await file.text()).replace(/\r\n/g, "\n");
+  const rawText = await file.text().catch(() => null);
+
+  if (rawText === null) {
+    return {
+      nextLength: seenLength,
+      content: null,
+    };
+  }
+
+  const raw = rawText.replace(/\r\n/g, "\n");
 
   if (raw.length <= seenLength) {
     return {
@@ -145,11 +154,11 @@ async function readRunOutputDelta(
     };
   }
 
-  const delta = raw.slice(seenLength).trim();
+  const delta = raw.slice(seenLength);
 
   return {
     nextLength: raw.length,
-    content: delta || null,
+    content: delta.trim() ? delta : null,
   };
 }
 
@@ -412,6 +421,7 @@ export async function runDirectStewardTurn(
     model: spec.model,
     prompt,
     source: "console",
+    sourceMessage: input.sessionId,
   });
 
   await appendLogEntry(
@@ -456,9 +466,8 @@ export async function runDirectStewardTurn(
     seenLength = update.nextLength;
 
     if (update.content) {
-      const chunk = update.content.trim();
-      streamedOutput = streamedOutput ? `${streamedOutput}\n${chunk}` : chunk;
-      await input.onOutput?.(chunk);
+      streamedOutput += update.content;
+      await input.onOutput?.(update.content);
     }
 
     await Bun.sleep(500);
@@ -468,9 +477,8 @@ export async function runDirectStewardTurn(
 
   const finalUpdate = await readRunOutputDelta(run, seenLength);
   if (finalUpdate.content) {
-    const chunk = finalUpdate.content.trim();
-    streamedOutput = streamedOutput ? `${streamedOutput}\n${chunk}` : chunk;
-    await input.onOutput?.(chunk);
+    streamedOutput += finalUpdate.content;
+    await input.onOutput?.(finalUpdate.content);
   }
 
   if (launchError) {
