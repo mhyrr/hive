@@ -350,6 +350,38 @@ steering a team. This maps better to how technical leadership actually works:
 OpenClaw's interface is fundamentally conversational. You talk to one agent.
 HIVE's interface is fundamentally operational. You manage a team.
 
+But this comparison undersells the challenge. OpenClaw users *feel* like
+they're managing a capable colleague — not because the interface is
+operationally superior, but because the combination of conversational
+intimacy and autonomous action (heartbeat tasks, overnight work, proactive
+initiative) creates the emotional experience of having a reliable chief of
+staff. The agent does things while you sleep. It tells you what happened
+when you wake up. That *feels* like a team, even if architecturally it's
+one agent in a chat window.
+
+HIVE's operational model is architecturally better, but it needs to deliver
+the same emotional experience through different means. The "close touch"
+of a great leadership relationship isn't conversation — it's **anticipation**.
+A great chief of staff doesn't chat with you. They know what you need before
+you ask. They surface problems before they become crises. They make your
+decisions take effect immediately and confirm the results.
+
+This maps to the universal complaint of technical leadership: **not knowing
+what you need to know.** Every engineering manager, VP, CTO has said some
+version of: "I found out about the problem too late." HIVE should solve this
+not by being conversational, but by being the best-informed leadership
+surface anyone has ever had: proactive briefings, attention-ranked queues,
+health indicators that surface struggling before stuck, and an intervention
+feedback loop that makes direction feel immediate.
+
+The thesis: HIVE's human-in-the-loop isn't just "managerial vs
+conversational." It's **"informed commander vs intimate chatbot."** The
+informed commander knows more, reacts faster, and leads more effectively —
+even if the chatbot *feels* closer at first. The close touch comes from
+anticipation and awareness, not from conversation.
+
+See `HIVE-LEADERSHIP-UI.md` for the full design of this leadership surface.
+
 ---
 
 ## Mitigations: OpenClaw's Ecosystem Advantage Is Porous
