@@ -237,7 +237,7 @@ who's had two different models review the same PR has seen it.
 
 ## Beyond the Base Five: Extending the Lens System
 
-The five base personas coverAlright, I think this is really solid. There's still a few things, and I'm less sure about them, so let's walk through them here. the core cognitive territory for general
+The five base personas cover the core cognitive territory for general
 software engineering. But the system should support extension in two
 directions: **deeper specialization** of existing lenses, and **novel
 lenses** for specific problem domains.
@@ -364,6 +364,169 @@ its training data will exercise it better than one that hasn't.
 
 ---
 
+## Lens-Skill Affinity
+
+Lenses describe how an agent thinks. Skills describe what an agent can
+*do*. These aren't the same thing — but they're not independent either.
+Certain cognitive lenses naturally reach for certain skills, and making
+this affinity explicit improves both the persona system and the skill
+system.
+
+### The Natural Pairings
+
+| Lens | Natural Skills | Why |
+|------|---------------|-----|
+| Critic | Security scanning, linting, test runners, dependency audit | The adversarial lens needs tools that expose flaws — static analysis, CVE databases, coverage reports. These aren't just "tools the critic uses" — they're *extensions of the critic's cognition*. A critic without a security scanner is like an auditor without a calculator. |
+| Scout | Web search, documentation fetching, dependency analysis, API exploration | The exploratory lens needs tools that expand its reach. The scout's value is proportional to the terrain it can cover. |
+| Craftsman | Build system, test runner, formatter, REPL, version control | The material lens needs tools that interact with the code as material — compiling it, running it, shaping it. |
+| Architect | Codebase search, dependency graphing, diagramming | The structural lens needs tools that reveal structure — import graphs, call hierarchies, module boundaries. |
+| Steward | Board state, message system, feed, run management | The coordination lens needs tools that provide situational awareness and enable communication. |
+| Reducer | Dead code detection, dependency analysis, coverage reports | The subtractive lens needs tools that identify what's unused, unreferenced, or redundant. |
+
+### Skill Pre-Loading
+
+When the steward assigns a lens to an agent, the natural skills for that
+lens should be **pre-loaded** — available without explicit configuration.
+The critic doesn't need to be told "you have access to the linter." It's
+part of the cognitive kit.
+
+This maps to the skill system's design:
+
+```markdown
+# Agent: gamma
+persona: critic
+domain: security
+skills: [security-scan, dependency-audit, coverage-report]  # auto from lens affinity
+skills+: [custom-compliance-check]                          # project-specific addition
+```
+
+The `skills` list is derived from lens affinity. The `skills+` list adds
+project-specific extras. This keeps configuration minimal while ensuring
+each lens has the tools it naturally needs.
+
+### Skills as Shared Vocabulary
+
+Some skills aren't lens-specific — they're shared infrastructure that
+any agent might use. Version control, file reading, codebase search.
+These are the equivalent of "everyone can use a text editor." They don't
+define a lens; they're just the floor.
+
+The interesting skills are the ones that *do* define a lens's reach.
+When a new skill is added to the hive (imported from the community or
+created via `hive chat`), the hive mind should assess which lenses it
+naturally supports and update the affinity map. A new "API contract
+validation" skill naturally pairs with the critic and integrator lenses.
+A "load testing" skill pairs with the critic/performance specialization.
+
+Over time, the lens-skill affinity map becomes part of the hive's
+institutional knowledge — another dimension of learned experience that
+improves team composition.
+
+---
+
+## Execution Topology: Pipelines, Fan-Outs, and MapReduce
+
+Not all multi-agent work is sequential. The composition patterns above
+describe *who's on the team*. This section describes *how they execute*.
+The execution topology should match the task's information-flow shape,
+not default to a pipeline.
+
+### Three Execution Patterns
+
+**Pipeline (sequential).** Each agent's output feeds the next agent's
+input. The classic: architect designs → craftsman builds → critic reviews.
+Use this when each stage genuinely depends on the previous stage's full
+output. You can't review code that hasn't been written.
+
+```
+architect ──→ craftsman ──→ critic
+```
+
+**Fan-out / Fan-in (parallel perspectives).** Multiple agents examine
+the same input simultaneously, then results are synthesized. This is
+the **MapReduce** pattern: each agent is a map function applying its
+lens to the problem, and the steward is the reduce function that
+integrates the perspectives.
+
+```
+              ┌── architect ──┐
+              │               │
+task ────────┼── craftsman ──┼──→ steward (synthesis) ──→ decision
+              │               │
+              └── critic ─────┘
+```
+
+Use this when you want multiple perspectives *before* committing to a
+direction. "Should we use approach A or B?" is a fan-out: the architect
+evaluates structural implications, the craftsman evaluates implementation
+cost, the critic evaluates risk. All in parallel. The steward synthesizes.
+
+This is where the MapReduce analogy is precise:
+- **Map phase:** each agent applies its cognitive lens to the same input,
+  independently and in parallel. No agent sees another's output. This is
+  essential — if the critic sees the architect's recommendation first, it
+  anchors on it and loses independence.
+- **Reduce phase:** the steward reads all outputs, identifies agreements,
+  surfaces disagreements, and produces either a decision (if the steward
+  has authority) or a structured choice for the human (if it doesn't).
+
+The reduce phase is the most cognitively demanding moment in the entire
+system. This is where the steward's synthesis mode — running on Opus —
+earns its cost. Taking three independent perspectives and finding the
+coherent path through them isn't scheduling. It's intellectual
+leadership.
+
+**Swarm (dynamic collaboration).** Agents work on related tasks
+concurrently, communicating through shared state (BOARD.md, messages).
+The steward monitors and adjusts. This is the standard multi-agent
+pattern for implementation work — two craftsmen building different
+modules in parallel, checking in with each other via contracts.
+
+```
+craftsman-α ←──→ BOARD.md ←──→ craftsman-β
+                    ↑
+                 steward
+```
+
+### Matching Topology to Task
+
+The steward should select the execution topology based on the task shape:
+
+| Task Shape | Topology | Why |
+|-----------|----------|-----|
+| "Build feature X" | Pipeline (design → build → review) | Sequential dependencies are real |
+| "Should we use A or B?" | Fan-out/fan-in (MapReduce) | Need independent perspectives before deciding |
+| "Build modules X, Y, Z" | Swarm (parallel with coordination) | Independent work with shared contracts |
+| "What's wrong with this code?" | Fan-out/fan-in (MapReduce) | Multiple lenses find different problems |
+| "Fix this bug" | Pipeline (diagnose → fix → verify) | Sequential, often just two agents |
+| "Refactor the auth system" | Pipeline + fan-out (plan → build, with parallel review) | Hybrid — design is serial, review benefits from parallel lenses |
+
+The key insight: **the fan-out/fan-in pattern is underused in current
+multi-agent systems.** Most frameworks default to pipelines because
+pipelines are easy to implement. But the highest-value multi-agent
+pattern is often "get three independent perspectives, then synthesize"
+— and that's a MapReduce, not a pipeline.
+
+### Why Independence Matters in the Map Phase
+
+When agents evaluate in parallel, their independence is a feature, not
+a limitation. If the architect recommends approach A and the craftsman
+sees that recommendation before evaluating, the craftsman is anchored.
+Anchoring bias is well-documented in humans and observably present in
+LLMs — if you show a model someone else's answer first, its own answer
+shifts toward it.
+
+The fan-out pattern preserves cognitive independence by design: each
+agent gets the same input (the task description, relevant code, project
+context) but *not* the other agents' outputs. Only the steward in the
+reduce phase sees everything.
+
+This is why the MapReduce framing matters architecturally. It's not just
+a metaphor — it's a constraint on information flow that protects the
+epistemic diversity the whole system depends on.
+
+---
+
 ## Team Composition as Cognitive Design
 
 If personas are cognitive lenses and models are substrates, then team
@@ -451,13 +614,13 @@ craftsman does the work.
 ### Dynamic Composition
 
 The steward shouldn't just pick from a fixed menu. Given a task
-description, the steward should reason about what cognitive modes are
-needed:
+description, the steward should reason about cognitive modes *and*
+execution topology:
 
 ```
 Human: "Add rate limiting to the API"
 
-Steward's reasoning:
+Steward's reasoning (composition mode, Opus):
 - This is an additive feature on an existing system → needs structural
   thinking (where does rate limiting live?) and implementation
 - Security implications → needs adversarial thinking
@@ -465,15 +628,34 @@ Steward's reasoning:
 - Team: architect (quick structural decision on middleware vs per-route),
   craftsman (implement), critic/security (review)
 - Models: architect on Opus (structural judgment worth the cost),
-  craftsman on Sonnet (fast implementation), critic on different-model
+  craftsman on Sonnet (fast implementation), critic on GPT-5.4
   (cross-model review value)
+- Topology: pipeline (architect decides placement → craftsman builds →
+  critic reviews)
+- Skills: auto-load security-scan and test-runner for critic,
+  build-system for craftsman
+```
+
+```
+Human: "Should we use Oban or a custom GenServer for background jobs?"
+
+Steward's reasoning (composition mode, Opus):
+- This is a decision, not an implementation → needs perspectives first
+- Team: architect (structural implications), craftsman (implementation
+  realities), scout (research both options)
+- Topology: fan-out/fan-in (MapReduce) — all three evaluate
+  independently, steward synthesizes
+- Models: architect on Opus, craftsman on Sonnet, scout on Gemini
+  (research across docs)
+- Skills: auto-load web-search and doc-fetch for scout
+- After synthesis: present structured decision to human
 ```
 
 This is the steward exercising the coordination lens: reading the task,
-identifying the cognitive needs, composing the team, matching models to
-roles. It's what the leadership UI's informed commander experience
-relies on — the leader says "add rate limiting" and the steward does the
-organizational thinking.
+identifying the cognitive needs, composing the team, selecting the
+execution topology, matching models to roles. It's what the leadership
+UI's informed commander experience relies on — the leader says "add rate
+limiting" and the steward does the organizational thinking.
 
 ---
 
@@ -491,42 +673,47 @@ experience with model-task pairings.
 
 ## Models
 
-### claude-opus-4
+### claude-opus-4.6
 runtime: claude-code
-cost-tier: high
-strengths: deep reasoning, architectural thinking, nuanced judgment,
-           complex code review, Elixir, system design
-best-for: architect, critic (security/correctness), complex decisions
-context: 200K tokens
+cost-tier: high ($5/$25 per 1M tokens)
+strengths: deepest reasoning, architectural thinking, nuanced judgment,
+           complex code review, extended agentic tasks, Elixir
+best-for: architect, critic (security/correctness), steward (synthesis mode)
+context: 1M tokens
+output: 128K tokens
 
-### claude-sonnet-4
+### claude-sonnet-4.6
 runtime: claude-code
-cost-tier: medium
-strengths: fast, practical, clean code generation, good test writing
-best-for: craftsman, steward (when judgment quality matters)
-context: 200K tokens
+cost-tier: medium ($3/$15 per 1M tokens)
+strengths: fast, practical, clean code generation, good test writing,
+           strong balance of speed and quality
+best-for: craftsman, steward (scheduling mode when local isn't available)
+context: 1M tokens
 
-### gpt-4o
+### gpt-5.4
 runtime: codex
 cost-tier: medium
 strengths: different training distribution (cross-review value),
-           strong Python, good at data-heavy code
-best-for: craftsman (Python projects), critic (cross-model review)
-context: 128K tokens
+           native computer-use, tool search across ecosystems,
+           strong Python, merged Codex coding capabilities
+best-for: craftsman (Python/data projects), critic (cross-model review),
+          tasks requiring computer-use or tool orchestration
+context: 1M tokens
 
 ### gemini-2.5-pro
 runtime: gemini-cli
 cost-tier: medium
-strengths: massive context window, research synthesis, documentation
-best-for: scout, historian (large context ingestion)
-context: 1M+ tokens
+strengths: multimodal context (text + images + audio + video + code),
+           research synthesis, documentation analysis
+best-for: scout (multimodal research), historian (large-context analysis)
+context: 1M tokens (2M coming)
 
-### llama-3-8b
+### llama-3-8b (or equivalent local)
 runtime: ollama
 cost-tier: free (local)
-strengths: fast, zero marginal cost, good enough for routing
-best-for: steward (routine coordination), memory curation
-context: 32K tokens
+strengths: fast, zero marginal cost, good enough for routing and scheduling
+best-for: steward (scheduling mode), memory curation
+context: 32-128K tokens
 ```
 
 ### Learned Affinity
@@ -538,13 +725,15 @@ produce the best outcomes. This goes into persona memory:
 # ~/.hive/memory/personas/critic.md
 
 ## Model Observations
-- Claude Opus consistently catches subtle type-level bugs that Sonnet
+- Claude Opus 4.6 consistently catches subtle type-level bugs that Sonnet
   misses. Worth the cost for critic passes on core modules.
 - Using a different model for critic than for craftsman catches ~30%
   more issues in practice. Cross-model review is real.
-- GPT-4o as critic on Elixir code over-flags pattern matching as
+- GPT-5.4 as critic on Elixir code over-flags pattern matching as
   "possible nil" — Elixir's pattern matching makes these safe. Adjust
-  domain context when using GPT-4o for Elixir review.
+  domain context when using GPT-5.4 for Elixir review.
+- GPT-5.4's computer-use capability useful for integration testing
+  tasks — the craftsman can interact with actual UIs during verification.
 ```
 
 This is the institutional memory angle from the research doc, applied
@@ -679,44 +868,70 @@ what to think about.
 Task arrives from human
         │
         ▼
-    ┌──────────┐
-    │ Steward  │  Cognitive design: what lenses does this task need?
-    │  (lens)  │  Model selection: which models serve those lenses best?
-    └────┬─────┘  Team sizing: minimum viable cognitive diversity
+┌─────────────────┐
+│ Steward          │  COMPOSITION MODE (Opus)
+│ (composition)    │  What lenses? What models? What topology?
+└────────┬────────┘  What skills does each lens need?
          │
          ▼
-    ┌──────────────────────────────┐
-    │  Team Composition            │
-    │                              │
-    │  architect (Opus) ──────┐    │
-    │  craftsman (Sonnet) ────┤    │  Each agent = lens + model + scope
-    │  critic (GPT-4o) ──────┘    │
-    └──────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Team + Topology                              │
+│                                               │
+│  Pipeline:                                    │
+│    architect (Opus) → craftsman (Sonnet)       │
+│    → critic (GPT-5.4)                         │
+│                                               │
+│  ── OR ──                                     │
+│                                               │
+│  Fan-out/Fan-in (MapReduce):                  │
+│    ┌── architect (Opus) ──┐                   │
+│    ├── craftsman (Sonnet) ─┤→ steward (Opus)  │
+│    └── critic (GPT-5.4) ──┘   (synthesis)     │
+│                                               │
+│  Each agent = lens + model + scope + skills   │
+└──────────────────────────────────────────────┘
          │
          ▼
-    ┌──────────┐
-    │ Execution │  Agents work. Disagreements surface.
-    │           │  Steward coordinates, resolves, escalates.
-    └────┬─────┘
+┌─────────────────┐
+│ Steward          │  SCHEDULING MODE (local/cheap)
+│ (scheduling)     │  Routine coordination, board updates,
+└────────┬────────┘  message routing, progress monitoring
+         │
+         ▼  (when disagreement or decision point detected)
+┌─────────────────┐
+│ Steward          │  SYNTHESIS MODE (Opus)
+│ (synthesis)      │  Integrate perspectives, resolve conflicts,
+└────────┬────────┘  generate briefings, present decisions
          │
          ▼
-    ┌──────────┐
-    │ Learning │  Model-persona affinity data accumulates.
-    │          │  The hive gets better at team composition.
-    └──────────┘
+┌──────────────────┐
+│ Learning          │  Model-persona affinity accumulates.
+│                   │  Lens-skill pairings refined.
+│                   │  Topology effectiveness tracked.
+└──────────────────┘
 ```
 
-The human says "build auth." The steward thinks: this needs structural
-design (architect), implementation (craftsman), and security review
-(critic with security domain specialization). The architect should be
-Opus because the structural decisions shape everything downstream. The
+The human says "build auth." The steward enters composition mode on Opus:
+this needs structural design (architect), implementation (craftsman), and
+security review (critic with security domain specialization). Topology:
+pipeline — sequential dependencies are real. The architect should be Opus
+because the structural decisions shape everything downstream. The
 craftsman should be Sonnet because fast, clean implementation matters
-more than deep reasoning here. The critic should be a *different model*
-because cross-model security review catches training-data blind spots.
+more than deep reasoning here. The critic should be GPT-5.4 because
+cross-model security review catches training-data blind spots. Skills:
+auto-load security-scan for the critic, test-runner for the craftsman.
 
-Three agents. Three lenses. Three models. Not because three is a magic
-number — because the task needs structural, material, and adversarial
-thinking, and each benefits from a different model substrate.
+During execution, the steward drops to scheduling mode on a local model
+— fast, cheap cycles monitoring progress. When the critic flags a concern
+that contradicts the architect's design, the steward shifts to synthesis
+mode on Opus — reads both perspectives, integrates them, and either
+resolves or presents the structured choice to the human.
+
+Three agents. Three lenses. Three models. One steward with three gears.
+Not because three is a magic number — because the task needs structural,
+material, and adversarial thinking, each benefits from a different model
+substrate, and the coordination shifts between cheap scheduling and
+expensive synthesis as the situation demands.
 
 That's what multi-agent orchestration should actually be.
 
@@ -738,11 +953,11 @@ not as fixed agent assignments:
 
 ```markdown
 ## Team
-- orchestrator: steward, llama-3-8b (local), full project
-- alpha: architect, claude-opus-4, system design + contracts
-- beta: craftsman, claude-sonnet-4, backend (src/lib/**)
-- gamma: craftsman, codex, frontend (src/web/**)
-- delta: critic, claude-opus-4, review (full project)
+- orchestrator: steward, llama-3-8b (local) / claude-opus-4.6 (synthesis), full project
+- alpha: architect, claude-opus-4.6, system design + contracts
+- beta: craftsman, claude-sonnet-4.6, backend (src/lib/**)
+- gamma: craftsman, gpt-5.4, frontend (src/web/**)
+- delta: critic, gpt-5.4, review (full project)  # cross-model from beta's Claude
 ```
 
 But the steward should also be able to create ad-hoc teams for tasks
@@ -774,19 +989,92 @@ The hive mind — even running on a small local model — can generate
 good persona drafts because the template is clear and the principles
 are documented.
 
-### The Steward's Meta-Cognition
+### The Steward's Dual Nature: Scheduler and Synthesizer
 
-The steward is the only persona that needs to think about *other
-personas*. It needs to:
+The steward does three things that look similar from the outside but are
+cognitively very different:
+
+1. **Scheduling** — task assignment, sequencing, monitoring, message
+   routing, board updates. Pattern-based, relatively mechanical. "Alpha
+   finished task 001, beta is unblocked, assign task 003." This is an
+   OS scheduler: fast, deterministic-ish, high-frequency.
+
+2. **Team composition** — reading a task, identifying what cognitive
+   lenses are needed, selecting models, sizing the team. This requires
+   judgment but happens once per task, not continuously.
+
+3. **Synthesis** — taking conflicting outputs from multiple agents,
+   understanding what each perspective got right, integrating them into
+   a coherent direction, presenting it to the leader. This is the
+   hardest cognitive task in the entire system.
+
+These are not the same cognitive load. Scheduling can run on a local 8B
+model — it's pattern matching on board state. Synthesis requires the
+best reasoning model available — it's reading three agents' analyses,
+modeling the human's priorities, and finding the coherent path through
+genuine disagreement. That's an Opus-class task.
+
+**The design: one persona, tiered execution.**
+
+The steward is a single persona with a single prompt and full context
+over the project state. But the *model it runs on* changes based on
+what the current cycle demands:
+
+| Steward Mode | Trigger | Model | Cost |
+|-------------|---------|-------|------|
+| **Scheduling** | Routine cycle, board update, simple assignment | Local 8B / Haiku | Minimal |
+| **Composition** | New task arrives, team needs forming | Sonnet / Opus | Moderate |
+| **Synthesis** | Disagreement detected, MapReduce reduce phase, human briefing | Opus | High, worth it |
+
+The supervisor (the deterministic loop) detects which mode is needed:
+- Routine board update with no conflicts → scheduling mode (cheap model)
+- Agent outputs contradict each other → synthesis mode (Opus)
+- Human just arrived after absence → synthesis mode for briefing (Opus)
+- New task from human → composition mode (Opus for complex tasks,
+  Sonnet for straightforward ones)
+
+**Why not a separate synthesizer persona?** The synthesizer needs the
+steward's full context to do its job — the plan, the board state, what
+each agent produced, what the leader cares about, the history of
+decisions. If you split synthesis into a separate persona, you either
+duplicate all that context (expensive) or have the steward summarize
+for the synthesizer (lossy). The steward already has the context. It
+should be the one doing the synthesis — just on a better model when
+the task demands it.
+
+This is architecturally cleaner than two personas because:
+- No handoff between coordinator and synthesizer (handoff = context loss)
+- The steward's accumulated understanding of the team, the project, and
+  the leader's patterns stays in one place
+- The model-tiering is an implementation detail, not a conceptual split
+- It maps to how great human leaders actually work — the same person
+  does the scheduling *and* the judgment calls, they just engage
+  different cognitive gears
+
+**The synthesis mode is the chief of staff.** When the steward is in
+synthesis mode, it's doing exactly what the leadership UI document
+describes: generating briefings, integrating perspectives, anticipating
+the leader's next question, turning disagreement into a structured
+decision. This is where HIVE's "informed commander" experience comes
+from. The scheduling mode keeps the trains running. The synthesis mode
+makes the leader effective. Same persona, different gear.
+
+**Meta-cognition across both modes.** The steward is the only persona
+that needs to think about *other personas*. Across both modes, it needs
+to:
 - Read a task and identify which cognitive lenses are needed
 - Select models based on lens-model affinity and available budget
 - Size the team (resist the impulse to use all five when two will do)
 - Detect when a task needs a lens that doesn't exist yet
-- Learn from outcomes which compositions worked
+- Choose the right execution topology (pipeline, fan-out, swarm)
+- Learn from outcomes which compositions and topologies worked
 
-This is what makes the steward the hardest persona to get right, and
-why it benefits from the best available model for judgment calls even
-when routine coordination runs on a cheap local model.
+This is what makes the steward the hardest persona to get right — and
+why the synthesis mode exists. Routine coordination is solved by the
+scheduling mode on a cheap model. The genuinely hard moments — team
+composition, disagreement resolution, leadership briefings — get the
+full power of a frontier model. You pay for intelligence exactly when
+intelligence matters.
 
 ---
 
@@ -817,9 +1105,18 @@ but different ways of seeing applied through different substrates to
 the same problem.
 
 HIVE is built for this future. Not because it's the most sophisticated
-framework — but because its primitives (cognitive personas, model
-heterogeneity, file-based coordination, accumulated memory) are the
+framework — but because its primitives (cognitive lenses, model
+heterogeneity, execution topologies, lens-skill affinity, tiered
+orchestration, file-based coordination, accumulated memory) are the
 right primitives for composing intelligent teams from increasingly
 capable and increasingly specialized models.
+
+The steward's dual nature — cheap scheduling for routine coordination,
+frontier synthesis for the moments that matter — means the system's
+intelligence investment tracks the actual difficulty of what's happening.
+Most cycles are cheap. The expensive cycles are the ones that produce
+disproportionate value: integrating perspectives, resolving
+disagreements, presenting structured decisions to the leader. Pay for
+intelligence when intelligence matters. Automate everything else.
 
 The org chart is dead. Long live the cognitive ensemble.
