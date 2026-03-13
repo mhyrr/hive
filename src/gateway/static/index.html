@@ -52,31 +52,78 @@
     <div class="console-history" id="console-history">
       <div class="console-welcome">
         <p>Speak to the swarm.</p>
-        <p class="console-welcome-hint">Console steers. Feed watches.</p>
+        <p class="console-welcome-hint">Console steers. The live rail watches.</p>
       </div>
     </div>
     <form class="console-input" id="console-form">
       <textarea id="console-input" placeholder="Talk to the hive... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
       <button type="submit" id="console-send-btn">Send</button>
     </form>
+    <div class="console-activity" id="console-activity">
+      <div class="console-activity-empty">No live hive activity yet.</div>
+    </div>
   </main>
 
-  <!-- Feed panel -->
-  <aside class="feed">
-    <section class="process-logs">
-      <div class="process-logs-header">
-        <span>Process Logs</span>
-        <button class="process-logs-refresh" id="process-logs-refresh" title="Refresh process logs">Refresh</button>
-      </div>
-      <div class="process-logs-content" id="process-logs-content">
-        <div class="process-logs-empty">No live process logs yet.</div>
-      </div>
+  <!-- Operations rail -->
+  <aside class="rail">
+    <div class="rail-tabs">
+      <button class="rail-tab rail-tab--active" id="rail-tab-live" data-rail-tab="live" type="button">Live</button>
+      <button class="rail-tab" id="rail-tab-queue" data-rail-tab="queue" type="button">Queue</button>
+      <button class="rail-tab" id="rail-tab-timeline" data-rail-tab="timeline" type="button">Timeline</button>
+    </div>
+
+    <section class="rail-panel rail-panel--active" id="rail-panel-live" data-rail-panel="live">
+      <section class="rail-section">
+        <div class="rail-section-header">Current Activity</div>
+        <div class="live-summary" id="live-summary">
+          <div class="rail-empty">No project in focus yet.</div>
+        </div>
+      </section>
+      <section class="rail-section">
+        <div class="rail-section-header">Active Agents</div>
+        <div class="live-agents" id="live-agents">
+          <div class="rail-empty">No active agents.</div>
+        </div>
+      </section>
+      <section class="rail-section rail-section--logs">
+        <div class="process-logs-header">
+          <span>Raw Logs</span>
+          <button class="process-logs-refresh" id="process-logs-refresh" title="Refresh live data">Refresh</button>
+        </div>
+        <div class="process-logs-content" id="process-logs-content">
+          <div class="process-logs-empty">No live process logs yet.</div>
+        </div>
+      </section>
     </section>
-    <section class="feed-section">
-      <div class="feed-header">Feed</div>
-      <div class="feed-entries" id="feed-entries">
-        <!-- Feed entries appear here -->
-      </div>
+
+    <section class="rail-panel" id="rail-panel-queue" data-rail-panel="queue">
+      <section class="rail-section">
+        <div class="rail-section-header">Pending Approvals</div>
+        <div class="queue-list" id="queue-approvals">
+          <div class="rail-empty">No pending approvals.</div>
+        </div>
+      </section>
+      <section class="rail-section">
+        <div class="rail-section-header">Waiting On Human</div>
+        <div class="queue-list" id="queue-waiting-human">
+          <div class="rail-empty">Nothing is waiting on a human reply.</div>
+        </div>
+      </section>
+      <section class="rail-section">
+        <div class="rail-section-header">Incidents</div>
+        <div class="queue-list" id="queue-incidents">
+          <div class="rail-empty">No active incidents.</div>
+        </div>
+      </section>
+    </section>
+
+    <section class="rail-panel" id="rail-panel-timeline" data-rail-panel="timeline">
+      <section class="rail-section rail-section--timeline">
+        <div class="rail-section-header">Timeline</div>
+        <div class="timeline-list" id="timeline-list">
+          <div class="rail-empty">No timeline items yet.</div>
+        </div>
+      </section>
     </section>
   </aside>
 

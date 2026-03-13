@@ -16,13 +16,19 @@ var state = {
   wsConnected: false,
   wsReconnectDelay: 1000,
   wsMaxReconnectDelay: 30000,
-  processLogsRefreshTimer: null,
+  liveRefreshTimer: null,
+  queueRefreshTimer: null,
+  timelineRefreshTimer: null,
   feedEntries: [],
   consoleHistory: [],
   consoleStream: null,
   consoleDetailPayloads: [],
   sessionId: null,
   sending: false,
+  liveSnapshot: null,
+  queueSnapshot: null,
+  timelineItems: [],
+  railTab: 'live',
 };
 
 
@@ -82,6 +88,193 @@ function nowTimeString() {
 
 function isMac() {
   return navigator.platform && navigator.platform.indexOf('Mac') !== -1;
+}
+
+function truncateText(text, max) {
+  if (!text) return '';
+  var normalized = String(text).replace(/\s+/g, ' ').trim();
+  var limit = typeof max === 'number' ? max : 160;
+  if (normalized.length <= limit) return normalized;
+  return normalized.slice(0, limit - 1).trimEnd() + '\u2026';
+}
+
+function formatRelativeAge(iso) {
+  if (!iso) return '';
+
+  var then = new Date(iso).getTime();
+  if (!isFinite(then)) return '';
+
+  var delta = Math.max(0, Date.now() - then);
+  var seconds = Math.floor(delta / 1000);
+  if (seconds < 60) return seconds + 's ago';
+
+  var minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + 'm ago';
+
+  var hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + 'h ago';
+
+  var days = Math.floor(hours / 24);
+  return days + 'd ago';
+}
+
+function formatMoment(iso) {
+  var time = formatTime(iso);
+  var age = formatRelativeAge(iso);
+  if (time && age) return time + ' \u00b7 ' + age;
+  return time || age || '';
+}
+
+function countLabel(count, singular, plural) {
+  return count + ' ' + (count === 1 ? singular : (plural || singular + 's'));
+}
+
+function joinMeta(parts) {
+  return parts.filter(Boolean).join(' \u00b7 ');
+}
+
+function toneClass(base, tone) {
+  return base + ' ' + base + '--' + (tone || 'info');
+}
+
+function escapeAttr(text) {
+  return escapeHtml(text).replace(/"/g, '&quot;');
+}
+
+function toneFromStatus(status) {
+  if (status === 'failed' || status === 'error' || status === 'cancelled') {
+    return 'error';
+  }
+  if (status === 'active' || status === 'running') {
+    return 'success';
+  }
+  if (status === 'starting') {
+    return 'warning';
+  }
+  return 'info';
+}
+
+function buildApiPath(basePath, project, params) {
+  var search = new URLSearchParams();
+  if (project) {
+    search.set('project', project);
+  }
+  if (params) {
+    for (var key in params) {
+      if (!Object.prototype.hasOwnProperty.call(params, key)) continue;
+      var value = params[key];
+      if (value === null || value === undefined || value === '') continue;
+      search.set(key, String(value));
+    }
+  }
+
+  var query = search.toString();
+  return query ? basePath + '?' + query : basePath;
+}
+
+function parseFileTarget(target) {
+  if (!target || target[0] !== '/') return null;
+
+  var normalized = String(target).trim();
+  var line = null;
+  var fragmentIndex = normalized.indexOf('#L');
+
+  if (fragmentIndex !== -1) {
+    var fragment = normalized.slice(fragmentIndex + 2);
+    normalized = normalized.slice(0, fragmentIndex);
+    var match = fragment.match(/^(\d+)/);
+    if (match) {
+      line = match[1];
+    }
+  }
+
+  return {
+    path: normalized,
+    line: line,
+  };
+}
+
+function buildMarkdownHref(target) {
+  if (!target) return null;
+
+  if (/^https?:\/\//i.test(target)) {
+    return target;
+  }
+
+  var fileTarget = parseFileTarget(target);
+  if (!fileTarget) {
+    return null;
+  }
+
+  return buildApiPath('/file', null, {
+    path: fileTarget.path,
+    line: fileTarget.line,
+  });
+}
+
+function buildPreviewHref(path, line) {
+  return buildApiPath('/file', null, {
+    path: path,
+    line: line,
+  });
+}
+
+function renderInlineText(text) {
+  var source = String(text || '');
+  var html = '';
+  var lastIndex = 0;
+  var markdownLinkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+  var match;
+
+  while ((match = markdownLinkPattern.exec(source)) !== null) {
+    html += escapeHtml(source.slice(lastIndex, match.index));
+    var label = match[1];
+    var target = match[2].trim();
+    var href = buildMarkdownHref(target);
+    var fileTarget = parseFileTarget(target);
+
+    if (href) {
+      var attrs = 'class="turn-link" href="' + escapeAttr(href) + '" target="_blank" rel="noopener noreferrer"';
+      if (fileTarget) {
+        attrs += ' data-open-path="' + escapeAttr(fileTarget.path) + '"';
+        if (fileTarget.line) {
+          attrs += ' data-open-line="' + escapeAttr(fileTarget.line) + '"';
+        }
+      }
+
+      html += '<a ' + attrs + '>' +
+        escapeHtml(label) +
+        '</a>';
+    } else {
+      html += escapeHtml(match[0]);
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  html += escapeHtml(source.slice(lastIndex));
+  return html;
+}
+
+function renderRichText(text) {
+  var normalized = String(text || '').replace(/\r\n/g, '\n');
+  var blocks = normalized.split(/\n{2,}/);
+  var html = '';
+
+  for (var i = 0; i < blocks.length; i++) {
+    var block = blocks[i];
+    if (!block.trim()) continue;
+    var lines = block.split('\n');
+    var renderedLines = [];
+
+    for (var j = 0; j < lines.length; j++) {
+      renderedLines.push(renderInlineText(lines[j]));
+    }
+
+    html += '<p class="turn-paragraph">' + renderedLines.join('<br>') + '</p>';
+  }
+
+  return html || '<p class="turn-paragraph"></p>';
 }
 
 
@@ -168,18 +361,17 @@ function handleWsEvent(event) {
 
   switch (event.type) {
     case 'feed':
-      addFeedEntry(event);
-      scheduleProcessLogsRefresh();
+      scheduleOperationsRefresh(150);
       break;
     case 'board-changed':
+    case 'message-changed':
     case 'run-changed':
     case 'state-changed':
     case 'run-started':
     case 'run-completed':
     case 'supervisor-tick':
       refreshStatus();
-      refreshAgentOverview();
-      scheduleProcessLogsRefresh();
+      scheduleOperationsRefresh(150);
       break;
     case 'console-response':
     case 'session-message':
@@ -190,7 +382,6 @@ function handleWsEvent(event) {
         if (event.project) {
           updateSessionProject(event.project);
         }
-        scheduleProcessLogsRefresh();
         removeThinkingIndicator();
         addConsoleTurn(
           event.data.role || 'assistant',
@@ -200,6 +391,7 @@ function handleWsEvent(event) {
           event.data.details || null
         );
       }
+      scheduleOperationsRefresh(100);
       break;
     case 'session-stream':
       if (event.data) {
@@ -211,6 +403,7 @@ function handleWsEvent(event) {
         }
         updateThinkingIndicator(event.data.content || '');
       }
+      scheduleLiveRefresh(100);
       break;
   }
 }
@@ -525,7 +718,7 @@ function renderConsoleItem(item) {
     html += '<span></span><span></span><span></span>';
     html += '</span></div>';
   } else {
-    html += '<div class="turn-content">' + escapeHtml(item.content || '') + '</div>';
+    html += '<div class="turn-content">' + renderRichText(item.content || '') + '</div>';
   }
 
   html += '</div>';
@@ -553,7 +746,7 @@ function renderConsoleHistory() {
   if (items.length === 0) {
     container.innerHTML = '<div class="console-welcome">' +
       '<p>Speak to the swarm.</p>' +
-      '<p class="console-welcome-hint">Console steers. Feed watches.</p>' +
+      '<p class="console-welcome-hint">Console steers. The live rail watches.</p>' +
       '</div>';
     return;
   }
@@ -708,6 +901,20 @@ function closeConsoleDetailModal() {
   document.body.classList.remove('modal-open');
 }
 
+async function requestOpenLocalPath(path, line) {
+  if (!path) return;
+
+  try {
+    await apiPost('/open', {
+      path: path,
+      line: line || null,
+    });
+  } catch (e) {
+    console.error('Open path request failed:', e);
+    window.open(buildPreviewHref(path, line || null), '_blank', 'noopener,noreferrer');
+  }
+}
+
 function setupConsoleDetailModal() {
   var container = document.getElementById('console-history');
   var modal = document.getElementById('turn-detail-modal');
@@ -716,6 +923,21 @@ function setupConsoleDetailModal() {
 
   if (container) {
     container.addEventListener('click', function (event) {
+      var link = event.target && event.target.closest
+        ? event.target.closest('a[data-open-path]')
+        : null;
+      if (link) {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+          return;
+        }
+        event.preventDefault();
+        requestOpenLocalPath(
+          link.getAttribute('data-open-path') || '',
+          link.getAttribute('data-open-line') || null
+        );
+        return;
+      }
+
       var button = event.target && event.target.closest
         ? event.target.closest('[data-detail-index]')
         : null;
@@ -752,7 +974,7 @@ function renderProjectName() {
 function updateSessionProject(project) {
   state.sessionProject = project || null;
   renderProjectName();
-  scheduleProcessLogsRefresh(0);
+  scheduleOperationsRefresh(0);
 }
 
 function updateSessionIndicator(sessionId, project) {
@@ -779,6 +1001,7 @@ async function createNewSession() {
     var data = await apiPost('/console/new', {});
     updateSessionIndicator(data.sessionId, data.project);
     clearConsoleHistory();
+    scheduleOperationsRefresh(0);
   } catch (e) {
     console.error('Failed to create new session:', e);
     addConsoleTurn('error', 'Failed to create new session: ' + e.message);
@@ -795,6 +1018,7 @@ async function loadSession(sessionId) {
     );
 
     setConsoleHistory(data.turns || []);
+    scheduleOperationsRefresh(0);
 
     // Close the sessions dropdown
     closeSessionsDropdown();
@@ -877,79 +1101,38 @@ async function openSessionsDropdown() {
 }
 
 
-// --- Agent Overview ---
-
-function parseAgentInfo(psText) {
-  if (!psText || typeof psText !== 'string') return [];
-
-  var agents = [];
-  var lines = psText.split('\n');
-  var inActiveSection = false;
-
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i];
-
-    if (line.indexOf('Active runs:') !== -1) {
-      inActiveSection = true;
-      continue;
-    }
-
-    if (inActiveSection) {
-      // End of active section
-      if (line.trim() === '' || line.indexOf('No ') !== -1 || line.indexOf('Recent ') !== -1) {
-        inActiveSection = false;
-        continue;
-      }
-
-      // Parse agent line: "  alpha  steward   claude  pid:12345  2m ago"
-      var parts = line.trim().split(/\s{2,}/);
-      if (parts.length >= 3) {
-        agents.push({
-          name: parts[0],
-          persona: parts[1] || '',
-          runtime: parts[2] || '',
-          age: parts.length >= 5 ? parts[4] : (parts.length >= 4 ? parts[3] : ''),
-        });
-      }
-    }
-  }
-
-  return agents;
-}
+// --- Operations Rail ---
 
 function updateAgentOverview(agents) {
-  state.agents = agents;
-  state.agentCount = agents.length;
+  state.agents = Array.isArray(agents) ? agents.slice() : [];
+  state.agentCount = state.agents.length;
 
   var labelEl = document.querySelector('.topbar-agents-label');
   if (labelEl) {
-    if (agents.length > 0) {
-      labelEl.textContent = agents.length + ' agent' + (agents.length !== 1 ? 's' : '');
-    } else {
-      labelEl.textContent = '\u2014';
-    }
+    labelEl.textContent = state.agents.length > 0
+      ? countLabel(state.agents.length, 'live agent')
+      : '\u2014';
   }
 
-  // Update dropdown content
   var list = document.getElementById('agent-dropdown-list');
   if (!list) return;
 
-  list.innerHTML = '';
-
-  if (agents.length === 0) {
+  if (state.agents.length === 0) {
     list.innerHTML = '<div class="agent-dropdown-empty">No active agents</div>';
     return;
   }
 
-  for (var i = 0; i < agents.length; i++) {
-    var agent = agents[i];
+  list.innerHTML = '';
+
+  for (var i = 0; i < state.agents.length; i++) {
+    var agent = state.agents[i];
     var item = document.createElement('div');
     item.className = 'agent-dropdown-item';
     item.innerHTML =
-      '<span class="agent-dropdown-name">' + escapeHtml(agent.name) + '</span>' +
-      '<span class="agent-dropdown-persona">' + escapeHtml(agent.persona) + '</span>' +
-      '<span class="agent-dropdown-runtime">' + escapeHtml(agent.runtime) + '</span>' +
-      '<span class="agent-dropdown-age">' + escapeHtml(agent.age) + '</span>';
+      '<span class="agent-dropdown-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</span>' +
+      '<span class="agent-dropdown-persona">' + escapeHtml(agent.persona || '') + '</span>' +
+      '<span class="agent-dropdown-runtime">' + escapeHtml(agent.runtime || '') + '</span>' +
+      '<span class="agent-dropdown-age">' + escapeHtml(formatRelativeAge(agent.started)) + '</span>';
     list.appendChild(item);
   }
 }
@@ -965,66 +1148,167 @@ function closeAgentDropdown() {
   if (dropdown) dropdown.classList.remove('agent-dropdown--open');
 }
 
-async function refreshAgentOverview() {
-  try {
-    var data = await apiGet('/ps');
-    var text = data.result || '';
-    var agents = parseAgentInfo(text);
-    updateAgentOverview(agents);
-  } catch (e) {
-    console.error('Agent overview refresh failed:', e);
-    updateAgentOverview([]);
+function refreshAgentOverview() {
+  return refreshLiveSnapshot();
+}
+
+function setRailTab(tab) {
+  state.railTab = tab || 'live';
+
+  var buttons = document.querySelectorAll('[data-rail-tab]');
+  for (var i = 0; i < buttons.length; i++) {
+    var button = buttons[i];
+    var active = button.getAttribute('data-rail-tab') === state.railTab;
+    button.classList.toggle('rail-tab--active', active);
+  }
+
+  var panels = document.querySelectorAll('[data-rail-panel]');
+  for (var j = 0; j < panels.length; j++) {
+    var panel = panels[j];
+    var visible = panel.getAttribute('data-rail-panel') === state.railTab;
+    panel.classList.toggle('rail-panel--active', visible);
   }
 }
 
-
-// --- Status Updates ---
-
-function updateTopBar(data) {
-  if (!data) return;
-
-  if (data.project) {
-    state.project = data.project;
-  }
-  renderProjectName();
-  scheduleProcessLogsRefresh();
-
-  // Supervisor status
-  var dotEl = document.getElementById('supervisor-dot');
-  var labelEl = document.getElementById('supervisor-label');
-
-  if (data.supervisor) {
-    var supStatus = data.supervisor.status || 'unknown';
-    if (dotEl) {
-      dotEl.className = 'status-dot';
-      if (supStatus === 'active' || supStatus === 'running') {
-        dotEl.classList.add('status-dot--active');
-      } else if (supStatus === 'error' || supStatus === 'crashed') {
-        dotEl.classList.add('status-dot--error');
-      } else {
-        dotEl.classList.add('status-dot--stopped');
-      }
-    }
-    if (labelEl) {
-      labelEl.textContent = 'supervisor ' + supStatus;
-    }
-  } else if (labelEl) {
-    labelEl.textContent = '\u2014';
+function setupRailTabs() {
+  var buttons = document.querySelectorAll('[data-rail-tab]');
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener('click', function () {
+      var tab = this.getAttribute('data-rail-tab') || 'live';
+      setRailTab(tab);
+    });
   }
 }
 
-
-// --- Process Logs ---
-
-function scheduleProcessLogsRefresh(delay) {
-  if (state.processLogsRefreshTimer) {
-    clearTimeout(state.processLogsRefreshTimer);
+function scheduleLiveRefresh(delay) {
+  if (state.liveRefreshTimer) {
+    clearTimeout(state.liveRefreshTimer);
   }
 
-  state.processLogsRefreshTimer = setTimeout(function () {
-    state.processLogsRefreshTimer = null;
-    refreshProcessLogs();
-  }, typeof delay === 'number' ? delay : 200);
+  state.liveRefreshTimer = setTimeout(function () {
+    state.liveRefreshTimer = null;
+    refreshLiveSnapshot();
+  }, typeof delay === 'number' ? delay : 160);
+}
+
+function scheduleQueueRefresh(delay) {
+  if (state.queueRefreshTimer) {
+    clearTimeout(state.queueRefreshTimer);
+  }
+
+  state.queueRefreshTimer = setTimeout(function () {
+    state.queueRefreshTimer = null;
+    refreshQueueSnapshot();
+  }, typeof delay === 'number' ? delay : 220);
+}
+
+function scheduleTimelineRefresh(delay) {
+  if (state.timelineRefreshTimer) {
+    clearTimeout(state.timelineRefreshTimer);
+  }
+
+  state.timelineRefreshTimer = setTimeout(function () {
+    state.timelineRefreshTimer = null;
+    refreshTimeline();
+  }, typeof delay === 'number' ? delay : 280);
+}
+
+function scheduleOperationsRefresh(delay) {
+  var base = typeof delay === 'number' ? delay : 180;
+  scheduleLiveRefresh(base);
+  scheduleQueueRefresh(base + 60);
+  scheduleTimelineRefresh(base + 120);
+}
+
+function renderConsoleActivity(snapshot) {
+  var container = document.getElementById('console-activity');
+  if (!container) return;
+
+  if (!snapshot || !snapshot.project) {
+    container.innerHTML = '<div class="console-activity-empty">No live hive activity yet.</div>';
+    return;
+  }
+
+  var summary = truncateText(snapshot.summary || 'No active work is in motion right now.', 220);
+  var latest = snapshot.activity && snapshot.activity[0] ? snapshot.activity[0] : null;
+  var meta = [
+    'project ' + snapshot.project,
+    snapshot.supervisor ? 'supervisor ' + (snapshot.supervisor.status || 'unknown') : 'supervisor offline',
+    snapshot.agents && snapshot.agents.length > 0
+      ? countLabel(snapshot.agents.length, 'live agent')
+      : 'no live agents',
+    latest ? 'latest ' + formatMoment(latest.ts) : '',
+  ];
+
+  var html = '<div class="console-activity-summary">';
+  html += '<div class="console-activity-summary-line">' + escapeHtml(summary) + '</div>';
+  html += '<div class="console-activity-summary-meta">' + escapeHtml(joinMeta(meta)) + '</div>';
+  html += '</div>';
+
+  container.innerHTML = html;
+}
+
+function renderLiveSummary(snapshot) {
+  var container = document.getElementById('live-summary');
+  if (!container) return;
+
+  if (!snapshot || !snapshot.project) {
+    container.innerHTML = '<div class="rail-empty">No project in focus yet.</div>';
+    return;
+  }
+
+  var supervisorStatus = snapshot.supervisor ? (snapshot.supervisor.status || 'unknown') : 'offline';
+  var html = '<div class="live-summary-block">';
+  html += '<div class="live-summary-label">Working Now</div>';
+  html += '<div class="live-summary-value">' + escapeHtml(snapshot.summary || 'No active work is in motion right now.') + '</div>';
+  html += '</div>';
+  html += '<div class="live-summary-grid">';
+  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Project</div><div class="live-summary-stat-value">' + escapeHtml(snapshot.project) + '</div></div>';
+  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Session</div><div class="live-summary-stat-value">' + escapeHtml(snapshot.sessionId || 'none') + '</div></div>';
+  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Supervisor</div><div class="live-summary-stat-value">' + escapeHtml(supervisorStatus) + '</div></div>';
+  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Live Agents</div><div class="live-summary-stat-value">' + escapeHtml(String((snapshot.agents || []).length)) + '</div></div>';
+  html += '</div>';
+
+  container.innerHTML = html;
+}
+
+function renderLiveAgents(agents) {
+  var container = document.getElementById('live-agents');
+  if (!container) return;
+
+  if (!Array.isArray(agents) || agents.length === 0) {
+    container.innerHTML = '<div class="rail-empty">No active agents.</div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < agents.length; i++) {
+    var agent = agents[i];
+    var meta = [
+      agent.runtime || '',
+      agent.model || '',
+      formatMoment(agent.started),
+      agent.pid ? 'pid ' + agent.pid : '',
+      agent.taskId ? 'task ' + agent.taskId : '',
+    ];
+    html += '<div class="agent-card">';
+    html += '<div class="agent-card-header">';
+    html += '<div class="agent-card-header-copy">';
+    html += '<div class="agent-card-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</div>';
+    html += '<div class="agent-card-descriptor">' + escapeHtml(joinMeta([agent.persona, agent.descriptor])) + '</div>';
+    html += '</div>';
+    html += '<div class="' + toneClass('status-pill', toneFromStatus(agent.status)) + '">' + escapeHtml(agent.status || 'active') + '</div>';
+    html += '</div>';
+    html += '<div class="agent-card-meta">' + escapeHtml(joinMeta(meta)) + '</div>';
+    if (agent.latestOutput) {
+      html += '<div class="agent-card-output">' + escapeHtml(truncateText(agent.latestOutput, 180)) + '</div>';
+    } else {
+      html += '<div class="agent-card-output agent-card-output--empty">No visible output yet.</div>';
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
 }
 
 function renderProcessLogBlock(title, meta, tailLines) {
@@ -1039,68 +1323,201 @@ function renderProcessLogBlock(title, meta, tailLines) {
     '</div>';
 }
 
-function renderProcessLogs(data) {
+function renderProcessLogs(snapshot) {
   var container = document.getElementById('process-logs-content');
   if (!container) return;
 
-  if (!data || !data.project) {
+  if (!snapshot || !snapshot.project) {
     container.innerHTML = '<div class="process-logs-empty">No project in focus yet. Start a session or switch project focus.</div>';
     return;
   }
 
   var html = '';
 
-  if (data.supervisor) {
-    var supervisorMeta = 'status ' + (data.supervisor.status || 'unknown');
-    if (data.supervisor.pid) {
-      supervisorMeta += ' · pid ' + data.supervisor.pid;
-    }
+  if (snapshot.supervisor) {
     html += renderProcessLogBlock(
-      'Supervisor · ' + data.project,
-      supervisorMeta,
-      data.supervisor.tail || []
+      'Supervisor \u00b7 ' + snapshot.project,
+      joinMeta([
+        'status ' + (snapshot.supervisor.status || 'unknown'),
+        snapshot.supervisor.pid ? 'pid ' + snapshot.supervisor.pid : '',
+      ]),
+      snapshot.supervisor.tail || []
     );
   }
 
-  if (data.runs && Array.isArray(data.runs)) {
-    for (var i = 0; i < data.runs.length; i++) {
-      var run = data.runs[i];
-      var meta = (run.status || 'active') + ' · ' + (run.runId || '');
-      if (run.pid) {
-        meta += ' · pid ' + run.pid;
-      }
-      html += renderProcessLogBlock(
-        (run.agentId || 'agent') + ' · ' + data.project,
-        meta,
-        run.tail || []
-      );
-    }
+  var agents = Array.isArray(snapshot.agents) ? snapshot.agents : [];
+  for (var i = 0; i < agents.length; i++) {
+    var agent = agents[i];
+    html += renderProcessLogBlock(
+      (agent.displayName || agent.agentId || 'agent') + ' \u00b7 ' + snapshot.project,
+      joinMeta([
+        agent.status || 'active',
+        agent.runtime || '',
+        agent.runId || '',
+        agent.pid ? 'pid ' + agent.pid : '',
+      ]),
+      agent.tail || []
+    );
   }
 
   if (!html) {
-    container.innerHTML = '<div class="process-logs-empty">No active supervisor or run logs for ' + escapeHtml(data.project) + '.</div>';
+    container.innerHTML = '<div class="process-logs-empty">No active supervisor or agent logs for ' + escapeHtml(snapshot.project) + '.</div>';
     return;
   }
 
   container.innerHTML = html;
 }
 
-async function refreshProcessLogs() {
-  var project = state.sessionProject || state.project;
-  var path = '/process-logs';
-  if (project) {
-    path += '?project=' + encodeURIComponent(project);
+function renderQueueCards(containerId, itemsHtml, emptyText) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = itemsHtml || '<div class="rail-empty">' + escapeHtml(emptyText) + '</div>';
+}
+
+function renderQueueSnapshot(snapshot) {
+  if (!snapshot || !snapshot.project) {
+    renderQueueCards('queue-approvals', '', 'No pending approvals.');
+    renderQueueCards('queue-waiting-human', '', 'Nothing is waiting on a human reply.');
+    renderQueueCards('queue-incidents', '', 'No active incidents.');
+    return;
   }
 
-  try {
-    var data = await apiGet(path);
-    renderProcessLogs(data);
-  } catch (e) {
-    console.error('Process logs refresh failed:', e);
-    var container = document.getElementById('process-logs-content');
-    if (container) {
-      container.innerHTML = '<div class="process-logs-empty">Failed to load process logs.</div>';
+  var approvalsHtml = '';
+  var approvals = Array.isArray(snapshot.approvals) ? snapshot.approvals : [];
+  for (var i = 0; i < approvals.length; i++) {
+    var approval = approvals[i];
+    approvalsHtml += '<div class="queue-card queue-card--warning">';
+    approvalsHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(approval.summary || approval.kind || 'Approval requested') + '</div>';
+    approvalsHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(approval.created)) + '</div></div>';
+    approvalsHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
+      approval.kind || '',
+      approval.requestedBy ? 'requested by ' + approval.requestedBy : '',
+      approval.project || 'global',
+    ])) + '</div>';
+    if (approval.note) {
+      approvalsHtml += '<div class="queue-card-body">' + escapeHtml(truncateText(approval.note, 180)) + '</div>';
     }
+    approvalsHtml += '</div>';
+  }
+  renderQueueCards('queue-approvals', approvalsHtml, 'No pending approvals.');
+
+  var waitingHtml = '';
+  var waiting = Array.isArray(snapshot.waitingOnHuman) ? snapshot.waitingOnHuman : [];
+  for (var j = 0; j < waiting.length; j++) {
+    var item = waiting[j];
+    waitingHtml += '<div class="queue-card queue-card--info">';
+    waitingHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(item.summary || item.type || 'Human input needed') + '</div>';
+    waitingHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(item.ts)) + '</div></div>';
+    waitingHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
+      item.type || 'message',
+      item.from ? 'from ' + item.from : '',
+      item.to ? 'to ' + item.to : '',
+    ])) + '</div>';
+    waitingHtml += '</div>';
+  }
+  renderQueueCards('queue-waiting-human', waitingHtml, 'Nothing is waiting on a human reply.');
+
+  var incidentsHtml = '';
+  var incidents = Array.isArray(snapshot.incidents) ? snapshot.incidents : [];
+  for (var k = 0; k < incidents.length; k++) {
+    var incident = incidents[k];
+    incidentsHtml += '<div class="' + toneClass('queue-card', incident.severity === 'error' ? 'error' : 'warning') + '">';
+    incidentsHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(incident.summary || incident.kind || 'Incident') + '</div>';
+    incidentsHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(incident.ts)) + '</div></div>';
+    incidentsHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
+      incident.source || '',
+      incident.kind || '',
+      incident.routed ? 'routed' : 'unrouted',
+    ])) + '</div>';
+    if (incident.details && incident.details.length > 0) {
+      incidentsHtml += '<div class="queue-card-body">' + escapeHtml(truncateText(incident.details.join(' \u00b7 '), 220)) + '</div>';
+    }
+    incidentsHtml += '</div>';
+  }
+  renderQueueCards('queue-incidents', incidentsHtml, 'No active incidents.');
+}
+
+function renderTimeline(items) {
+  var container = document.getElementById('timeline-list');
+  if (!container) return;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    container.innerHTML = '<div class="rail-empty">No timeline items yet.</div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    html += '<div class="' + toneClass('timeline-card', item.tone) + '">';
+    html += '<div class="timeline-card-header">';
+    html += '<div class="timeline-card-title">' + escapeHtml(item.title || item.source || 'Timeline item') + '</div>';
+    html += '<div class="timeline-card-time">' + escapeHtml(formatMoment(item.ts)) + '</div>';
+    html += '</div>';
+    html += '<div class="timeline-card-meta">' + escapeHtml(joinMeta([
+      item.source || '',
+      item.project || 'global',
+    ])) + '</div>';
+    if (item.details && item.details.length > 0) {
+      html += '<div class="timeline-card-details">';
+      for (var j = 0; j < item.details.length; j++) {
+        html += '<div class="timeline-card-detail">' + escapeHtml(item.details[j]) + '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+async function refreshLiveSnapshot() {
+  var project = state.sessionProject || state.project;
+
+  try {
+    var data = await apiGet(buildApiPath('/live', project));
+    state.liveSnapshot = data;
+    renderConsoleActivity(data);
+    renderLiveSummary(data);
+    renderLiveAgents(data.agents || []);
+    renderProcessLogs(data);
+    updateAgentOverview(data.agents || []);
+  } catch (e) {
+    console.error('Live snapshot refresh failed:', e);
+    state.liveSnapshot = null;
+    renderConsoleActivity(null);
+    renderLiveSummary(null);
+    renderLiveAgents([]);
+    renderProcessLogs(null);
+    updateAgentOverview([]);
+  }
+}
+
+async function refreshQueueSnapshot() {
+  var project = state.sessionProject || state.project;
+
+  try {
+    var data = await apiGet(buildApiPath('/queue', project));
+    state.queueSnapshot = data;
+    renderQueueSnapshot(data);
+  } catch (e) {
+    console.error('Queue snapshot refresh failed:', e);
+    state.queueSnapshot = null;
+    renderQueueSnapshot(null);
+  }
+}
+
+async function refreshTimeline() {
+  var project = state.sessionProject || state.project;
+
+  try {
+    var data = await apiGet(buildApiPath('/timeline', project, { count: 50 }));
+    state.timelineItems = Array.isArray(data.items) ? data.items : [];
+    renderTimeline(state.timelineItems);
+  } catch (e) {
+    console.error('Timeline refresh failed:', e);
+    state.timelineItems = [];
+    renderTimeline([]);
   }
 }
 
@@ -1108,23 +1525,58 @@ function setupProcessLogs() {
   var btn = document.getElementById('process-logs-refresh');
   if (btn) {
     btn.addEventListener('click', function () {
-      refreshProcessLogs();
+      scheduleOperationsRefresh(0);
     });
+  }
+}
+
+function refreshProcessLogs() {
+  return refreshLiveSnapshot();
+}
+
+
+// --- Status Updates ---
+
+function updateTopBar(data) {
+  if (!data) return;
+
+  if (data.project) {
+    state.project = data.project;
+  }
+  renderProjectName();
+
+  var dotEl = document.getElementById('supervisor-dot');
+  var labelEl = document.getElementById('supervisor-label');
+
+  if (data.supervisor) {
+    var supStatus = data.supervisor.status || 'unknown';
+    if (dotEl) {
+      dotEl.className = 'status-dot';
+      if (supStatus === 'active' || supStatus === 'running') {
+        dotEl.classList.add('status-dot--active');
+      } else if (supStatus === 'error' || supStatus === 'crashed' || supStatus === 'failed') {
+        dotEl.classList.add('status-dot--error');
+      } else {
+        dotEl.classList.add('status-dot--stopped');
+      }
+    }
+    if (labelEl) {
+      labelEl.textContent = 'supervisor ' + supStatus;
+    }
+  } else if (labelEl) {
+    labelEl.textContent = '\u2014';
   }
 }
 
 async function refreshStatus() {
   try {
     var data = await apiGet('/status');
-    // The status endpoint may return different shapes.
-    // Try to extract project, supervisor, and agent info.
     var parsed = {
       project: null,
       supervisor: null,
     };
 
     if (data.result && typeof data.result === 'string') {
-      // Parse "Project: xxx" from the result text
       var projectMatch = data.result.match(/^Project:\s*(.+)$/m);
       if (projectMatch) {
         parsed.project = projectMatch[1].trim();
@@ -1141,68 +1593,9 @@ async function refreshStatus() {
 
     updateTopBar(parsed);
   } catch (e) {
-    // API unreachable — show degraded state
     console.error('Status refresh failed:', e);
     renderProjectName();
   }
-}
-
-async function refreshFeed() {
-  try {
-    var data = await apiGet('/feed?count=50');
-
-    // data may be { result: "..." } with feed text, or { entries: [...] }
-    if (data.entries && Array.isArray(data.entries)) {
-      state.feedEntries = data.entries;
-      renderFeedEntries(data.entries);
-    } else if (data.result && typeof data.result === 'string') {
-      // Parse feed text into entries
-      var entries = parseFeedText(data.result);
-      state.feedEntries = entries;
-      renderFeedEntries(entries);
-    } else {
-      renderFeedEntries([]);
-    }
-  } catch (e) {
-    console.error('Feed refresh failed:', e);
-    renderFeedEntries([]);
-  }
-}
-
-function parseFeedText(text) {
-  if (!text || !text.trim()) return [];
-
-  var lines = text.split('\n');
-  var entries = [];
-
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].trim();
-    if (!line || line.startsWith('#')) continue;
-
-    // Feed lines look like: "[2026-03-10 14:52] alpha: Task 001 complete"
-    // or "- [timestamp] content"
-    // or just "content"
-    var tsMatch = line.match(/^\[?(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}(?::\d{2})?Z?)\]?\s*(.+)/);
-    var headline;
-    var ts;
-
-    if (tsMatch) {
-      ts = tsMatch[1];
-      headline = tsMatch[2];
-    } else {
-      // Strip leading "- " if present
-      headline = line.replace(/^-\s*/, '');
-      ts = null;
-    }
-
-    entries.push({
-      type: 'feed',
-      ts: ts,
-      data: { raw: headline },
-    });
-  }
-
-  return entries;
 }
 
 
@@ -1282,6 +1675,7 @@ async function sendConsoleMessage() {
       removeThinkingIndicator();
       addConsoleTurn('assistant', data.result, null, data.resultSource || 'system', data.resultDetails || null);
     }
+    scheduleOperationsRefresh(100);
   } catch (e) {
     removeThinkingIndicator();
     addConsoleTurn('error', 'Error: ' + e.message);
@@ -1313,6 +1707,7 @@ async function loadConsoleHistory() {
     } else {
       clearConsoleHistory();
     }
+    scheduleOperationsRefresh(0);
   } catch (e) {
     // Console history endpoint may not exist yet — that is fine
     console.log('Console history not available:', e.message);
@@ -1366,7 +1761,7 @@ async function restartSupervisor() {
     var msg = (data && data.message) || 'Supervisor restarted';
     addConsoleTurn('assistant', msg, null, 'system');
     refreshStatus();
-    refreshAgentOverview();
+    scheduleOperationsRefresh(0);
   } catch (e) {
     addConsoleTurn('error', 'Restart failed: ' + e.message);
   } finally {
@@ -1419,6 +1814,8 @@ async function init() {
 
   // Set up agent dropdown
   setupAgentDropdown();
+  setupRailTabs();
+  setRailTab(state.railTab);
 
   // Set up restart button
   setupRestartButton();
@@ -1438,20 +1835,33 @@ async function init() {
   // Connect WebSocket for real-time updates
   connectWebSocket();
 
-  // Show initial empty feed state
-  renderFeedEntries([]);
+  renderConsoleActivity(null);
+  renderLiveSummary(null);
+  renderLiveAgents([]);
+  renderQueueSnapshot(null);
+  renderTimeline([]);
   renderProcessLogs(null);
 
   // Load initial data from API (non-blocking, graceful on failure)
-  refreshStatus();
-  refreshFeed();
-  refreshAgentOverview();
-  refreshProcessLogs();
-  loadConsoleHistory();
+  await refreshStatus();
+  await loadConsoleHistory();
+  await Promise.all([
+    refreshLiveSnapshot(),
+    refreshQueueSnapshot(),
+    refreshTimeline(),
+  ]);
 
   setInterval(function () {
-    refreshProcessLogs();
+    refreshLiveSnapshot();
   }, 2500);
+
+  setInterval(function () {
+    refreshQueueSnapshot();
+  }, 5000);
+
+  setInterval(function () {
+    refreshTimeline();
+  }, 8000);
 }
 
 // Start when DOM is ready

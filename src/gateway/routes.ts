@@ -39,11 +39,17 @@ import {
   switchSessionProject,
   type SessionTurnDetails,
 } from "../lib/sessions";
-import { refreshProjectRuntimeState, type ProjectRuntimeState } from "../lib/state";
+import {
+  readStewardDeltaHistory,
+  refreshProjectRuntimeState,
+  type ProjectRuntimeState,
+} from "../lib/state";
 import { runDirectStewardTurn } from "../lib/steward";
 import { resolveRuntimeHints } from "../lib/runtime";
-import { normalizeProjectName } from "../lib/project";
+import { findPlanAgent, normalizeProjectName, parseDefaultTeam } from "../lib/project";
 import { UsageError } from "../lib/errors";
+import { listApprovals, type ApprovalRequest } from "../lib/approvals";
+import { listRecentEvents, type EventRecord } from "../lib/events";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -71,6 +77,107 @@ function jsonError(status: number, message: string): Response {
       ...corsHeaders(),
     },
   });
+}
+
+function toPositiveInteger(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function buildOpenInvocation(input: {
+  path: string;
+  line?: number | null;
+}): { command: string; args: string[]; strategy: "default-app" | "editor-cli" } {
+  const normalizedPath = input.path.trim();
+  const line = input.line ?? null;
+  const explicitCommand = process.env.HIVE_OPEN_COMMAND?.trim();
+
+  if (explicitCommand) {
+    return {
+      command: explicitCommand,
+      args: line ? [`${normalizedPath}:${line}`] : [normalizedPath],
+      strategy: "editor-cli",
+    };
+  }
+
+  const explicitEditorCli = process.env.HIVE_EDITOR_CLI?.trim();
+
+  if (explicitEditorCli) {
+    return {
+      command: explicitEditorCli,
+      args: line ? ["--goto", `${normalizedPath}:${line}`] : [normalizedPath],
+      strategy: "editor-cli",
+    };
+  }
+
+  if (process.platform === "darwin") {
+    return {
+      command: "open",
+      args: [normalizedPath],
+      strategy: "default-app",
+    };
+  }
+
+  if (process.platform === "linux") {
+    return {
+      command: "xdg-open",
+      args: [normalizedPath],
+      strategy: "default-app",
+    };
+  }
+
+  if (process.platform === "win32") {
+    return {
+      command: "cmd",
+      args: ["/c", "start", "", normalizedPath],
+      strategy: "default-app",
+    };
+  }
+
+  throw new UsageError(`Unsupported platform for opening files: ${process.platform}`);
+}
+
+async function openLocalPath(input: {
+  path: string;
+  line?: number | null;
+}): Promise<{ strategy: "default-app" | "editor-cli" }> {
+  const normalizedPath = input.path.trim();
+
+  if (!normalizedPath) {
+    throw new UsageError("Missing path");
+  }
+
+  if (!normalizedPath.startsWith("/")) {
+    throw new UsageError("Path must be absolute");
+  }
+
+  const file = Bun.file(normalizedPath);
+
+  if (!(await file.exists())) {
+    throw new UsageError(`File not found: ${normalizedPath}`);
+  }
+
+  const invocation = buildOpenInvocation({
+    path: normalizedPath,
+    line: input.line ?? null,
+  });
+
+  Bun.spawn([invocation.command, ...invocation.args], {
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+
+  return {
+    strategy: invocation.strategy,
+  };
 }
 
 export function handleOptions(): Response {
@@ -208,6 +315,487 @@ function buildSessionTurnDetails(input: {
       activeCount: input.state.activeRunsSummary.count,
     },
     statusNotes: uniqueNotes.length > 0 ? uniqueNotes : null,
+  };
+}
+
+type GatewayLiveAgent = {
+  runId: string;
+  agentId: string;
+  displayName: string;
+  persona: string;
+  descriptor: string;
+  status: string;
+  runtime: string;
+  model: string | null;
+  started: string;
+  pid: number | null;
+  taskId: string | null;
+  source: string;
+  latestOutput: string | null;
+  tail: string[];
+};
+
+type GatewayRecentCompletion = {
+  runId: string;
+  agentId: string;
+  displayName: string;
+  persona: string;
+  descriptor: string;
+  status: string;
+  ended: string;
+  summary: string;
+  changedFiles: string[];
+  runtime: string | null;
+  model: string | null;
+};
+
+type GatewayActivityItem = {
+  id: string;
+  ts: string;
+  source: "delta" | "event";
+  kind: string;
+  actor: string | null;
+  title: string;
+  detail: string;
+  tone: "info" | "warning" | "error" | "success";
+};
+
+type GatewayQueueIncident = {
+  id: string;
+  ts: string;
+  kind: string;
+  source: string;
+  severity: "warning" | "error";
+  summary: string;
+  details: string[];
+  routed: boolean;
+};
+
+type GatewayTimelineItem = {
+  id: string;
+  ts: string;
+  source: "feed" | "event";
+  project: string | null;
+  title: string;
+  details: string[];
+  tone: "info" | "warning" | "error" | "success";
+};
+
+function classifyTone(text: string): GatewayTimelineItem["tone"] {
+  const normalized = text.toLowerCase();
+
+  if (
+    normalized.includes("error") ||
+    normalized.includes("failed") ||
+    normalized.includes("crash") ||
+    normalized.includes("rejected")
+  ) {
+    return "error";
+  }
+
+  if (
+    normalized.includes("warning") ||
+    normalized.includes("blocked") ||
+    normalized.includes("approval requested") ||
+    normalized.includes("stale")
+  ) {
+    return "warning";
+  }
+
+  if (
+    normalized.includes("done") ||
+    normalized.includes("completed") ||
+    normalized.includes("approved") ||
+    normalized.includes("resolved")
+  ) {
+    return "success";
+  }
+
+  return "info";
+}
+
+function toneFromSeverity(
+  severity: EventRecord["severity"],
+): GatewayTimelineItem["tone"] {
+  if (severity === "error") {
+    return "error";
+  }
+
+  if (severity === "warning") {
+    return "warning";
+  }
+
+  return "info";
+}
+
+async function readProjectAgentContext(projectPaths: ProjectPaths): Promise<{
+  plan: string;
+  projectConfig: string;
+}> {
+  const [plan, projectConfig] = await Promise.all([
+    Bun.file(projectPaths.plan).text().catch(() => ""),
+    Bun.file(projectPaths.config).text().catch(() => ""),
+  ]);
+
+  return { plan, projectConfig };
+}
+
+function resolveAgentPresentation(input: {
+  plan: string;
+  projectConfig: string;
+  agentId: string;
+}): { displayName: string; persona: string; descriptor: string } {
+  if (input.agentId === "console") {
+    return {
+      displayName: "steward",
+      persona: "steward",
+      descriptor: "live steward session",
+    };
+  }
+
+  if (input.agentId === "orchestrator") {
+    return {
+      displayName: "orchestrator",
+      persona: "steward",
+      descriptor: "project orchestration steward",
+    };
+  }
+
+  const planAgent = findPlanAgent(input.plan, input.agentId);
+
+  if (planAgent) {
+    return {
+      displayName: input.agentId,
+      persona: planAgent.persona,
+      descriptor: planAgent.descriptor,
+    };
+  }
+
+  const teamAgent = parseDefaultTeam(input.projectConfig).find(
+    (agent) => agent.id === input.agentId,
+  );
+
+  if (teamAgent) {
+    return {
+      displayName: input.agentId,
+      persona: teamAgent.persona,
+      descriptor: teamAgent.descriptor,
+    };
+  }
+
+  return {
+    displayName: input.agentId,
+    persona: "worker",
+    descriptor: "active worker",
+  };
+}
+
+function toneFromDeltaKind(kind: string): GatewayActivityItem["tone"] {
+  if (kind === "worker-result" || kind === "steward-result") {
+    return "success";
+  }
+
+  if (kind === "human-message") {
+    return "warning";
+  }
+
+  if (kind === "message-cleared" || kind === "run-finished") {
+    return "info";
+  }
+
+  return "info";
+}
+
+function mapDeltaActivity(input: {
+  revision: number;
+  ts: string;
+  change: Awaited<ReturnType<typeof readStewardDeltaHistory>>[number]["changes"][number];
+}): GatewayActivityItem {
+  return {
+    id: `delta-${input.revision}-${input.change.type}-${input.change.runId ?? input.change.filename ?? input.change.summary}`,
+    ts: input.ts,
+    source: "delta",
+    kind: input.change.type,
+    actor: input.change.agent ?? null,
+    title: input.change.agent
+      ? `${input.change.agent} · ${input.change.type}`
+      : input.change.type.replace(/-/g, " "),
+    detail: input.change.summary,
+    tone: toneFromDeltaKind(input.change.type),
+  };
+}
+
+function mapEventActivity(event: EventRecord): GatewayActivityItem {
+  return {
+    id: `event-${event.id}`,
+    ts: event.ts,
+    source: "event",
+    kind: event.kind,
+    actor: event.source,
+    title: event.kind,
+    detail: event.summary,
+    tone: toneFromSeverity(event.severity),
+  };
+}
+
+async function buildGatewayLiveSnapshot(input: {
+  options: GatewayOptions;
+  projectId: string | null;
+}): Promise<{
+  project: string | null;
+  sessionId: string | null;
+  summary: string | null;
+  supervisor: {
+    status: string;
+    pid: number | null;
+    tail: string[];
+  } | null;
+  agents: GatewayLiveAgent[];
+  recentCompletions: GatewayRecentCompletion[];
+  activity: GatewayActivityItem[];
+}> {
+  if (!input.projectId || input.projectId === "default") {
+    return {
+      project: null,
+      sessionId: null,
+      summary: null,
+      supervisor: null,
+      agents: [],
+      recentCompletions: [],
+      activity: [],
+    };
+  }
+
+  const projectPaths = getProjectPaths(input.options.hivePaths, input.projectId);
+  const runtimeState = await refreshProjectRuntimeState({
+    hivePaths: input.options.hivePaths,
+    projectId: input.projectId,
+    projectPaths,
+  });
+  const agentContext = await readProjectAgentContext(projectPaths);
+  const [supervisorState, deltaHistory, recentEvents] = await Promise.all([
+    reconcileDetachedSupervisorState(projectPaths),
+    readStewardDeltaHistory({
+      projectPaths,
+      limit: 10,
+    }),
+    listRecentEvents({
+      paths: input.options.hivePaths,
+      scope: "all",
+      limit: 20,
+    }),
+  ]);
+
+  const agents = await Promise.all(
+    runtimeState.activeRuns.map(async (run) => {
+      const presentation = resolveAgentPresentation({
+        ...agentContext,
+        agentId: run.agentId,
+      });
+      const tail = await readRunOutputTail(run, 12);
+
+      return {
+        runId: run.runId,
+        agentId: run.agentId,
+        displayName: presentation.displayName,
+        persona: presentation.persona,
+        descriptor: presentation.descriptor,
+        status: run.status,
+        runtime: run.runtime,
+        model: run.model,
+        started: run.started,
+        pid: run.pid,
+        taskId: run.taskId,
+        source: run.source,
+        latestOutput: tail[tail.length - 1] ?? null,
+        tail,
+      };
+    }),
+  );
+
+  const recentCompletions = await Promise.all(
+    runtimeState.recentResultsSummary.items.slice(0, 6).map(async (result) => {
+      const run = await readRunRecordForResult(result);
+      const presentation = resolveAgentPresentation({
+        ...agentContext,
+        agentId: result.agentId,
+      });
+
+      return {
+        runId: result.runId,
+        agentId: result.agentId,
+        displayName: presentation.displayName,
+        persona: presentation.persona,
+        descriptor: presentation.descriptor,
+        status: result.status,
+        ended: result.ended,
+        summary: result.summary || result.status,
+        changedFiles: result.changedFiles,
+        runtime: run?.runtime ?? null,
+        model: run?.model ?? null,
+      };
+    }),
+  );
+
+  const deltaActivities = deltaHistory
+    .flatMap((packet) =>
+      packet.changes.map((change) =>
+        mapDeltaActivity({
+          revision: packet.revision,
+          ts: packet.ts,
+          change,
+        }),
+      ),
+    );
+  const eventActivities = recentEvents
+    .filter(
+      (event) =>
+        event.project === input.projectId &&
+        (
+          event.kind === "approval.requested" ||
+          event.kind === "approval.resolved" ||
+          event.kind === "event.routed" ||
+          event.kind === "memory.extracted" ||
+          event.severity !== "info"
+        ),
+    )
+    .map((event) => mapEventActivity(event));
+  const activity = [...deltaActivities, ...eventActivities]
+    .sort((left, right) => right.ts.localeCompare(left.ts))
+    .slice(0, 12);
+
+  const currentActivity = await buildCurrentActivitySummary({
+    options: input.options,
+    project: input.projectId,
+  });
+
+  return {
+    project: input.projectId,
+    sessionId: runtimeState.sessionMeta?.sessionId ?? null,
+    summary: currentActivity.summary,
+    supervisor: supervisorState
+      ? {
+          status: supervisorState.status,
+          pid: supervisorState.pid,
+          tail: await readTextTail(supervisorState.logPath, 24),
+        }
+      : null,
+    agents,
+    recentCompletions,
+    activity,
+  };
+}
+
+async function buildGatewayQueueSnapshot(input: {
+  options: GatewayOptions;
+  projectId: string | null;
+}): Promise<{
+  project: string | null;
+  approvals: ApprovalRequest[];
+  waitingOnHuman: ProjectRuntimeState["humanInboxSummary"]["items"];
+  incidents: GatewayQueueIncident[];
+}> {
+  if (!input.projectId || input.projectId === "default") {
+    return {
+      project: null,
+      approvals: [],
+      waitingOnHuman: [],
+      incidents: [],
+    };
+  }
+
+  const projectPaths = getProjectPaths(input.options.hivePaths, input.projectId);
+  const [runtimeState, approvals, recentExternalEvents] = await Promise.all([
+    refreshProjectRuntimeState({
+      hivePaths: input.options.hivePaths,
+      projectId: input.projectId,
+      projectPaths,
+    }),
+    listApprovals(input.options.hivePaths, "pending"),
+    listRecentEvents({
+      paths: input.options.hivePaths,
+      scope: "external",
+      limit: 30,
+    }),
+  ]);
+
+  return {
+    project: input.projectId,
+    approvals: approvals.filter(
+      (approval) => approval.project === null || approval.project === input.projectId,
+    ),
+    waitingOnHuman: runtimeState.humanInboxSummary.items.filter(
+      (item) => item.needsHumanReply,
+    ),
+    incidents: recentExternalEvents
+      .filter(
+        (event) =>
+          event.project === input.projectId &&
+          event.severity !== "info",
+      )
+      .map((event) => ({
+        id: event.id,
+        ts: event.ts,
+        kind: event.kind,
+        source: event.source,
+        severity: event.severity === "error" ? "error" : "warning",
+        summary: event.summary,
+        details: event.details,
+        routed: event.data.routed === true,
+      })),
+  };
+}
+
+async function buildGatewayTimeline(input: {
+  options: GatewayOptions;
+  projectId: string | null;
+  count: number;
+}): Promise<{
+  project: string | null;
+  items: GatewayTimelineItem[];
+}> {
+  const feedText = await Bun.file(input.options.hivePaths.feed).text().catch(() => "");
+  const feedItems = parseStructuredFeedEntries(feedText)
+    .filter(
+      (entry) =>
+        !input.projectId ||
+        entry.project === null ||
+        entry.project === input.projectId,
+    )
+    .map((entry, index) => ({
+      id: `feed-${entry.ts ?? "unknown"}-${index}`,
+      ts: entry.ts ?? "",
+      source: "feed" as const,
+      project: entry.project,
+      title: entry.headline,
+      details: entry.details,
+      tone: classifyTone(`${entry.headline} ${entry.details.join(" ")}`),
+    }));
+  const eventItems = (await listRecentEvents({
+    paths: input.options.hivePaths,
+    scope: "all",
+    limit: input.count * 2,
+  }))
+    .filter(
+      (event) =>
+        !input.projectId ||
+        event.project === input.projectId,
+    )
+    .map((event) => ({
+      id: `event-${event.id}`,
+      ts: event.ts,
+      source: "event" as const,
+      project: event.project,
+      title: event.summary,
+      details: [`${event.kind} · ${event.source}`, ...event.details],
+      tone: toneFromSeverity(event.severity),
+    }));
+
+  return {
+    project: input.projectId,
+    items: [...feedItems, ...eventItems]
+      .sort((left, right) => right.ts.localeCompare(left.ts))
+      .slice(0, input.count),
   };
 }
 
@@ -1088,6 +1676,98 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
+  "/api/live": async (_req, url, options, _broadcast) => {
+    try {
+      const projectId = await resolveGatewayProjectFocus({
+        options,
+        requestedProject: url.searchParams.get("project"),
+      });
+      const snapshot = await buildGatewayLiveSnapshot({
+        options,
+        projectId,
+      });
+      return jsonOk(snapshot);
+    } catch (err) {
+      if (err instanceof UsageError) {
+        return jsonError(400, err.message);
+      }
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/queue": async (_req, url, options, _broadcast) => {
+    try {
+      const projectId = await resolveGatewayProjectFocus({
+        options,
+        requestedProject: url.searchParams.get("project"),
+      });
+      const queue = await buildGatewayQueueSnapshot({
+        options,
+        projectId,
+      });
+      return jsonOk(queue);
+    } catch (err) {
+      if (err instanceof UsageError) {
+        return jsonError(400, err.message);
+      }
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/timeline": async (_req, url, options, _broadcast) => {
+    try {
+      const rawCount = url.searchParams.get("count") ?? "40";
+      const count = Number(rawCount);
+
+      if (!Number.isInteger(count) || count <= 0) {
+        return jsonError(400, "Invalid count");
+      }
+
+      const projectId = await resolveGatewayProjectFocus({
+        options,
+        requestedProject: url.searchParams.get("project"),
+      });
+      const timeline = await buildGatewayTimeline({
+        options,
+        projectId,
+        count,
+      });
+      return jsonOk(timeline);
+    } catch (err) {
+      if (err instanceof UsageError) {
+        return jsonError(400, err.message);
+      }
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/file": async (_req, url, _options, _broadcast) => {
+    const requestedPath = url.searchParams.get("path")?.trim() ?? "";
+
+    if (!requestedPath) {
+      return jsonError(400, "Missing path");
+    }
+
+    if (!requestedPath.startsWith("/")) {
+      return jsonError(400, "Path must be absolute");
+    }
+
+    const normalizedPath = requestedPath.split("#")[0] ?? requestedPath;
+    const file = Bun.file(normalizedPath);
+
+    if (!(await file.exists())) {
+      return jsonError(404, `File not found: ${normalizedPath}`);
+    }
+
+    return new Response(await file.text(), {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        ...corsHeaders(),
+      },
+    });
+  },
+
   "/api/ps": async (_req, _url, _options, _broadcast) => {
     try {
       const result = await psCommand();
@@ -1424,6 +2104,35 @@ const postRoutes: Record<string, RouteHandler> = {
     } catch (err) {
       if (err instanceof SyntaxError) {
         return jsonError(400, "Invalid JSON body");
+      }
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/open": async (req, _url, _options, _broadcast) => {
+    try {
+      const body = await req.json() as { path?: string; line?: number | string | null };
+      const path = body.path?.trim();
+
+      if (!path) {
+        return jsonError(400, "Missing 'path' field");
+      }
+
+      const result = await openLocalPath({
+        path,
+        line: toPositiveInteger(body.line),
+      });
+
+      return jsonOk({
+        ok: true,
+        strategy: result.strategy,
+      });
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        return jsonError(400, "Invalid JSON body");
+      }
+      if (err instanceof UsageError) {
+        return jsonError(400, err.message);
       }
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
