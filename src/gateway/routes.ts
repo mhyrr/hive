@@ -16,6 +16,7 @@ import { runtimesCommand } from "../commands/runtimes";
 import {
   getRunOutputPath,
   listActiveRuns,
+  markRunStopRequested,
   readActiveRun,
   readRunRecord,
   readRunOutputTail,
@@ -32,14 +33,15 @@ import {
   createSession,
   getActiveSession,
   getPendingSessionTurns,
+  getSession,
   getSessionHistory,
   getSessionState,
   listSessions,
-  getSession,
   appendTurn,
   enqueuePendingSessionTurn,
   switchSessionProject,
   takePendingSessionTurns,
+  updateSessionMeta,
   type SessionTurnDetails,
 } from "../lib/sessions";
 import {
@@ -48,7 +50,7 @@ import {
   type ProjectRuntimeState,
 } from "../lib/state";
 import { runDirectStewardTurn } from "../lib/steward";
-import { resolveRuntimeHints } from "../lib/runtime";
+import { getAdapter, listRuntimeAdapters, resolveRuntimeHints } from "../lib/runtime";
 import { findPlanAgent, normalizeProjectName, parseDefaultTeam } from "../lib/project";
 import { UsageError } from "../lib/errors";
 import { listApprovals, type ApprovalRequest } from "../lib/approvals";
@@ -301,6 +303,11 @@ function buildQueuedFollowUpLead(queuedCount: number): string {
   return `I'm still in the middle of a live steward turn, so I queued your latest note and will pick it up next. ${countLabel} ${queuedCount === 1 ? "is" : "are"} waiting behind the current reply.`;
 }
 
+function buildInterruptedFollowUpLead(queuedCount: number): string {
+  const countLabel = `${queuedCount} follow-up${queuedCount === 1 ? "" : "s"}`;
+  return `I'm interrupting the current live steward draft so you don't have to wait for it to finish. ${countLabel} ${queuedCount === 1 ? "is" : "are"} lined up behind the restart.`;
+}
+
 function buildDirectTurnPlaceholder(message: string): string {
   const normalized = message.trim().toLowerCase();
 
@@ -326,6 +333,83 @@ function buildDirectTurnPlaceholder(message: string): string {
   }
 
   return "One second. Let me check the board, recent runs, and open messages before I answer.";
+}
+
+function shouldPreemptLiveStewardTurn(input: {
+  sessionId: string;
+  run: RunRecord;
+}): boolean {
+  return input.run.source === "console" && input.run.sourceMessage === input.sessionId;
+}
+
+async function requestConsoleRunStop(input: {
+  projectPaths: ReturnType<typeof getProjectPaths>;
+  run: RunRecord;
+  actor: string;
+}): Promise<void> {
+  await markRunStopRequested(input.run, input.actor);
+
+  if (!input.run.pid || input.run.pid === process.pid) {
+    return;
+  }
+
+  try {
+    process.kill(input.run.pid, "SIGTERM");
+  } catch {
+    return;
+  }
+
+  void Bun.sleep(1_500).then(async () => {
+    const activeRun = await readActiveRun(input.projectPaths, "console");
+
+    if (
+      activeRun?.runId === input.run.runId &&
+      activeRun.pid === input.run.pid &&
+      isProcessAlive(input.run.pid)
+    ) {
+      try {
+        process.kill(input.run.pid, "SIGKILL");
+      } catch {
+        // Process already exited.
+      }
+    }
+  });
+}
+
+function formatRuntimeSelection(runtime: string, model: string | null): string {
+  return model ? `${runtime} (${model})` : `${runtime} (default model)`;
+}
+
+function renderSlashCommandHelp(input: {
+  currentProject: string;
+  currentRuntime: string;
+  currentModel: string | null;
+}): string {
+  return [
+    "HIVE session help",
+    `Current project: ${input.currentProject}`,
+    `Current steward runtime: ${formatRuntimeSelection(input.currentRuntime, input.currentModel)}`,
+    "",
+    "Slash commands",
+    "/help",
+    "/project",
+    "/project <project>",
+    "/project <project> <message>",
+    "/runtime",
+    "/runtime <runtime>",
+    "/runtime <runtime> <model>",
+    "",
+    "Routing shortcuts",
+    "@<project>: <message>",
+    "",
+    "Examples",
+    "/project hive what changed in the last run?",
+    "/runtime claude",
+    "/runtime codex gpt-5-codex",
+    "@hive: summarize the active agents",
+    "what's happening right now?",
+    "take the next step on the current goal",
+  ].join("\n");
 }
 
 function buildSessionTurnDetails(input: {
@@ -1149,15 +1233,13 @@ async function buildCurrentActivitySummary(input: {
       `- ${describeLeadRun(leadRun)}${since ? ` since ${since}` : ""}.`,
     );
 
-    const leadTail = leadRun.agentId === "console"
-      ? []
-      : await readRunOutputTail(leadRun, 6);
+    const leadTail = await readRunOutputTail(leadRun, 6);
     const latestVisibleLine = leadTail[leadTail.length - 1] ?? null;
 
-    if (latestVisibleLine && leadRun.agentId !== "console") {
+    if (latestVisibleLine) {
       lines.push(`- Latest visible output: ${latestVisibleLine}`);
     } else if (leadRun.agentId === "console") {
-      lines.push("- Live reply generation is still in progress.");
+      lines.push("- Live reply generation is still in progress. Waiting for the first streamed update.");
     } else {
       lines.push("- No visible output from that run yet.");
     }
@@ -1238,28 +1320,253 @@ async function ensureSupervisorRunning(input: {
   return `Supervisor started (pid ${state.pid ?? "unknown"})`;
 }
 
+async function resolveGatewayStewardDefaults(input: {
+  options: GatewayOptions;
+  projectId: string;
+}): Promise<{ runtime: string; model: string | null }> {
+  const globalConfig = await Bun.file(input.options.hivePaths.config).text().catch(() => "");
+  let projectConfig = "";
+  let plan = "";
+
+  if (input.projectId && input.projectId !== "default") {
+    const projectPaths = getProjectPaths(input.options.hivePaths, input.projectId);
+    const projectContext = await readProjectAgentContext(projectPaths);
+    projectConfig = projectContext.projectConfig;
+    plan = projectContext.plan;
+  }
+
+  return resolveRuntimeHints({
+    globalConfig,
+    teamAgent: parseDefaultTeam(projectConfig).find((agent) => agent.id === "orchestrator") ?? null,
+    planAgent: findPlanAgent(plan, "orchestrator"),
+  });
+}
+
+async function resolveGatewayStewardRuntime(input: {
+  options: GatewayOptions;
+  projectId: string;
+  requestedRuntime?: string | null;
+  requestedModel?: string | null;
+}): Promise<{
+  runtime: string;
+  model: string | null;
+  defaults: {
+    runtime: string;
+    model: string | null;
+  };
+}> {
+  const defaults = await resolveGatewayStewardDefaults({
+    options: input.options,
+    projectId: input.projectId,
+  });
+
+  if (!input.requestedRuntime?.trim()) {
+    return {
+      runtime: defaults.runtime,
+      model: defaults.model,
+      defaults,
+    };
+  }
+
+  const adapter = getAdapter(input.requestedRuntime);
+
+  if (!adapter) {
+    const runtimes = listRuntimeAdapters()
+      .map((runtime) => runtime.name)
+      .join(", ");
+    throw new UsageError(`Unknown runtime: ${input.requestedRuntime}. Available runtimes: ${runtimes}.`);
+  }
+
+  const runtime = adapter.name;
+  const explicitModel = input.requestedModel?.trim() ? input.requestedModel.trim() : null;
+
+  return {
+    runtime,
+    model: explicitModel ?? (runtime === defaults.runtime ? defaults.model : null),
+    defaults,
+  };
+}
+
+type SessionSlashCommandResult = {
+  projectId: string;
+  continueWorkflow: boolean;
+  message: string;
+  result: string | null;
+  resultSource?: "system";
+};
+
+async function resolveSessionSlashCommand(input: {
+  options: GatewayOptions;
+  sessionId: string;
+  currentProject: string;
+  rawMessage: string;
+}): Promise<SessionSlashCommandResult | null> {
+  const trimmed = input.rawMessage.trim();
+
+  if (!trimmed.startsWith("/")) {
+    return null;
+  }
+
+  if (trimmed === "/help" || trimmed === "/?") {
+    const session = await getSession(input.options.hivePaths.sessionsDir, input.sessionId);
+    return {
+      projectId: input.currentProject,
+      continueWorkflow: false,
+      message: "",
+      result: renderSlashCommandHelp({
+        currentProject: input.currentProject,
+        currentRuntime: session?.runtime ?? "unknown",
+        currentModel: session?.model ?? null,
+      }),
+      resultSource: "system",
+    };
+  }
+
+  if (trimmed === "/project") {
+    return {
+      projectId: input.currentProject,
+      continueWorkflow: false,
+      message: "",
+      result: `Current project focus: ${input.currentProject}.`,
+      resultSource: "system",
+    };
+  }
+
+  const projectMatch = trimmed.match(/^\/project\s+([^\s]+)(?:\s+(.*))?$/is);
+
+  if (projectMatch) {
+    const projectId = await resolveProjectId({
+      options: input.options,
+      token: projectMatch[1]!,
+    });
+    const message = (projectMatch[2] ?? "").trim();
+    const switched = projectId !== input.currentProject;
+
+    if (switched) {
+      await switchSessionProject({
+        sessionsDir: input.options.hivePaths.sessionsDir,
+        sessionId: input.sessionId,
+        projectId,
+      });
+    }
+
+    return {
+      projectId,
+      continueWorkflow: message.length > 0,
+      message,
+      result: message.length > 0
+        ? null
+        : switched
+          ? `Switched context to ${projectId}.`
+          : `Already focused on ${projectId}.`,
+      resultSource: "system",
+    };
+  }
+
+  const runtimeMatch = trimmed.match(/^\/runtime(?:\s+([^\s]+)(?:\s+(.+))?)?$/is);
+
+  if (runtimeMatch) {
+    const session = await getSession(input.options.hivePaths.sessionsDir, input.sessionId);
+
+    if (!session) {
+      throw new UsageError(`Session not found: ${input.sessionId}`);
+    }
+
+    const runtimeToken = runtimeMatch[1]?.trim() ?? "";
+    const modelToken = runtimeMatch[2]?.trim() ?? null;
+    const { runtime, model, defaults } = await resolveGatewayStewardRuntime({
+      options: input.options,
+      projectId: input.currentProject,
+      requestedRuntime: runtimeToken || null,
+      requestedModel: modelToken,
+    });
+
+    if (!runtimeToken) {
+      const currentLabel = formatRuntimeSelection(session.runtime, session.model);
+      const defaultLabel = formatRuntimeSelection(defaults.runtime, defaults.model);
+      const matchesDefault =
+        session.runtime === defaults.runtime &&
+        (session.model ?? null) === (defaults.model ?? null);
+
+      return {
+        projectId: input.currentProject,
+        continueWorkflow: false,
+        message: "",
+        result: matchesDefault
+          ? `This steward session is using ${currentLabel}. That matches the project's steward default.`
+          : `This steward session is using ${currentLabel}. The project's steward default is ${defaultLabel}.`,
+        resultSource: "system",
+      };
+    }
+
+    const projectPaths =
+      input.currentProject && input.currentProject !== "default"
+        ? getProjectPaths(input.options.hivePaths, input.currentProject)
+        : null;
+
+    if (projectPaths) {
+      await reconcileActiveConsoleRun(projectPaths);
+    }
+
+    const activeConsoleRun = projectPaths ? await readActiveRun(projectPaths, "console") : null;
+    const wasAlreadySelected =
+      session.runtime === runtime && (session.model ?? null) === (model ?? null);
+
+    if (!wasAlreadySelected) {
+      await updateSessionMeta({
+        sessionsDir: input.options.hivePaths.sessionsDir,
+        sessionId: input.sessionId,
+        runtime,
+        model,
+      });
+    }
+
+    const targetLabel = formatRuntimeSelection(runtime, model);
+    const previousLabel = formatRuntimeSelection(session.runtime, session.model);
+    const nextTurnNote = activeConsoleRun
+      ? ` The current live turn stays on ${previousLabel}; the next turn will use ${targetLabel}.`
+      : ` New turns in this session will use ${targetLabel}.`;
+
+    return {
+      projectId: input.currentProject,
+      continueWorkflow: false,
+      message: "",
+      result: wasAlreadySelected
+        ? `This steward session is already set to ${targetLabel}.${activeConsoleRun ? nextTurnNote : ""}`
+        : `Switched the steward session to ${targetLabel}.${nextTurnNote}`,
+      resultSource: "system",
+    };
+  }
+
+  if (/^\/[^\s]+/.test(trimmed)) {
+    const session = await getSession(input.options.hivePaths.sessionsDir, input.sessionId);
+    return {
+      projectId: input.currentProject,
+      continueWorkflow: false,
+      message: "",
+      result: `Unknown slash command.\n\n${renderSlashCommandHelp({
+        currentProject: input.currentProject,
+        currentRuntime: session?.runtime ?? "unknown",
+        currentModel: session?.model ?? null,
+      })}`,
+      resultSource: "system",
+    };
+  }
+
+  return null;
+}
+
 async function createGatewaySession(input: {
   options: GatewayOptions;
   project: string;
 }): Promise<Awaited<ReturnType<typeof createSession>>> {
-  const globalConfig = await Bun.file(input.options.hivePaths.config).text().catch(() => "");
-  let projectConfig = "";
-  let plan = "";
   let runtime = "claude";
   let model: string | null = null;
 
   try {
-    if (input.project && input.project !== "default") {
-      const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
-      const projectContext = await readProjectAgentContext(projectPaths);
-      projectConfig = projectContext.projectConfig;
-      plan = projectContext.plan;
-    }
-
-    const hints = resolveRuntimeHints({
-      globalConfig,
-      teamAgent: parseDefaultTeam(projectConfig).find((agent) => agent.id === "orchestrator") ?? null,
-      planAgent: findPlanAgent(plan, "orchestrator"),
+    const hints = await resolveGatewayStewardRuntime({
+      options: input.options,
+      projectId: input.project,
     });
     runtime = hints.runtime;
     model = hints.model;
@@ -1299,8 +1606,9 @@ async function resolveSessionTurnTarget(input: {
 }): Promise<{
   projectId: string;
   message: string;
-  switchOnly: boolean;
-  switched: boolean;
+  continueWorkflow: boolean;
+  result: string | null;
+  resultSource?: "system";
 }> {
   const trimmed = input.rawMessage.trim();
   const sessionState = await getSessionState(input.options.hivePaths.sessionsDir, input.sessionId);
@@ -1310,29 +1618,15 @@ async function resolveSessionTurnTarget(input: {
     (await getActiveProject(input.options.hivePaths)) ||
     "default";
 
-  const switchMatch = trimmed.match(/^\/project\s+([^\s]+)(?:\s+(.*))?$/is);
+  const slashCommand = await resolveSessionSlashCommand({
+    options: input.options,
+    sessionId: input.sessionId,
+    currentProject,
+    rawMessage: trimmed,
+  });
 
-  if (switchMatch) {
-    const projectId = await resolveProjectId({
-      options: input.options,
-      token: switchMatch[1]!,
-    });
-    const message = (switchMatch[2] ?? "").trim();
-
-    if (projectId !== currentProject) {
-      await switchSessionProject({
-        sessionsDir: input.options.hivePaths.sessionsDir,
-        sessionId: input.sessionId,
-        projectId,
-      });
-    }
-
-    return {
-      projectId,
-      message,
-      switchOnly: message.length === 0,
-      switched: projectId !== currentProject,
-    };
+  if (slashCommand) {
+    return slashCommand;
   }
 
   const inlineMatch = trimmed.match(/^@([^\s:]+):?\s*(.*)$/s);
@@ -1355,16 +1649,21 @@ async function resolveSessionTurnTarget(input: {
     return {
       projectId,
       message,
-      switchOnly: message.length === 0,
-      switched: projectId !== currentProject,
+      continueWorkflow: message.length > 0,
+      result: message.length === 0
+        ? projectId !== currentProject
+          ? `Switched context to ${projectId}.`
+          : `Already focused on ${projectId}.`
+        : null,
+      resultSource: "system",
     };
   }
 
   return {
     projectId: currentProject,
     message: trimmed,
-    switchOnly: false,
-    switched: false,
+    continueWorkflow: true,
+    result: null,
   };
 }
 
@@ -1682,14 +1981,44 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
     });
     const queuedCount = getPendingSessionTurns(queuedState, input.project).length;
 
-    pushStatusNote(statusNotes, `Live console run already active: ${existingConsoleRun.runId}.`);
-    pushStatusNote(statusNotes, `Queued ${queuedCount} follow-up message(s) for the live steward.`);
-
-    const currentActivity = await buildCurrentActivitySummary({
-      options: input.options,
-      project: input.project,
-      lead: buildQueuedFollowUpLead(queuedCount),
+    const canPreempt = shouldPreemptLiveStewardTurn({
+      sessionId: input.sessionId,
+      run: existingConsoleRun,
     });
+
+    pushStatusNote(statusNotes, `Live console run already active: ${existingConsoleRun.runId}.`);
+
+    const currentActivity = canPreempt
+      ? await (async () => {
+          await requestConsoleRunStop({
+            projectPaths,
+            run: existingConsoleRun,
+            actor: "human-follow-up",
+          });
+          pushStatusNote(
+            statusNotes,
+            `Requested stop for live steward run ${existingConsoleRun.runId}.`,
+          );
+          pushStatusNote(
+            statusNotes,
+            `Queued ${queuedCount} follow-up message(s) behind the restart.`,
+          );
+
+          return buildCurrentActivitySummary({
+            options: input.options,
+            project: input.project,
+            lead: buildInterruptedFollowUpLead(queuedCount),
+          });
+        })()
+      : await (async () => {
+          pushStatusNote(statusNotes, `Queued ${queuedCount} follow-up message(s) for the live steward.`);
+
+          return buildCurrentActivitySummary({
+            options: input.options,
+            project: input.project,
+            lead: buildQueuedFollowUpLead(queuedCount),
+          });
+        })();
 
     await appendSessionTurnAndBroadcast({
       options: input.options,
@@ -1724,19 +2053,17 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
       sessionId: input.sessionId,
       humanMessage: input.message,
       onOutput: (chunk) => {
-        const normalized = chunk.trim();
-
-        if (!normalized) {
+        if (!chunk.trim()) {
           return;
         }
 
         clearPlaceholderTimer();
-        streamedReply = streamedReply ? `${streamedReply}\n${normalized}` : normalized;
+        streamedReply += chunk;
         broadcastSessionStream({
           broadcast: input.broadcast,
           sessionId: input.sessionId,
           project: input.project,
-          content: streamedReply,
+          content: streamedReply.trimEnd(),
         });
       },
     });
@@ -1813,6 +2140,17 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
     }
 
     clearPlaceholderTimer();
+
+    if (direct.finalRun.status === "cancelled") {
+      pushStatusNote(statusNotes, `Direct steward run interrupted: ${direct.finalRun.runId}.`);
+      void schedulePendingSessionTurnDrain({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+      });
+      return;
+    }
+
     pushStatusNote(statusNotes, `Direct steward run completed: ${direct.finalRun.runId}.`);
     const finalState = await refreshProjectRuntimeState({
       hivePaths: input.options.hivePaths,
@@ -2196,17 +2534,14 @@ const postRoutes: Record<string, RouteHandler> = {
         source: "human",
       });
 
-      if (target.switchOnly) {
-        const result = target.switched
-          ? `Switched context to ${target.projectId}.`
-          : `Already focused on ${target.projectId}.`;
-
+      if (!target.continueWorkflow) {
+        const result = target.result ?? "Command completed.";
         await appendTurn({
           sessionsDir,
           sessionId: session.sessionId,
           role: "assistant",
           content: result,
-          source: "system",
+          source: target.resultSource ?? "system",
         });
 
         scheduleProjectRuntimeRefresh({
@@ -2216,7 +2551,7 @@ const postRoutes: Record<string, RouteHandler> = {
 
         return jsonOk({
           result,
-          resultSource: "system",
+          resultSource: target.resultSource ?? "system",
           sessionId: session.sessionId,
           project: target.projectId,
         });

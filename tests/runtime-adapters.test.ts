@@ -59,8 +59,10 @@ describe("claude adapter", () => {
 
     expect(args).toEqual([
       "--print",
+      "--verbose",
       "--output-format",
-      "json",
+      "stream-json",
+      "--include-partial-messages",
       "--permission-mode",
       "bypassPermissions",
       "--add-dir",
@@ -79,8 +81,10 @@ describe("claude adapter", () => {
 
     expect(args).toEqual([
       "--print",
+      "--verbose",
       "--output-format",
-      "json",
+      "stream-json",
+      "--include-partial-messages",
       "--permission-mode",
       "bypassPermissions",
       "--add-dir",
@@ -160,6 +164,66 @@ describe("claude adapter", () => {
     expect(parsed?.metadata?.cacheCreationInputTokens).toBe(300);
     expect(parsed?.metadata?.cacheReadInputTokens).toBe(80);
     expect(parsed?.metadata?.totalTokens).toBe(1800);
+  });
+
+  test("parses stream-json output with partial assistant snapshots", () => {
+    const parsed = adapter.parseOutput?.([
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Hel" }],
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Hello there" }],
+        },
+      }),
+      JSON.stringify({
+        type: "result",
+        result: "Hello there",
+        duration_ms: 1200,
+        usage: {
+          input_tokens: 30,
+          output_tokens: 12,
+        },
+      }),
+    ].join("\n"));
+
+    expect(parsed?.text).toBe("Hello there");
+    expect(parsed?.metadata?.durationMs).toBe(1200);
+    expect(parsed?.metadata?.inputTokens).toBe(30);
+    expect(parsed?.metadata?.outputTokens).toBe(12);
+  });
+
+  test("extracts live text deltas from claude stream-json events", () => {
+    const capture = adapter.createOutputCapture?.();
+
+    expect(capture?.handleStdoutLine(JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "Hel" }],
+      },
+    }))).toBe("Hel");
+    expect(capture?.handleStdoutLine(JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "Hello" }],
+      },
+    }))).toBe("lo");
+    expect(capture?.handleStdoutLine(JSON.stringify({
+      type: "content_block_delta",
+      delta: {
+        text: " there",
+      },
+    }))).toBe(" there");
+    expect(capture?.handleStdoutLine(JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "Hello there" }],
+      },
+    }))).toBeNull();
   });
 });
 
@@ -394,7 +458,7 @@ describe("buildLaunchSpec backward compatibility", () => {
     });
   });
 
-  test("produces claude launch spec with json output format", () => {
+  test("produces claude launch spec with streaming output format", () => {
     const spec = buildLaunchSpec({
       runtime: "claude",
       model: "opus",
@@ -409,8 +473,10 @@ describe("buildLaunchSpec backward compatibility", () => {
       command: "claude",
       args: [
         "--print",
+        "--verbose",
         "--output-format",
-        "json",
+        "stream-json",
+        "--include-partial-messages",
         "--permission-mode",
         "bypassPermissions",
         "--add-dir",

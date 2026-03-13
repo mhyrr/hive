@@ -20,6 +20,7 @@ import {
   listRecentRunResults,
   markRunActive,
   readActiveRun,
+  readRunRecord,
   writeRunResult,
 } from "../src/lib/runs";
 import { getSession, getSessionHistory, getSessionState } from "../src/lib/sessions";
@@ -782,6 +783,133 @@ path: ${context.repo}
     expect(detailData.session.currentProject).toBe("otherproj");
   });
 
+  test("session can inspect and switch steward runtime with /runtime", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    await Bun.write(
+      projectPaths.config,
+      `# Project: TestProj
+
+## Repo
+path: ${context.repo}
+
+## Default Team
+- orchestrator: steward, claude-opus-4-6 via claude
+- alpha: craftsman via codex
+`,
+    );
+
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(createRes.status).toBe(200);
+    const createData = await createRes.json() as { sessionId: string };
+
+    const inspectReq = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "/runtime" }),
+    });
+    const inspectRes = await handleApi(
+      inspectReq,
+      new URL(inspectReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(inspectRes.status).toBe(200);
+    const inspectData = await inspectRes.json() as { result: string };
+    expect(inspectData.result).toContain("claude");
+    expect(inspectData.result).toContain("claude-opus-4-6");
+
+    const switchReq = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "/runtime codex" }),
+    });
+    const switchRes = await handleApi(
+      switchReq,
+      new URL(switchReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(switchRes.status).toBe(200);
+    const switchData = await switchRes.json() as { result: string; sessionId: string };
+    expect(switchData.result).toContain("Switched the steward session to codex");
+
+    const switchedMeta = await getSession(join(context.hiveHome, "sessions"), createData.sessionId);
+    expect(switchedMeta?.runtime).toBe("codex");
+    expect(switchedMeta?.model).toBeNull();
+    expect(await Bun.file(join(context.hiveHome, "sessions", "active.md")).text()).toContain("runtime: codex");
+
+    const switchBackReq = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "/runtime claude" }),
+    });
+    const switchBackRes = await handleApi(
+      switchBackReq,
+      new URL(switchBackReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(switchBackRes.status).toBe(200);
+    const switchBackData = await switchBackRes.json() as { result: string };
+    expect(switchBackData.result).toContain("claude-opus-4-6");
+
+    const switchedBackMeta = await getSession(join(context.hiveHome, "sessions"), createData.sessionId);
+    expect(switchedBackMeta?.runtime).toBe("claude");
+    expect(switchedBackMeta?.model).toBe("claude-opus-4-6");
+  });
+
+  test("session /help lists slash commands, routing shortcuts, and examples", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(createRes.status).toBe(200);
+
+    const helpReq = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "/help" }),
+    });
+    const helpRes = await handleApi(
+      helpReq,
+      new URL(helpReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(helpRes.status).toBe(200);
+
+    const helpData = await helpRes.json() as { result: string };
+    expect(helpData.result).toContain("HIVE session help");
+    expect(helpData.result).toContain("Current project: testproj");
+    expect(helpData.result).toContain("Slash commands");
+    expect(helpData.result).toContain("/runtime <runtime> <model>");
+    expect(helpData.result).toContain("Routing shortcuts");
+    expect(helpData.result).toContain("@<project>: <message>");
+    expect(helpData.result).toContain("Examples");
+    expect(helpData.result).toContain("what's happening right now?");
+  });
+
   test("process logs endpoint exposes supervisor and active run tails", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "TestProj", context.repo]);
@@ -1096,7 +1224,98 @@ path: ${context.repo}
     }
   });
 
-  test("active steward turn queues the follow-up and reports current activity", async () => {
+  test("active steward turn interrupts the current web reply and restarts on the newest follow-up", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "testproj");
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(createRes.status).toBe(200);
+    const createData = await createRes.json() as { sessionId: string };
+
+    await Bun.sleep(200);
+
+    const sleeper = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    let run = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "console",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "# Prompt",
+      source: "console",
+      sourceMessage: createData.sessionId,
+    });
+    run = await markRunActive(projectPaths, run, sleeper.pid);
+    await Bun.write(getRunOutputPath(run), "Inspecting recent progress\nChecking latest activity\n");
+
+    try {
+      const req = new Request("http://localhost/api/console/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "what's happening right now?" }),
+      });
+      const res = await handleApi(
+        req,
+        new URL(req.url),
+        { port: 0, hivePaths: context.paths },
+        () => {},
+      );
+      expect(res.status).toBe(200);
+
+      const data = await res.json() as { sessionId: string };
+      expect(data.sessionId).toBe(createData.sessionId);
+      await Bun.sleep(200);
+
+      const [history, persistedRun] = await Promise.all([
+        getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId),
+        readRunRecord(run.path),
+      ]);
+      expect(history.some((turn) =>
+        turn.role === "assistant" &&
+        turn.source === "system" &&
+        turn.content.includes("interrupting the current live steward draft")
+      )).toBe(true);
+      expect(history.some((turn) =>
+        turn.role === "assistant" &&
+        turn.details?.statusNotes?.some((note) => note.includes("Requested stop for live steward run"))
+      )).toBe(true);
+      expect(history.some((turn) =>
+        turn.role === "assistant" &&
+        turn.details?.statusNotes?.some((note) => note.includes("Queued 1 follow-up message(s) behind the restart"))
+      )).toBe(true);
+      expect(persistedRun?.stopRequestedAt).toBeTruthy();
+      expect(persistedRun?.stopRequestedBy).toBe("human-follow-up");
+
+      const messages = await listProjectMessages(context.paths.msgDir, "testproj");
+      expect(messages.some((message) =>
+        message.attributes.type === "nudge" &&
+        message.body.includes("what's happening right now?")
+      )).toBe(false);
+    } finally {
+      try {
+        process.kill(sleeper.pid, "SIGKILL");
+      } catch {
+        // Process already exited.
+      }
+      await sleeper.exited;
+    }
+  });
+
+  test("unowned active console turn keeps follow-ups queued instead of preempting", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "TestProj", context.repo]);
     await runCli(["work", "testproj"]);
@@ -1110,7 +1329,7 @@ path: ${context.repo}
       runtime: "codex",
       model: "gpt-5-codex",
       prompt: "# Prompt",
-      source: "gateway-test",
+      source: "console",
     });
     run = await markRunActive(projectPaths, run, process.pid);
     await Bun.write(getRunOutputPath(run), "Inspecting recent progress\nChecking latest activity\n");
@@ -1131,9 +1350,10 @@ path: ${context.repo}
     const data = await res.json() as { sessionId: string };
     await Bun.sleep(200);
 
-    const [history, sessionState] = await Promise.all([
+    const [history, sessionState, persistedRun] = await Promise.all([
       getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId),
       getSessionState(join(context.hiveHome, "sessions"), data.sessionId),
+      readRunRecord(run.path),
     ]);
     expect(history.some((turn) =>
       turn.role === "assistant" &&
@@ -1142,23 +1362,10 @@ path: ${context.repo}
     )).toBe(true);
     expect(history.some((turn) =>
       turn.role === "assistant" &&
-      turn.content.includes("Live reply generation is still in progress")
-    )).toBe(true);
-    expect(history.some((turn) =>
-      turn.role === "assistant" &&
-      turn.details?.statusNotes?.some((note) => note.includes("Live console run already active"))
-    )).toBe(true);
-    expect(history.some((turn) =>
-      turn.role === "assistant" &&
-      turn.details?.statusNotes?.some((note) => note.includes("Queued 1 follow-up message(s)"))
+      turn.details?.statusNotes?.some((note) => note.includes("Queued 1 follow-up message(s) for the live steward"))
     )).toBe(true);
     expect(sessionState?.pendingTurns.map((item) => item.content)).toContain("what's happening right now?");
-
-    const messages = await listProjectMessages(context.paths.msgDir, "testproj");
-    expect(messages.some((message) =>
-      message.attributes.type === "nudge" &&
-      message.body.includes("what's happening right now?")
-    )).toBe(false);
+    expect(persistedRun?.stopRequestedAt).toBeNull();
   });
 
   test("stale console run is cleared before gateway decides a turn is already in progress", async () => {

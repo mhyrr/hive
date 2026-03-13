@@ -556,6 +556,57 @@ export async function updateSessionState(input: {
   return next;
 }
 
+export async function updateSessionMeta(input: {
+  sessionsDir: string;
+  sessionId: string;
+  project?: string;
+  runtime?: string;
+  model?: string | null;
+  status?: SessionMeta["status"];
+  lastActive?: string;
+  turns?: number;
+}): Promise<SessionMeta | null> {
+  const meta = await getSession(input.sessionsDir, input.sessionId);
+
+  if (!meta) {
+    return null;
+  }
+
+  const next: SessionMeta = {
+    ...meta,
+    project: input.project ?? meta.project,
+    runtime: input.runtime ?? meta.runtime,
+    model: input.model !== undefined ? input.model : meta.model,
+    status: input.status ?? meta.status,
+    lastActive: input.lastActive ?? meta.lastActive,
+    turns: input.turns ?? meta.turns,
+  };
+
+  await Bun.write(
+    join(input.sessionsDir, input.sessionId, "meta.md"),
+    stringifyFrontmatter(metaToAttributes(next), ""),
+  );
+
+  const active = await getActiveSession(input.sessionsDir);
+
+  if (active?.sessionId === input.sessionId) {
+    await Bun.write(
+      join(input.sessionsDir, "active.md"),
+      stringifyFrontmatter(
+        {
+          session: input.sessionId,
+          project: next.project,
+          runtime: next.runtime,
+          started: next.started,
+        },
+        "",
+      ),
+    );
+  }
+
+  return next;
+}
+
 export function getProjectSessionState(
   state: SessionState | null,
   projectId: string,
@@ -604,38 +655,11 @@ export async function switchSessionProject(input: {
       updatedAt: toIsoTimestamp(),
     },
   });
-
-  const meta = await getSession(input.sessionsDir, input.sessionId);
-
-  if (meta) {
-    await Bun.write(
-      join(input.sessionsDir, input.sessionId, "meta.md"),
-      stringifyFrontmatter(
-        metaToAttributes({
-          ...meta,
-          project: input.projectId,
-        }),
-        "",
-      ),
-    );
-  }
-
-  const active = await getActiveSession(input.sessionsDir);
-
-  if (active?.sessionId === input.sessionId) {
-    await Bun.write(
-      join(input.sessionsDir, "active.md"),
-      stringifyFrontmatter(
-        {
-          session: input.sessionId,
-          project: input.projectId,
-          runtime: active.runtime,
-          started: active.started,
-        },
-        "",
-      ),
-    );
-  }
+  await updateSessionMeta({
+    sessionsDir: input.sessionsDir,
+    sessionId: input.sessionId,
+    project: input.projectId,
+  });
 
   return next;
 }
