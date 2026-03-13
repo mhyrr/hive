@@ -352,6 +352,292 @@ HIVE's interface is fundamentally operational. You manage a team.
 
 ---
 
+## Mitigations: OpenClaw's Ecosystem Advantage Is Porous
+
+OpenClaw's 5,700 skills sound like a moat, but the format is just a directory
+with a SKILL.md file — YAML frontmatter plus markdown instructions. No SDK, no
+compilation, no special runtime. Skills are playbooks, not code.
+
+This means HIVE can import them essentially as-is. An OpenClaw skill is:
+
+```
+skill-name/
+├── SKILL.md          # YAML frontmatter + markdown instructions
+├── scripts/          # Optional helper scripts
+├── references/       # Optional docs
+└── assets/           # Optional templates
+```
+
+HIVE already has a skills system (`~/.hive/skills/` with markdown files). The
+format differences are minor:
+
+| Property | OpenClaw | HIVE |
+|----------|----------|------|
+| Location | `~/.openclaw/skills/` or project `skills/` | `~/.hive/skills/` |
+| Format | SKILL.md with YAML frontmatter | Markdown with optional frontmatter |
+| Loading | Injected into system prompt as XML | Path-referenced, agent reads on demand |
+| Scoping | Global or per-workspace | Global or per-project |
+
+A `hive import-skill <openclaw-skill-dir>` command could translate the
+frontmatter conventions and drop the skill into HIVE's system. The instructions
+are model-agnostic natural language — they don't reference OpenClaw internals.
+The 5,700 skills on ClawHub are MIT-0 licensed.
+
+**The actual moat isn't the skills — it's the community writing them.** But
+skill portability means HIVE can be a free-rider on OpenClaw's ecosystem
+without building its own marketplace. Write a thin compatibility layer, not a
+competing ecosystem.
+
+The skills that *won't* port cleanly are ones that depend on OpenClaw-specific
+tool configurations (channel adapters, gateway features). But those are
+personal-assistant skills (WhatsApp integration, calendar management), not
+software engineering skills. The coding-relevant skills — git workflows, code
+review playbooks, testing strategies, deployment procedures — are pure markdown
+instructions and port trivially.
+
+---
+
+## The Orchestrator Speed Problem: LLM vs Deterministic Routing
+
+### The Honest Tradeoff
+
+OpenClaw's JavaScript routing is deterministic and fast. Pattern match, resolve
+session, dispatch. Milliseconds. HIVE's steward is an LLM call. Even with a
+fast model, that's seconds — potentially 5-15 seconds for a full orchestration
+pass with a frontier model reading board state, messages, and plan.
+
+This is a real cost today. Here's why it gets better:
+
+### The Inference Speed Trajectory
+
+Inference costs have dropped **280x since late 2022**. NVIDIA Blackwell
+delivers 1,000+ tokens/second/user — a 15x improvement over prior hardware.
+H100 cloud prices dropped from $7-8/hr to $1.49-3.90/hr. vLLM achieves 793
+TPS vs Ollama's 41 TPS. Speculative decoding adds another 2-3x.
+
+The trend line is clear: inference is getting 10x cheaper and 5-10x faster
+roughly every 18 months. A steward pass that costs $0.05 and takes 8 seconds
+today will cost $0.005 and take ~1 second within 18 months.
+
+### Orchestrator Design Implications
+
+This trajectory should inform how we design the steward:
+
+**Today (March 2026):**
+- Steward runs on a frontier model (Opus/Sonnet) — necessary for judgment
+  quality
+- Target: <15 seconds per orchestration cycle
+- Token budget: ~4K input (board digest + messages + plan summary), ~1K output
+  (assignments + board updates)
+- Cycle frequency: every 30-60 seconds in autonomous mode
+- Cost: ~$0.02-0.05 per cycle → ~$1-3/hour of active supervision
+
+**Near-term (late 2026):**
+- Steward can run on a mid-tier model (Sonnet-class) as those models match
+  today's Opus on routing/planning tasks
+- Target: <5 seconds per cycle
+- Same token budget, but cheaper per token
+- Cost drops to ~$0.20-0.50/hour
+
+**Medium-term (2027):**
+- Steward runs on a small specialized model (8B-class fine-tuned for
+  orchestration)
+- Target: <1 second per cycle
+- Could run locally — zero marginal cost
+- The "small models coordinate, big models create" vision from the PRD
+  becomes practical
+
+**Long-term (2028+):**
+- Orchestration latency is negligible
+- The quality advantage of LLM orchestration (contextual judgment, natural
+  language understanding, adaptive coordination) dominates
+- OpenClaw's deterministic routing becomes the disadvantage — it can't adapt
+  to novel situations without code changes
+
+### The Hybrid Path
+
+In the meantime, HIVE should support a **tiered orchestration strategy**:
+
+1. **Fast path (deterministic):** Simple assignment dispatch, message routing,
+   status updates. No LLM needed. The supervisor already does this — it reads
+   board state and launches runs based on assignment messages.
+
+2. **Judgment path (LLM):** Task decomposition, conflict resolution, stuck
+   detection, reassignment, plan adjustment. This is where the steward's
+   intelligence matters.
+
+3. **The split:** Most orchestration cycles are fast-path (80%). The steward
+   only needs to engage for judgment calls (20%). This keeps the system
+   responsive while preserving the LLM orchestration advantage where it counts.
+
+The supervisor loop already implements the fast path. The steward engages for
+the judgment calls. This isn't a compromise — it's the right architecture.
+Deterministic when determinism is sufficient, intelligent when intelligence
+is required.
+
+---
+
+## Predictions: Where OpenClaw Is Heading (And Why It Converges Toward HIVE)
+
+### The Multi-Instance Pattern
+
+People are already setting up multiple OpenClaw instances in a boss/employee
+hierarchy: an "overall commander" agent that understands intent and delegates
+to specialized worker agents (search, coding, documentation). OpenClaw's own
+agent visibility model supports this with scoping: "self" (isolated), "tree"
+(own conversations plus sub-tasks), or "agent" (all sessions of the same
+agent).
+
+This is HIVE's persona structure, reinvented with heavyweight infrastructure.
+Instead of a steward.md prompt and a craftsman.md prompt coordinating through
+shared files, it's multiple full OpenClaw instances with their own gateways,
+memories, and session management, wired together through channel adapters.
+
+The overhead is enormous. Each OpenClaw instance is 1.52GB of RAM. A
+four-agent team is 6GB just for the orchestration layer. HIVE's equivalent
+is four markdown files and a shared `~/.hive/` directory.
+
+### Prediction 1: OpenClaw will build native multi-agent coordination
+
+The boss/employee pattern is too popular to ignore. OpenClaw will eventually
+build first-class multi-agent support — shared memory across instances,
+native task boards, agent-to-agent messaging. When they do, they'll be
+rebuilding what HIVE already has, but bolted onto a heavyweight infrastructure.
+
+### Prediction 2: The Skill.md format becomes a de facto standard
+
+OpenClaw's SKILL.md is simple enough to become portable. Other frameworks will
+adopt it or build compatibility layers. HIVE should be ready for this — build
+the import layer now so that when skills become the "npm packages of agent
+capabilities," HIVE is a first-class consumer.
+
+### Prediction 3: Model heterogeneity becomes mainstream
+
+OpenClaw is model-agnostic but single-model-per-instance. As specialized
+models emerge (code models, reasoning models, security models), users will
+want different models for different tasks. OpenClaw's architecture makes this
+hard — you'd need separate instances with separate model configs, coordinated
+externally. HIVE's per-agent model selection handles this natively.
+
+### Prediction 4: The personal assistant and the engineering team diverge
+
+OpenClaw is optimized for the personal assistant use case: one human, one
+agent, connected to messaging apps and productivity tools. HIVE is optimized
+for the engineering team use case: one human, multiple agents, working on
+code across multiple projects.
+
+These are fundamentally different products. OpenClaw will get better at being
+a personal assistant. HIVE should get better at being an engineering team.
+Trying to be both is how you end up mediocre at both.
+
+### Prediction 5: Files-as-API becomes the coordination standard
+
+As agent runtimes proliferate (Claude Code, Codex, Gemini CLI, Cursor, Windsurf,
+plus whatever ships next quarter), the lowest-common-denominator coordination
+mechanism is the filesystem. Every runtime can read and write files. Not every
+runtime supports WebSocket connections or channel adapters or structured APIs.
+
+The project that makes "shared markdown files as coordination protocol" simple
+and well-documented wins the multi-runtime coordination space. That's HIVE's
+bet, and the proliferation of runtimes strengthens it every month.
+
+---
+
+## The Local Plane: Runtime Agnosticism as Infrastructure Independence
+
+### What "Adapters Are CLI Tools" Really Means
+
+HIVE's runtime adapters are thin wrappers around CLI invocations:
+
+```
+claude --session X --prompt "..."     # Claude Code
+codex --session X + prompt            # Codex
+gemini --session X + SKILL.md         # Gemini CLI
+ollama run MODEL + prompt             # Local model
+```
+
+The adapter doesn't care what's behind the CLI. It doesn't care if:
+- The model runs on your laptop (Ollama, LM Studio)
+- The model runs on a box on your network (self-hosted vLLM instance)
+- The model runs in the cloud (Anthropic API, OpenAI API)
+- The model runs on a Raspberry Pi on your desk (PicoClaw-style)
+
+This is genuine infrastructure independence. OpenClaw's Gateway is a Node.js
+server that must be running. HIVE's "infrastructure" is `~/.hive/` existing on
+disk. The agent runtimes bring their own infrastructure — HIVE just writes the
+files they need and reads the files they produce.
+
+### The Project-Specific Memory Advantage
+
+This infrastructure independence compounds with per-project memory. Consider:
+
+**Scenario:** You have three projects. Project A is an Elixir backend that runs
+best with Claude (good at Elixir). Project B is a Python ML pipeline that runs
+best with Codex (good at Python/data). Project C is a React frontend that runs
+well with any model.
+
+With HIVE:
+- Project A's config specifies Claude runtimes
+- Project B's config specifies Codex runtimes
+- Project C uses the cheapest available model
+- Each project has its own memory file tracking conventions, decisions, patterns
+- Cross-project knowledge.md captures learnings that transfer
+- The steward picks the right runtime per task *per project*
+
+With OpenClaw:
+- You pick one model for the instance
+- You could run separate instances per project, but then you lose cross-project
+  memory (each instance has its own memory)
+- The boss/employee multi-instance pattern helps but adds massive overhead
+
+### The Token Budget Maximization Angle
+
+Different model providers offer different subscription tiers, rate limits, and
+token budgets. If you're paying for Claude Pro, Codex, and Gemini, you have
+three separate token pools. A single-model system wastes two of those
+subscriptions. A multi-model system like HIVE can **spread work across all
+three pools**, maximizing the value of each subscription.
+
+This is a practical economic argument that becomes stronger as people subscribe
+to multiple AI services:
+
+- **Claude Pro:** Use for architecture, complex reasoning, Elixir code
+- **Codex (ChatGPT Pro):** Use for Python, data pipelines, quick iterations
+- **Gemini:** Use for research, documentation, large-context analysis
+- **Local models (free):** Use for orchestration, memory curation, simple tasks
+
+HIVE's per-agent runtime configuration makes this trivial: assign each persona
+to the runtime where it gets the best value. The steward runs on a local model
+(free). The craftsman runs on Claude (best for your stack). The scout runs on
+Gemini (best context window for research). The critic runs on Codex (spreading
+the budget).
+
+Nobody subscribes to just one AI service anymore. HIVE is the **router that
+maximizes the return on your total AI spend** by putting each task on the
+right model based on both capability and budget.
+
+This also acts as a natural **rate limit mitigation** strategy. When one
+provider is rate-limited or slow, work shifts to another. The hive never blocks
+on a single provider's availability.
+
+### The Offline / Degraded Mode Story
+
+Because HIVE's coordination is files and its adapters are CLI tools, the system
+degrades gracefully:
+
+- Cloud is down? Orchestrator falls back to local model. Workers fall back
+  to local models. Quality degrades but work continues.
+- Internet is out? Local models handle orchestration and simple tasks.
+  Cloud-dependent workers queue their assignments in BOARD.md until
+  connectivity returns.
+- Rate limited? Steward reassigns to a different runtime.
+
+OpenClaw with cloud models: gateway runs, but the brain is dead until the API
+returns. There's no fallback path unless you've pre-configured local model
+support.
+
+---
+
 ## Summary
 
 | Dimension | OpenClaw | HIVE |
