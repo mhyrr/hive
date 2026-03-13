@@ -98,6 +98,14 @@ function truncateText(text, max) {
   return normalized.slice(0, limit - 1).trimEnd() + '\u2026';
 }
 
+function truncateMultilineText(text, max) {
+  if (!text) return '';
+  var normalized = String(text).replace(/\r\n/g, '\n').trim();
+  var limit = typeof max === 'number' ? max : 360;
+  if (normalized.length <= limit) return normalized;
+  return normalized.slice(0, limit - 1).trimEnd() + '\u2026';
+}
+
 function formatRelativeAge(iso) {
   if (!iso) return '';
 
@@ -745,8 +753,8 @@ function renderConsoleHistory() {
 
   if (items.length === 0) {
     container.innerHTML = '<div class="console-welcome">' +
-      '<p>Speak to the swarm.</p>' +
-      '<p class="console-welcome-hint">Console steers. The live rail watches.</p>' +
+      '<p>Talk to the steward.</p>' +
+      '<p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>' +
       '</div>';
     return;
   }
@@ -1284,6 +1292,12 @@ function renderLiveAgents(agents) {
   var html = '';
   for (var i = 0; i < agents.length; i++) {
     var agent = agents[i];
+    var outputPreview = '';
+    if (Array.isArray(agent.tail) && agent.tail.length > 0) {
+      outputPreview = truncateMultilineText(agent.tail.slice(-4).join('\n'), 420);
+    } else if (agent.latestOutput) {
+      outputPreview = truncateMultilineText(agent.latestOutput, 320);
+    }
     var meta = [
       agent.runtime || '',
       agent.model || '',
@@ -1300,8 +1314,8 @@ function renderLiveAgents(agents) {
     html += '<div class="' + toneClass('status-pill', toneFromStatus(agent.status)) + '">' + escapeHtml(agent.status || 'active') + '</div>';
     html += '</div>';
     html += '<div class="agent-card-meta">' + escapeHtml(joinMeta(meta)) + '</div>';
-    if (agent.latestOutput) {
-      html += '<div class="agent-card-output">' + escapeHtml(truncateText(agent.latestOutput, 180)) + '</div>';
+    if (outputPreview) {
+      html += '<div class="agent-card-output">' + escapeHtml(outputPreview) + '</div>';
     } else {
       html += '<div class="agent-card-output agent-card-output--empty">No visible output yet.</div>';
     }

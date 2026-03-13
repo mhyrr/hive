@@ -31,12 +31,15 @@ import { isProcessAlive, DEFAULT_MAX_PARALLEL, DEFAULT_SUPERVISOR_INTERVAL_SECON
 import {
   createSession,
   getActiveSession,
+  getPendingSessionTurns,
   getSessionHistory,
   getSessionState,
   listSessions,
   getSession,
   appendTurn,
+  enqueuePendingSessionTurn,
   switchSessionProject,
+  takePendingSessionTurns,
   type SessionTurnDetails,
 } from "../lib/sessions";
 import {
@@ -50,6 +53,8 @@ import { findPlanAgent, normalizeProjectName, parseDefaultTeam } from "../lib/pr
 import { UsageError } from "../lib/errors";
 import { listApprovals, type ApprovalRequest } from "../lib/approvals";
 import { listRecentEvents, type EventRecord } from "../lib/events";
+
+const pendingSessionTurnDrains = new Map<string, Promise<void>>();
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -266,6 +271,63 @@ function pushStatusNote(notes: string[], note: string): void {
   notes.push(normalized);
 }
 
+function formatQueuedTurnBatchMessage(input: {
+  batch: Array<{ content: string; ts: string }>;
+}): string {
+  if (input.batch.length === 0) {
+    return "";
+  }
+
+  if (input.batch.length === 1) {
+    return input.batch[0]!.content;
+  }
+
+  const lines = [
+    "These follow-up messages arrived while you were still responding. Treat them as the next human turn and address them together in one reply.",
+    "",
+  ];
+
+  for (const item of input.batch) {
+    lines.push(`### ${formatActivityTime(item.ts) ?? item.ts}`);
+    lines.push(item.content);
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
+}
+
+function buildQueuedFollowUpLead(queuedCount: number): string {
+  const countLabel = `${queuedCount} follow-up${queuedCount === 1 ? "" : "s"}`;
+  return `I'm still in the middle of a live steward turn, so I queued your latest note and will pick it up next. ${countLabel} ${queuedCount === 1 ? "is" : "are"} waiting behind the current reply.`;
+}
+
+function buildDirectTurnPlaceholder(message: string): string {
+  const normalized = message.trim().toLowerCase();
+
+  if (
+    normalized.includes("codex") ||
+    normalized.includes("claude") ||
+    normalized.includes("runtime") ||
+    normalized.includes("model") ||
+    normalized.includes("switch")
+  ) {
+    return "One second. I'm checking which runtime this steward session is using and how the project is wired.";
+  }
+
+  if (
+    normalized.includes("what's happening") ||
+    normalized.includes("what is happening") ||
+    normalized.includes("going on") ||
+    normalized.includes("right now") ||
+    normalized.includes("status") ||
+    normalized.includes("progress")
+  ) {
+    return "One second. I'm checking the live board, runs, and inbox.";
+  }
+
+  return "One second. Let me check the board, recent runs, and open messages before I answer.";
+}
+
 function buildSessionTurnDetails(input: {
   project: string;
   state: ProjectRuntimeState;
@@ -316,6 +378,93 @@ function buildSessionTurnDetails(input: {
     },
     statusNotes: uniqueNotes.length > 0 ? uniqueNotes : null,
   };
+}
+
+type ContinueConsoleWorkflowInput = {
+  options: GatewayOptions;
+  broadcast: GatewayBroadcast;
+  sessionId: string;
+  project: string;
+  message: string;
+  origin?: "human" | "queued-follow-up";
+};
+
+async function schedulePendingSessionTurnDrain(input: {
+  options: GatewayOptions;
+  broadcast: GatewayBroadcast;
+  sessionId: string;
+}): Promise<void> {
+  if (pendingSessionTurnDrains.has(input.sessionId)) {
+    return;
+  }
+
+  const drainPromise = (async () => {
+    while (true) {
+      const sessionState = await getSessionState(
+        input.options.hivePaths.sessionsDir,
+        input.sessionId,
+      );
+      const pendingTurns = getPendingSessionTurns(sessionState);
+
+      if (pendingTurns.length === 0) {
+        return;
+      }
+
+      const projectId = pendingTurns[0]!.projectId;
+
+      if (!projectId || projectId === "default") {
+        await takePendingSessionTurns({
+          sessionsDir: input.options.hivePaths.sessionsDir,
+          sessionId: input.sessionId,
+          projectId,
+        });
+        continue;
+      }
+
+      const projectPaths = getProjectPaths(input.options.hivePaths, projectId);
+      await reconcileActiveConsoleRun(projectPaths);
+
+      if (await readActiveRun(projectPaths, "console")) {
+        await Bun.sleep(750);
+        continue;
+      }
+
+      const batch = await takePendingSessionTurns({
+        sessionsDir: input.options.hivePaths.sessionsDir,
+        sessionId: input.sessionId,
+        projectId,
+      });
+
+      if (batch.length === 0) {
+        await Bun.sleep(150);
+        continue;
+      }
+
+      broadcastSessionStream({
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: projectId,
+        content:
+          batch.length === 1
+            ? "Picking up the follow-up you sent while I was finishing the last turn."
+            : `Picking up ${batch.length} queued follow-ups now.`,
+      });
+
+      await continueConsoleWorkflow({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: projectId,
+        message: formatQueuedTurnBatchMessage({ batch }),
+        origin: "queued-follow-up",
+      });
+    }
+  })().finally(() => {
+    pendingSessionTurnDrains.delete(input.sessionId);
+  });
+
+  pendingSessionTurnDrains.set(input.sessionId, drainPromise);
+  await drainPromise;
 }
 
 type GatewayLiveAgent = {
@@ -455,9 +604,9 @@ function resolveAgentPresentation(input: {
 
   if (input.agentId === "orchestrator") {
     return {
-      displayName: "orchestrator",
+      displayName: "background steward",
       persona: "steward",
-      descriptor: "project orchestration steward",
+      descriptor: "background coordination steward",
     };
   }
 
@@ -946,7 +1095,7 @@ function describeLeadRun(run: RunRecord): string {
   }
 
   if (run.agentId === "orchestrator") {
-    return "The hive is actively assessing the project and deciding the next moves";
+    return "The background steward is assessing the project and deciding the next moves";
   }
 
   return `${run.agentId} is actively working${run.taskId ? ` on ${run.taskId}` : ""}`;
@@ -958,7 +1107,7 @@ function summarizeRecentResult(input: {
   summary: string;
 }): string {
   const base = input.agentId === "orchestrator"
-    ? "The last completed hive pass"
+    ? "The last completed background steward pass"
     : `The last completed step from ${input.agentId}`;
 
   if (input.summary.trim()) {
@@ -1094,11 +1243,24 @@ async function createGatewaySession(input: {
   project: string;
 }): Promise<Awaited<ReturnType<typeof createSession>>> {
   const globalConfig = await Bun.file(input.options.hivePaths.config).text().catch(() => "");
+  let projectConfig = "";
+  let plan = "";
   let runtime = "claude";
   let model: string | null = null;
 
   try {
-    const hints = resolveRuntimeHints({ globalConfig });
+    if (input.project && input.project !== "default") {
+      const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
+      const projectContext = await readProjectAgentContext(projectPaths);
+      projectConfig = projectContext.projectConfig;
+      plan = projectContext.plan;
+    }
+
+    const hints = resolveRuntimeHints({
+      globalConfig,
+      teamAgent: parseDefaultTeam(projectConfig).find((agent) => agent.id === "orchestrator") ?? null,
+      planAgent: findPlanAgent(plan, "orchestrator"),
+    });
     runtime = hints.runtime;
     model = hints.model;
   } catch {
@@ -1227,12 +1389,12 @@ async function continueQueuedWorkflow(input: {
       sayResult.split("\n").find((line) => /Supervisor/i.test(line)) ??
       "Supervisor state updated.";
     pushStatusNote(statusNotes, supervisorLine);
-    pushStatusNote(statusNotes, "Turn routed through queued orchestration.");
+    pushStatusNote(statusNotes, "Turn routed through background coordination.");
     broadcastSessionStream({
       broadcast: input.broadcast,
       sessionId: input.sessionId,
       project: input.project,
-      content: "Queued orchestration is assessing the project.",
+      content: "Background coordination is assessing the project.",
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -1274,7 +1436,7 @@ async function continueQueuedWorkflow(input: {
 
     if (orchestratorRun && !announcedOrchestratorRun) {
       announcedOrchestratorRun = true;
-      pushStatusNote(statusNotes, `Orchestrator run ${orchestratorRun.runId} started.`);
+      pushStatusNote(statusNotes, `Background coordination pass ${orchestratorRun.runId} started.`);
       broadcastSessionStream({
         broadcast: input.broadcast,
         sessionId: input.sessionId,
@@ -1368,7 +1530,7 @@ async function continueQueuedWorkflow(input: {
           sessionId: input.sessionId,
           project: input.project,
           role: "assistant",
-          content: "Queued orchestration finished without a visible reply.",
+          content: "Background coordination finished without a visible reply.",
           source: "system",
           details: buildSessionTurnDetails({
             project: input.project,
@@ -1437,7 +1599,7 @@ async function continueQueuedWorkflow(input: {
     sessionId: input.sessionId,
     project: input.project,
     role: "assistant",
-    content: "This is still in motion. I’ll keep the board moving, and the next orchestration result will land here when it’s ready.",
+    content: "This is still in motion. I’ll keep the board moving, and the next background coordination result will land here when it’s ready.",
     source: "system",
     details: buildSessionTurnDetails({
       project: input.project,
@@ -1447,19 +1609,28 @@ async function continueQueuedWorkflow(input: {
   });
 }
 
-async function continueConsoleWorkflow(input: {
-  options: GatewayOptions;
-  broadcast: GatewayBroadcast;
-  sessionId: string;
-  project: string;
-  message: string;
-}): Promise<void> {
+async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Promise<void> {
   if (!input.project || input.project === "default") {
     return;
   }
 
   let supervisorLine = "Supervisor state updated.";
   const statusNotes: string[] = [];
+  let placeholderTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    broadcastSessionStream({
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+      project: input.project,
+      content: buildDirectTurnPlaceholder(input.message),
+    });
+  }, 700);
+
+  function clearPlaceholderTimer(): void {
+    if (placeholderTimer) {
+      clearTimeout(placeholderTimer);
+      placeholderTimer = null;
+    }
+  }
 
   try {
     supervisorLine = await ensureSupervisorRunning({
@@ -1478,26 +1649,46 @@ async function continueConsoleWorkflow(input: {
       role: "assistant",
       content: `I couldn't prepare the runtime infrastructure: ${errorMessage}`,
     });
+    clearPlaceholderTimer();
     return;
   }
-
-  broadcastSessionStream({
-    broadcast: input.broadcast,
-    sessionId: input.sessionId,
-    project: input.project,
-    content: "Reviewing the current project state and preparing a response.",
-  });
 
   const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
   await reconcileActiveConsoleRun(projectPaths);
   const existingConsoleRun = await readActiveRun(projectPaths, "console");
 
   if (existingConsoleRun) {
+    clearPlaceholderTimer();
+    if (input.origin === "queued-follow-up") {
+      await enqueuePendingSessionTurn({
+        sessionsDir: input.options.hivePaths.sessionsDir,
+        sessionId: input.sessionId,
+        projectId: input.project,
+        content: input.message,
+      });
+      void schedulePendingSessionTurnDrain({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+      });
+      return;
+    }
+
+    const queuedState = await enqueuePendingSessionTurn({
+      sessionsDir: input.options.hivePaths.sessionsDir,
+      sessionId: input.sessionId,
+      projectId: input.project,
+      content: input.message,
+    });
+    const queuedCount = getPendingSessionTurns(queuedState, input.project).length;
+
     pushStatusNote(statusNotes, `Live console run already active: ${existingConsoleRun.runId}.`);
+    pushStatusNote(statusNotes, `Queued ${queuedCount} follow-up message(s) for the live steward.`);
+
     const currentActivity = await buildCurrentActivitySummary({
       options: input.options,
       project: input.project,
-      lead: "I already have a live turn in progress, so I'm not starting another overlapping pass.",
+      lead: buildQueuedFollowUpLead(queuedCount),
     });
 
     await appendSessionTurnAndBroadcast({
@@ -1517,25 +1708,72 @@ async function continueConsoleWorkflow(input: {
         statusNotes,
       }),
     });
+    void schedulePendingSessionTurnDrain({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+    });
     return;
   }
 
   try {
+    let streamedReply = "";
     const direct = await runDirectStewardTurn({
       hivePaths: input.options.hivePaths,
       projectId: input.project,
       sessionId: input.sessionId,
       humanMessage: input.message,
+      onOutput: (chunk) => {
+        const normalized = chunk.trim();
+
+        if (!normalized) {
+          return;
+        }
+
+        clearPlaceholderTimer();
+        streamedReply = streamedReply ? `${streamedReply}\n${normalized}` : normalized;
+        broadcastSessionStream({
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+          project: input.project,
+          content: streamedReply,
+        });
+      },
     });
 
     if (direct.mode === "fallback") {
+      clearPlaceholderTimer();
       pushStatusNote(statusNotes, `Direct steward unavailable: ${direct.reason}`);
 
       if (/console run already active/i.test(direct.reason)) {
+        if (input.origin === "queued-follow-up") {
+          await enqueuePendingSessionTurn({
+            sessionsDir: input.options.hivePaths.sessionsDir,
+            sessionId: input.sessionId,
+            projectId: input.project,
+            content: input.message,
+          });
+          void schedulePendingSessionTurnDrain({
+            options: input.options,
+            broadcast: input.broadcast,
+            sessionId: input.sessionId,
+          });
+          return;
+        }
+
+        const queuedState = await enqueuePendingSessionTurn({
+          sessionsDir: input.options.hivePaths.sessionsDir,
+          sessionId: input.sessionId,
+          projectId: input.project,
+          content: input.message,
+        });
+        const queuedCount = getPendingSessionTurns(queuedState, input.project).length;
+
+        pushStatusNote(statusNotes, `Queued ${queuedCount} follow-up message(s) for the live steward.`);
         const currentActivity = await buildCurrentActivitySummary({
           options: input.options,
           project: input.project,
-          lead: "I already have a live turn in progress, so I'm not starting another overlapping pass.",
+          lead: buildQueuedFollowUpLead(queuedCount),
         });
 
         await appendSessionTurnAndBroadcast({
@@ -1552,6 +1790,11 @@ async function continueConsoleWorkflow(input: {
             statusNotes,
           }),
         });
+        void schedulePendingSessionTurnDrain({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+        });
         return;
       }
 
@@ -1559,7 +1802,7 @@ async function continueConsoleWorkflow(input: {
         broadcast: input.broadcast,
         sessionId: input.sessionId,
         project: input.project,
-        content: "Direct reply path is unavailable, so the hive is continuing through orchestrated work.",
+        content: "Direct reply path is unavailable, so the hive is continuing through background coordination.",
       });
 
       await continueQueuedWorkflow({
@@ -1569,6 +1812,7 @@ async function continueConsoleWorkflow(input: {
       return;
     }
 
+    clearPlaceholderTimer();
     pushStatusNote(statusNotes, `Direct steward run completed: ${direct.finalRun.runId}.`);
     const finalState = await refreshProjectRuntimeState({
       hivePaths: input.options.hivePaths,
@@ -1603,6 +1847,11 @@ async function continueConsoleWorkflow(input: {
           statusNotes,
         }),
       });
+      void schedulePendingSessionTurnDrain({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+      });
       return;
     }
 
@@ -1632,14 +1881,20 @@ async function continueConsoleWorkflow(input: {
         statusNotes,
       }),
     });
+    void schedulePendingSessionTurnDrain({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+    });
   } catch (error) {
+    clearPlaceholderTimer();
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     pushStatusNote(statusNotes, `Direct steward failed: ${errorMessage}`);
     broadcastSessionStream({
       broadcast: input.broadcast,
       sessionId: input.sessionId,
       project: input.project,
-      content: "The direct reply path failed, so the hive is continuing through orchestrated work.",
+      content: "The direct reply path failed, so the hive is continuing through background coordination.",
     });
 
     await continueQueuedWorkflow({

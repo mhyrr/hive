@@ -7,7 +7,9 @@ import { parseFrontmatter } from "../src/lib/frontmatter";
 import {
   appendTurn,
   createSession,
+  enqueuePendingSessionTurn,
   getActiveSession,
+  getPendingSessionTurns,
   getSession,
   getSessionHistory,
   getSessionPrompt,
@@ -15,6 +17,7 @@ import {
   listSessions,
   parseHistory,
   switchSessionProject,
+  takePendingSessionTurns,
   updateSessionState,
   updateSessionProjectState,
 } from "../src/lib/sessions";
@@ -419,6 +422,65 @@ Got it. Sending correction to alpha.
     expect(updatedState!.projectStates.myproject?.lastRevisionSeen).toBe(7);
     expect(updatedState!.projectStates.myproject?.lastRunId).toBe("20260311-141105Z-console");
     expect(updatedState!.projectStates.otherproj?.lastRevisionSeen).toBe(2);
+  });
+
+  test("pending follow-up turns are queued per project and can be drained in order", async () => {
+    const session = await createSession({
+      sessionsDir,
+      project: "myproject",
+      runtime: "claude",
+      model: null,
+      systemPrompt: "test",
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-11T14:11:06Z";
+    await enqueuePendingSessionTurn({
+      sessionsDir,
+      sessionId: session.sessionId,
+      projectId: "myproject",
+      content: "first follow-up",
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-11T14:11:07Z";
+    await enqueuePendingSessionTurn({
+      sessionsDir,
+      sessionId: session.sessionId,
+      projectId: "otherproj",
+      content: "other project note",
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-11T14:11:08Z";
+    const state = await enqueuePendingSessionTurn({
+      sessionsDir,
+      sessionId: session.sessionId,
+      projectId: "myproject",
+      content: "second follow-up",
+    });
+
+    expect(getPendingSessionTurns(state, "myproject").map((item) => item.content)).toEqual([
+      "first follow-up",
+      "second follow-up",
+    ]);
+    expect(getPendingSessionTurns(state, "otherproj").map((item) => item.content)).toEqual([
+      "other project note",
+    ]);
+
+    const drained = await takePendingSessionTurns({
+      sessionsDir,
+      sessionId: session.sessionId,
+      projectId: "myproject",
+    });
+
+    expect(drained.map((item) => item.content)).toEqual([
+      "first follow-up",
+      "second follow-up",
+    ]);
+
+    const afterDrain = await getSessionState(sessionsDir, session.sessionId);
+    expect(getPendingSessionTurns(afterDrain, "myproject")).toEqual([]);
+    expect(getPendingSessionTurns(afterDrain, "otherproj").map((item) => item.content)).toEqual([
+      "other project note",
+    ]);
   });
 
   test("switchSessionProject updates current project and metadata", async () => {
