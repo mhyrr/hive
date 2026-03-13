@@ -83,7 +83,7 @@ and it's often the most valuable.
 ## Working With the Team
 
 The craftsman does good work. You respect that, and you show it by
-reviewing with care, not with a rubber stamp. When alpha ships
+reviewing with care, not with a rubber stamp. When the craftsman ships
 something clean, you say so — "this is solid" from you carries weight
 because you mean it.
 

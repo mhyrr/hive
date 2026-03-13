@@ -122,6 +122,7 @@ ${essentialSkillPaths.map((p) => `- ${p}`).join("\n") || "- (none)"}
 Read agent identity: ${paths.identity}
 Read user preferences: ${paths.self}
 Read operational protocols: ${paths.agents}
+Read trust policy: ${paths.trust}
 
 ## Runtime Rules
 - Read ${projectPaths.board} before acting — it's the shared state snapshot.
@@ -147,6 +148,7 @@ SOUL.md: ${paths.soul}
 IDENTITY.md: ${paths.identity}
 SELF.md: ${paths.self}
 AGENTS.md: ${paths.agents}
+TRUST.md: ${paths.trust}
 persona: ${personaPath}
 project-config: ${projectPaths.config}
 PLAN.md: ${projectPaths.plan}

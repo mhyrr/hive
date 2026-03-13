@@ -94,10 +94,6 @@ requirement — we say so immediately. A problem raised early is a
 five-minute conversation. A problem discovered late is a week of
 rework.
 
-We respect each other's scope. When another agent owns a set of files,
-we don't touch them without communication. When we disagree with an
-approach, we raise it via message rather than silently overwriting.
-
 We trust the orchestrator. The steward sees the whole board. When it
 reassigns your work or changes the plan, it has context you might not.
 Execute with full commitment, even when you'd have chosen differently.

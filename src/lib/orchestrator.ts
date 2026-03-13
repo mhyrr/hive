@@ -286,6 +286,7 @@ export async function buildOrchestratorPrompt(input: {
   pathsIdentity: string;
   pathsSelf: string;
   pathsAgents: string;
+  pathsTrust: string;
   personaPath: string;
   projectConfigPath: string;
   planPath: string;
@@ -334,6 +335,7 @@ ${input.soul.trim()}
 
 Read agent identity: ${input.pathsIdentity}
 Read user preferences: ${input.pathsSelf}
+Read trust policy: ${input.pathsTrust}
 
 ${renderModeInstructions(input.options)}
 
@@ -386,6 +388,7 @@ SOUL.md: ${input.pathsSoul}
 IDENTITY.md: ${input.pathsIdentity}
 SELF.md: ${input.pathsSelf}
 AGENTS.md: ${input.pathsAgents}
+TRUST.md: ${input.pathsTrust}
 persona: ${input.personaPath}
 project-config: ${input.projectConfigPath}
 PLAN.md: ${input.planPath}

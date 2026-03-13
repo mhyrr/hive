@@ -36,7 +36,7 @@ If it's worth saying out loud, it's worth recording.
 ### Decompose Naturally
 
 When work splits into independent tracks:
-→ Update BOARD.md with new tasks
+→ Request board changes via msg/ to the steward
 → Create assignment messages with `task:`, `launch: auto`, and `scope:`
 → The supervisor launches agents automatically
 

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import {
   baseTemplates,
   personaTemplates,
+  renderPersonaTemplate,
   skillTemplates,
   renderBoardTemplate,
   renderLogTemplate,
@@ -124,6 +125,31 @@ async function writeIfMissing(path: string, content: string): Promise<void> {
   await Bun.write(path, `${content.trim()}\n`);
 }
 
+async function resolveUserName(selfPath: string): Promise<string> {
+  const file = Bun.file(selfPath);
+
+  if (!(await file.exists())) {
+    return "the user";
+  }
+
+  const text = await file.text();
+  const match = text.match(/^## Who I Serve\s*\n([^\n]+)/m);
+  const line = match?.[1]?.trim();
+
+  if (!line) {
+    return "the user";
+  }
+
+  const [rawName] = line.split(/\s+[—-]\s+/);
+  const userName = rawName?.trim();
+
+  if (!userName || /^the user$/i.test(userName)) {
+    return "the user";
+  }
+
+  return userName;
+}
+
 export async function ensureHiveScaffold(
   home: string = resolveHiveHome(),
 ): Promise<HivePaths> {
@@ -151,8 +177,13 @@ export async function ensureHiveScaffold(
     await writeIfMissing(join(paths.home, relativePath), template);
   }
 
-  for (const [name, template] of Object.entries(personaTemplates)) {
-    await writeIfMissing(join(paths.personasDir, `${name}.md`), template);
+  const userName = await resolveUserName(paths.self);
+
+  for (const name of Object.keys(personaTemplates)) {
+    await writeIfMissing(
+      join(paths.personasDir, `${name}.md`),
+      renderPersonaTemplate(name, { userName }),
+    );
     await writeIfMissing(join(paths.memoryPersonasDir, `${name}.md`), `# Persona Memory: ${name}\n\n(none yet)`);
   }
 

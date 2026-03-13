@@ -78,6 +78,7 @@ type StewardPromptContext = {
   identityPath: string;
   selfPath: string;
   agentsPath: string;
+  trustPath: string;
   memorySummaryPath: string;
   memoryHeatPath: string;
   recentDecisionsPath: string;
@@ -228,6 +229,7 @@ ${input.soul}
 Read agent identity: ${input.identityPath}
 Read user preferences: ${input.selfPath}
 Read operational doctrine: ${input.agentsPath}
+Read trust policy: ${input.trustPath}
 
 ## Operating Rules
 - Answer the human directly and concretely.
@@ -388,6 +390,7 @@ export async function runDirectStewardTurn(
     identityPath: input.hivePaths.identity,
     selfPath: input.hivePaths.self,
     agentsPath: input.hivePaths.agents,
+    trustPath: input.hivePaths.trust,
     memorySummaryPath: memoryContext.memorySummaryPath,
     memoryHeatPath: memoryContext.memoryHeatPath,
     recentDecisionsPath: memoryContext.recentDecisionsPath,

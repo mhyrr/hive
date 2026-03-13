@@ -89,6 +89,7 @@ function buildConsolePrompt(input: {
   pathsIdentity: string;
   pathsSelf: string;
   pathsAgents: string;
+  pathsTrust: string;
   pathsConfig: string;
   pathsFeed: string;
   knowledgePath: string;
@@ -134,6 +135,7 @@ ${essentialSkillPaths.map((p) => `- ${p}`).join("\n") || "- (none)"}
 
 Read your agent identity: ${input.pathsIdentity}
 Read operational protocols: ${input.pathsAgents}
+Read trust policy: ${input.pathsTrust}
 Read your user's preferences: ${input.pathsSelf}
 
 ## How You Operate
@@ -183,6 +185,7 @@ SOUL.md: ${input.pathsSoul}
 IDENTITY.md: ${input.pathsIdentity}
 SELF.md: ${input.pathsSelf}
 AGENTS.md: ${input.pathsAgents}
+TRUST.md: ${input.pathsTrust}
 config: ${input.pathsConfig}
 feed: ${input.pathsFeed}
 knowledge: ${input.knowledgePath}
@@ -281,6 +284,7 @@ export async function consoleCommand(args: string[]): Promise<string> {
     pathsIdentity: paths.identity,
     pathsSelf: paths.self,
     pathsAgents: paths.agents,
+    pathsTrust: paths.trust,
     pathsConfig: paths.config,
     pathsFeed: paths.feed,
     knowledgePath: join(paths.memoryDir, "knowledge.md"),

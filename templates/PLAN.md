@@ -9,6 +9,6 @@ Task: Decompose, assign, monitor, adjust.
 
 ## Rules
 - Read BOARD.md before starting work.
-- Check ~/.hive/msg/ between major steps.
+- Check `hive inbox <agent>` between major steps.
 - Post all deliverables and status changes via msg/.
 - Append decisions and learnings to LOG.md.
