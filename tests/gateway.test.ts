@@ -6,17 +6,21 @@ import { join } from "node:path";
 import { runCli } from "../src/cli";
 import { handleApi } from "../src/gateway/routes";
 import { startGateway, stopGateway } from "../src/gateway/server";
+import { createApprovalRequest } from "../src/lib/approvals";
 import { writeDetachedSupervisorState } from "../src/lib/detached-supervisor";
-import { listProjectMessages } from "../src/lib/messages";
+import { appendEvent } from "../src/lib/events";
+import { createMessage, listProjectMessages } from "../src/lib/messages";
 import { ensureHiveScaffold, getProjectPaths, type HivePaths } from "../src/lib/paths";
 import {
   createRunDraft,
+  finalizeRun,
   getRunOutputPath,
   listActiveRuns,
   listAllRuns,
   listRecentRunResults,
   markRunActive,
   readActiveRun,
+  writeRunResult,
 } from "../src/lib/runs";
 import { getSessionHistory } from "../src/lib/sessions";
 
@@ -819,6 +823,260 @@ describe("Gateway session endpoints", () => {
       entry.agentId === "alpha" &&
       entry.tail.join("\n").includes("checking board")
     )).toBe(true);
+  });
+
+  test("live snapshot endpoint returns structured agents, activity, and recent completions", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "testproj");
+    let activeRun = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "# Prompt",
+      source: "gateway-test",
+    });
+    activeRun = await markRunActive(projectPaths, activeRun, process.pid);
+    await Bun.write(getRunOutputPath(activeRun), "reading compact state\nassigning worker\n");
+
+    let completedRun = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "beta",
+      runtime: "claude",
+      model: "claude-opus-4-6",
+      prompt: "# Prompt",
+      source: "gateway-test",
+    });
+    completedRun = await finalizeRun({
+      projectPaths,
+      run: completedRun,
+      status: "exited",
+      exitCode: 0,
+    });
+    await writeRunResult(completedRun, {
+      finalVisibleOutput: "Implemented the auth fix and updated the tests.",
+      changedFiles: ["src/auth.ts", "tests/auth.test.ts"],
+      durationMs: 4200,
+      numTurns: 2,
+      totalTokens: 1800,
+    });
+
+    await writeDetachedSupervisorState(projectPaths, {
+      projectId: "testproj",
+      pid: process.pid,
+      status: "active",
+      mode: "detached",
+      intervalSeconds: 30,
+      maxParallel: 3,
+      startedAt: "2026-03-11T14:00:00Z",
+      updatedAt: "2026-03-11T14:00:00Z",
+      lastPassAt: "2026-03-11T14:00:00Z",
+      stoppedAt: null,
+      stopRequestedAt: null,
+      stopRequestedBy: null,
+      logPath: join(projectPaths.supervisorDir, "detached.log"),
+    });
+    await Bun.write(join(projectPaths.supervisorDir, "detached.log"), "tick one\nchecking assignments\n");
+
+    const req = new Request("http://localhost/api/live?project=testproj");
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      project: string | null;
+      summary: string | null;
+      supervisor: { status: string; tail: string[] } | null;
+      agents: Array<{ agentId: string; latestOutput: string | null; runtime: string }>;
+      recentCompletions: Array<{ agentId: string; summary: string; changedFiles: string[] }>;
+      activity: Array<{ title: string; detail: string }>;
+    };
+
+    expect(data.project).toBe("testproj");
+    expect(typeof data.summary).toBe("string");
+    expect(data.supervisor?.status).toBe("active");
+    expect(data.supervisor?.tail).toEqual(["tick one", "checking assignments"]);
+    expect(data.agents.some((agent) =>
+      agent.agentId === "alpha" &&
+      agent.runtime === "codex" &&
+      agent.latestOutput?.includes("assigning worker")
+    )).toBe(true);
+    expect(data.recentCompletions.some((completion) =>
+      completion.agentId === "beta" &&
+      completion.summary.includes("Implemented the auth fix") &&
+      completion.changedFiles.includes("src/auth.ts")
+    )).toBe(true);
+    expect(data.activity.length).toBeGreaterThan(0);
+  });
+
+  test("queue snapshot endpoint returns approvals, waiting on human, and incidents", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    await createApprovalRequest({
+      paths: context.paths,
+      kind: "deploy",
+      summary: "Deploy the login fix",
+      note: "Need confirmation before rolling the hotfix.",
+      project: "testproj",
+      requestedBy: "steward",
+    });
+    await createMessage(context.paths.msgDir, {
+      from: "alpha",
+      to: "human",
+      type: "question",
+      project: "testproj",
+      body: "Which rollout window should I target?",
+    });
+    await appendEvent({
+      paths: context.paths,
+      scope: "external",
+      kind: "sentry.alert",
+      source: "sentry",
+      project: "testproj",
+      severity: "warning",
+      summary: "Login failures are spiking",
+      details: ["error rate exceeded threshold", "route: /login"],
+      data: { routed: true },
+    });
+
+    const req = new Request("http://localhost/api/queue?project=testproj");
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      project: string | null;
+      approvals: Array<{ kind: string; summary: string }>;
+      waitingOnHuman: Array<{ from: string; to: string; needsHumanReply: boolean; summary: string }>;
+      incidents: Array<{ source: string; severity: string; routed: boolean; summary: string }>;
+    };
+
+    expect(data.project).toBe("testproj");
+    expect(data.approvals.some((approval) =>
+      approval.kind === "deploy" &&
+      approval.summary.includes("Deploy the login fix")
+    )).toBe(true);
+    expect(data.waitingOnHuman.some((item) =>
+      item.from === "alpha" &&
+      item.to === "human" &&
+      item.needsHumanReply === true &&
+      item.summary.includes("rollout window")
+    )).toBe(true);
+    expect(data.incidents.some((incident) =>
+      incident.source === "sentry" &&
+      incident.severity === "warning" &&
+      incident.routed === true &&
+      incident.summary.includes("Login failures")
+    )).toBe(true);
+  });
+
+  test("timeline endpoint returns unified feed and event items", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    await createApprovalRequest({
+      paths: context.paths,
+      kind: "deploy",
+      summary: "Deploy the login fix",
+      project: "testproj",
+      requestedBy: "steward",
+    });
+    await appendEvent({
+      paths: context.paths,
+      kind: "memory.extracted",
+      source: "memory",
+      project: "testproj",
+      summary: "Daily memory extract completed",
+      details: ["journal updated", "project summary refreshed"],
+    });
+
+    const req = new Request("http://localhost/api/timeline?project=testproj&count=10");
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      project: string | null;
+      items: Array<{ source: string; title: string; project: string | null; details: string[] }>;
+    };
+
+    expect(data.project).toBe("testproj");
+    expect(data.items.some((item) =>
+      item.source === "feed" &&
+      item.title.includes("Approval requested")
+    )).toBe(true);
+    expect(data.items.some((item) =>
+      item.source === "event" &&
+      item.title.includes("Daily memory extract completed") &&
+      item.project === "testproj" &&
+      item.details.some((detail) => detail.includes("memory.extracted"))
+    )).toBe(true);
+  });
+
+  test("file endpoint returns plain text for absolute file paths", async () => {
+    const target = join(context.root, "linked-file.md");
+    await Bun.write(target, "# linked\nhello gateway\n");
+
+    const req = new Request(`http://localhost/api/file?path=${encodeURIComponent(target)}`);
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(await res.text()).toContain("hello gateway");
+  });
+
+  test("open endpoint launches a local path through the configured opener", async () => {
+    const target = join(context.root, "open-me.ts");
+    await Bun.write(target, "export const opened = true;\n");
+    process.env.HIVE_OPEN_COMMAND = "/usr/bin/true";
+
+    try {
+      const req = new Request("http://localhost/api/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: target, line: 12 }),
+      });
+      const res = await handleApi(
+        req,
+        new URL(req.url),
+        { port: 0, hivePaths: context.paths },
+        () => {},
+      );
+
+      expect(res.status).toBe(200);
+
+      const data = await res.json() as { ok: boolean; strategy: string };
+      expect(data.ok).toBe(true);
+      expect(data.strategy).toBe("editor-cli");
+    } finally {
+      delete process.env.HIVE_OPEN_COMMAND;
+    }
   });
 
   test("active steward turn reports current activity instead of queueing another pass", async () => {
