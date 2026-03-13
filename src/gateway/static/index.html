@@ -51,12 +51,12 @@
 
     <div class="console-history" id="console-history">
       <div class="console-welcome">
-        <p>Speak to the swarm.</p>
-        <p class="console-welcome-hint">Console steers. The live rail watches.</p>
+        <p>Talk to the steward.</p>
+        <p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>
       </div>
     </div>
     <form class="console-input" id="console-form">
-      <textarea id="console-input" placeholder="Talk to the hive... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
+      <textarea id="console-input" placeholder="Talk to HIVE... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
       <button type="submit" id="console-send-btn">Send</button>
     </form>
     <div class="console-activity" id="console-activity">
@@ -73,13 +73,13 @@
     </div>
 
     <section class="rail-panel rail-panel--active" id="rail-panel-live" data-rail-panel="live">
-      <section class="rail-section">
+      <section class="rail-section rail-section--current-activity">
         <div class="rail-section-header">Current Activity</div>
         <div class="live-summary" id="live-summary">
           <div class="rail-empty">No project in focus yet.</div>
         </div>
       </section>
-      <section class="rail-section">
+      <section class="rail-section rail-section--active-agents">
         <div class="rail-section-header">Active Agents</div>
         <div class="live-agents" id="live-agents">
           <div class="rail-empty">No active agents.</div>

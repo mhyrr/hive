@@ -22,7 +22,7 @@ import {
   readActiveRun,
   writeRunResult,
 } from "../src/lib/runs";
-import { getSessionHistory } from "../src/lib/sessions";
+import { getSession, getSessionHistory, getSessionState } from "../src/lib/sessions";
 
 type TestContext = {
   root: string;
@@ -466,6 +466,20 @@ describe("Gateway session endpoints", () => {
     await runCli(["project", "add", "TestProj", context.repo]);
     await runCli(["work", "testproj"]);
 
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    await Bun.write(
+      projectPaths.config,
+      `# Project: TestProj
+
+## Repo
+path: ${context.repo}
+
+## Default Team
+- orchestrator: steward, claude-opus-4-6 via claude
+- alpha: craftsman via codex
+`,
+    );
+
     const req = new Request("http://localhost/api/console/new", {
       method: "POST",
     });
@@ -484,6 +498,9 @@ describe("Gateway session endpoints", () => {
 
     const sessionDir = join(context.hiveHome, "sessions", data.sessionId);
     expect(await Bun.file(join(sessionDir, "state.json")).exists()).toBeTrue();
+    const sessionMeta = await getSession(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(sessionMeta?.runtime).toBe("claude");
+    expect(sessionMeta?.model).toBe("claude-opus-4-6");
     const sessionState = await Bun.file(join(sessionDir, "state.json")).json() as {
       currentProject: string;
     };
@@ -491,8 +508,8 @@ describe("Gateway session endpoints", () => {
 
     await Bun.sleep(150);
 
-    const projectPaths = getProjectPaths(context.paths, "testproj");
-    const sessionContext = await Bun.file(projectPaths.stateSessionContext).json() as {
+    const refreshedProjectPaths = getProjectPaths(context.paths, "testproj");
+    const sessionContext = await Bun.file(refreshedProjectPaths.stateSessionContext).json() as {
       activeSession: { sessionId: string } | null;
     };
     expect(sessionContext.activeSession?.sessionId).toBe(data.sessionId);
@@ -1079,7 +1096,7 @@ describe("Gateway session endpoints", () => {
     }
   });
 
-  test("active steward turn reports current activity instead of queueing another pass", async () => {
+  test("active steward turn queues the follow-up and reports current activity", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "TestProj", context.repo]);
     await runCli(["work", "testproj"]);
@@ -1114,11 +1131,14 @@ describe("Gateway session endpoints", () => {
     const data = await res.json() as { sessionId: string };
     await Bun.sleep(200);
 
-    const history = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    const [history, sessionState] = await Promise.all([
+      getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId),
+      getSessionState(join(context.hiveHome, "sessions"), data.sessionId),
+    ]);
     expect(history.some((turn) =>
       turn.role === "assistant" &&
       turn.source === "system" &&
-      turn.content.includes("I already have a live turn in progress")
+      turn.content.includes("queued your latest note")
     )).toBe(true);
     expect(history.some((turn) =>
       turn.role === "assistant" &&
@@ -1128,6 +1148,11 @@ describe("Gateway session endpoints", () => {
       turn.role === "assistant" &&
       turn.details?.statusNotes?.some((note) => note.includes("Live console run already active"))
     )).toBe(true);
+    expect(history.some((turn) =>
+      turn.role === "assistant" &&
+      turn.details?.statusNotes?.some((note) => note.includes("Queued 1 follow-up message(s)"))
+    )).toBe(true);
+    expect(sessionState?.pendingTurns.map((item) => item.content)).toContain("what's happening right now?");
 
     const messages = await listProjectMessages(context.paths.msgDir, "testproj");
     expect(messages.some((message) =>

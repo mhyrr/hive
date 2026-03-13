@@ -55,12 +55,19 @@ export type SessionTurnDetails = {
   statusNotes?: string[] | null;
 };
 
+export type PendingSessionTurn = {
+  projectId: string;
+  content: string;
+  ts: string;
+};
+
 export type SessionState = {
   currentProject: string;
   projectStates: Record<string, {
     lastRevisionSeen: number;
     lastRunId: string | null;
   }>;
+  pendingTurns: PendingSessionTurn[];
   updatedAt: string;
 };
 
@@ -68,6 +75,7 @@ type LegacySessionState = {
   project?: string;
   lastRevisionSeen?: number;
   lastRunId?: string | null;
+  pendingTurns?: unknown;
   updatedAt?: string;
 };
 
@@ -116,6 +124,45 @@ function attributesToMeta(attrs: Record<string, string>): SessionMeta {
   };
 }
 
+function normalizePendingSessionTurns(value: unknown): PendingSessionTurn[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const record = item as Record<string, unknown>;
+      const projectId =
+        typeof record.projectId === "string" && record.projectId.trim()
+          ? record.projectId.trim()
+          : null;
+      const content =
+        typeof record.content === "string" && record.content.trim()
+          ? record.content.trim()
+          : null;
+      const ts =
+        typeof record.ts === "string" && record.ts.trim()
+          ? record.ts.trim()
+          : toIsoTimestamp();
+
+      if (!projectId || !content) {
+        return null;
+      }
+
+      return {
+        projectId,
+        content,
+        ts,
+      };
+    })
+    .filter((item): item is PendingSessionTurn => Boolean(item))
+    .sort((left, right) => left.ts.localeCompare(right.ts));
+}
+
 function normalizeSessionState(
   value: SessionState | LegacySessionState | null,
   fallbackProject = "default",
@@ -143,6 +190,7 @@ function normalizeSessionState(
             },
           ]),
       ),
+      pendingTurns: normalizePendingSessionTurns(value.pendingTurns),
       updatedAt:
         typeof value.updatedAt === "string" && value.updatedAt.trim()
           ? value.updatedAt
@@ -160,6 +208,7 @@ function normalizeSessionState(
         lastRunId: typeof legacy?.lastRunId === "string" ? legacy.lastRunId : null,
       },
     },
+    pendingTurns: normalizePendingSessionTurns(legacy?.pendingTurns),
     updatedAt:
       typeof legacy?.updatedAt === "string" && legacy.updatedAt.trim()
         ? legacy.updatedAt
@@ -176,6 +225,7 @@ function createInitialSessionState(project: string, updatedAt: string): SessionS
         lastRunId: null,
       },
     },
+    pendingTurns: [],
     updatedAt,
   };
 }
@@ -516,6 +566,19 @@ export function getProjectSessionState(
   };
 }
 
+export function getPendingSessionTurns(
+  state: SessionState | null,
+  projectId?: string | null,
+): PendingSessionTurn[] {
+  const pending = state?.pendingTurns ?? [];
+
+  if (!projectId) {
+    return pending;
+  }
+
+  return pending.filter((item) => item.projectId === projectId);
+}
+
 export async function switchSessionProject(input: {
   sessionsDir: string;
   sessionId: string;
@@ -607,4 +670,92 @@ export async function updateSessionProjectState(input: {
       updatedAt: toIsoTimestamp(),
     },
   });
+}
+
+export async function enqueuePendingSessionTurn(input: {
+  sessionsDir: string;
+  sessionId: string;
+  projectId: string;
+  content: string;
+  ts?: string;
+}): Promise<SessionState> {
+  const content = input.content.trim();
+
+  if (!content) {
+    return normalizeSessionState(
+      await getSessionState(input.sessionsDir, input.sessionId),
+      input.projectId,
+    );
+  }
+
+  const existing = normalizeSessionState(
+    await getSessionState(input.sessionsDir, input.sessionId),
+    input.projectId,
+  );
+  const ts = input.ts ?? toIsoTimestamp();
+
+  return updateSessionState({
+    sessionsDir: input.sessionsDir,
+    sessionId: input.sessionId,
+    update: {
+      pendingTurns: [
+        ...existing.pendingTurns,
+        {
+          projectId: input.projectId,
+          content,
+          ts,
+        },
+      ],
+      updatedAt: ts,
+    },
+  });
+}
+
+export async function takePendingSessionTurns(input: {
+  sessionsDir: string;
+  sessionId: string;
+  projectId: string;
+  limit?: number;
+}): Promise<PendingSessionTurn[]> {
+  const existing = normalizeSessionState(
+    await getSessionState(input.sessionsDir, input.sessionId),
+    input.projectId,
+  );
+  const matches = existing.pendingTurns.filter((item) => item.projectId === input.projectId);
+  const limit = input.limit && input.limit > 0 ? input.limit : matches.length;
+  const selected = matches.slice(0, limit);
+
+  if (selected.length === 0) {
+    return [];
+  }
+
+  const selectedCounts = new Map<string, number>();
+
+  for (const item of selected) {
+    const key = `${item.projectId}\u0000${item.ts}\u0000${item.content}`;
+    selectedCounts.set(key, (selectedCounts.get(key) ?? 0) + 1);
+  }
+
+  const remaining = existing.pendingTurns.filter((item) => {
+    const key = `${item.projectId}\u0000${item.ts}\u0000${item.content}`;
+    const remainingCount = selectedCounts.get(key) ?? 0;
+
+    if (remainingCount > 0) {
+      selectedCounts.set(key, remainingCount - 1);
+      return false;
+    }
+
+    return true;
+  });
+
+  await updateSessionState({
+    sessionsDir: input.sessionsDir,
+    sessionId: input.sessionId,
+    update: {
+      pendingTurns: remaining,
+      updatedAt: toIsoTimestamp(),
+    },
+  });
+
+  return selected;
 }
