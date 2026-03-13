@@ -51,6 +51,27 @@ function renderTemplate(
   }, template);
 }
 
+export function renderPersonaTemplate(
+  name: string,
+  replacements: {
+    userName?: string;
+  } = {},
+): string {
+  const template = personaTemplates[name];
+
+  if (!template) {
+    throw new Error(`Unknown persona template: ${name}`);
+  }
+
+  if (name === "steward") {
+    return renderTemplate(template, {
+      userName: replacements.userName ?? "the user",
+    });
+  }
+
+  return template;
+}
+
 export function renderProjectConfigTemplate(
   projectName: string,
   repoPath: string,

@@ -170,22 +170,38 @@ to the same problem, that difference is signal, not noise. It's the
 model equivalent of two engineers with different professional
 backgrounds.
 
-**Context handling.** Gemini can hold 1M+ tokens. Claude handles 200K
-well. Smaller models fall off at 32K. A scout reading through
-documentation, issue trackers, and prior art benefits from massive
-context. A craftsman writing a single function doesn't need it — and
-paying for it is waste.
+**Context handling.** As of March 2026, the frontier providers have
+converged: Claude Opus 4.6 and Sonnet 4.6 at 1M tokens, GPT-5.4 at
+1M tokens, Gemini 2.5 Pro at 1M (2M coming). The context-window arms
+race is effectively over at the frontier. The real differentiation is
+now in *what models do with large context* — retrieval accuracy over
+long documents, ability to maintain coherence across a 500K-token
+conversation, quality of synthesis when given an entire codebase.
+Smaller local models still fall off at 32-128K, which matters for the
+steward-on-local-model strategy.
 
 **Code fluency.** Some models produce genuinely cleaner code in certain
-languages and frameworks. This varies by model and changes with each
-release. But at any given moment, there's a real answer to "which model
-writes the best Elixir?" and it's not always the most expensive one.
+languages and frameworks. GPT-5.4 merged the Codex line back into the
+mainline model — it's now the first general-purpose model with native
+computer-use capabilities and strong coding. Claude's code generation
+leans toward explicit, well-structured patterns. GPT tends toward
+concise, convention-heavy patterns. This varies by release and language,
+but at any given moment there's a real answer to "which model writes the
+best Elixir?" and it's not always the most expensive one.
 
 **Risk profile.** Some models are conservative — they'll warn about edge
 cases and add defensive code. Others are creative — they'll propose
 unconventional solutions that work beautifully or fail spectacularly.
 Conservative maps well to the critic lens. Creative maps well to the
 architect and scout lenses.
+
+**Capability profile.** GPT-5.4 introduces native computer-use and tool
+search — it can operate applications and find the right tools across
+large ecosystems. Claude excels at extended reasoning and agentic
+multi-step tasks. Gemini's multimodal context (text, images, audio,
+video, code in the same window) makes it uniquely suited for tasks that
+cross modality boundaries. These aren't just features — they're
+different cognitive substrates that make different kinds of work natural.
 
 ### Model-Lens Affinity
 
@@ -195,18 +211,18 @@ mode.**
 
 | Lens | Cognitive Need | Model Affinity |
 |------|---------------|----------------|
-| Steward | Fast assessment, coordination, low cost | Small/local model (8B-class), or Sonnet/Haiku for judgment calls |
+| Steward (scheduling) | Fast assessment, coordination, low cost | Small/local model (8B-class), or Haiku. Routine cycles don't need frontier reasoning. |
+| Steward (synthesis) | Deep judgment, integration of perspectives | Opus-class. When the steward synthesizes conflicting agent outputs or composes teams, it needs the best reasoning available. See "The Steward's Dual Nature" below. |
 | Architect | Deep structural reasoning, trade-off analysis | Opus-class. The cost is worth it for decisions that shape everything downstream. |
 | Craftsman | Fast, practical, high code quality | Sonnet-class. Speed matters for implementation velocity. Best model for the target language/framework. |
-| Critic | Thorough, adversarial, finds edge cases | Opus-class for security/correctness. Different *model* from the one that wrote the code — training distribution diversity catches what same-model review misses. |
-| Scout | Breadth, research, large-context synthesis | Large-context model (Gemini for 1M+ context), or web-enabled model for research tasks. |
+| Critic | Thorough, adversarial, finds edge cases | Opus-class for security/correctness. Different *model family* from the one that wrote the code — training distribution diversity catches what same-model review misses. |
+| Scout | Breadth, research, synthesis across sources | Web-enabled model, or multimodal model (Gemini) for tasks that cross text/image/code boundaries. |
 
-The last row is revealing. A scout researching library options benefits
-from a model that can ingest entire documentation sites. A critic
-reviewing code benefits from a model with deep reasoning. A craftsman
-implementing a feature benefits from a model that writes clean code
-fast. These aren't preferences — they're functional requirements that
-different models serve differently.
+A critic reviewing code benefits from a model with deep reasoning. A
+craftsman implementing a feature benefits from a model that writes clean
+code fast. A scout benefits from web access or multimodal context. These
+aren't preferences — they're functional requirements that different
+models serve differently.
 
 **The cross-model critic is the strongest example.** When Claude writes
 code and Claude reviews it, there's a systematic blind spot — the same
@@ -221,7 +237,7 @@ who's had two different models review the same PR has seen it.
 
 ## Beyond the Base Five: Extending the Lens System
 
-The five base personas cover the core cognitive territory for general
+The five base personas coverAlright, I think this is really solid. There's still a few things, and I'm less sure about them, so let's walk through them here. the core cognitive territory for general
 software engineering. But the system should support extension in two
 directions: **deeper specialization** of existing lenses, and **novel
 lenses** for specific problem domains.

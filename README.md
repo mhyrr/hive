@@ -6,6 +6,8 @@
 
 ![Process logs and run details](hive2.png)
 
+![Multiple agent types working together](hive_multi.png)
+
 A team orchestration layer for AI coding agents. Multiple minds, different
 cognitive styles, coordinating through shared files across multiple projects.
 

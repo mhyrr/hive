@@ -128,6 +128,7 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
     pathsIdentity: paths.identity,
     pathsSelf: paths.self,
     pathsAgents: paths.agents,
+    pathsTrust: paths.trust,
     personaPath,
     projectConfigPath: projectPaths.config,
     planPath: projectPaths.plan,
