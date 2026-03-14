@@ -105,10 +105,16 @@
           <div class="rail-empty">No active agents.</div>
         </div>
       </section>
-      <section class="rail-section rail-section--logs">
+      <section class="rail-section rail-section--logs" id="process-logs-section">
         <div class="process-logs-header">
-          <span>Raw Logs</span>
-          <button class="process-logs-refresh" id="process-logs-refresh" title="Refresh live data">Refresh</button>
+          <div class="process-logs-header-copy">
+            <span class="process-logs-title" id="process-logs-title">Raw Logs</span>
+            <span class="process-logs-subtitle" id="process-logs-subtitle" hidden></span>
+          </div>
+          <div class="process-logs-actions">
+            <button class="process-logs-back" id="process-logs-back" type="button" hidden>Back</button>
+            <button class="process-logs-refresh" id="process-logs-refresh" title="Refresh live data">Refresh</button>
+          </div>
         </div>
         <div class="process-logs-content" id="process-logs-content">
           <div class="process-logs-empty">No live process logs yet.</div>

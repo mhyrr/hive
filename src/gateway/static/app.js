@@ -28,11 +28,15 @@ var state = {
   sessionId: null,
   pendingSends: 0,
   liveSnapshot: null,
+  processLogsSnapshot: null,
   healthSnapshot: null,
   queueSnapshot: null,
   timelineItems: [],
   railTab: 'live',
   pulsesCollapsed: true,
+  processLogsFocus: null,
+  processLogsStickToBottom: true,
+  processLogsRefreshTimer: null,
   agentSignals: {},
   notificationsPrimed: false,
   toastSeenKeys: {},
@@ -709,11 +713,19 @@ function getConsoleItemSourceText(item) {
   return item.content || '';
 }
 
+function shouldCollapseConsoleItem(item) {
+  return item.itemType === 'draft' || item.itemType === 'status' || item.source === 'system';
+}
+
 function shouldPreferLatestPreview(item) {
-  return item.role === 'assistant' || item.itemType === 'draft' || item.itemType === 'status' || item.source === 'system';
+  return item.itemType === 'draft' || item.itemType === 'status' || item.source === 'system';
 }
 
 function buildCollapsedConsolePreview(item) {
+  if (!shouldCollapseConsoleItem(item)) {
+    return null;
+  }
+
   var sourceText = getConsoleItemSourceText(item);
   var lineLimit = item.itemType === 'draft' ? 5 : 4;
   var charLimit = item.itemType === 'draft' ? 520 : 420;
@@ -1128,6 +1140,14 @@ function setupConsoleDetailModal() {
 
 // --- Session Management ---
 
+function resetProcessLogFocus(clearSnapshot) {
+  state.processLogsFocus = null;
+  state.processLogsStickToBottom = true;
+  if (clearSnapshot) {
+    state.processLogsSnapshot = null;
+  }
+}
+
 function renderProjectName() {
   var projectEl = document.getElementById('project-name');
   if (!projectEl) return;
@@ -1135,8 +1155,13 @@ function renderProjectName() {
 }
 
 function updateSessionProject(project) {
-  state.sessionProject = project || null;
+  var nextProject = project || null;
+  if (state.sessionProject !== nextProject) {
+    resetProcessLogFocus(true);
+  }
+  state.sessionProject = nextProject;
   renderProjectName();
+  renderProcessLogs(state.processLogsSnapshot);
   scheduleOperationsRefresh(0);
 }
 
@@ -1144,6 +1169,7 @@ function updateSessionIndicator(sessionId, project) {
   if (state.sessionId !== sessionId) {
     state.consoleExpanded = {};
     state.pulsesCollapsed = true;
+    resetProcessLogFocus(true);
     state.notificationsPrimed = false;
     state.toastSeenKeys = {};
     state.toasts = [];
@@ -1388,11 +1414,23 @@ function scheduleTimelineRefresh(delay) {
   }, typeof delay === 'number' ? delay : 280);
 }
 
+function scheduleProcessLogsRefresh(delay) {
+  if (state.processLogsRefreshTimer) {
+    clearTimeout(state.processLogsRefreshTimer);
+  }
+
+  state.processLogsRefreshTimer = setTimeout(function () {
+    state.processLogsRefreshTimer = null;
+    refreshProcessLogs();
+  }, typeof delay === 'number' ? delay : 200);
+}
+
 function scheduleOperationsRefresh(delay) {
   var base = typeof delay === 'number' ? delay : 180;
   scheduleLiveRefresh(base);
-  scheduleQueueRefresh(base + 60);
-  scheduleTimelineRefresh(base + 120);
+  scheduleProcessLogsRefresh(base + 30);
+  scheduleQueueRefresh(base + 90);
+  scheduleTimelineRefresh(base + 150);
 }
 
 function getProjectFocus() {
@@ -1789,7 +1827,6 @@ function buildAttentionItems(liveSnapshot, queueSnapshot, healthSnapshot) {
         latestActivity ? 'latest ' + formatMoment(latestActivity.ts) : '',
         agents.length > 0 ? countLabel(agents.length, 'active run') : '',
       ]),
-      prompt: 'Give me a short leadership brief on what is currently in flight, what looks risky, and what you need from me.',
       openTab: 'live',
       focusId: 'live-agents',
     });
@@ -1808,7 +1845,6 @@ function buildAttentionItems(liveSnapshot, queueSnapshot, healthSnapshot) {
         completion.model || '',
         formatMoment(completion.ended),
       ]),
-      prompt: 'Give me the last completed-work brief: what landed, what changed, and what still needs review.',
       openTab: 'timeline',
       focusId: 'timeline-list',
     });
@@ -2061,8 +2097,6 @@ function buildPulseItems(leadership, liveSnapshot) {
         formatMoment(completion.ended),
       ]),
       ts: completion.ended,
-      actionLabel: 'Brief Me',
-      actionPrompt: 'Give me the last completed-work brief: what landed, what changed, and what still needs review.',
       secondaryLabel: 'Open Timeline',
       secondaryTab: 'timeline',
       secondaryFocusId: 'timeline-list',
@@ -2106,8 +2140,6 @@ function buildPulseItems(leadership, liveSnapshot) {
         formatMoment(activeAgent.started),
       ]),
       ts: activeAgent.started,
-      actionLabel: 'Brief Me',
-      actionPrompt: 'Give me a short live brief on what is currently in flight, what changed most recently, and what can wait.',
       secondaryLabel: 'Logs',
       secondaryRunId: activeAgent.runId || '',
     });
@@ -2269,7 +2301,7 @@ function maybeEmitLeadershipToasts(leadership) {
       title: item.title,
       summary: item.summary,
       ts: item.ts,
-      actionLabel: item.kind === 'approval' ? 'Ask Hive' : 'Brief Me',
+      actionLabel: item.kind === 'waiting' ? 'Draft Reply' : 'Ask Hive',
       actionPrompt: item.prompt,
       secondaryLabel: item.openTab === 'queue' ? 'Open Queue' : 'Open Live',
       secondaryTab: item.openTab || 'queue',
@@ -2286,8 +2318,6 @@ function maybeEmitLeadershipToasts(leadership) {
       title: (completion.displayName || completion.agentId || 'worker') + ' wrapped a pass.',
       summary: truncateText(completion.summary || 'Recent work completed cleanly.', 150),
       ts: completion.ended,
-      actionLabel: 'Brief Me',
-      actionPrompt: 'Give me the last completed-work brief: what landed, what changed, and what still needs review.',
       secondaryLabel: 'Open Timeline',
       secondaryTab: 'timeline',
       secondaryFocusId: 'timeline-list',
@@ -2322,6 +2352,10 @@ function renderLeadershipSurface() {
 }
 
 function focusRailSection(tab, focusId) {
+  if (tab === 'live' && focusId && focusId !== 'process-logs-section' && state.processLogsFocus) {
+    clearProcessLogFocus();
+  }
+
   setRailTab(tab || 'live');
 
   window.requestAnimationFrame(function () {
@@ -2332,23 +2366,30 @@ function focusRailSection(tab, focusId) {
 }
 
 function focusProcessLog(runId) {
+  if (!runId) return;
+
+  state.processLogsFocus = runId;
+  state.processLogsStickToBottom = true;
   setRailTab('live');
+  renderProcessLogs(state.processLogsSnapshot);
+  scheduleProcessLogsRefresh(0);
 
   window.requestAnimationFrame(function () {
+    var section = document.getElementById('process-logs-section');
     var container = document.getElementById('process-logs-content');
-    if (!container) return;
-
-    var target = null;
-    var blocks = container.querySelectorAll('.process-log-block');
-    for (var i = 0; i < blocks.length; i++) {
-      if (blocks[i].getAttribute('data-process-log-run-id') === runId) {
-        target = blocks[i];
-        break;
-      }
+    if (section) {
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-
-    (target || container).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   });
+}
+
+function clearProcessLogFocus() {
+  if (!state.processLogsFocus) return;
+  resetProcessLogFocus(false);
+  renderProcessLogs(state.processLogsSnapshot);
 }
 
 function renderConsoleActivity(snapshot) {
@@ -2463,18 +2504,11 @@ function renderLiveAgents(agents) {
         : 'Waiting for the first visible update from this agent.';
       html += '<div class="agent-card-output agent-card-output--empty">' + escapeHtml(emptyOutput) + '</div>';
     }
-    var briefPrompt = agent.persona === 'steward'
-      ? 'Give me a short leadership brief on the current conversation: what is moving, what changed, and what you need from me.'
-      : 'Give me a short update on ' + (agent.displayName || agent.agentId || 'this agent') + ': what it is doing, whether it is blocked, and what you want from me.';
     html += '<div class="agent-card-actions">';
-    html += renderRailActionButton('Brief Me', {
-      'data-rail-action': 'send-prompt',
-      'data-rail-prompt': briefPrompt,
-    });
-    html += renderRailActionButton('Logs', {
+    html += renderRailActionButton(state.processLogsFocus === (agent.runId || '') ? 'Watching' : 'Logs', {
       'data-rail-action': 'log',
       'data-rail-run-id': agent.runId || '',
-    }, true);
+    }, state.processLogsFocus === (agent.runId || ''));
     html += '</div>';
     html += '</div>';
   }
@@ -2482,15 +2516,141 @@ function renderLiveAgents(agents) {
   container.innerHTML = html;
 }
 
+function getLiveAgentForRun(runId) {
+  var agents = state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : [];
+  for (var i = 0; i < agents.length; i++) {
+    if (agents[i].runId === runId) {
+      return agents[i];
+    }
+  }
+  return null;
+}
+
+function buildProcessLogSelection(snapshot) {
+  var focus = state.processLogsFocus;
+  if (!focus) return null;
+  if (!snapshot || !snapshot.project) return null;
+
+  if (focus === 'supervisor') {
+    if (snapshot && snapshot.supervisor) {
+      return {
+        kind: 'supervisor',
+        title: 'Supervisor live output',
+        subtitle: joinMeta([
+          snapshot.project || '',
+          'status ' + (snapshot.supervisor.status || 'unknown'),
+          snapshot.supervisor.pid ? 'pid ' + snapshot.supervisor.pid : '',
+        ]),
+        note: 'Watching the detached supervisor log for fresh coordination output.',
+        tail: snapshot.supervisor.tail || [],
+      };
+    }
+
+    return {
+      kind: 'missing',
+      title: 'Supervisor live output',
+      subtitle: 'No active supervisor log found for this project.',
+      note: 'The detached supervisor may have stopped or rotated out since you opened the inspector.',
+      tail: [],
+    };
+  }
+
+  var runs = snapshot && Array.isArray(snapshot.runs) ? snapshot.runs : [];
+  for (var i = 0; i < runs.length; i++) {
+    var run = runs[i];
+    if (run.runId !== focus) continue;
+
+    var liveAgent = getLiveAgentForRun(run.runId);
+    var displayName = liveAgent
+      ? (liveAgent.displayName || liveAgent.agentId || run.agentId || 'agent')
+      : (run.agentId || 'agent');
+
+    return {
+      kind: 'run',
+      title: displayName + ' live output',
+      subtitle: joinMeta([
+        liveAgent ? liveAgent.persona || '' : '',
+        run.status || 'active',
+        run.runtime || '',
+        run.model || '',
+        formatMoment(run.started),
+        run.pid ? 'pid ' + run.pid : '',
+      ]),
+      note: 'Watching the latest visible agent output as it streams in.',
+      tail: run.tail || [],
+    };
+  }
+
+  return {
+    kind: 'missing',
+    title: 'Live output unavailable',
+    subtitle: 'Run ' + focus + ' is no longer active.',
+    note: 'This agent may have finished or been replaced since you opened the inspector.',
+    tail: [],
+  };
+}
+
+function renderProcessLogsChrome(selection) {
+  var livePanel = document.getElementById('rail-panel-live');
+  var title = document.getElementById('process-logs-title');
+  var subtitle = document.getElementById('process-logs-subtitle');
+  var backBtn = document.getElementById('process-logs-back');
+  var inspecting = Boolean(selection);
+
+  if (livePanel) {
+    livePanel.classList.toggle('rail-panel--log-focus', inspecting);
+  }
+  if (title) {
+    title.textContent = inspecting ? 'Live Output' : 'Raw Logs';
+  }
+  if (subtitle) {
+    subtitle.hidden = !inspecting;
+    subtitle.textContent = inspecting ? (selection.subtitle || '') : '';
+  }
+  if (backBtn) {
+    backBtn.hidden = !inspecting;
+  }
+}
+
 function renderProcessLogBlock(title, meta, tailLines, runId) {
   var tail = tailLines && tailLines.length > 0
     ? escapeHtml(tailLines.join('\n'))
     : '<span class="process-log-empty-line">(no output yet)</span>';
+  var actions = runId
+    ? '<div class="process-log-block-actions">' + renderRailActionButton(
+      state.processLogsFocus === runId ? 'Watching' : 'Inspect',
+      {
+        'data-rail-action': 'log',
+        'data-rail-run-id': runId,
+      },
+      state.processLogsFocus === runId
+    ) + '</div>'
+    : '';
 
   return '<div class="process-log-block" data-process-log-run-id="' + escapeAttr(runId || '') + '">' +
+    '<div class="process-log-block-header">' +
+    '<div class="process-log-block-copy">' +
     '<div class="process-log-title">' + escapeHtml(title) + '</div>' +
     '<div class="process-log-meta">' + escapeHtml(meta) + '</div>' +
+    '</div>' +
+    actions +
+    '</div>' +
     '<pre class="process-log-tail">' + tail + '</pre>' +
+    '</div>';
+}
+
+function renderProcessLogInspector(selection) {
+  var tail = selection.tail && selection.tail.length > 0
+    ? escapeHtml(selection.tail.join('\n'))
+    : '<span class="process-log-empty-line">(waiting for visible output)</span>';
+
+  return '<div class="process-log-inspector">' +
+    '<div class="process-log-inspector-header">' +
+    '<div class="process-log-inspector-title">' + escapeHtml(selection.title) + '</div>' +
+    '<div class="process-log-inspector-meta">' + escapeHtml(selection.subtitle || '') + '</div>' +
+    '<div class="process-log-inspector-note">' + escapeHtml(selection.note || '') + '</div>' +
+    '</div>' +
+    '<pre class="process-log-inspector-tail">' + tail + '</pre>' +
     '</div>';
 }
 
@@ -2498,8 +2658,19 @@ function renderProcessLogs(snapshot) {
   var container = document.getElementById('process-logs-content');
   if (!container) return;
 
+  var selection = buildProcessLogSelection(snapshot);
+  renderProcessLogsChrome(selection);
+
   if (!snapshot || !snapshot.project) {
     container.innerHTML = '<div class="process-logs-empty">No project in focus yet. Start a session or switch project focus.</div>';
+    return;
+  }
+
+  if (selection) {
+    container.innerHTML = renderProcessLogInspector(selection);
+    if (state.processLogsStickToBottom) {
+      container.scrollTop = container.scrollHeight;
+    }
     return;
   }
 
@@ -2517,19 +2688,25 @@ function renderProcessLogs(snapshot) {
     );
   }
 
-  var agents = Array.isArray(snapshot.agents) ? snapshot.agents : [];
-  for (var i = 0; i < agents.length; i++) {
-    var agent = agents[i];
+  var runs = Array.isArray(snapshot.runs) ? snapshot.runs : [];
+  for (var i = 0; i < runs.length; i++) {
+    var run = runs[i];
+    var liveAgent = getLiveAgentForRun(run.runId || '');
+    var runName = liveAgent
+      ? (liveAgent.displayName || liveAgent.agentId || run.agentId || 'agent')
+      : (run.agentId || 'agent');
     html += renderProcessLogBlock(
-      (agent.displayName || agent.agentId || 'agent') + ' \u00b7 ' + snapshot.project,
+      runName + ' \u00b7 ' + snapshot.project,
       joinMeta([
-        agent.status || 'active',
-        agent.runtime || '',
-        agent.runId || '',
-        agent.pid ? 'pid ' + agent.pid : '',
+        liveAgent ? liveAgent.persona || '' : '',
+        run.status || 'active',
+        run.runtime || '',
+        run.model || '',
+        formatMoment(run.started),
+        run.pid ? 'pid ' + run.pid : '',
       ]),
-      agent.tail || [],
-      agent.runId || ''
+      run.tail || [],
+      run.runId || ''
     );
   }
 
@@ -2692,7 +2869,6 @@ async function refreshLiveSnapshot() {
     renderConsoleActivity(data);
     renderLiveSummary(data);
     renderLiveAgents(data.agents || []);
-    renderProcessLogs(data);
     updateAgentOverview(data.agents || []);
     renderLeadershipSurface();
   } catch (e) {
@@ -2702,7 +2878,6 @@ async function refreshLiveSnapshot() {
     renderConsoleActivity(null);
     renderLiveSummary(null);
     renderLiveAgents([]);
-    renderProcessLogs(null);
     updateAgentOverview([]);
     renderLeadershipSurface();
   }
@@ -2742,15 +2917,45 @@ async function refreshTimeline() {
 
 function setupProcessLogs() {
   var btn = document.getElementById('process-logs-refresh');
+  var backBtn = document.getElementById('process-logs-back');
+  var container = document.getElementById('process-logs-content');
   if (btn) {
     btn.addEventListener('click', function () {
-      scheduleOperationsRefresh(0);
+      scheduleProcessLogsRefresh(0);
+    });
+  }
+  if (backBtn) {
+    backBtn.addEventListener('click', function () {
+      clearProcessLogFocus();
+    });
+  }
+  if (container) {
+    container.addEventListener('scroll', function () {
+      if (!state.processLogsFocus) return;
+      var remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
+      state.processLogsStickToBottom = remaining < 48;
     });
   }
 }
 
-function refreshProcessLogs() {
-  return refreshLiveSnapshot();
+async function refreshProcessLogs() {
+  var project = getProjectFocus();
+  var params = {};
+
+  if (state.processLogsFocus) {
+    params.run = state.processLogsFocus;
+    params.lines = 400;
+  }
+
+  try {
+    var data = await apiGet(buildApiPath('/process-logs', project, params));
+    state.processLogsSnapshot = data;
+    renderProcessLogs(data);
+  } catch (e) {
+    console.error('Process logs refresh failed:', e);
+    state.processLogsSnapshot = null;
+    renderProcessLogs(null);
+  }
 }
 
 
@@ -3185,12 +3390,17 @@ async function init() {
   await loadConsoleHistory();
   await Promise.all([
     refreshLiveSnapshot(),
+    refreshProcessLogs(),
     refreshQueueSnapshot(),
     refreshTimeline(),
   ]);
 
   setInterval(function () {
     refreshLiveSnapshot();
+  }, 2500);
+
+  setInterval(function () {
+    refreshProcessLogs();
   }, 2500);
 
   setInterval(function () {
