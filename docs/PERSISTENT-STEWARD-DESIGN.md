@@ -1,0 +1,460 @@
+# HIVE Persistent Steward Design
+
+Design document. March 2026.
+
+---
+
+## 1. Purpose
+
+HIVE already has the right core abstraction:
+
+- files are the API
+- markdown is the durable human-readable source of truth
+- workers are disposable
+- the hive is multi-perspective, not mono-agent
+- coordination intelligence lives in prompts and conventions
+
+What HIVE lacks today is a first-class living head.
+
+The current hot path is:
+
+1. human sends a message via the gateway
+2. gateway calls `runDirectStewardTurn()`
+3. the steward prompt is rebuilt from disk — every time
+4. a fresh runtime process launches, reasons, exits
+5. the human eventually sees the result
+
+This creates three failures:
+
+1. Human latency is tied to a full cold-start steward pass.
+2. The head of the hive is not persistent, so every turn rehydrates context.
+3. The gateway session is not a true conversation with the head agent.
+
+The goal of this design is to make HIVE feel like a continuously alive steward
+the user can talk to at any time, without destroying the multi-agent
+architecture that makes HIVE what it is.
+
+---
+
+## 2. Design Principles
+
+1. **Persistent agenthood.** The human should experience HIVE as one coherent
+   interlocutor that knows what's going on and remembers the conversation.
+
+2. **Token efficiency.** Persistent does not mean constantly inferencing.
+   Expensive reasoning should happen only when warranted.
+
+3. **Multi-model operation.** Route work across frontier models, small models,
+   and deterministic processes. Not everything needs the best model.
+
+4. **File-native continuity.** Durable truth stays in SOUL.md, IDENTITY.md,
+   SELF.md, PLAN.md, BOARD.md, LOG.md, memory, and messages.
+
+5. **Hive integrity.** The steward is the head of a hive, not a replacement
+   for the hive's multiple minds.
+
+6. **No new daemons.** The gateway is already the long-lived process. Build on
+   it rather than adding separate background services.
+
+---
+
+## 3. Architecture Layers
+
+### Layer A: Durable Hive Substrate
+
+The existing file system of record. Unchanged.
+
+- SOUL.md, IDENTITY.md, SELF.md, AGENTS.md
+- PLAN.md, BOARD.md, LOG.md
+- project memory, message files, project config
+- run records, feed, sessions
+
+This remains the durable truth. Nothing in this design changes it.
+
+### Layer B: Deterministic Runtime Fabric
+
+Cheap, non-LLM processes that already exist or are straightforward to add.
+
+- State monitor: parses file state, tracks revisions, computes compact
+  summaries, emits delta packets for the steward
+- Supervisor: launches and stops worker runs, enforces scope and parallel
+  rules, maintains the run ledger, recovers stale runs
+- Derived state: machine-readable JSON under a project state directory,
+  disposable and rebuildable from markdown
+
+The state monitor already has a partial implementation in
+`refreshProjectRuntimeState()`. The supervisor already runs as a detached
+process managed by the gateway. This layer extends what exists.
+
+### Layer C: Persistent Steward
+
+A long-lived session that embodies the steward. Lives inside the gateway
+process.
+
+Responsibilities:
+
+- converse with the human directly
+- maintain hot working context across turns
+- decide what matters and what to ignore
+- wake workers through assignment messages
+- synthesize worker outcomes into coherent updates
+- commit durable changes back to files
+
+The steward is one identity with two operating modes:
+
+**Control mode** — orchestration. Inspect deltas, assign work, track blockers,
+manage priority, decide when a human decision is needed.
+
+**Synthesis mode** — editorial integration. Compress worker results, reconcile
+disagreement, produce clear updates, propose next steps, maintain continuity
+for the user.
+
+These are modes, not separate agents. The human experiences one voice.
+
+### Layer D: Transient Execution Fleet
+
+A mixed pool of workers, unchanged from today:
+
+- Frontier-model workers (architect, craftsman, critic, scout)
+- Any runtime adapter (Claude, Codex, Gemini, etc.)
+- Launched by the supervisor on steward request
+- Scoped, disposable, report outcomes through files
+
+---
+
+## 4. Where Pi Fits
+
+Pi is the session engine for the persistent steward.
+
+Pi provides:
+
+- session continuity across turns without prompt rebuild
+- hot conversational context with automatic compaction
+- tool and capability invocation
+- model and provider routing
+- a stable identity-bearing runtime object
+
+Pi does not become:
+
+- the durable memory system (HIVE files)
+- the project state system (HIVE substrate)
+- the worker coordination substrate (HIVE supervisor)
+- the universal runtime for all agents (workers use whatever runtime fits)
+
+**The boundary is sharp: Pi owns one live steward session. HIVE owns
+everything else.**
+
+This preserves HIVE's runtime-agnostic stance. Workers still launch via any
+adapter. Only the steward uses Pi, because only the steward needs persistent
+sessions and fast interactive response.
+
+---
+
+## 5. The Token-Efficient Runtime Model
+
+The key principle: **persistent does not mean constantly inferencing.**
+
+The steward should be continuous but mostly idle. Three layers control cost:
+
+### 5.1 Always-On Cheap State
+
+The state monitor (deterministic, no LLM) runs as part of the gateway's
+existing event loop:
+
+- watch for file changes (gateway's watcher already does this)
+- track revision hashes on key files
+- compute compact board/message/run summaries
+- debounce noisy changes
+- produce delta packets when meaningful state changes
+
+### 5.2 Activation Gate
+
+Before waking the steward, a deterministic check decides whether the event
+is worth a model call.
+
+Wake for:
+
+- direct human message
+- high-priority worker completion
+- conflict between workers
+- blocking error or plan transition
+- scheduled checkpoint (configurable)
+
+Do not wake for:
+
+- routine file churn
+- worker heartbeats
+- low-value telemetry
+- every log append
+
+### 5.3 Steward Turn
+
+When activated, the steward receives only:
+
+- the human message (if any)
+- a compact delta packet (what changed since last turn)
+- relevant worker completion summaries
+- unresolved questions or escalation items
+
+The steward should not reread the whole hive. Deep reads happen only when:
+
+- the state monitor marks something as changed and relevant
+- the human asks a question requiring inspection
+- the steward explicitly requests context expansion
+
+---
+
+## 6. Model Tiering
+
+Not everything needs the frontier model. This should be explicit policy, not
+afterthought.
+
+### Tier 0: Deterministic
+
+No model. Use for file watching, revision tracking, process management, git
+status, run ledger maintenance, threshold checks, stale-run detection, routing
+rules.
+
+This is the default whenever possible.
+
+### Tier 1: Small Model
+
+Use a cheap/fast model for narrow interpretation and compression.
+
+Examples: summarize worker logs, classify a result as success/blocker/ambiguous,
+compress telemetry into a one-line digest, judge whether a delta is
+steward-worthy, extract decisions from recent activity.
+
+These are not "full minds." They are limited cognition modules. Pi's
+role-based model routing (the `smol` role) maps directly to this tier.
+
+### Tier 2: Specialist Workers
+
+Use strong models when actual reasoning is needed. Architect for design
+tradeoffs, craftsman for implementation, critic for adversarial review, scout
+for option generation.
+
+This is the existing HIVE worker model. Unchanged.
+
+### Tier 3: Persistent Steward
+
+The best available model budget, used when the head of the hive needs to
+reason, synthesize, or converse. This is the scarce intelligence budget and
+should be protected by the activation gate.
+
+---
+
+## 7. Context Contract
+
+### Bootstrap (steward startup)
+
+On first activation, provide:
+
+- compact SOUL.md
+- compact IDENTITY.md and SELF.md
+- compact AGENTS.md
+- project identity and config
+- board summary digest
+- active assignments summary
+- recent worker results summary
+- recent decisions summary
+- recent conversation tail
+- file paths for deeper reads
+
+This is the only heavy load.
+
+### Refresh (subsequent turns)
+
+After bootstrap, the steward receives only delta packets:
+
+- human messages
+- state changes since last turn
+- worker completion summaries
+- escalation events
+
+### Deep Reads
+
+On explicit request only. The steward asks for a specific file or context
+expansion when it decides it needs more.
+
+This contract already exists in embryonic form in `buildStewardTurnPrompt()`,
+which assembles digests rather than full files. The persistent steward
+formalizes the delta path so the bootstrap only happens once.
+
+---
+
+## 8. Derived State
+
+The existing `refreshProjectRuntimeState()` already computes board summaries,
+open message summaries, active runs summaries, and recent results. Formalize
+this as a project-local state directory:
+
+```
+~/.hive/projects/<project>/state/
+  revision.json           # content hashes for key files
+  board-summary.json      # compact board digest
+  open-messages.json      # pending message summary
+  recent-results.json     # recent worker outcomes
+  active-runs.json        # what's running now
+  steward-delta.json      # changes since steward last looked
+```
+
+These are not source of truth. They are fast runtime derivatives, disposable
+and rebuildable from markdown at any time.
+
+---
+
+## 9. Implementation in the Gateway
+
+The gateway is already the right home. It's the long-lived process that manages
+the supervisor, serves the web console, and handles human conversation. Adding
+the persistent steward means changing how the gateway handles
+`/api/console/send`, not adding new infrastructure.
+
+### Today
+
+```
+POST /api/console/send
+  → runDirectStewardTurn()
+    → rebuild prompt from disk
+    → launch fresh runtime process
+    → wait for completion
+    → capture output
+    → return to human
+```
+
+### After
+
+```
+POST /api/console/send
+  → feed message to persistent steward session
+    → steward receives message + latest delta
+    → steward responds from hot context
+    → steward may dispatch workers via assignment messages
+    → return response to human immediately
+```
+
+The gateway keeps its existing responsibilities (supervisor management,
+WebSocket broadcast, session tracking, static assets). The persistent steward
+session is one more long-lived resource alongside the supervisor.
+
+### Fallback
+
+If the steward session dies (crash, OOM, provider error), fall back to the
+existing `runDirectStewardTurn()` one-shot path. The human sees a slightly
+slower response, not a broken system. On next gateway restart, a fresh steward
+session bootstraps from derived state + markdown.
+
+This makes the persistent steward a progressive enhancement, not a hard
+requirement.
+
+---
+
+## 10. Skills Evolution
+
+Today, HIVE skills are markdown files that shape how agents think
+(`state-efficient-ops.md`, `autonomous-ops.md`). These are cognitive skills —
+prompt-level guidance.
+
+The natural next step is capability skills: skills that bundle instructions
+with callable scripts or tools. A capability skill might include a markdown
+file describing the capability plus a script that executes it.
+
+Example: a `workspace-health` skill that includes a shell script to check repo
+state and a markdown description of when and how to use it.
+
+The third step is sensor skills: lightweight processes that periodically
+observe some aspect of the environment and produce structured output for the
+state monitor.
+
+This evolution should be demand-driven. Start with cognitive skills (already
+working). Add capability skills when a specific capability needs a script. Add
+sensor skills when a specific environmental signal proves valuable enough to
+automate.
+
+Do not build a universal skill manifest format, a capability runner daemon, or
+a sensor bus until there are enough concrete skills to justify the abstraction.
+
+---
+
+## 11. Rollout
+
+### Phase 1: Derived State and Deltas
+
+Formalize `refreshProjectRuntimeState()` into the state directory. Add
+revision tracking and delta generation so the system can answer "what changed
+since the steward last looked" cheaply.
+
+This is prerequisite infrastructure. It makes the existing one-shot path
+faster too, because `runDirectStewardTurn()` can use deltas instead of full
+rebuilds.
+
+### Phase 2: Persistent Steward Session
+
+Replace `runDirectStewardTurn()` in the gateway with a Pi-backed persistent
+session. Bootstrap once on gateway start. Feed delta packets and human
+messages into the live session. Fall back to one-shot on failure.
+
+### Phase 3: Model Tiering
+
+Add routing policy so the steward can dispatch tier-1 (small model) work for
+triage and compression tasks. Use Pi's role-based model selection to route
+cheap operations to fast models and expensive operations to frontier models.
+
+### Phase 4: Capability and Sensor Skills
+
+Driven by pain. When a specific script or environmental sensor proves
+valuable, package it as a skill. Build whatever minimal infrastructure those
+concrete skills require.
+
+---
+
+## 12. What Could Go Wrong
+
+**Pi takes over too much.** Mitigation: the boundary is explicit. Pi owns one
+session. If Pi starts accumulating HIVE-level responsibilities (memory, board
+management, worker coordination), that's a design violation.
+
+**The steward becomes expensive again.** Mitigation: activation gating, delta
+discipline, deep-read restrictions, and model tiering. If the steward is
+burning tokens on every file change, the activation gate is too loose.
+
+**Loss of hive pluralism.** Mitigation: keep architect, craftsman, critic, and
+scout as genuine independent worker minds for important tasks. The steward
+coordinates; it does not replace the team.
+
+**Steward recovery is disorienting.** Mitigation: on crash, the steward
+rebuilds from derived state + markdown + conversation history. The human may
+notice a brief delay but should not lose context. This needs explicit testing
+during phase 2.
+
+**Sensor/skill sprawl.** Mitigation: don't build the abstraction until the
+concrete instances justify it. Two scripts don't need a framework.
+
+---
+
+## 13. Success Criteria
+
+The design is working when:
+
+1. `hey` gets a near-immediate response from the live steward.
+2. Human follow-up questions do not trigger full prompt rebuilds.
+3. The session shows live work updates without forcing the user to read feed.
+4. The steward only rereads markdown when relevant state has changed.
+5. Worker launches remain deterministic and supervised.
+6. Killing the steward does not lose durable project state.
+7. The system runs on a laptop without constant token spend.
+
+---
+
+## 14. What This Design Does Not Do
+
+- Replace markdown with a database.
+- Require a central daemon beyond the existing gateway.
+- Make every loop an LLM loop.
+- Require all workers to use Pi.
+- Build infrastructure ahead of concrete need.
+
+The steward is the mouth, memory of the moment, and coordinator of the hive.
+The hive remains plural. The steward is the singular conversational vessel of
+that plurality.
