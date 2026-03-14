@@ -118,6 +118,17 @@ export function extractPersonaName(descriptor: string): string {
   return match ? match[0].toLowerCase() : descriptor.trim().toLowerCase();
 }
 
+export function stripRuntimeHintsFromDescriptor(descriptor: string): string {
+  return descriptor
+    .trim()
+    .replace(/\s*,\s*[^,()]+?\s+via\s+[a-z0-9._-]+\b/gi, "")
+    .replace(/\s+via\s+[a-z0-9._-]+\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*$/, "")
+    .trim();
+}
+
 export function extractBodyValue(body: string, key: string): string | null {
   const match = body.match(new RegExp(`^${key}:\\s*(.+)$`, "mi"));
 

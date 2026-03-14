@@ -1445,6 +1445,10 @@ function renderLiveAgents(agents) {
   for (var i = 0; i < agents.length; i++) {
     var agent = agents[i];
     var outputPreview = '';
+    var descriptor = agent.descriptor || '';
+    if (descriptor && agent.persona && descriptor.toLowerCase() === String(agent.persona).toLowerCase()) {
+      descriptor = '';
+    }
     if (Array.isArray(agent.tail) && agent.tail.length > 0) {
       outputPreview = truncateMultilineText(agent.tail.slice(-4).join('\n'), 420);
     } else if (agent.latestOutput) {
@@ -1461,7 +1465,7 @@ function renderLiveAgents(agents) {
     html += '<div class="agent-card-header">';
     html += '<div class="agent-card-header-copy">';
     html += '<div class="agent-card-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</div>';
-    html += '<div class="agent-card-descriptor">' + escapeHtml(joinMeta([agent.persona, agent.descriptor])) + '</div>';
+    html += '<div class="agent-card-descriptor">' + escapeHtml(joinMeta([agent.persona, descriptor])) + '</div>';
     html += '</div>';
     html += '<div class="' + toneClass('status-pill', toneFromStatus(agent.status)) + '">' + escapeHtml(agent.status || 'active') + '</div>';
     html += '</div>';

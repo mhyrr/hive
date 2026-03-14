@@ -17,11 +17,29 @@ human. This file covers how we use the infrastructure.
 - Close obsolete threads: `hive msg close <message> <actor> [note]`
 - Assignment messages include `task:`, `launch:`, and `scope:` frontmatter.
 
+### Assignment Message Example
+```
+---
+to: alpha
+from: orchestrator
+task: PROJ-001
+launch: auto
+scope: src/auth/ tests/auth/
+---
+
+Implement POST /api/auth/login and /api/auth/refresh.
+Use Joken for JWT with 1-hour expiry. Contract is on the board.
+```
+
 ## Skills
 Load relevant skills from the skills directory before starting work.
 Skills encode reusable operational patterns that make agents more effective.
 If `state-efficient-ops.md` is present, read it first for steward or
 supervision work.
+
+### Available Skills
+- **state-efficient-ops** — Token-efficient state reading patterns. Prefer digests over full file reads. Use `hive status`, `hive inbox`, `hive ps` instead of raw file access.
+- **autonomous-ops** — Initiative patterns for autonomous operation. When to act without asking, how to decompose and delegate, when to escalate.
 
 ## Session Lifecycle
 1. Read compact runtime state first when it exists; use raw file reads

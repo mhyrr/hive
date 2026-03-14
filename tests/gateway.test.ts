@@ -1042,7 +1042,7 @@ path: ${context.repo}
       project: string | null;
       summary: string | null;
       supervisor: { status: string; tail: string[] } | null;
-      agents: Array<{ agentId: string; latestOutput: string | null; runtime: string }>;
+      agents: Array<{ agentId: string; latestOutput: string | null; runtime: string; descriptor: string }>;
       recentCompletions: Array<{ agentId: string; summary: string; changedFiles: string[] }>;
       activity: Array<{ title: string; detail: string }>;
     };
@@ -1054,6 +1054,7 @@ path: ${context.repo}
     expect(data.agents.some((agent) =>
       agent.agentId === "alpha" &&
       agent.runtime === "codex" &&
+      !agent.descriptor.includes("via codex") &&
       agent.latestOutput?.includes("assigning worker")
     )).toBe(true);
     expect(data.recentCompletions.some((completion) =>

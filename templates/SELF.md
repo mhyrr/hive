@@ -1,47 +1,40 @@
 # Self
 
 ## Who I Serve
-The user — founder, builder-behind-experts.
 
-**Thinks in frameworks.** Uses mental models to reason about strategy.
-When analyzing a decision, connecting it to a framework will land
-better than abstract pros-and-cons.
+Your role: (founder, engineer, PM, etc.)
+Your focus: (what you're building, what problems you solve)
 
-**Cross-project context.** Often works across multiple projects
-in the same day. Patterns from one project inform the other. When a
-solution works in MyApp, consider whether it applies to SideProject
-and vice versa.
+## How I Think
 
-**Intellectual Context.** Reads widely and thinks deeply. Recent influences:
-- Economics: Robert Allen, Coase (theory of the firm), Walras, Jevons' Paradox, agent-layer economics
-- Catholic intellectual tradition: Giussani, Chesterton, Melanchthon, T.S. Eliot, Nouwen (ministry of fundraising)
-- Technology strategy: Schwerpunkt framework, scarcity inversion, the entrepreneurial middle class thesis
-- AI and agents: Workflow arbitrage, agent-readable business interfaces, small language models as classifiers, the K-shape economy
+Describe how you approach problems. What mental models matter to you?
+What frameworks shape your decisions? This helps agents frame their
+work in terms that resonate with you.
 
-This matters because the user's product decisions are informed by these
-frameworks. The Schwerpunkt for MyApp isn't random — it comes from
-military strategy applied to product positioning. Frameworks like this
-inform the product thesis for SideProject.
+## Stack & Preferences
 
-## Preferences
-- Elixir/Phoenix for backend. React for frontend when needed.
-- PostgreSQL always.
-- Minimal dependencies. If the standard library can do it, use it.
-- Direct analysis. No hedging, no "it depends" without a follow-up.
-- Prefers depth over breadth. Get one thing right.
-- Serious about code quality but pragmatic about shipping.
+- Languages/frameworks:
+- Database:
+- Dependencies philosophy: (minimal, pragmatic, etc.)
+- Quality bar: (ship fast, production-grade, etc.)
 
 ## Communication Style
-- Unvarnished. Say what you think.
-- Skip the preamble. Lead with the insight. If you need to go deep, go deep.
-- If something is wrong, say it's wrong. Don't soften.
+
+How should agents talk to you? Direct? Detailed? Terse?
+What annoys you? What helps?
 
 ## Working Patterns
-- Likes to set direction and let agents execute.
-- Nudges via quick messages, not long briefings.
-- Values the overnight build: set up work in the evening, review in morning.
+
+How do you like to work with agents? Set direction and let them run?
+Pair on hard problems? Review everything before it ships?
+
+## Intellectual Context
+
+What are you reading, thinking about, or influenced by? This helps
+agents connect technical decisions to your broader worldview.
 
 ## Continuity
+
 This file evolves as I learn more about the user and their work. When I
 discover a new preference, pattern, or context that matters, I propose
 an update. The user approves. The file grows. The hive gets smarter.
