@@ -14,6 +14,7 @@ import projectConfigTemplate from "../../templates/project-config.md" with { typ
 import planTemplate from "../../templates/PLAN.md" with { type: "text" };
 import boardTemplate from "../../templates/BOARD.md" with { type: "text" };
 import logTemplate from "../../templates/LOG.md" with { type: "text" };
+import projectMemoryTemplate from "../../templates/project-memory.md" with { type: "text" };
 import stateEfficientOpsSkill from "../../templates/skills/state-efficient-ops.md" with { type: "text" };
 import autonomousOpsSkill from "../../templates/skills/autonomous-ops.md" with { type: "text" };
 
@@ -100,17 +101,7 @@ export function renderLogTemplate(projectName: string, dateLabel: string): strin
 }
 
 export function renderProjectMemoryTemplate(projectName: string): string {
-  return `# Project Memory: ${projectName}
-
-## Durable Facts
-(none yet)
-
-## Conventions
-(none yet)
-
-## Decisions
-(none yet)
-
-## Open Questions
-(none yet)`;
+  return renderTemplate(projectMemoryTemplate.trim(), {
+    project_name: projectName,
+  });
 }
