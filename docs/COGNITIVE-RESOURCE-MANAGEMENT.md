@@ -57,21 +57,42 @@ What's missing is:
 - a concept of model tiers in routing decisions
 - aggregated usage tracking across runs
 
-### 3.2 Local Models Worth Running
+### 3.2 Local Models Worth Running (March 2026)
 
-Two families stand out for local deployment on a dev laptop or home server:
+The small model landscape moved fast in early 2026. Two families lead for
+HIVE's tier-1 use cases:
 
-**Qwen 2.5 (3B / 7B)** — Alibaba's small models. Strong at code
-understanding, summarization, and structured output. The 3B fits comfortably
-in ~4GB VRAM. The 7B is the sweet spot for quality/speed on a decent GPU.
-Runs well under Ollama or llama.cpp.
+**Qwen 3.5 (4B / 9B)** — Alibaba's latest small series (released Feb/Mar
+2026). The 4B is the standout: it rivals Qwen 2.5 72B on many benchmarks
+despite being 18x smaller. Supports tool calling, thinking mode, and
+multimodal input natively. The 4B runs in ~3GB VRAM (Q4 quantized). The 9B
+is ~5GB and competitive with models 13x its size. Both support structured
+output, which matters for producing JSON digests. Apache 2.0 licensed.
 
-**Gemma 2 (2B / 9B)** — Google's open models. The 2B is remarkably capable
-for classification and extraction tasks given its size. The 9B competes with
-much larger models on reasoning benchmarks. Good llama.cpp support.
+**Gemma 3 (1B / 4B / 12B)** — Google's third-generation open models (released
+early 2026). The 4B is multimodal (text + vision), has QAT quantization
+support for efficient inference, and excels at structured output and
+instruction following. The 1B is text-only but extremely fast — good for
+the simplest classification tasks where latency matters more than nuance.
+The 12B is strong enough to blur into tier-2 territory.
 
-Both run via Ollama, which provides an OpenAI-compatible API that makes
+Both families run via Ollama, which has become the de facto standard for
+local model deployment. Ollama provides an OpenAI-compatible API that makes
 integration straightforward.
+
+**Other notable options:**
+
+- **Phi-4 Mini (3.8B)** — Microsoft. Exceptional reasoning and math for its
+  size. Good for analytical tasks like deciding whether a diff is significant.
+- **SmolLM3 3B** — Hugging Face. Outperforms Llama 3.2 3B and Qwen 2.5 3B
+  at the 3B scale. Fully open, instruct-tuned with reasoning support.
+- **Llama 3.2 3B** — Meta. 128k context window is the largest in this class.
+  Good when worker output is long and needs single-pass summarization.
+
+The recommended default pairing for HIVE tier-1 is **Qwen 3.5 4B** (primary,
+best all-around) with **Gemma 3 4B** as an alternative (strongest structured
+output, multimodal if we ever want vision). Either fits comfortably on a
+laptop GPU or even CPU-only with acceptable latency for background tasks.
 
 ### 3.3 Haiku
 
@@ -101,7 +122,7 @@ majority of events.
 Small, fast, cheap models handling narrow tasks that need language
 understanding but not deep reasoning.
 
-**Local options:** Qwen 2.5 3B, Gemma 2 2B, Qwen 2.5 7B, Gemma 2 9B
+**Local options:** Qwen 3.5 4B, Gemma 3 4B, Phi-4 Mini, SmolLM3 3B
 **Cloud option:** Claude Haiku
 
 Tasks:
@@ -114,7 +135,7 @@ Tasks:
 - prepare compact delta packets for the steward
 - judge whether a human message needs the steward or can be answered directly
 
-These are not "full minds." They are narrow cognition modules. A 3B model
+These are not "full minds." They are narrow cognition modules. A 4B model
 can summarize a 2000-token worker log into 50 tokens perfectly well. There is
 no reason to spend Opus tokens on this.
 
@@ -123,8 +144,8 @@ no reason to spend Opus tokens on this.
 Strong models powering the disposable worker fleet. This is the existing HIVE
 worker model, unchanged.
 
-**Typical models:** Claude Sonnet, strong local models (Qwen 32B, etc.),
-domain-tuned models
+**Typical models:** Claude Sonnet, strong local models (Gemma 3 27B, Qwen 3.5
+32B, etc.), domain-tuned models
 
 Tasks: architecture, implementation, critique, research, code generation,
 design review — anything requiring real reasoning within a scoped assignment.
@@ -205,7 +226,7 @@ For tier-1 tasks, prefer:
 Keep this simple. A config file maps task types to preferred models:
 
 ```
-tier1_local: qwen2.5:7b
+tier1_local: qwen3.5:4b
 tier1_cloud: haiku
 tier1_fallback: haiku
 ```
@@ -321,12 +342,152 @@ downgrade should be conservative and transparent.
 
 ---
 
-## 9. Implementation Plan
+## 9. Console UI
+
+Cognitive resource management should be visible but not intrusive. The user
+should be able to ignore it entirely during normal operation but find the
+information immediately when they want it. Three layers, from least to most
+detailed:
+
+### 9.1 Topbar Budget Chip
+
+Add a small chip to the existing topbar, between the agent count and the
+connection indicator:
+
+```
+HIVE │ myproject │ ● active ↻ │ 3 agents ▾ │ ⚡ 14k T3 │ ● connected
+```
+
+The chip shows tier-3 (steward) token consumption for the current window.
+This is the single most important number — it tells you whether the steward
+is burning through budget or running efficiently.
+
+**States:**
+
+- `⚡ 14k T3` — normal, showing tier-3 tokens used
+- `⚡ 45k/50k T3` — approaching budget threshold (amber)
+- `⚡ 52k/50k T3` — over budget (red)
+- `⚡ — T3` — no usage data yet
+
+Click to expand a dropdown (same pattern as the existing agents dropdown)
+showing per-tier breakdown:
+
+```
+┌─────────────────────────────┐
+│  Cognition (24h)            │
+│                             │
+│  T3  steward     14,200 tk  │
+│  T2  workers     83,400 tk  │
+│  T1  local/haiku 41,800 tk  │
+│  T0  deterministic    —     │
+│                             │
+│  est. cost        $0.42     │
+│  steward wakes    7         │
+│  worker runs      12        │
+│  tier-1 calls     34        │
+└─────────────────────────────┘
+```
+
+This mirrors the agents dropdown pattern: a topbar chip with a details
+flyout. No new UI paradigm.
+
+### 9.2 Console Turn Chips
+
+Console turns already display detail chips (clickable metadata). Extend
+these to show which model/tier handled the response:
+
+```
+┌──────────────────────────────────────────────┐
+│ ASSISTANT  12:34                             │
+│ The refactoring is complete. I assigned the  │
+│ architect to review the API boundary...      │
+│                                              │
+│ [opus] [1,240 tk] [detail]                   │
+└──────────────────────────────────────────────┘
+```
+
+For tier-1 responses (if message pre-processing answers directly):
+
+```
+┌──────────────────────────────────────────────┐
+│ ASSISTANT  12:35                             │
+│ 3 workers are currently active.              │
+│                                              │
+│ [haiku] [82 tk] [detail]                     │
+└──────────────────────────────────────────────┘
+```
+
+This tells the user *per response* what did the work. It also makes routing
+tangible — when the user sees `[qwen3.5:4b]` on a summary vs. `[opus]` on a
+synthesis, the tiering stops being abstract.
+
+The model chip is always visible. Token count and detail are secondary chips
+that follow the existing pattern.
+
+### 9.3 Feed Panel Cognition Section
+
+Add a collapsible section to the feed panel, between Process Logs and the
+event Feed:
+
+```
+┌────────────────────────────┐
+│  Process Logs       Refresh│
+│  ...                       │
+├────────────────────────────┤
+│  Cognition            ▾    │
+│                            │
+│  local   qwen3.5:4b  ●    │
+│  cloud   haiku        ●    │
+│  steward opus              │
+│                            │
+│  T3: ████░░░░░ 14k/50k    │
+│  T2: ██████░░░ 83k/200k   │
+│  T1: █░░░░░░░░ 42k/500k   │
+│                            │
+│  last steward wake: 4m ago │
+│  tier-1 calls today: 34   │
+├────────────────────────────┤
+│  Feed                      │
+│  ...                       │
+└────────────────────────────┘
+```
+
+This section shows:
+
+- which models are active per tier (with a green dot if Ollama is responding)
+- simple bar charts for budget consumption by tier
+- recency of steward activation
+- tier-1 call volume
+
+Collapsed by default. The user opens it when tuning routing or investigating
+token spend. It's a diagnostic view, not a primary interaction surface.
+
+### 9.4 Design Constraints
+
+**No new pages or modals.** Everything fits within the existing three-panel
+layout (topbar, console, feed).
+
+**No required interaction.** The user never has to look at any of this for
+the hive to work. The topbar chip is passive. The turn chips are additive
+metadata. The feed section is collapsed.
+
+**Progressive disclosure.** Topbar chip → dropdown breakdown → turn-level
+detail → feed panel diagnostics. Each level adds detail for users who want
+it. Most users will only ever notice the topbar chip.
+
+**Consistent with existing patterns.** The topbar chip follows the agents
+dropdown pattern. The turn chips follow the existing detail chip pattern.
+The feed section follows the process logs / feed section pattern. No new
+UI components, just new data in existing containers.
+
+---
+
+## 10. Implementation Plan
 
 ### Step 1: Ollama Adapter
 
 Add an `ollama` runtime adapter to the existing adapter registry. Test with
-Qwen 2.5 7B and Gemma 2 9B. Verify output parsing and model selection work
+Qwen 3.5 4B and Gemma 3 4B. Verify output parsing and model selection work
 through the standard HIVE flow.
 
 ### Step 2: Tier-1 Task Runner
@@ -352,15 +513,30 @@ the run record. Feed the digest (not the full output) to the steward.
 ### Step 4: Usage Tracking
 
 Aggregate `RuntimeMetadata` from completed runs into `usage.json`. Add a
-gateway endpoint and console display for usage reporting.
+`GET /api/cognition` gateway endpoint that returns per-tier token counts,
+model availability, and budget status.
 
-### Step 5: Routing Policy
+### Step 5: Console UI
+
+Add the three UI layers:
+
+1. Topbar budget chip — wire to `/api/cognition` endpoint, update on
+   `run-completed` and `supervisor-tick` WebSocket events.
+2. Turn model chips — extend the existing detail chip rendering in `app.js`
+   to include model name and token count from the response metadata.
+3. Feed cognition section — collapsible panel reading from `/api/cognition`,
+   showing tier bars and model status. Collapsed by default.
+
+These are purely additive to the existing `index.html`, `style.css`, and
+`app.js`. No new files.
+
+### Step 6: Routing Policy
 
 Add configuration for routing preferences:
 
 ```
 # in project config or ~/.hive/config.md
-tier1_local: qwen2.5:7b
+tier1_local: qwen3.5:4b
 tier1_cloud: haiku
 tier2_default: sonnet
 tier3_default: opus
@@ -371,7 +547,7 @@ a task.
 
 ---
 
-## 10. What This Does Not Do
+## 11. What This Does Not Do
 
 - **No distributed scheduler.** Routing is policy-based configuration, not a
   resource auction or optimization algorithm.
@@ -386,19 +562,20 @@ a task.
 
 ---
 
-## 11. Where Pain Might Live (Future Work)
+## 12. Where Pain Might Live (Future Work)
 
 These are things we're deliberately not building now but should watch for:
 
-**Tier-1 quality variance.** Local 3B models may produce inconsistent
-summaries. If worker output compression proves unreliable, we may need
+**Tier-1 quality variance.** Even good 4B models produce inconsistent output
+on edge cases. If worker output compression proves unreliable, we may need
 validation (run two models, compare) or a quality threshold that falls back
 to Haiku. Watch for cases where the steward asks for full output because
 the summary was inadequate.
 
-**Context window pressure on local models.** Small models have 4K-8K context
-windows. Worker outputs that exceed this need chunked summarization or
-selective extraction. If this becomes common, we'll need a chunking strategy.
+**Context window pressure on local models.** Qwen 3.5 4B and Gemma 3 4B
+support 32K+ context, which is generous for most tier-1 tasks. But very long
+worker outputs may still need chunked summarization. Llama 3.2 3B's 128K
+window is an option if this becomes a pattern.
 
 **Ollama cold start.** First inference after model load is slow. If HIVE
 frequently switches between local models, load times may hurt. May need a
@@ -413,15 +590,14 @@ summaries are lossy vs. lossless.
 same API keys, per-project budgets need coordination. Not a problem until
 someone runs multiple projects simultaneously.
 
-**Model freshness.** Local models get stale. Qwen 2.5 is great today; Qwen 3
-may be better in six months. Need a low-friction way to swap models without
-reconfiguring everything. The tier-based config makes this easy (change one
-line), but we should watch for cases where model-specific prompt tuning
-creates lock-in.
+**Model freshness.** Local models improve fast. Qwen 3.5 is the best 4B
+today; something better will exist in six months. The tier-based config makes
+swapping easy (change one line), but watch for cases where model-specific
+prompt tuning creates lock-in. Keep tier-1 prompts generic.
 
 ---
 
-## 12. Success Criteria
+## 13. Success Criteria
 
 1. Routine summarization and classification run on local models or Haiku,
    not the steward's model.
@@ -431,3 +607,5 @@ creates lock-in.
 5. Adding a new local model is a one-line config change.
 6. The system works fine with no local models — Haiku fills tier-1 seamlessly.
 7. The user can see what's being routed where and override it.
+8. The topbar chip shows tier-3 budget at a glance without requiring interaction.
+9. Each console turn shows which model produced it.
