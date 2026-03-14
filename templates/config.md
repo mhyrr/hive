@@ -1,8 +1,13 @@
 # Hive Config
 
 ## Hive Mind
-model: local-small
-runtime: ollama
+# Runtime options: claude, codex, ollama
+runtime: claude
+# Model options vary by runtime:
+#   claude: claude-sonnet-4-6 (default), claude-opus-4-6
+#   codex: codex (uses OpenAI Codex CLI)
+#   ollama: local-small, local-large (requires local Ollama server)
+model: claude-sonnet-4-6
 
 ## Defaults
 orchestrator: steward

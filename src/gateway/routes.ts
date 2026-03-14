@@ -51,7 +51,12 @@ import {
 } from "../lib/state";
 import { runDirectStewardTurn } from "../lib/steward";
 import { getAdapter, listRuntimeAdapters, resolveRuntimeHints } from "../lib/runtime";
-import { findPlanAgent, normalizeProjectName, parseDefaultTeam } from "../lib/project";
+import {
+  findPlanAgent,
+  normalizeProjectName,
+  parseDefaultTeam,
+  stripRuntimeHintsFromDescriptor,
+} from "../lib/project";
 import { UsageError } from "../lib/errors";
 import { listApprovals, type ApprovalRequest } from "../lib/approvals";
 import { listRecentEvents, type EventRecord } from "../lib/events";
@@ -700,7 +705,7 @@ function resolveAgentPresentation(input: {
     return {
       displayName: input.agentId,
       persona: planAgent.persona,
-      descriptor: planAgent.descriptor,
+      descriptor: stripRuntimeHintsFromDescriptor(planAgent.descriptor),
     };
   }
 
@@ -712,7 +717,7 @@ function resolveAgentPresentation(input: {
     return {
       displayName: input.agentId,
       persona: teamAgent.persona,
-      descriptor: teamAgent.descriptor,
+      descriptor: stripRuntimeHintsFromDescriptor(teamAgent.descriptor),
     };
   }
 
