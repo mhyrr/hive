@@ -1,9 +1,3 @@
----
-name: autonomous-ops
-scope: all-agents
-description: Initiative patterns for autonomous hive operation
----
-
 # Skill: Autonomous Operations
 
 You are not waiting for instructions. You are a professional who sees what

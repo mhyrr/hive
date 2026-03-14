@@ -25,6 +25,14 @@
         </div>
       </div>
     </div>
+    <button class="topbar-health" id="health-indicator" type="button" title="Open live health">
+      <span class="topbar-health-icon">·</span>
+      <span class="topbar-health-label">idle</span>
+    </button>
+    <button class="topbar-attention" id="attention-badge" type="button" title="Open attention queue">
+      <span class="topbar-attention-icon">!</span>
+      <span class="topbar-attention-label">all clear</span>
+    </button>
     <div class="topbar-connection" id="connection-status">
       <span class="status-dot status-dot--disconnected"></span>
       <span>disconnected</span>
@@ -42,6 +50,7 @@
       </div>
       <div class="session-toolbar-actions">
         <button class="session-btn" id="sessions-btn" title="Browse sessions">Sessions</button>
+        <button class="session-btn" id="brief-session-btn" title="Ask the hive for a brief">Brief</button>
         <button class="session-btn" id="new-session-btn" title="New session (Ctrl+N)">+ New</button>
       </div>
       <!-- Sessions dropdown -->
@@ -59,6 +68,13 @@
         <p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>
       </div>
     </div>
+    <section class="pulse-panel" id="pulse-panel" hidden>
+      <div class="pulse-panel-header">
+        <div class="pulse-panel-kicker">Live Pulse</div>
+        <button class="pulse-panel-toggle" id="pulse-panel-toggle" type="button">Collapse</button>
+      </div>
+      <div class="pulse-panel-list" id="pulse-panel-list"></div>
+    </section>
     <form class="console-input" id="console-form">
       <textarea id="console-input" placeholder="Talk to HIVE... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
       <button type="submit" id="console-send-btn">Send</button>
@@ -102,6 +118,12 @@
 
     <section class="rail-panel" id="rail-panel-queue" data-rail-panel="queue">
       <section class="rail-section">
+        <div class="rail-section-header">Attention Queue</div>
+        <div class="queue-list" id="queue-attention">
+          <div class="rail-empty">Nothing needs you right now.</div>
+        </div>
+      </section>
+      <section class="rail-section">
         <div class="rail-section-header">Pending Approvals</div>
         <div class="queue-list" id="queue-approvals">
           <div class="rail-empty">No pending approvals.</div>
@@ -141,6 +163,8 @@
       <div class="turn-detail-dialog-body" id="turn-detail-body"></div>
     </div>
   </div>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
   <script src="/app.js"></script>
 </body>

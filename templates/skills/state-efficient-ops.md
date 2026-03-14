@@ -1,9 +1,3 @@
----
-name: state-efficient-ops
-scope: all-agents
-description: Efficient state and token management for HIVE agents
----
-
 # Skill: State-Efficient Operations
 
 This skill teaches agents to manage HIVE state without wasting tokens.
@@ -69,10 +63,10 @@ Patterns:
 - One write per update, not read-modify-write cycles
 
 ### Checking State
-- `hive inbox <agent>` — cheaper than scanning msg/ yourself
-- `hive status` — cheaper than reading BOARD.md + msg/ yourself
-- `hive ps` — cheaper than scanning runs/active/
-- `hive feed 5` — cheaper than reading feed.md
+- `hive inbox <agent>` — filtered view; avoids scanning all of msg/
+- `hive status` — formatted overview; read BOARD.md directly when you need to parse task state
+- `hive ps` — quick check; avoids scanning runs/active/
+- `hive feed 5` — recent window; avoids reading full feed.md
 
 ## Token Budget Targets
 
