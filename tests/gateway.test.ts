@@ -476,7 +476,7 @@ describe("Gateway session endpoints", () => {
 path: ${context.repo}
 
 ## Default Team
-- orchestrator: steward, claude-opus-4-6 via claude
+- orchestrator: steward, claude-sonnet-4-6 via claude
 - alpha: craftsman via codex
 `,
     );
@@ -501,7 +501,7 @@ path: ${context.repo}
     expect(await Bun.file(join(sessionDir, "state.json")).exists()).toBeTrue();
     const sessionMeta = await getSession(join(context.hiveHome, "sessions"), data.sessionId);
     expect(sessionMeta?.runtime).toBe("claude");
-    expect(sessionMeta?.model).toBe("claude-opus-4-6");
+    expect(sessionMeta?.model).toBe("claude-sonnet-4-6");
     const sessionState = await Bun.file(join(sessionDir, "state.json")).json() as {
       currentProject: string;
     };
@@ -797,7 +797,7 @@ path: ${context.repo}
 path: ${context.repo}
 
 ## Default Team
-- orchestrator: steward, claude-opus-4-6 via claude
+- orchestrator: steward, claude-sonnet-4-6 via claude
 - alpha: craftsman via codex
 `,
     );
@@ -828,7 +828,7 @@ path: ${context.repo}
     expect(inspectRes.status).toBe(200);
     const inspectData = await inspectRes.json() as { result: string };
     expect(inspectData.result).toContain("claude");
-    expect(inspectData.result).toContain("claude-opus-4-6");
+    expect(inspectData.result).toContain("claude-sonnet-4-6");
 
     const switchReq = new Request("http://localhost/api/console/send", {
       method: "POST",
@@ -863,11 +863,11 @@ path: ${context.repo}
     );
     expect(switchBackRes.status).toBe(200);
     const switchBackData = await switchBackRes.json() as { result: string };
-    expect(switchBackData.result).toContain("claude-opus-4-6");
+    expect(switchBackData.result).toContain("claude-sonnet-4-6");
 
     const switchedBackMeta = await getSession(join(context.hiveHome, "sessions"), createData.sessionId);
     expect(switchedBackMeta?.runtime).toBe("claude");
-    expect(switchedBackMeta?.model).toBe("claude-opus-4-6");
+    expect(switchedBackMeta?.model).toBe("claude-sonnet-4-6");
   });
 
   test("session /help lists slash commands, routing shortcuts, and examples", async () => {
@@ -968,6 +968,54 @@ path: ${context.repo}
       entry.agentId === "alpha" &&
       entry.tail.join("\n").includes("checking board")
     )).toBe(true);
+  });
+
+  test("process logs endpoint expands the focused run tail when requested", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "testproj");
+    let run = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "# Prompt",
+      source: "gateway-test",
+    });
+    run = await markRunActive(projectPaths, run, 81234);
+    await Bun.write(
+      getRunOutputPath(run),
+      Array.from({ length: 75 }, (_value, index) => `line ${index + 1}`).join("\n") + "\n",
+    );
+
+    const req = new Request(
+      `http://localhost/api/process-logs?project=testproj&run=${encodeURIComponent(run.runId)}&lines=60`,
+    );
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      project: string | null;
+      selectedRunId: string | null;
+      runs: Array<{ runId: string; tail: string[] }>;
+    };
+    const selectedRun = data.runs.find((entry) => entry.runId === run.runId) ?? null;
+
+    expect(data.project).toBe("testproj");
+    expect(data.selectedRunId).toBe(run.runId);
+    expect(selectedRun).not.toBeNull();
+    expect(selectedRun?.tail.length).toBe(60);
+    expect(selectedRun?.tail[0]).toBe("line 16");
+    expect(selectedRun?.tail[selectedRun.tail.length - 1]).toBe("line 75");
   });
 
   test("live snapshot endpoint returns structured agents, activity, and recent completions", async () => {

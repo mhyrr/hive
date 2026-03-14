@@ -2400,6 +2400,9 @@ const getRoutes: Record<string, RouteHandler> = {
       }
 
       const projectPaths = getProjectPaths(options.hivePaths, projectId);
+      const requestedRunId = url.searchParams.get("run")?.trim() || null;
+      const requestedLineCount = toPositiveInteger(url.searchParams.get("lines"));
+      const tailLimit = Math.min(Math.max(requestedLineCount ?? (requestedRunId ? 240 : 40), 20), 400);
       const [supervisor, activeRuns] = await Promise.all([
         reconcileDetachedSupervisorState(projectPaths),
         listActiveRuns(projectPaths),
@@ -2410,24 +2413,34 @@ const getRoutes: Record<string, RouteHandler> = {
             status: supervisor.status,
             pid: supervisor.pid,
             logPath: supervisor.logPath,
-            tail: await readTextTail(supervisor.logPath, 50),
+            tail: await readTextTail(
+              supervisor.logPath,
+              requestedRunId === "supervisor" ? tailLimit : 50,
+            ),
           }
         : null;
 
       const runs = await Promise.all(
-        activeRuns.map(async (run) => ({
-          runId: run.runId,
-          agentId: run.agentId,
-          status: run.status,
-          started: run.started,
-          pid: run.pid,
-          outputPath: getRunOutputPath(run),
-          tail: await readRunOutputTail(run, 40),
-        })),
+        activeRuns.map(async (run) => {
+          const isFocusedRun = requestedRunId !== null && requestedRunId === run.runId;
+
+          return {
+            runId: run.runId,
+            agentId: run.agentId,
+            status: run.status,
+            runtime: run.runtime,
+            model: run.model,
+            started: run.started,
+            pid: run.pid,
+            outputPath: getRunOutputPath(run),
+            tail: await readRunOutputTail(run, isFocusedRun ? tailLimit : 40),
+          };
+        }),
       );
 
       return jsonOk({
         project: projectId,
+        selectedRunId: requestedRunId,
         supervisor: supervisorPayload,
         runs,
       });
