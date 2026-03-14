@@ -476,7 +476,7 @@ describe("Gateway session endpoints", () => {
 path: ${context.repo}
 
 ## Default Team
-- orchestrator: steward, claude-opus-4-6 via claude
+- orchestrator: steward, claude-sonnet-4-6 via claude
 - alpha: craftsman via codex
 `,
     );
@@ -501,7 +501,7 @@ path: ${context.repo}
     expect(await Bun.file(join(sessionDir, "state.json")).exists()).toBeTrue();
     const sessionMeta = await getSession(join(context.hiveHome, "sessions"), data.sessionId);
     expect(sessionMeta?.runtime).toBe("claude");
-    expect(sessionMeta?.model).toBe("claude-opus-4-6");
+    expect(sessionMeta?.model).toBe("claude-sonnet-4-6");
     const sessionState = await Bun.file(join(sessionDir, "state.json")).json() as {
       currentProject: string;
     };
@@ -797,7 +797,7 @@ path: ${context.repo}
 path: ${context.repo}
 
 ## Default Team
-- orchestrator: steward, claude-opus-4-6 via claude
+- orchestrator: steward, claude-sonnet-4-6 via claude
 - alpha: craftsman via codex
 `,
     );
@@ -828,7 +828,7 @@ path: ${context.repo}
     expect(inspectRes.status).toBe(200);
     const inspectData = await inspectRes.json() as { result: string };
     expect(inspectData.result).toContain("claude");
-    expect(inspectData.result).toContain("claude-opus-4-6");
+    expect(inspectData.result).toContain("claude-sonnet-4-6");
 
     const switchReq = new Request("http://localhost/api/console/send", {
       method: "POST",
@@ -863,11 +863,11 @@ path: ${context.repo}
     );
     expect(switchBackRes.status).toBe(200);
     const switchBackData = await switchBackRes.json() as { result: string };
-    expect(switchBackData.result).toContain("claude-opus-4-6");
+    expect(switchBackData.result).toContain("claude-sonnet-4-6");
 
     const switchedBackMeta = await getSession(join(context.hiveHome, "sessions"), createData.sessionId);
     expect(switchedBackMeta?.runtime).toBe("claude");
-    expect(switchedBackMeta?.model).toBe("claude-opus-4-6");
+    expect(switchedBackMeta?.model).toBe("claude-sonnet-4-6");
   });
 
   test("session /help lists slash commands, routing shortcuts, and examples", async () => {
