@@ -6,7 +6,7 @@ path: {{repo_path}}
 ## Runtime
 # Override the global runtime/model for this project.
 # runtime: claude
-# model: claude-opus-4-6
+# model: claude-sonnet-4-6
 
 ## Stack
 # language: typescript
