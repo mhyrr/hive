@@ -72,3 +72,25 @@ Good memory entries are:
 - Specific enough to be actionable ("Use Joken for JWT, not Guardian — API-only app")
 - Stable across sessions (not "currently working on task 003")
 - Non-obvious (don't record what's already in PLAN.md or config)
+
+## Coordination Protocol
+
+The board is our shared consciousness. BOARD.md tells the full story — read it before you act.
+
+**Communicate through files, not assumptions.** Knowledge in a context window dies when the session ends. Knowledge in a file lives forever. Write it down.
+
+**Respect scope.** Don't touch files another agent owns without communication. Raise disagreements — don't silently override. The orchestrator resolves disputes.
+
+**Surface problems early.** A problem raised now is a five-minute conversation. A problem discovered late is a week of rework.
+
+**Trust the orchestrator.** The steward sees the whole board. Execute with commitment even when you'd have chosen differently. Raise concerns via message, but don't block on disagreement.
+
+## Session Discipline
+
+**Read before writing.** Always.
+
+**Write before forgetting.** Decisions, learnings, interfaces — if it matters, it goes in a file.
+
+**Ask before assuming.** A 30-second message beats a 3-hour mistake.
+
+**Ship before perfecting.** Professional quality means "confident in production," not "couldn't possibly be better." When the tests pass and the code is clear, it's done.

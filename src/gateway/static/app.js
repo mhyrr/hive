@@ -26,11 +26,17 @@ var state = {
   consoleExpanded: {},
   consoleView: 'conversation',
   sessionId: null,
-  sending: false,
+  pendingSends: 0,
   liveSnapshot: null,
+  healthSnapshot: null,
   queueSnapshot: null,
   timelineItems: [],
   railTab: 'live',
+  pulsesCollapsed: true,
+  agentSignals: {},
+  notificationsPrimed: false,
+  toastSeenKeys: {},
+  toasts: [],
 };
 
 
@@ -1137,6 +1143,10 @@ function updateSessionProject(project) {
 function updateSessionIndicator(sessionId, project) {
   if (state.sessionId !== sessionId) {
     state.consoleExpanded = {};
+    state.pulsesCollapsed = true;
+    state.notificationsPrimed = false;
+    state.toastSeenKeys = {};
+    state.toasts = [];
   }
   state.sessionId = sessionId;
   if (project !== undefined) {
@@ -1144,6 +1154,7 @@ function updateSessionIndicator(sessionId, project) {
   } else if (!sessionId) {
     updateSessionProject(null);
   }
+  renderLeadershipSurface();
   var el = document.getElementById('session-id');
   if (!el) return;
 
@@ -1286,11 +1297,15 @@ function updateAgentOverview(agents) {
 
   for (var i = 0; i < state.agents.length; i++) {
     var agent = state.agents[i];
+    var health = findAgentHealth(state.healthSnapshot, agent);
     var item = document.createElement('div');
     item.className = 'agent-dropdown-item';
     item.innerHTML =
       '<span class="agent-dropdown-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</span>' +
       '<span class="agent-dropdown-persona">' + escapeHtml(agent.persona || '') + '</span>' +
+      '<span class="agent-dropdown-health agent-dropdown-health--' + escapeAttr(health ? health.label : 'working') + '">' +
+        escapeHtml((health ? health.icon + ' ' + health.label : '· working')) +
+      '</span>' +
       '<span class="agent-dropdown-runtime">' + escapeHtml(agent.runtime || '') + '</span>' +
       '<span class="agent-dropdown-age">' + escapeHtml(formatRelativeAge(agent.started)) + '</span>';
     list.appendChild(item);
@@ -1380,6 +1395,962 @@ function scheduleOperationsRefresh(delay) {
   scheduleTimelineRefresh(base + 120);
 }
 
+function getProjectFocus() {
+  return state.sessionProject || state.project || null;
+}
+
+function getMinutesSince(iso) {
+  if (!iso) return 0;
+  var then = new Date(iso).getTime();
+  if (!isFinite(then)) return 0;
+  return Math.max(0, (Date.now() - then) / 60000);
+}
+
+function getAgentKey(agent) {
+  return (agent && (agent.runId || agent.agentId || agent.displayName)) || '';
+}
+
+function buildAgentOutputFingerprint(agent) {
+  if (!agent) return '';
+
+  var segments = [];
+  if (Array.isArray(agent.tail) && agent.tail.length > 0) {
+    segments.push(agent.tail.join('\n'));
+  }
+  if (agent.latestOutput) {
+    segments.push(agent.latestOutput);
+  }
+
+  return normalizeMultilineText(segments.join('\n'));
+}
+
+function updateAgentSignals(agents) {
+  var nextSignals = {};
+  var now = nowISO();
+
+  for (var i = 0; i < (agents || []).length; i++) {
+    var agent = agents[i];
+    var key = getAgentKey(agent);
+    if (!key) continue;
+
+    var fingerprint = buildAgentOutputFingerprint(agent);
+    var previous = state.agentSignals[key];
+    var changed = !previous || previous.fingerprint !== fingerprint;
+    var hadOutput = previous ? previous.outputSeen : false;
+    var outputSeen = hadOutput || Boolean(fingerprint);
+    var lastChangedAt;
+
+    if (changed) {
+      if (fingerprint) {
+        lastChangedAt = now;
+      } else {
+        lastChangedAt = agent.started || now;
+      }
+    } else {
+      lastChangedAt = previous.lastChangedAt || agent.started || now;
+    }
+
+    nextSignals[key] = {
+      fingerprint: fingerprint,
+      lastChangedAt: lastChangedAt,
+      changeCount: changed
+        ? ((previous && previous.changeCount) || 0) + (fingerprint ? 1 : 0)
+        : ((previous && previous.changeCount) || 0),
+      outputSeen: outputSeen,
+    };
+  }
+
+  state.agentSignals = nextSignals;
+}
+
+function countPatternMatches(text, pattern) {
+  if (!text) return 0;
+  var matches = text.match(pattern);
+  return matches ? matches.length : 0;
+}
+
+function healthTone(level) {
+  if (level === 'cruising') return 'success';
+  if (level === 'struggling') return 'warning';
+  if (level === 'stuck') return 'error';
+  return 'info';
+}
+
+function healthIcon(level) {
+  if (level === 'cruising') return '●';
+  if (level === 'struggling') return '▲';
+  if (level === 'stuck') return '■';
+  return '·';
+}
+
+function formatHealthLevel(level) {
+  return level || 'working';
+}
+
+function buildAgentHealth(agent) {
+  var key = getAgentKey(agent);
+  var signal = key ? state.agentSignals[key] : null;
+  var text = buildAgentOutputFingerprint(agent).toLowerCase();
+  var ageMinutes = getMinutesSince(agent.started);
+  var staleMinutes = getMinutesSince(signal ? signal.lastChangedAt : agent.started);
+  var outputSeen = signal ? signal.outputSeen : Boolean(text);
+  var changeCount = signal ? signal.changeCount : 0;
+  var blockedMatches = countPatternMatches(
+    text,
+    /\b(blocked|stuck|waiting on|needs human|needs your|approval required|cannot proceed|can't proceed|permission denied)\b/g,
+  );
+  var struggleMatches = countPatternMatches(
+    text,
+    /\b(error|failed|retry|retrying|exception|timeout|timed out|not found|unable|cannot|can't|conflict|warning|failing|fixing|investigating)\b/g,
+  );
+  var progressMatches = countPatternMatches(
+    text,
+    /\b(completed|updated|wrote|fixed|verified|created|launched|running|working|finished|done|passed|clean|resolved)\b/g,
+  );
+  var level = 'working';
+  var reason = 'Work is moving normally.';
+
+  if (agent.status === 'failed' || agent.status === 'error' || agent.status === 'cancelled') {
+    level = 'stuck';
+    reason = 'This run is no longer healthy and likely needs intervention.';
+  } else if (blockedMatches > 0 || ((staleMinutes >= 14 && ageMinutes >= 15) || (!outputSeen && ageMinutes >= 12))) {
+    level = 'stuck';
+    reason = blockedMatches > 0
+      ? 'The latest output reads like a blocker or a wait state.'
+      : 'No meaningful visible movement for ' + Math.round(staleMinutes) + 'm.';
+  } else if (struggleMatches > 0 || (staleMinutes >= 7 && ageMinutes >= 9)) {
+    level = 'struggling';
+    reason = struggleMatches > 0
+      ? 'Retries, errors, or warnings are showing up in the recent output.'
+      : 'Progress has gone quiet for ' + Math.round(staleMinutes) + 'm.';
+  } else if ((progressMatches > 0 && staleMinutes <= 3) || (changeCount >= 3 && staleMinutes <= 4) || (outputSeen && ageMinutes <= 4)) {
+    level = 'cruising';
+    reason = 'Recent output suggests steady forward progress.';
+  }
+
+  return {
+    key: key,
+    level: level,
+    tone: healthTone(level),
+    icon: healthIcon(level),
+    label: formatHealthLevel(level),
+    summary: reason,
+    ageMinutes: ageMinutes,
+    staleMinutes: staleMinutes,
+    ageLabel: formatRelativeAge(agent.started),
+    staleLabel: Math.round(staleMinutes) + 'm quiet',
+    outputSeen: outputSeen,
+    changeCount: changeCount,
+  };
+}
+
+function buildHealthSnapshot(liveSnapshot) {
+  var agents = liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : [];
+  updateAgentSignals(agents);
+
+  var healthAgents = [];
+  var counts = {
+    cruising: 0,
+    working: 0,
+    struggling: 0,
+    stuck: 0,
+  };
+
+  for (var i = 0; i < agents.length; i++) {
+    var health = buildAgentHealth(agents[i]);
+    health.agent = agents[i];
+    healthAgents.push(health);
+    counts[health.level] += 1;
+  }
+
+  var aggregate = 'idle';
+  if (counts.stuck > 0) {
+    aggregate = 'stuck';
+  } else if (counts.struggling > 0) {
+    aggregate = 'struggling';
+  } else if (counts.working > 0) {
+    aggregate = 'working';
+  } else if (counts.cruising > 0) {
+    aggregate = 'cruising';
+  }
+
+  var summaryParts = [];
+  if (counts.cruising > 0) summaryParts.push(countLabel(counts.cruising, 'cruising agent', 'cruising agents'));
+  if (counts.working > 0) summaryParts.push(countLabel(counts.working, 'working agent', 'working agents'));
+  if (counts.struggling > 0) summaryParts.push(countLabel(counts.struggling, 'struggling agent', 'struggling agents'));
+  if (counts.stuck > 0) summaryParts.push(countLabel(counts.stuck, 'stuck agent', 'stuck agents'));
+
+  return {
+    aggregate: aggregate,
+    tone: healthTone(aggregate === 'idle' ? 'working' : aggregate),
+    counts: counts,
+    agents: healthAgents,
+    summary: summaryParts.join(' \u00b7 ') || 'No active health signals.',
+  };
+}
+
+function findAgentHealth(healthSnapshot, agent) {
+  if (!healthSnapshot || !Array.isArray(healthSnapshot.agents)) return null;
+  var key = getAgentKey(agent);
+  for (var i = 0; i < healthSnapshot.agents.length; i++) {
+    if (healthSnapshot.agents[i].key === key) {
+      return healthSnapshot.agents[i];
+    }
+  }
+  return null;
+}
+
+function listAgentNames(agents) {
+  var names = [];
+
+  for (var i = 0; i < (agents || []).length; i++) {
+    var agent = agents[i];
+    if (!agent || agent.persona === 'steward') continue;
+    var name = agent.displayName || agent.agentId || 'agent';
+    if (names.indexOf(name) === -1) {
+      names.push(name);
+    }
+  }
+
+  return names;
+}
+
+function formatCompactList(items, limit) {
+  var values = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (values.length === 0) return '';
+
+  var max = typeof limit === 'number' ? limit : 3;
+  var shown = values.slice(0, max);
+  var suffix = values.length > max ? ' +' + (values.length - max) : '';
+
+  return shown.join(', ') + suffix;
+}
+
+function formatAttentionLabel(input) {
+  if (input.urgentCount > 0) {
+    return input.urgentCount === 1 ? '1 urgent' : input.urgentCount + ' urgent';
+  }
+
+  if (input.needsYouCount > 0) {
+    return input.needsYouCount === 1 ? '1 needs you' : input.needsYouCount + ' need you';
+  }
+
+  if (input.activeCount > 0) {
+    return input.activeCount === 1 ? '1 in flight' : input.activeCount + ' in flight';
+  }
+
+  return 'all clear';
+}
+
+function renderRailActionButton(label, attrs, quiet) {
+  var html = '<button class="rail-action-btn' + (quiet ? ' rail-action-btn--quiet' : '') + '" type="button"';
+
+  for (var key in attrs) {
+    if (!Object.prototype.hasOwnProperty.call(attrs, key)) continue;
+    var value = attrs[key];
+    if (value === null || value === undefined || value === '') continue;
+    html += ' ' + key + '="' + escapeAttr(String(value)) + '"';
+  }
+
+  html += '>' + escapeHtml(label) + '</button>';
+  return html;
+}
+
+function buildAttentionItems(liveSnapshot, queueSnapshot, healthSnapshot) {
+  var items = [];
+  var approvals = queueSnapshot && Array.isArray(queueSnapshot.approvals) ? queueSnapshot.approvals : [];
+  var waitingOnHuman = queueSnapshot && Array.isArray(queueSnapshot.waitingOnHuman) ? queueSnapshot.waitingOnHuman : [];
+  var incidents = queueSnapshot && Array.isArray(queueSnapshot.incidents) ? queueSnapshot.incidents : [];
+  var agents = liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : [];
+  var recentCompletions = liveSnapshot && Array.isArray(liveSnapshot.recentCompletions)
+    ? liveSnapshot.recentCompletions
+    : [];
+  var latestActivity = liveSnapshot && Array.isArray(liveSnapshot.activity) && liveSnapshot.activity.length > 0
+    ? liveSnapshot.activity[0]
+    : null;
+
+  for (var i = 0; i < incidents.length; i++) {
+    var incident = incidents[i];
+    items.push({
+      id: incident.id || ('incident-' + i),
+      kind: 'incident',
+      tone: incident.severity === 'error' ? 'error' : 'warning',
+      priority: incident.severity === 'error' ? 0 : 3,
+      ts: incident.ts || '',
+      title: incident.summary || incident.kind || 'Incident',
+      summary: truncateText((incident.details || []).join(' \u00b7 ') || 'An external incident was raised for this project.', 180),
+      meta: joinMeta([
+        incident.source || '',
+        incident.kind || '',
+        formatMoment(incident.ts),
+      ]),
+      prompt:
+        'I saw this incident: "' + (incident.summary || incident.kind || 'Incident') +
+        '". Give me a crisp brief on what happened, the impact, and whether you need a decision from me.',
+      openTab: 'queue',
+      focusId: 'queue-incidents',
+    });
+  }
+
+  for (var j = 0; j < approvals.length; j++) {
+    var approval = approvals[j];
+    items.push({
+      id: approval.id || ('approval-' + j),
+      kind: 'approval',
+      tone: 'warning',
+      priority: 1,
+      ts: approval.created || '',
+      title: approval.summary || approval.kind || 'Approval requested',
+      summary: truncateText(approval.note || 'A yes/no call is waiting before work can continue.', 180),
+      meta: joinMeta([
+        approval.kind || '',
+        approval.requestedBy ? 'requested by ' + approval.requestedBy : '',
+        formatMoment(approval.created),
+      ]),
+      prompt:
+        'We have a pending approval: "' + (approval.summary || approval.kind || 'Approval requested') +
+        '". Give me the context, your recommendation, and the tradeoffs in 3 bullets.',
+      openTab: 'queue',
+      focusId: 'queue-approvals',
+    });
+  }
+
+  for (var k = 0; k < waitingOnHuman.length; k++) {
+    var waiting = waitingOnHuman[k];
+    items.push({
+      id: waiting.id || ('waiting-' + k),
+      kind: 'waiting',
+      tone: 'info',
+      priority: 2,
+      ts: waiting.ts || '',
+      title: waiting.summary || waiting.type || 'Human input needed',
+      summary: 'The hive is paused until you answer this thread.',
+      meta: joinMeta([
+        waiting.type || 'message',
+        waiting.from ? 'from ' + waiting.from : '',
+        formatMoment(waiting.ts),
+      ]),
+      prompt:
+        'We are waiting on a human reply for "' + (waiting.summary || waiting.type || 'this thread') +
+        '". Draft the reply you recommend and tell me what happens next if I send it.',
+      openTab: 'queue',
+      focusId: 'queue-waiting-human',
+    });
+  }
+
+  var healthIssues = healthSnapshot && Array.isArray(healthSnapshot.agents)
+    ? healthSnapshot.agents.filter(function (item) {
+      return item.level === 'stuck' || item.level === 'struggling';
+    })
+    : [];
+  for (var h = 0; h < healthIssues.length; h++) {
+    var issue = healthIssues[h];
+    var issueAgent = issue.agent || null;
+    var issueName = issueAgent ? (issueAgent.displayName || issueAgent.agentId || 'agent') : 'agent';
+    var issuePriority = issue.level === 'stuck' ? 0 : 3;
+    items.push({
+      id: 'health-' + issue.key,
+      kind: 'health',
+      tone: issue.level === 'stuck' ? 'error' : 'warning',
+      priority: issuePriority,
+      ts: issueAgent ? issueAgent.started : '',
+      title: issue.level === 'stuck'
+        ? issueName + ' looks stuck.'
+        : issueName + ' is starting to struggle.',
+      summary: issue.summary,
+      meta: joinMeta([
+        issue.label,
+        issue.staleLabel,
+        issue.ageLabel,
+      ]),
+      prompt:
+        'Take a look at ' + issueName +
+        '. Give me a short health brief: what it is doing, why it looks ' + issue.label +
+        ', and whether you want me to intervene.',
+      openTab: 'live',
+      focusId: 'live-agents',
+    });
+  }
+
+  if (agents.length > 0) {
+    var agentNames = listAgentNames(agents);
+    items.push({
+      id: 'active-work',
+      kind: 'active',
+      tone: approvals.length > 0 || waitingOnHuman.length > 0 || incidents.length > 0 ? 'info' : 'success',
+      priority: 4,
+      ts: latestActivity ? latestActivity.ts : (agents[0].started || ''),
+      title: agents.length === 1 ? 'One thread is actively moving.' : countLabel(agents.length, 'live thread') + ' are moving.',
+      summary:
+        agentNames.length > 0
+          ? 'Running now: ' + formatCompactList(agentNames, 4) + '.'
+          : 'The steward is actively working the current conversation.',
+      meta: joinMeta([
+        latestActivity ? 'latest ' + formatMoment(latestActivity.ts) : '',
+        agents.length > 0 ? countLabel(agents.length, 'active run') : '',
+      ]),
+      prompt: 'Give me a short leadership brief on what is currently in flight, what looks risky, and what you need from me.',
+      openTab: 'live',
+      focusId: 'live-agents',
+    });
+  } else if (recentCompletions.length > 0) {
+    var completion = recentCompletions[0];
+    items.push({
+      id: 'recent-completion-' + (completion.runId || 'latest'),
+      kind: 'recent',
+      tone: 'success',
+      priority: 5,
+      ts: completion.ended || '',
+      title: (completion.displayName || completion.agentId || 'worker') + ' just wrapped a pass.',
+      summary: truncateText(completion.summary || 'Recent work completed cleanly.', 180),
+      meta: joinMeta([
+        completion.runtime || '',
+        completion.model || '',
+        formatMoment(completion.ended),
+      ]),
+      prompt: 'Give me the last completed-work brief: what landed, what changed, and what still needs review.',
+      openTab: 'timeline',
+      focusId: 'timeline-list',
+    });
+  }
+
+  items.sort(function (left, right) {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return String(right.ts || '').localeCompare(String(left.ts || ''));
+  });
+
+  return items.slice(0, 6);
+}
+
+function buildLeadershipSnapshot() {
+  var liveSnapshot = state.liveSnapshot;
+  var healthSnapshot = state.healthSnapshot;
+  var queueSnapshot = state.queueSnapshot;
+  var project =
+    getProjectFocus() ||
+    (liveSnapshot && liveSnapshot.project) ||
+    (queueSnapshot && queueSnapshot.project) ||
+    null;
+  var activeAgents = liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : [];
+  var attentionItems = buildAttentionItems(liveSnapshot, queueSnapshot, healthSnapshot);
+  var urgentCount = 0;
+  var needsYouCount = 0;
+
+  for (var i = 0; i < attentionItems.length; i++) {
+    if (attentionItems[i].tone === 'error') {
+      urgentCount += 1;
+    }
+    if (
+      attentionItems[i].kind === 'approval' ||
+      attentionItems[i].kind === 'waiting' ||
+      attentionItems[i].kind === 'incident' ||
+      (attentionItems[i].kind === 'health' && attentionItems[i].tone === 'error')
+    ) {
+      needsYouCount += 1;
+    }
+  }
+
+  var badgeTone = 'clear';
+  if (urgentCount > 0) {
+    badgeTone = 'error';
+  } else if (needsYouCount > 0) {
+    badgeTone = 'warning';
+  } else if (activeAgents.length > 0) {
+    badgeTone = 'info';
+  }
+
+  return {
+    project: project,
+    attentionItems: attentionItems,
+    health: healthSnapshot,
+    badgeTone: badgeTone,
+    badgeLabel: formatAttentionLabel({
+      urgentCount: urgentCount,
+      needsYouCount: needsYouCount,
+      activeCount: activeAgents.length,
+    }),
+    badgeCount: urgentCount || needsYouCount || activeAgents.length || 0,
+  };
+}
+
+function renderAttentionBadge(leadership) {
+  var button = document.getElementById('attention-badge');
+  if (!button) return;
+
+  var icon = button.querySelector('.topbar-attention-icon');
+  var label = button.querySelector('.topbar-attention-label');
+  var tone = leadership ? leadership.badgeTone : 'clear';
+  var text = leadership ? leadership.badgeLabel : 'all clear';
+  var count = leadership ? leadership.badgeCount : 0;
+
+  button.className = 'topbar-attention topbar-attention--' + tone;
+  button.setAttribute('title', tone === 'clear'
+    ? 'Open attention queue'
+    : 'Open attention queue (' + text + ')');
+
+  if (label) {
+    label.textContent = text;
+  }
+  if (icon) {
+    icon.textContent = count > 0 ? String(Math.min(count, 9)) : '!';
+  }
+}
+
+function renderHealthIndicator(healthSnapshot) {
+  var button = document.getElementById('health-indicator');
+  if (!button) return;
+
+  var icon = button.querySelector('.topbar-health-icon');
+  var label = button.querySelector('.topbar-health-label');
+  var aggregate = healthSnapshot ? healthSnapshot.aggregate : 'idle';
+  var summary = healthSnapshot ? healthSnapshot.summary : 'No active health signals.';
+
+  button.className = 'topbar-health topbar-health--' + aggregate;
+  button.setAttribute('title', summary);
+
+  if (icon) {
+    icon.textContent = healthIcon(aggregate);
+  }
+  if (label) {
+    label.textContent = aggregate;
+  }
+}
+
+function renderHealthPill(health) {
+  if (!health) return '';
+
+  return '<div class="health-pill health-pill--' + escapeAttr(health.label) + '">' +
+    '<span class="health-pill-icon">' + escapeHtml(health.icon) + '</span>' +
+    '<span>' + escapeHtml(health.label) + '</span>' +
+    '</div>';
+}
+
+function renderAttentionQueue(leadership) {
+  if (!leadership || !leadership.project || !leadership.attentionItems || leadership.attentionItems.length === 0) {
+    renderQueueCards('queue-attention', '', 'Nothing needs you right now.');
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < leadership.attentionItems.length; i++) {
+    var item = leadership.attentionItems[i];
+    html += '<div class="' + toneClass('queue-card', item.tone) + '">';
+    html += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(item.title) + '</div>';
+    html += '<div class="queue-card-time">' + escapeHtml(formatMoment(item.ts)) + '</div></div>';
+    html += '<div class="queue-card-meta">' + escapeHtml(item.meta || '') + '</div>';
+    html += '<div class="queue-card-body">' + escapeHtml(item.summary || '') + '</div>';
+    html += '<div class="queue-card-actions">';
+    if (item.prompt) {
+      html += renderRailActionButton('Ask Hive', {
+        'data-rail-action': 'send-prompt',
+        'data-rail-prompt': item.prompt,
+      });
+    }
+    if (item.openTab) {
+      html += renderRailActionButton(
+        item.openTab === 'live' ? 'Open Live' : (item.openTab === 'timeline' ? 'Open Timeline' : 'Open Queue'),
+        {
+          'data-rail-action': 'focus-tab',
+          'data-rail-tab-target': item.openTab,
+          'data-rail-focus-id': item.focusId || '',
+        },
+        true
+      );
+    }
+    html += '</div>';
+    html += '</div>';
+  }
+
+  renderQueueCards('queue-attention', html, 'Nothing needs you right now.');
+}
+
+function humanizeActivityTitle(activity) {
+  if (!activity) return 'The hive made a move.';
+
+  var actor = activity.actor || 'The hive';
+  var kind = String(activity.kind || '').toLowerCase();
+
+  if (kind === 'worker-result') {
+    return actor + ' turned in a result.';
+  }
+  if (kind === 'steward-result') {
+    return 'The steward closed a coordination pass.';
+  }
+  if (kind === 'human-message') {
+    return 'A direction just landed.';
+  }
+  if (kind === 'message-cleared') {
+    return actor + ' cleared a thread.';
+  }
+  if (kind === 'run-finished') {
+    return actor + ' wrapped a run.';
+  }
+
+  if (activity.title) {
+    return activity.title.charAt(0).toUpperCase() + activity.title.slice(1) + '.';
+  }
+
+  return actor + ' made a move.';
+}
+
+function buildPulseItems(leadership, liveSnapshot) {
+  var items = [];
+  var seen = {};
+  var attentionItems = leadership && Array.isArray(leadership.attentionItems) ? leadership.attentionItems : [];
+  var recentCompletions = liveSnapshot && Array.isArray(liveSnapshot.recentCompletions)
+    ? liveSnapshot.recentCompletions
+    : [];
+  var activity = liveSnapshot && Array.isArray(liveSnapshot.activity) ? liveSnapshot.activity : [];
+  var agents = liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : [];
+
+  function pushPulse(item) {
+    if (!item || !item.id || seen[item.id]) return;
+    seen[item.id] = true;
+    items.push(item);
+  }
+
+  for (var i = 0; i < attentionItems.length && i < 2; i++) {
+    var attention = attentionItems[i];
+    if (
+      attention.kind !== 'incident' &&
+      attention.kind !== 'approval' &&
+      attention.kind !== 'waiting' &&
+      attention.kind !== 'health'
+    ) {
+      continue;
+    }
+
+    pushPulse({
+      id: 'pulse-attention-' + attention.id,
+      tone: attention.tone,
+      tag: attention.kind === 'incident'
+        ? 'Needs you now'
+        : (attention.kind === 'approval'
+          ? 'Decision waiting'
+          : (attention.kind === 'waiting' ? 'Reply waiting' : 'Health watch')),
+      title: attention.title,
+      summary: attention.summary,
+      meta: attention.meta,
+      ts: attention.ts,
+      actionLabel: attention.kind === 'waiting' ? 'Draft Reply' : 'Ask Hive',
+      actionPrompt: attention.prompt,
+      secondaryLabel: 'Open Queue',
+      secondaryTab: 'queue',
+      secondaryFocusId: attention.focusId || 'queue-attention',
+    });
+  }
+
+  for (var j = 0; j < recentCompletions.length && items.length < 4; j++) {
+    var completion = recentCompletions[j];
+    var changedFiles = Array.isArray(completion.changedFiles) ? completion.changedFiles.length : 0;
+    pushPulse({
+      id: 'pulse-completion-' + (completion.runId || j),
+      tone: 'success',
+      tag: 'Just finished',
+      title: (completion.displayName || completion.agentId || 'worker') + ' wrapped a pass.',
+      summary: truncateText(
+        (completion.summary || 'Work completed cleanly.') +
+        (changedFiles > 0 ? ' ' + countLabel(changedFiles, 'file') + ' changed.' : ''),
+        170
+      ),
+      meta: joinMeta([
+        completion.runtime || '',
+        completion.model || '',
+        formatMoment(completion.ended),
+      ]),
+      ts: completion.ended,
+      actionLabel: 'Brief Me',
+      actionPrompt: 'Give me the last completed-work brief: what landed, what changed, and what still needs review.',
+      secondaryLabel: 'Open Timeline',
+      secondaryTab: 'timeline',
+      secondaryFocusId: 'timeline-list',
+    });
+  }
+
+  for (var k = 0; k < activity.length && items.length < 4; k++) {
+    var activityItem = activity[k];
+    pushPulse({
+      id: 'pulse-activity-' + (activityItem.id || k),
+      tone: activityItem.tone || 'info',
+      tag: activityItem.actor ? activityItem.actor : 'Live signal',
+      title: humanizeActivityTitle(activityItem),
+      summary: truncateText(activityItem.detail || 'Fresh movement just hit the board.', 170),
+      meta: joinMeta([
+        activityItem.kind || '',
+        formatMoment(activityItem.ts),
+      ]),
+      ts: activityItem.ts,
+      actionLabel: 'Ask Context',
+      actionPrompt:
+        'Give me the context behind this update: "' + (activityItem.detail || activityItem.title || 'live signal') +
+        '". Tell me what changed, why it matters, and whether you need anything from me.',
+      secondaryLabel: 'Open Live',
+      secondaryTab: 'live',
+      secondaryFocusId: 'live-agents',
+    });
+  }
+
+  if (items.length === 0 && agents.length > 0) {
+    var activeAgent = agents[0];
+    pushPulse({
+      id: 'pulse-active-' + (activeAgent.runId || 'steward'),
+      tone: 'info',
+      tag: 'Still moving',
+      title: (activeAgent.displayName || activeAgent.agentId || 'The steward') + ' is still working.',
+      summary: truncateText(activeAgent.latestOutput || 'There is active work in flight right now.', 170),
+      meta: joinMeta([
+        activeAgent.runtime || '',
+        activeAgent.model || '',
+        formatMoment(activeAgent.started),
+      ]),
+      ts: activeAgent.started,
+      actionLabel: 'Brief Me',
+      actionPrompt: 'Give me a short live brief on what is currently in flight, what changed most recently, and what can wait.',
+      secondaryLabel: 'Logs',
+      secondaryRunId: activeAgent.runId || '',
+    });
+  }
+
+  return items.slice(0, 4);
+}
+
+function renderPulsePanel(leadership) {
+  var panel = document.getElementById('pulse-panel');
+  var list = document.getElementById('pulse-panel-list');
+  var toggle = document.getElementById('pulse-panel-toggle');
+
+  if (!panel || !list || !toggle) return;
+
+  var pulseItems = buildPulseItems(leadership, state.liveSnapshot);
+  if (!leadership || !leadership.project || pulseItems.length === 0) {
+    panel.hidden = true;
+    panel.classList.remove('pulse-panel--collapsed');
+    list.innerHTML = '';
+    toggle.textContent = 'Collapse';
+    return;
+  }
+
+  panel.hidden = false;
+  panel.classList.toggle('pulse-panel--collapsed', state.pulsesCollapsed);
+  toggle.textContent = state.pulsesCollapsed ? 'Expand' : 'Collapse';
+
+  if (state.pulsesCollapsed) {
+    list.innerHTML = '';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < pulseItems.length; i++) {
+    var item = pulseItems[i];
+    html += '<div class="' + toneClass('pulse-card', item.tone) + '">';
+    html += '<div class="pulse-card-header">';
+    html += '<div class="pulse-card-tag">' + escapeHtml(item.tag || 'Live pulse') + '</div>';
+    html += '<div class="pulse-card-time">' + escapeHtml(formatMoment(item.ts)) + '</div>';
+    html += '</div>';
+    html += '<div class="pulse-card-title">' + escapeHtml(item.title) + '</div>';
+    html += '<div class="pulse-card-summary">' + escapeHtml(item.summary || '') + '</div>';
+    if (item.meta) {
+      html += '<div class="pulse-card-meta">' + escapeHtml(item.meta) + '</div>';
+    }
+    html += '<div class="pulse-card-actions">';
+    if (item.actionPrompt) {
+      html += renderRailActionButton(item.actionLabel || 'Ask Hive', {
+        'data-rail-action': 'send-prompt',
+        'data-rail-prompt': item.actionPrompt,
+      });
+    }
+    if (item.secondaryRunId) {
+      html += renderRailActionButton(item.secondaryLabel || 'Logs', {
+        'data-rail-action': 'log',
+        'data-rail-run-id': item.secondaryRunId,
+      }, true);
+    } else if (item.secondaryTab) {
+      html += renderRailActionButton(item.secondaryLabel || 'Open', {
+        'data-rail-action': 'focus-tab',
+        'data-rail-tab-target': item.secondaryTab,
+        'data-rail-focus-id': item.secondaryFocusId || '',
+      }, true);
+    }
+    html += '</div>';
+    html += '</div>';
+  }
+
+  list.innerHTML = html;
+}
+
+function dismissToast(key) {
+  if (!key) return;
+  state.toasts = state.toasts.filter(function (item) {
+    return item.key !== key;
+  });
+  renderToastStack();
+}
+
+function renderToastStack() {
+  var container = document.getElementById('toast-stack');
+  if (!container) return;
+
+  if (!state.toasts || state.toasts.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < state.toasts.length; i++) {
+    var toast = state.toasts[i];
+    html += '<div class="' + toneClass('toast-card', toast.tone) + '">';
+    html += '<div class="toast-card-header">';
+    html += '<div class="toast-card-kicker">' + escapeHtml(toast.kicker || 'HIVE') + '</div>';
+    html += '<div class="toast-card-time">' + escapeHtml(formatMoment(toast.ts)) + '</div>';
+    html += '</div>';
+    html += '<div class="toast-card-title">' + escapeHtml(toast.title) + '</div>';
+    html += '<div class="toast-card-summary">' + escapeHtml(toast.summary || '') + '</div>';
+    html += '<div class="toast-card-actions">';
+    if (toast.actionPrompt) {
+      html += renderRailActionButton(toast.actionLabel || 'Ask Hive', {
+        'data-rail-action': 'send-prompt',
+        'data-rail-prompt': toast.actionPrompt,
+      });
+    }
+    if (toast.secondaryRunId) {
+      html += renderRailActionButton(toast.secondaryLabel || 'Logs', {
+        'data-rail-action': 'log',
+        'data-rail-run-id': toast.secondaryRunId,
+      }, true);
+    } else if (toast.secondaryTab) {
+      html += renderRailActionButton(toast.secondaryLabel || 'Open', {
+        'data-rail-action': 'focus-tab',
+        'data-rail-tab-target': toast.secondaryTab,
+        'data-rail-focus-id': toast.secondaryFocusId || '',
+      }, true);
+    }
+    html += '<button class="toast-dismiss" type="button" data-toast-dismiss="' + escapeAttr(toast.key) + '">Dismiss</button>';
+    html += '</div>';
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function addToast(toast) {
+  if (!toast || !toast.key || state.toastSeenKeys[toast.key]) return;
+
+  state.toastSeenKeys[toast.key] = true;
+  state.toasts = [toast].concat(state.toasts || []).slice(0, 4);
+  renderToastStack();
+
+  var ttl = toast.tone === 'error' ? 18000 : (toast.tone === 'warning' ? 14000 : 9000);
+  setTimeout(function () {
+    dismissToast(toast.key);
+  }, ttl);
+}
+
+function maybeEmitLeadershipToasts(leadership) {
+  if (!leadership || !leadership.project) return;
+
+  var candidates = [];
+  var attentionItems = leadership.attentionItems || [];
+  var recentCompletions = state.liveSnapshot && Array.isArray(state.liveSnapshot.recentCompletions)
+    ? state.liveSnapshot.recentCompletions
+    : [];
+
+  for (var i = 0; i < attentionItems.length; i++) {
+    var item = attentionItems[i];
+    if (item.tone !== 'error' && item.kind !== 'approval' && item.kind !== 'health') {
+      continue;
+    }
+
+    candidates.push({
+      key: 'toast-attention-' + item.id,
+      tone: item.tone,
+      kicker: item.tone === 'error' ? 'Needs you now' : 'Leadership heads-up',
+      title: item.title,
+      summary: item.summary,
+      ts: item.ts,
+      actionLabel: item.kind === 'approval' ? 'Ask Hive' : 'Brief Me',
+      actionPrompt: item.prompt,
+      secondaryLabel: item.openTab === 'queue' ? 'Open Queue' : 'Open Live',
+      secondaryTab: item.openTab || 'queue',
+      secondaryFocusId: item.focusId || '',
+    });
+  }
+
+  if (recentCompletions.length > 0) {
+    var completion = recentCompletions[0];
+    candidates.push({
+      key: 'toast-completion-' + (completion.runId || 'latest'),
+      tone: 'success',
+      kicker: 'Completed',
+      title: (completion.displayName || completion.agentId || 'worker') + ' wrapped a pass.',
+      summary: truncateText(completion.summary || 'Recent work completed cleanly.', 150),
+      ts: completion.ended,
+      actionLabel: 'Brief Me',
+      actionPrompt: 'Give me the last completed-work brief: what landed, what changed, and what still needs review.',
+      secondaryLabel: 'Open Timeline',
+      secondaryTab: 'timeline',
+      secondaryFocusId: 'timeline-list',
+    });
+  }
+
+  if (!state.notificationsPrimed) {
+    for (var p = 0; p < candidates.length; p++) {
+      if (candidates[p].tone !== 'error') {
+        state.toastSeenKeys[candidates[p].key] = true;
+      }
+    }
+    state.notificationsPrimed = true;
+    candidates = candidates.filter(function (item) {
+      return item.tone === 'error';
+    });
+  }
+
+  for (var j = 0; j < candidates.length && j < 2; j++) {
+    addToast(candidates[j]);
+  }
+}
+
+function renderLeadershipSurface() {
+  var leadership = buildLeadershipSnapshot();
+  renderHealthIndicator(leadership.health);
+  renderAttentionBadge(leadership);
+  renderAttentionQueue(leadership);
+  renderPulsePanel(leadership);
+  maybeEmitLeadershipToasts(leadership);
+  renderToastStack();
+}
+
+function focusRailSection(tab, focusId) {
+  setRailTab(tab || 'live');
+
+  window.requestAnimationFrame(function () {
+    var target = focusId ? document.getElementById(focusId) : null;
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+function focusProcessLog(runId) {
+  setRailTab('live');
+
+  window.requestAnimationFrame(function () {
+    var container = document.getElementById('process-logs-content');
+    if (!container) return;
+
+    var target = null;
+    var blocks = container.querySelectorAll('.process-log-block');
+    for (var i = 0; i < blocks.length; i++) {
+      if (blocks[i].getAttribute('data-process-log-run-id') === runId) {
+        target = blocks[i];
+        break;
+      }
+    }
+
+    (target || container).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 function renderConsoleActivity(snapshot) {
   var container = document.getElementById('console-activity');
   if (!container) return;
@@ -1418,6 +2389,7 @@ function renderLiveSummary(snapshot) {
   }
 
   var supervisorStatus = snapshot.supervisor ? (snapshot.supervisor.status || 'unknown') : 'offline';
+  var healthSnapshot = state.healthSnapshot;
   var html = '<div class="live-summary-block">';
   html += '<div class="live-summary-label">Working Now</div>';
   html += '<div class="live-summary-value">' + escapeHtml(snapshot.summary || 'No active work is in motion right now.') + '</div>';
@@ -1427,6 +2399,12 @@ function renderLiveSummary(snapshot) {
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Session</div><div class="live-summary-stat-value">' + escapeHtml(snapshot.sessionId || 'none') + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Supervisor</div><div class="live-summary-stat-value">' + escapeHtml(supervisorStatus) + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Live Agents</div><div class="live-summary-stat-value">' + escapeHtml(String((snapshot.agents || []).length)) + '</div></div>';
+  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Team Health</div><div class="live-summary-stat-value">' +
+    escapeHtml(healthSnapshot ? healthSnapshot.aggregate : 'idle') +
+    '</div></div>';
+  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Health Mix</div><div class="live-summary-stat-value">' +
+    escapeHtml(healthSnapshot ? healthSnapshot.summary : 'No active health signals.') +
+    '</div></div>';
   html += '</div>';
 
   container.innerHTML = html;
@@ -1444,6 +2422,7 @@ function renderLiveAgents(agents) {
   var html = '';
   for (var i = 0; i < agents.length; i++) {
     var agent = agents[i];
+    var health = findAgentHealth(state.healthSnapshot, agent);
     var outputPreview = '';
     var descriptor = agent.descriptor || '';
     if (descriptor && agent.persona && descriptor.toLowerCase() === String(agent.persona).toLowerCase()) {
@@ -1467,9 +2446,15 @@ function renderLiveAgents(agents) {
     html += '<div class="agent-card-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</div>';
     html += '<div class="agent-card-descriptor">' + escapeHtml(joinMeta([agent.persona, descriptor])) + '</div>';
     html += '</div>';
+    html += '<div class="agent-card-statuses">';
+    html += renderHealthPill(health);
     html += '<div class="' + toneClass('status-pill', toneFromStatus(agent.status)) + '">' + escapeHtml(agent.status || 'active') + '</div>';
     html += '</div>';
+    html += '</div>';
     html += '<div class="agent-card-meta">' + escapeHtml(joinMeta(meta)) + '</div>';
+    if (health) {
+      html += '<div class="agent-card-health-note">' + escapeHtml(health.summary) + '</div>';
+    }
     if (outputPreview) {
       html += '<div class="agent-card-output">' + escapeHtml(outputPreview) + '</div>';
     } else {
@@ -1478,18 +2463,31 @@ function renderLiveAgents(agents) {
         : 'Waiting for the first visible update from this agent.';
       html += '<div class="agent-card-output agent-card-output--empty">' + escapeHtml(emptyOutput) + '</div>';
     }
+    var briefPrompt = agent.persona === 'steward'
+      ? 'Give me a short leadership brief on the current conversation: what is moving, what changed, and what you need from me.'
+      : 'Give me a short update on ' + (agent.displayName || agent.agentId || 'this agent') + ': what it is doing, whether it is blocked, and what you want from me.';
+    html += '<div class="agent-card-actions">';
+    html += renderRailActionButton('Brief Me', {
+      'data-rail-action': 'send-prompt',
+      'data-rail-prompt': briefPrompt,
+    });
+    html += renderRailActionButton('Logs', {
+      'data-rail-action': 'log',
+      'data-rail-run-id': agent.runId || '',
+    }, true);
+    html += '</div>';
     html += '</div>';
   }
 
   container.innerHTML = html;
 }
 
-function renderProcessLogBlock(title, meta, tailLines) {
+function renderProcessLogBlock(title, meta, tailLines, runId) {
   var tail = tailLines && tailLines.length > 0
     ? escapeHtml(tailLines.join('\n'))
     : '<span class="process-log-empty-line">(no output yet)</span>';
 
-  return '<div class="process-log-block">' +
+  return '<div class="process-log-block" data-process-log-run-id="' + escapeAttr(runId || '') + '">' +
     '<div class="process-log-title">' + escapeHtml(title) + '</div>' +
     '<div class="process-log-meta">' + escapeHtml(meta) + '</div>' +
     '<pre class="process-log-tail">' + tail + '</pre>' +
@@ -1514,7 +2512,8 @@ function renderProcessLogs(snapshot) {
         'status ' + (snapshot.supervisor.status || 'unknown'),
         snapshot.supervisor.pid ? 'pid ' + snapshot.supervisor.pid : '',
       ]),
-      snapshot.supervisor.tail || []
+      snapshot.supervisor.tail || [],
+      'supervisor'
     );
   }
 
@@ -1529,7 +2528,8 @@ function renderProcessLogs(snapshot) {
         agent.runId || '',
         agent.pid ? 'pid ' + agent.pid : '',
       ]),
-      agent.tail || []
+      agent.tail || [],
+      agent.runId || ''
     );
   }
 
@@ -1549,6 +2549,7 @@ function renderQueueCards(containerId, itemsHtml, emptyText) {
 
 function renderQueueSnapshot(snapshot) {
   if (!snapshot || !snapshot.project) {
+    renderQueueCards('queue-attention', '', 'Nothing needs you right now.');
     renderQueueCards('queue-approvals', '', 'No pending approvals.');
     renderQueueCards('queue-waiting-human', '', 'Nothing is waiting on a human reply.');
     renderQueueCards('queue-incidents', '', 'No active incidents.');
@@ -1570,6 +2571,14 @@ function renderQueueSnapshot(snapshot) {
     if (approval.note) {
       approvalsHtml += '<div class="queue-card-body">' + escapeHtml(truncateText(approval.note, 180)) + '</div>';
     }
+    approvalsHtml += '<div class="queue-card-actions">';
+    approvalsHtml += renderRailActionButton('Ask Hive', {
+      'data-rail-action': 'send-prompt',
+      'data-rail-prompt':
+        'We have a pending approval: "' + (approval.summary || approval.kind || 'Approval requested') +
+        '". Give me the context, your recommendation, and the tradeoffs in 3 bullets.',
+    });
+    approvalsHtml += '</div>';
     approvalsHtml += '</div>';
   }
   renderQueueCards('queue-approvals', approvalsHtml, 'No pending approvals.');
@@ -1586,6 +2595,14 @@ function renderQueueSnapshot(snapshot) {
       item.from ? 'from ' + item.from : '',
       item.to ? 'to ' + item.to : '',
     ])) + '</div>';
+    waitingHtml += '<div class="queue-card-actions">';
+    waitingHtml += renderRailActionButton('Draft Reply', {
+      'data-rail-action': 'send-prompt',
+      'data-rail-prompt':
+        'We are waiting on a human reply for "' + (item.summary || item.type || 'this thread') +
+        '". Draft the reply you recommend and tell me what happens next if I send it.',
+    });
+    waitingHtml += '</div>';
     waitingHtml += '</div>';
   }
   renderQueueCards('queue-waiting-human', waitingHtml, 'Nothing is waiting on a human reply.');
@@ -1605,6 +2622,14 @@ function renderQueueSnapshot(snapshot) {
     if (incident.details && incident.details.length > 0) {
       incidentsHtml += '<div class="queue-card-body">' + escapeHtml(truncateText(incident.details.join(' \u00b7 '), 220)) + '</div>';
     }
+    incidentsHtml += '<div class="queue-card-actions">';
+    incidentsHtml += renderRailActionButton('Ask Hive', {
+      'data-rail-action': 'send-prompt',
+      'data-rail-prompt':
+        'I saw this incident: "' + (incident.summary || incident.kind || 'Incident') +
+        '". Give me a crisp brief on what happened, the impact, and whether you need a decision from me.',
+    });
+    incidentsHtml += '</div>';
     incidentsHtml += '</div>';
   }
   renderQueueCards('queue-incidents', incidentsHtml, 'No active incidents.');
@@ -1638,6 +2663,19 @@ function renderTimeline(items) {
       }
       html += '</div>';
     }
+    html += '<div class="timeline-card-actions">';
+    html += renderRailActionButton('Follow Up', {
+      'data-rail-action': 'send-prompt',
+      'data-rail-prompt':
+        'Follow up on this timeline item: "' + (item.title || item.source || 'Timeline item') +
+        '". Give me the important context, what changed, and whether anything needs my attention.',
+    });
+    html += renderRailActionButton('Open Timeline', {
+      'data-rail-action': 'focus-tab',
+      'data-rail-tab-target': 'timeline',
+      'data-rail-focus-id': 'timeline-list',
+    }, true);
+    html += '</div>';
     html += '</div>';
   }
 
@@ -1650,19 +2688,23 @@ async function refreshLiveSnapshot() {
   try {
     var data = await apiGet(buildApiPath('/live', project));
     state.liveSnapshot = data;
+    state.healthSnapshot = buildHealthSnapshot(data);
     renderConsoleActivity(data);
     renderLiveSummary(data);
     renderLiveAgents(data.agents || []);
     renderProcessLogs(data);
     updateAgentOverview(data.agents || []);
+    renderLeadershipSurface();
   } catch (e) {
     console.error('Live snapshot refresh failed:', e);
     state.liveSnapshot = null;
+    state.healthSnapshot = null;
     renderConsoleActivity(null);
     renderLiveSummary(null);
     renderLiveAgents([]);
     renderProcessLogs(null);
     updateAgentOverview([]);
+    renderLeadershipSurface();
   }
 }
 
@@ -1673,10 +2715,12 @@ async function refreshQueueSnapshot() {
     var data = await apiGet(buildApiPath('/queue', project));
     state.queueSnapshot = data;
     renderQueueSnapshot(data);
+    renderLeadershipSurface();
   } catch (e) {
     console.error('Queue snapshot refresh failed:', e);
     state.queueSnapshot = null;
     renderQueueSnapshot(null);
+    renderLeadershipSurface();
   }
 }
 
@@ -1687,10 +2731,12 @@ async function refreshTimeline() {
     var data = await apiGet(buildApiPath('/timeline', project, { count: 50 }));
     state.timelineItems = Array.isArray(data.items) ? data.items : [];
     renderTimeline(state.timelineItems);
+    renderLeadershipSurface();
   } catch (e) {
     console.error('Timeline refresh failed:', e);
     state.timelineItems = [];
     renderTimeline([]);
+    renderLeadershipSurface();
   }
 }
 
@@ -1775,16 +2821,16 @@ async function refreshStatus() {
 // --- Loading State ---
 
 function setSendingState(sending) {
-  state.sending = sending;
   var input = document.getElementById('console-input');
   var btn = document.getElementById('console-send-btn');
+  var busy = Boolean(sending);
 
   if (input) {
-    input.disabled = sending;
+    input.setAttribute('aria-busy', busy ? 'true' : 'false');
   }
   if (btn) {
-    btn.disabled = sending;
-    btn.textContent = sending ? 'Sending...' : 'Send';
+    btn.textContent = busy ? 'Queue' : 'Send';
+    btn.setAttribute('aria-busy', busy ? 'true' : 'false');
   }
 }
 
@@ -1819,23 +2865,33 @@ function setupConsoleInput() {
 
 async function sendConsoleMessage() {
   var input = document.getElementById('console-input');
-  if (!input || state.sending) return;
+  if (!input) return;
 
   var message = input.value.trim();
   if (!message) return;
 
   input.value = '';
   input.style.height = 'auto';
+  input.focus();
+
+  await submitConsoleMessage(message);
+}
+
+async function submitConsoleMessage(message) {
+  var normalized = String(message || '').trim();
+  if (!normalized) return;
+
+  state.pendingSends += 1;
+  setSendingState(state.pendingSends > 0);
 
   // Show human turn immediately
-  addConsoleTurn('human', message);
+  addConsoleTurn('human', normalized);
 
   // Show thinking indicator and loading state
-  setSendingState(true);
   showThinkingIndicator();
 
   try {
-    var data = await apiPost('/console/send', { message: message });
+    var data = await apiPost('/console/send', { message: normalized });
 
     // Update session ID from response
     if (data.sessionId) {
@@ -1853,8 +2909,8 @@ async function sendConsoleMessage() {
     removeThinkingIndicator();
     addConsoleTurn('error', 'Error: ' + e.message);
   } finally {
-    setSendingState(false);
-    input.focus();
+    state.pendingSends = Math.max(0, state.pendingSends - 1);
+    setSendingState(state.pendingSends > 0);
   }
 }
 
@@ -1922,6 +2978,7 @@ function toggleConsoleItemExpanded(key) {
 function setupSessionToolbar() {
   var newBtn = document.getElementById('new-session-btn');
   var sessionsBtn = document.getElementById('sessions-btn');
+  var briefBtn = document.getElementById('brief-session-btn');
   var viewToggle = document.getElementById('session-view-toggle');
 
   if (newBtn) {
@@ -1934,6 +2991,12 @@ function setupSessionToolbar() {
     sessionsBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       toggleSessionsDropdown();
+    });
+  }
+
+  if (briefBtn) {
+    briefBtn.addEventListener('click', function () {
+      submitConsoleMessage('Give me a short leadership brief: what is moving, what needs my attention, and what can wait?');
     });
   }
 
@@ -1961,6 +3024,65 @@ function setupAgentDropdown() {
       toggleAgentDropdown();
     });
   }
+}
+
+function setupLeadershipActions() {
+  var attentionBadge = document.getElementById('attention-badge');
+  if (attentionBadge) {
+    attentionBadge.addEventListener('click', function () {
+      focusRailSection('queue', 'queue-attention');
+    });
+  }
+
+  var healthIndicator = document.getElementById('health-indicator');
+  if (healthIndicator) {
+    healthIndicator.addEventListener('click', function () {
+      focusRailSection('live', 'live-agents');
+    });
+  }
+
+  var pulseToggle = document.getElementById('pulse-panel-toggle');
+  if (pulseToggle) {
+    pulseToggle.addEventListener('click', function () {
+      state.pulsesCollapsed = !state.pulsesCollapsed;
+      renderLeadershipSurface();
+    });
+  }
+
+  document.addEventListener('click', function (event) {
+    var toastDismiss = event.target && event.target.closest
+      ? event.target.closest('[data-toast-dismiss]')
+      : null;
+    if (toastDismiss) {
+      dismissToast(toastDismiss.getAttribute('data-toast-dismiss') || '');
+      return;
+    }
+
+    var railButton = event.target && event.target.closest
+      ? event.target.closest('[data-rail-action]')
+      : null;
+
+    if (!railButton) return;
+
+    var action = railButton.getAttribute('data-rail-action') || '';
+
+    if (action === 'send-prompt') {
+      submitConsoleMessage(railButton.getAttribute('data-rail-prompt') || '');
+      return;
+    }
+
+    if (action === 'focus-tab') {
+      focusRailSection(
+        railButton.getAttribute('data-rail-tab-target') || 'live',
+        railButton.getAttribute('data-rail-focus-id') || ''
+      );
+      return;
+    }
+
+    if (action === 'log') {
+      focusProcessLog(railButton.getAttribute('data-rail-run-id') || '');
+    }
+  });
 }
 
 
@@ -2028,6 +3150,7 @@ async function init() {
 
   // Set up agent dropdown
   setupAgentDropdown();
+  setupLeadershipActions();
   setupRailTabs();
   setRailTab(state.railTab);
 
@@ -2055,6 +3178,7 @@ async function init() {
   renderQueueSnapshot(null);
   renderTimeline([]);
   renderProcessLogs(null);
+  renderLeadershipSurface();
 
   // Load initial data from API (non-blocking, graceful on failure)
   await refreshStatus();
