@@ -1534,6 +1534,8 @@ body.modal-open {
 }
 
 .rail-section--logs {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 240px;
 }
@@ -1541,6 +1543,16 @@ body.modal-open {
 .rail-section--timeline {
   flex: 1;
   min-height: 100%;
+}
+
+.rail-panel--log-focus .rail-section--current-activity,
+.rail-panel--log-focus .rail-section--active-agents {
+  display: none;
+}
+
+.rail-panel--log-focus .rail-section--logs {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .rail-section-header {
@@ -1791,6 +1803,35 @@ body.modal-open {
   font-weight: 600;
 }
 
+.process-logs-header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.process-logs-title {
+  color: var(--amber-dim);
+}
+
+.process-logs-subtitle {
+  color: var(--text-secondary);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.process-logs-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-shrink: 0;
+}
+
+.process-logs-back,
 .process-logs-refresh {
   border: 1px solid var(--border-active);
   background: var(--bg-surface);
@@ -1803,9 +1844,12 @@ body.modal-open {
   cursor: pointer;
 }
 
+.process-logs-back:hover,
+.process-logs-back:focus-visible,
 .process-logs-refresh:hover {
   color: var(--amber-bright);
   border-color: var(--amber-dim);
+  outline: none;
 }
 
 .process-logs-content {
@@ -1828,6 +1872,22 @@ body.modal-open {
 .process-log-block {
   padding: var(--s3);
   border-bottom: 1px solid var(--border);
+}
+
+.process-log-block-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.process-log-block-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.process-log-block-actions {
+  flex-shrink: 0;
 }
 
 .process-log-block:last-child {
@@ -1857,10 +1917,61 @@ body.modal-open {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
 }
 
 .process-log-empty-line {
   color: var(--text-muted);
+}
+
+.process-log-inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: var(--s3);
+  gap: var(--s3);
+}
+
+.process-log-inspector-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.process-log-inspector-title {
+  color: var(--text-bright);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.process-log-inspector-meta {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.process-log-inspector-note {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.process-log-inspector-tail {
+  flex: 1;
+  min-height: 320px;
+  margin: 0;
+  padding: var(--s3);
+  background:
+    linear-gradient(180deg, rgba(212, 154, 0, 0.045), transparent 45%),
+    rgba(7, 12, 18, 0.96);
+  border: 1px solid rgba(212, 154, 0, 0.14);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .toast-stack {
