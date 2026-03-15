@@ -140,6 +140,33 @@ The synthesizer is triggered by the supervisor when:
 
 It is just another agent with a specific role. Not a special code path.
 
+### Synthesizer as Chief of Staff
+
+The synthesizer should not be a prettifier. It should act more like a chief of
+staff:
+
+- read all agent outputs, not just the winning one
+- extract disagreements, tradeoffs, and unresolved risks
+- force a decision when the team produced multiple valid paths
+- explain why the chosen path beat the alternatives
+- produce a final recommendation that a human can approve, reject, or ship
+
+That means the synthesizer needs explicit inputs:
+- task results from implementers, reviewers, researchers, and operators
+- the original intent from PLAN.md
+- repo reality: tests, git diff, docs, generated artifacts
+- trust constraints: what actions were approved vs still gated
+
+And explicit outputs:
+- **decision memo**: what we built, what we chose not to build, why
+- **pros/cons table**: where the team disagreed and how the tie was broken
+- **risk register**: what is still shaky, unverified, or blocked on humans
+- **ship recommendation**: ship / pause / ask-human, with reasons
+
+This persona matters because overnight work will often produce a lot of local
+optimizations and not enough global judgment. The synthesizer is the layer that
+turns many competent specialist passes into a coherent executive decision.
+
 ### Stale Goal Detection
 
 Overnight runs fail silently if an agent gets stuck. Currently: the board
@@ -272,3 +299,107 @@ survive. The reasoning doesn't have to.
 
 The overnight launch goal doesn't require abandoning that. It just requires
 making the entry point and the terminal conditions as clear as the middle.
+
+---
+
+## Notional Architecture Changes To Reduce Slowness
+
+If the file-backed model starts to feel slow, the right move is not to abandon
+files as source of truth. The right move is to add acceleration layers that are
+**derived from files** and disposable.
+
+### 1. Materialized state views
+
+HIVE is already inching this way with `board-summary.json`, `open-messages.json`,
+and other state files. Lean into that.
+
+Idea:
+- keep markdown and message files as the durable truth
+- maintain machine-friendly summaries alongside them
+- let agents bootstrap from the summaries first, then lazily read the source
+  files only when precision matters
+
+This preserves inspectability while cutting repeated full-file parsing.
+
+### 2. Append-only event log + projections
+
+Instead of repeatedly scanning BOARD.md, LOG.md, and msg/ from scratch, write a
+small append-only event stream whenever state changes, then derive projections
+from it.
+
+Example projections:
+- current board summary
+- per-agent inbox summary
+- open decisions
+- active runs by project
+
+The key constraint: the event log is a rebuildable cache, not the only truth.
+If it gets corrupted, you can regenerate it from the files.
+
+### 3. Scoped context packs
+
+Most agents do not need the entire hive state. They need a tight packet:
+- the task contract
+- relevant files for their scope
+- the last 1-3 decisions touching that area
+- any open messages addressed to them
+
+Build these as disposable context packs on launch. That cuts prompt assembly
+cost without changing the underlying storage model.
+
+### 4. Hot-path structured sidecars
+
+Some markdown is for humans, some data is for machines. Stop forcing the latter
+through prose.
+
+For frequently-read state, keep a structured sidecar near the human-readable
+file:
+- `BOARD.md` + `state/board-summary.json`
+- `LOG.md` + `state/recent-results.json`
+- `result.md` + `result.json`
+
+Humans inspect the markdown. Agents and supervisors hit the sidecar first.
+
+### 5. Local event bus over file writes
+
+You can keep file-backed durability while making the live system feel less
+poll-y. When a file changes, emit a local event so the supervisor, gateway, and
+persistent steward do not all rediscover it by re-reading the world.
+
+That gives you faster reaction time without making the event bus authoritative.
+Lose the bus, and the files still let you recover.
+
+### 6. Optional indexed store as a cache, not a replacement
+
+If HIVE grows large enough, add SQLite or a tiny embedded index for search,
+lookup, and relationship queries — but keep it explicitly derivative.
+
+Good use cases:
+- "show me all unresolved decisions touching runtime selection"
+- "find every task that modified routes.ts in the last week"
+- "what did beta conclude the last three times supervision flaked?"
+
+Bad use case:
+- making the database the thing that must survive for HIVE to function
+
+### 7. Aggressive lazy loading in the steward
+
+This is partly architecture, partly discipline: compact state should orient the
+steward, not seduce it into pretending it already knows.
+
+The fast path should be:
+1. load summaries
+2. decide what primary sources matter
+3. read only those
+4. answer or delegate
+
+That keeps latency down without repeating my earlier mistake of trusting a
+proxy instead of the file.
+
+## The Principle
+
+The durable layer should stay boring: files, markdown, append-only logs,
+inspectable state. The fast layer can get much smarter: projections, indexes,
+watchers, caches, scoped context assembly.
+
+In other words: **keep truth simple; make reads fast.**
