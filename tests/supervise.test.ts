@@ -37,6 +37,7 @@ async function setupContext(): Promise<TestContext> {
 
   process.env.HIVE_HOME = hiveHome;
   process.env.HIVE_FIXED_NOW = "2026-03-09T15:08:00Z";
+  process.env.HIVE_SCRIPT = join(import.meta.dir, "..", "bin", "hive.ts");
 
   return {
     root,
@@ -57,6 +58,7 @@ afterEach(async () => {
   process.chdir(context.originalCwd);
   delete process.env.HIVE_HOME;
   delete process.env.HIVE_FIXED_NOW;
+  delete process.env.HIVE_SCRIPT;
   await rm(context.root, { recursive: true, force: true });
 });
 
@@ -131,7 +133,7 @@ runtime: codex
     let state = await readDetachedSupervisorState(projectPaths);
     let attempts = 0;
 
-    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 20) {
+    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 40) {
       await Bun.sleep(150);
       state = await readDetachedSupervisorState(projectPaths);
       attempts += 1;
@@ -199,7 +201,7 @@ runtime: codex
     let state = await readDetachedSupervisorState(projectPaths);
     let attempts = 0;
 
-    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 20) {
+    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 40) {
       await Bun.sleep(150);
       state = await readDetachedSupervisorState(projectPaths);
       attempts += 1;

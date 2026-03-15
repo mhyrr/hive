@@ -206,7 +206,9 @@ export function buildDetachedInvocation(
 ): { command: string; args: string[] } {
   const executable = current.execPath;
   const executableName = basename(executable).toLowerCase();
-  const entrypoint = current.argv[1];
+  // HIVE_SCRIPT lets tests (which run under `bun test` with a test file as argv[1])
+  // specify the real hive entrypoint for detached child spawning.
+  const entrypoint = process.env.HIVE_SCRIPT ?? current.argv[1];
 
   // Dev mode: re-run the same script Bun launched.
   if (

@@ -2,6 +2,7 @@ import { type Server, type ServerWebSocket } from "bun";
 
 import type { HivePaths } from "../lib/paths";
 
+import { disposePersistentStewardsForHome } from "../lib/persistent-steward";
 import { serveStaticAsset } from "./assets";
 import { handleApi, handleOptions } from "./routes";
 import { startWatcher } from "./watcher";
@@ -24,6 +25,7 @@ type GatewayState = {
   server: Server;
   clients: Set<ServerWebSocket<unknown>>;
   stopWatcher: () => void;
+  hiveHome: string;
 };
 
 function corsHeaders(): Record<string, string> {
@@ -108,7 +110,12 @@ export function startGateway(options: GatewayOptions): GatewayState {
     },
   });
 
-  return { server, clients, stopWatcher };
+  return {
+    server,
+    clients,
+    stopWatcher,
+    hiveHome: options.hivePaths.home,
+  };
 }
 
 export function stopGateway(state: GatewayState): void {
@@ -122,4 +129,5 @@ export function stopGateway(state: GatewayState): void {
   }
   state.clients.clear();
   state.server.stop(true);
+  void disposePersistentStewardsForHome(state.hiveHome);
 }

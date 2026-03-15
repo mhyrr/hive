@@ -537,10 +537,20 @@ function getTurnPresentation(role, source) {
   }
 
   if (role === 'assistant' && source === 'system') {
-    return { cssRole: 'system', label: 'status' };
+    return { cssRole: 'system', label: 'buzz' };
   }
 
   return { cssRole: role, label: role };
+}
+
+function getConsoleItemPresentation(item) {
+  var presentation = getTurnPresentation(item.role, item.source);
+
+  if (item && item.itemType === 'draft' && item.role === 'assistant' && item.source === 'system') {
+    return { cssRole: presentation.cssRole, label: 'buzzing' };
+  }
+
+  return presentation;
 }
 
 function formatInteger(value) {
@@ -705,6 +715,140 @@ function isConversationOnlyItem(item) {
   return item.itemType === 'status' || item.itemType === 'draft' || item.source === 'system';
 }
 
+function findLatestConversationReplyItem(items) {
+  var allItems = Array.isArray(items) ? items : [];
+  var lastHumanIndex = -1;
+
+  for (var i = 0; i < allItems.length; i++) {
+    if (allItems[i] && allItems[i].role === 'human') {
+      lastHumanIndex = i;
+    }
+  }
+
+  if (lastHumanIndex === -1) {
+    return null;
+  }
+
+  for (var j = allItems.length - 1; j > lastHumanIndex; j--) {
+    var visibleAssistant = allItems[j];
+    if (!visibleAssistant || visibleAssistant.role !== 'assistant') continue;
+    if (!isConversationOnlyItem(visibleAssistant)) {
+      return null;
+    }
+  }
+
+  for (var k = allItems.length - 1; k > lastHumanIndex; k--) {
+    var candidate = allItems[k];
+    if (!candidate || candidate.role !== 'assistant') continue;
+    if (candidate.itemType === 'draft' || candidate.itemType === 'status' || candidate.source === 'system') {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function getLatestConversationReplyItemFromState() {
+  var items = buildConsoleDisplayItems(state.consoleHistory);
+
+  if (state.consoleStream) {
+    items.push({
+      itemType: 'draft',
+      role: 'assistant',
+      source: 'system',
+      ts: state.consoleStream.ts || nowISO(),
+      content: state.consoleStream.content || '',
+      details: null,
+    });
+  }
+
+  return findLatestConversationReplyItem(items);
+}
+
+function isLiveConversationActivityItem(item) {
+  if (!item) return false;
+  if (item.itemType === 'draft') return true;
+  if (item.itemType !== 'status' && item.source !== 'system') return false;
+
+  var details = item.details || null;
+  if (details && details.runs && typeof details.runs.activeCount === 'number' && details.runs.activeCount > 0) {
+    return true;
+  }
+
+  var statusNotes = details && Array.isArray(details.statusNotes) ? details.statusNotes.join('\n') : '';
+  if (/(live steward|persistent steward turn already active|queued .*follow-up|requested stop|still in motion)/i.test(statusNotes)) {
+    return true;
+  }
+
+  var text = getConsoleItemSourceText(item);
+  return /(still in the middle of a live steward turn|interrupting the current live steward draft|still in motion|queued .*follow-up|waiting for the first streamed update|live reply generation is still in progress)/i.test(text);
+}
+
+function getLiveConversationActivityItemFromState() {
+  var latestReply = getLatestConversationReplyItemFromState();
+  return isLiveConversationActivityItem(latestReply) ? latestReply : null;
+}
+
+function summarizeConversationActivity(item) {
+  if (!item) return '';
+
+  if (item.itemType === 'draft') {
+    return normalizeMultilineText(item.content)
+      ? 'The steward is drafting a live reply.'
+      : 'The steward is thinking through your latest message.';
+  }
+
+  return truncateText(getConsoleItemSourceText(item) || 'The steward is handling the current conversation.', 220);
+}
+
+function buildSyntheticStewardAgent(item) {
+  if (!item) return null;
+
+  var details = item.details || null;
+  var latestOutput = normalizeMultilineText(getConsoleItemSourceText(item));
+
+  return {
+    runId: 'session-steward:' + String(item.ts || nowISO()),
+    agentId: 'console',
+    displayName: 'steward',
+    persona: 'steward',
+    descriptor: 'live steward session',
+    status: 'active',
+    runtime: details && details.runtime ? details.runtime : '',
+    model: details && details.model ? details.model : null,
+    started: item.ts || nowISO(),
+    pid: null,
+    taskId: null,
+    source: 'session',
+    latestOutput: latestOutput || null,
+    tail: latestOutput ? splitDisplayLines(latestOutput).slice(-4) : [],
+  };
+}
+
+function buildVisibleLiveAgents(agents) {
+  var visibleAgents = Array.isArray(agents) ? agents.slice() : [];
+  var pendingConversation = getLiveConversationActivityItemFromState();
+
+  if (!pendingConversation) {
+    return visibleAgents;
+  }
+
+  for (var i = 0; i < visibleAgents.length; i++) {
+    var agent = visibleAgents[i];
+    if (!agent) continue;
+    if (agent.agentId === 'console' || agent.persona === 'steward') {
+      return visibleAgents;
+    }
+  }
+
+  var steward = buildSyntheticStewardAgent(pendingConversation);
+  if (steward) {
+    visibleAgents.push(steward);
+  }
+
+  return visibleAgents;
+}
+
 function getConsoleItemSourceText(item) {
   if (item.itemType === 'status' && item.fullText) {
     return item.fullText;
@@ -777,7 +921,7 @@ function renderDetailSection(title, rows) {
 
 function buildDetailPayload(item) {
   return {
-    title: item.itemType === 'status' ? 'Status Detail' : 'Reply Detail',
+    title: item.itemType === 'status' || item.itemType === 'draft' ? 'Buzz Detail' : 'Reply Detail',
     content: item.content || '',
     fullText: item.fullText || null,
     details: item.details || null,
@@ -813,7 +957,7 @@ function renderConsoleExpandChip(item) {
 }
 
 function renderConsoleItem(item) {
-  var presentation = getTurnPresentation(item.role, item.source);
+  var presentation = getConsoleItemPresentation(item);
   var classes = ['turn', 'turn-' + presentation.cssRole];
   if (item.itemType === 'status') {
     classes.push('turn-collapsed-status');
@@ -878,6 +1022,8 @@ function renderConsoleHistory() {
     items[idx].consoleKey = getConsoleItemKey(items[idx], idx);
   }
 
+  var pendingConversationItem = findLatestConversationReplyItem(items);
+
   var hiddenCount = 0;
   if (state.consoleView === 'conversation') {
     items = items.filter(function (item) {
@@ -885,6 +1031,11 @@ function renderConsoleHistory() {
       if (hidden) hiddenCount += 1;
       return !hidden;
     });
+
+    if (pendingConversationItem && items.indexOf(pendingConversationItem) === -1) {
+      items.push(pendingConversationItem);
+      hiddenCount = Math.max(0, hiddenCount - 1);
+    }
   }
 
   if (items.length === 0) {
@@ -1301,7 +1452,7 @@ async function openSessionsDropdown() {
 // --- Operations Rail ---
 
 function updateAgentOverview(agents) {
-  state.agents = Array.isArray(agents) ? agents.slice() : [];
+  state.agents = buildVisibleLiveAgents(agents);
   state.agentCount = state.agents.length;
 
   var labelEl = document.querySelector('.topbar-agents-label');
@@ -1699,7 +1850,7 @@ function buildAttentionItems(liveSnapshot, queueSnapshot, healthSnapshot) {
   var approvals = queueSnapshot && Array.isArray(queueSnapshot.approvals) ? queueSnapshot.approvals : [];
   var waitingOnHuman = queueSnapshot && Array.isArray(queueSnapshot.waitingOnHuman) ? queueSnapshot.waitingOnHuman : [];
   var incidents = queueSnapshot && Array.isArray(queueSnapshot.incidents) ? queueSnapshot.incidents : [];
-  var agents = liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : [];
+  var agents = buildVisibleLiveAgents(liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : []);
   var recentCompletions = liveSnapshot && Array.isArray(liveSnapshot.recentCompletions)
     ? liveSnapshot.recentCompletions
     : [];
@@ -1869,7 +2020,7 @@ function buildLeadershipSnapshot() {
     (liveSnapshot && liveSnapshot.project) ||
     (queueSnapshot && queueSnapshot.project) ||
     null;
-  var activeAgents = liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : [];
+  var activeAgents = buildVisibleLiveAgents(liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : []);
   var attentionItems = buildAttentionItems(liveSnapshot, queueSnapshot, healthSnapshot);
   var urgentCount = 0;
   var needsYouCount = 0;
@@ -2279,10 +2430,36 @@ function addToast(toast) {
   }, ttl);
 }
 
+function isHealthToastKey(key) {
+  return String(key || '').indexOf('toast-attention-health-') === 0;
+}
+
+function pruneHealthToasts(activeKeys) {
+  var allowed = activeKeys || {};
+  var nextToasts = [];
+  var removed = false;
+
+  for (var i = 0; i < (state.toasts || []).length; i++) {
+    var toast = state.toasts[i];
+    if (isHealthToastKey(toast.key) && !allowed[toast.key]) {
+      removed = true;
+      delete state.toastSeenKeys[toast.key];
+      continue;
+    }
+    nextToasts.push(toast);
+  }
+
+  if (removed) {
+    state.toasts = nextToasts;
+    renderToastStack();
+  }
+}
+
 function maybeEmitLeadershipToasts(leadership) {
   if (!leadership || !leadership.project) return;
 
   var candidates = [];
+  var activeHealthToastKeys = {};
   var attentionItems = leadership.attentionItems || [];
   var recentCompletions = state.liveSnapshot && Array.isArray(state.liveSnapshot.recentCompletions)
     ? state.liveSnapshot.recentCompletions
@@ -2290,11 +2467,15 @@ function maybeEmitLeadershipToasts(leadership) {
 
   for (var i = 0; i < attentionItems.length; i++) {
     var item = attentionItems[i];
-    if (item.tone !== 'error' && item.kind !== 'approval' && item.kind !== 'health') {
+    if (item.kind === 'health' && item.tone !== 'error') {
       continue;
     }
 
-    candidates.push({
+    if (item.tone !== 'error' && item.kind !== 'approval') {
+      continue;
+    }
+
+    var candidate = {
       key: 'toast-attention-' + item.id,
       tone: item.tone,
       kicker: item.tone === 'error' ? 'Needs you now' : 'Leadership heads-up',
@@ -2306,8 +2487,16 @@ function maybeEmitLeadershipToasts(leadership) {
       secondaryLabel: item.openTab === 'queue' ? 'Open Queue' : 'Open Live',
       secondaryTab: item.openTab || 'queue',
       secondaryFocusId: item.focusId || '',
-    });
+    };
+
+    if (item.kind === 'health') {
+      activeHealthToastKeys[candidate.key] = true;
+    }
+
+    candidates.push(candidate);
   }
+
+  pruneHealthToasts(activeHealthToastKeys);
 
   if (recentCompletions.length > 0) {
     var completion = recentCompletions[0];
@@ -2395,22 +2584,48 @@ function clearProcessLogFocus() {
 function renderConsoleActivity(snapshot) {
   var container = document.getElementById('console-activity');
   if (!container) return;
+  var pendingConversation = getLiveConversationActivityItemFromState();
 
   if (!snapshot || !snapshot.project) {
+    if (pendingConversation) {
+      container.innerHTML = '<div class="console-activity-summary">' +
+        '<div class="console-activity-summary-line">' + escapeHtml(summarizeConversationActivity(pendingConversation)) + '</div>' +
+        '<div class="console-activity-summary-meta">steward session active · latest conversation</div>' +
+        '</div>';
+      return;
+    }
     container.innerHTML = '<div class="console-activity-empty">No live hive activity yet.</div>';
     return;
   }
 
-  var summary = truncateText(snapshot.summary || 'No active work is in motion right now.', 220);
+  var summary = truncateText(
+    pendingConversation
+      ? summarizeConversationActivity(pendingConversation)
+      : (snapshot.summary || 'No active work is in motion right now.'),
+    220
+  );
   var latest = snapshot.activity && snapshot.activity[0] ? snapshot.activity[0] : null;
   var meta = [
     'project ' + snapshot.project,
     snapshot.supervisor ? 'supervisor ' + (snapshot.supervisor.status || 'unknown') : 'supervisor offline',
-    snapshot.agents && snapshot.agents.length > 0
-      ? countLabel(snapshot.agents.length, 'live agent')
-      : 'no live agents',
+    pendingConversation
+      ? 'steward session active'
+      : (snapshot.agents && snapshot.agents.length > 0
+        ? countLabel(snapshot.agents.length, 'live agent')
+        : 'no live agents'),
     latest ? 'latest ' + formatMoment(latest.ts) : '',
   ];
+
+  if (!pendingConversation) {
+    meta = [
+      'project ' + snapshot.project,
+      snapshot.supervisor ? 'supervisor ' + (snapshot.supervisor.status || 'unknown') : 'supervisor offline',
+      snapshot.agents && snapshot.agents.length > 0
+      ? countLabel(snapshot.agents.length, 'live agent')
+      : 'no live agents',
+      latest ? 'latest ' + formatMoment(latest.ts) : '',
+    ];
+  }
 
   var html = '<div class="console-activity-summary">';
   html += '<div class="console-activity-summary-line">' + escapeHtml(summary) + '</div>';
@@ -2423,23 +2638,35 @@ function renderConsoleActivity(snapshot) {
 function renderLiveSummary(snapshot) {
   var container = document.getElementById('live-summary');
   if (!container) return;
+  var pendingConversation = getLiveConversationActivityItemFromState();
+  var visibleAgents = buildVisibleLiveAgents(snapshot && Array.isArray(snapshot.agents) ? snapshot.agents : []);
 
   if (!snapshot || !snapshot.project) {
+    if (pendingConversation) {
+      container.innerHTML = '<div class="live-summary-block">' +
+        '<div class="live-summary-label">Working Now</div>' +
+        '<div class="live-summary-value">' + escapeHtml(summarizeConversationActivity(pendingConversation)) + '</div>' +
+        '</div>';
+      return;
+    }
     container.innerHTML = '<div class="rail-empty">No project in focus yet.</div>';
     return;
   }
 
   var supervisorStatus = snapshot.supervisor ? (snapshot.supervisor.status || 'unknown') : 'offline';
   var healthSnapshot = state.healthSnapshot;
+  var workingNow = pendingConversation
+    ? summarizeConversationActivity(pendingConversation)
+    : (snapshot.summary || 'No active work is in motion right now.');
   var html = '<div class="live-summary-block">';
   html += '<div class="live-summary-label">Working Now</div>';
-  html += '<div class="live-summary-value">' + escapeHtml(snapshot.summary || 'No active work is in motion right now.') + '</div>';
+  html += '<div class="live-summary-value">' + escapeHtml(workingNow) + '</div>';
   html += '</div>';
   html += '<div class="live-summary-grid">';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Project</div><div class="live-summary-stat-value">' + escapeHtml(snapshot.project) + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Session</div><div class="live-summary-stat-value">' + escapeHtml(snapshot.sessionId || 'none') + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Supervisor</div><div class="live-summary-stat-value">' + escapeHtml(supervisorStatus) + '</div></div>';
-  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Live Agents</div><div class="live-summary-stat-value">' + escapeHtml(String((snapshot.agents || []).length)) + '</div></div>';
+  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Live Agents</div><div class="live-summary-stat-value">' + escapeHtml(String(visibleAgents.length)) + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Team Health</div><div class="live-summary-stat-value">' +
     escapeHtml(healthSnapshot ? healthSnapshot.aggregate : 'idle') +
     '</div></div>';
@@ -2454,15 +2681,16 @@ function renderLiveSummary(snapshot) {
 function renderLiveAgents(agents) {
   var container = document.getElementById('live-agents');
   if (!container) return;
+  var visibleAgents = buildVisibleLiveAgents(agents);
 
-  if (!Array.isArray(agents) || agents.length === 0) {
+  if (visibleAgents.length === 0) {
     container.innerHTML = '<div class="rail-empty">No active agents.</div>';
     return;
   }
 
   var html = '';
-  for (var i = 0; i < agents.length; i++) {
-    var agent = agents[i];
+  for (var i = 0; i < visibleAgents.length; i++) {
+    var agent = visibleAgents[i];
     var health = findAgentHealth(state.healthSnapshot, agent);
     var outputPreview = '';
     var descriptor = agent.descriptor || '';
