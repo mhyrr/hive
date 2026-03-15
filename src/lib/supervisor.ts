@@ -9,6 +9,8 @@ import { RunRecord, RunResult } from "./runs";
 export const DEFAULT_SUPERVISOR_INTERVAL_SECONDS = 30;
 export const DEFAULT_STEWARD_REASSESS_SECONDS = 120;
 export const DEFAULT_MAX_PARALLEL = 3;
+export const DEFAULT_PULSE_INTERVAL_TICKS = 4;
+export const DEFAULT_STALE_WORKER_MINUTES = 30;
 
 export type StewardAssessment = {
   shouldLaunch: boolean;
@@ -312,4 +314,102 @@ export function assessRecoveredRuns(
   }
 
   return recovered;
+}
+
+export type PulseSignal = {
+  level: "nominal" | "warning" | "urgent";
+  message: string;
+};
+
+export function assessPulse(input: {
+  activeRuns: RunRecord[];
+  openMessages: HiveMessage[];
+  boardText: string;
+  staleWorkerMinutes?: number;
+}): PulseSignal[] {
+  const signals: PulseSignal[] = [];
+  const staleThreshold = input.staleWorkerMinutes ?? DEFAULT_STALE_WORKER_MINUTES;
+  const board = parseBoard(input.boardText);
+
+  for (const run of input.activeRuns) {
+    if (run.source === "console" || run.agentId === "orchestrator") {
+      continue;
+    }
+
+    const minutes = minutesSince(run.started);
+
+    if (minutes !== null && minutes >= staleThreshold) {
+      signals.push({
+        level: minutes >= staleThreshold * 2 ? "urgent" : "warning",
+        message: `${run.agentId} has been running for ${minutes}m (started ${run.started})`,
+      });
+    }
+  }
+
+  const unansweredNudges = input.openMessages.filter(
+    (msg) => msg.attributes.type === "nudge" && msg.attributes.to === "orchestrator",
+  );
+
+  for (const nudge of unansweredNudges) {
+    const minutes = minutesSince(nudge.attributes.ts ?? "");
+
+    if (minutes !== null && minutes > 10) {
+      signals.push({
+        level: minutes > 30 ? "urgent" : "warning",
+        message: `human nudge unanswered for ${minutes}m`,
+      });
+    }
+  }
+
+  const openQuestions = input.openMessages.filter(
+    (msg) => msg.attributes.type === "question" && msg.attributes.status !== "resolved",
+  );
+
+  if (openQuestions.length > 3) {
+    signals.push({
+      level: "warning",
+      message: `${openQuestions.length} open questions in message queue`,
+    });
+  }
+
+  const boardBlocked = board.agents.filter((agent) =>
+    (agent.fields.status ?? "").toLowerCase().includes("blocked"),
+  );
+
+  for (const agent of boardBlocked) {
+    const lastActive = agent.fields["last-active"];
+    const minutes = lastActive ? minutesSince(lastActive) : null;
+
+    signals.push({
+      level: minutes !== null && minutes > 20 ? "urgent" : "warning",
+      message: `${agent.id} is blocked on the board${minutes !== null ? ` (${minutes}m)` : ""}`,
+    });
+  }
+
+  return signals;
+}
+
+export function formatPulse(signals: PulseSignal[], activeRunCount: number): string {
+  if (signals.length === 0) {
+    return `◆ Pulse: ${activeRunCount} agent${activeRunCount === 1 ? "" : "s"} active, no issues`;
+  }
+
+  const urgent = signals.filter((s) => s.level === "urgent");
+  const warnings = signals.filter((s) => s.level === "warning");
+  const parts: string[] = [];
+
+  if (urgent.length > 0) {
+    parts.push(`${urgent.length} urgent`);
+  }
+
+  if (warnings.length > 0) {
+    parts.push(`${warnings.length} warning${warnings.length === 1 ? "" : "s"}`);
+  }
+
+  const details = signals.map((s) => {
+    const icon = s.level === "urgent" ? "⚠" : "▸";
+    return `  ${icon} ${s.message}`;
+  });
+
+  return [`◆ Pulse: ${parts.join(", ")}`, ...details].join("\n");
 }

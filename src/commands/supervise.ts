@@ -31,11 +31,14 @@ import {
   writeRunResult,
 } from "../lib/runs";
 import {
+  assessPulse,
   assessRecoveredRuns,
   assessStewardLaunch,
   DEFAULT_MAX_PARALLEL,
+  DEFAULT_PULSE_INTERVAL_TICKS,
   DEFAULT_STEWARD_REASSESS_SECONDS,
   DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
+  formatPulse,
   RecoveredRun,
   selectWorkerLaunches,
 } from "../lib/supervisor";
@@ -235,7 +238,10 @@ async function reconcileRecoveredRuns(input: {
   }
 }
 
+let supervisorTickCount = 0;
+
 async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
+  supervisorTickCount++;
   const paths = await ensureHiveScaffold();
   const activeProject = await getActiveProject(paths);
 
@@ -351,18 +357,45 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
       ? dispatch.skipped.map((reason) => `- ${reason}`).join("\n")
       : "- none";
 
+  const isPulseTick = supervisorTickCount % DEFAULT_PULSE_INTERVAL_TICKS === 0;
+  let pulseSection = "";
+
+  if (isPulseTick) {
+    const pulseSignals = assessPulse({
+      activeRuns: state.activeRuns,
+      openMessages: state.openMessages,
+      boardText: state.boardText,
+    });
+    const workerRuns = state.activeRuns.filter(
+      (r) => r.agentId !== "orchestrator" && r.source !== "console",
+    );
+    const pulseText = formatPulse(pulseSignals, workerRuns.length);
+
+    pulseSection = section("Health Pulse", pulseText);
+
+    if (pulseSignals.length > 0) {
+      await appendFeedEntry(paths, {
+        project: activeProject,
+        headline: pulseText.split("\n")[0]!,
+        details: pulseSignals.map((s) => s.message),
+      });
+    }
+  }
+
   return [
     `Project: ${activeProject}`,
     section("Recovered Runs", formatRecoveredRuns(recoveredRuns)),
     section("Steward", stewardSection),
     section("Worker Launches", workerSection),
     section("Skipped Assignments", skippedSection),
+    ...(pulseSection ? [pulseSection] : []),
     section(
       "Supervisor",
       [
         `tick-interval: ${options.intervalSeconds}s`,
         `steward-reassess: ${DEFAULT_STEWARD_REASSESS_SECONDS}s`,
         `max-parallel: ${options.maxParallel}`,
+        `tick: ${supervisorTickCount}${isPulseTick ? " (pulse)" : ""}`,
       ].join("\n"),
     ),
   ].join("\n\n");

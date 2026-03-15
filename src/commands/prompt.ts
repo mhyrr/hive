@@ -5,6 +5,16 @@ import { digestBoard, listSkills } from "../lib/digest";
 import { UsageError } from "../lib/errors";
 import { loadPromptMemoryContext } from "../lib/memory";
 import { listOpenProjectMessages } from "../lib/messages";
+
+const BOOTSTRAP_MAX_CHARS = 20_000;
+
+function capContent(content: string, label: string): string {
+  if (content.length <= BOOTSTRAP_MAX_CHARS) {
+    return content;
+  }
+
+  return `${content.slice(0, BOOTSTRAP_MAX_CHARS)}\n\n[... ${label} truncated at ${BOOTSTRAP_MAX_CHARS} chars ...]`;
+}
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -114,7 +124,7 @@ export async function promptCommand(args: string[]): Promise<string> {
 You are ${agentId} for project ${activeProject}. Operate from the files below, not assumptions.
 
 ## Shared Soul
-${soul.trim()}
+${capContent(soul.trim(), "SOUL.md")}
 
 ## Before Your First Action
 Read these skills — they define how you think:
@@ -133,7 +143,13 @@ Read trust policy: ${paths.trust}
 - Stay inside your stated scope unless the orchestrator or human reassigns you.
 
 ## Initiative
-You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Before ending your session, flush everything important to memory and LOG.md. Don't batch — record as you go.
+You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Record as you go — don't batch.
+
+## Before You Exit
+Your context window dies when you exit. Anything you learned that isn't in a file is lost forever. Before finishing:
+1. Flush decisions, conventions, and facts to memory via the commands above.
+2. Log a summary of what you built and any trade-offs to LOG.md via \`hive log\`.
+3. If you hit a dead end or chose between approaches, record WHY — the next agent will face the same choice.
 
 ## Agent
 id: ${agentId}

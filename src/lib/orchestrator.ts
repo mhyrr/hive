@@ -260,6 +260,17 @@ async function readFileOrDefault(path: string, fallback: string): Promise<string
   return fallback;
 }
 
+const BOOTSTRAP_MAX_CHARS_PER_FILE = 20_000;
+const BOOTSTRAP_MAX_CHARS_TOTAL = 150_000;
+
+function capBootstrapContent(content: string, label: string): string {
+  if (content.length <= BOOTSTRAP_MAX_CHARS_PER_FILE) {
+    return content;
+  }
+
+  return `${content.slice(0, BOOTSTRAP_MAX_CHARS_PER_FILE)}\n\n[... ${label} truncated at ${BOOTSTRAP_MAX_CHARS_PER_FILE} chars ...]`;
+}
+
 async function loadEssentialSkills(
   skillsDir: string,
   availableSkillNames: string[],
@@ -323,15 +334,21 @@ export async function buildOrchestratorPrompt(input: {
     "(none)";
 
   // Inline essential content so the agent can act immediately without file reads
-  const inlinedSkills = await loadEssentialSkills(input.skillsDir, input.availableSkillNames);
-  const inlinedAgents = await readFileOrDefault(input.pathsAgents, "(no AGENTS.md found)");
+  const inlinedSkills = capBootstrapContent(
+    await loadEssentialSkills(input.skillsDir, input.availableSkillNames),
+    "skills",
+  );
+  const inlinedAgents = capBootstrapContent(
+    await readFileOrDefault(input.pathsAgents, "(no AGENTS.md found)"),
+    "AGENTS.md",
+  );
 
   return `# HIVE Steward Prompt
 
 You are the steward/orchestrator for project ${input.projectId}. All context you need is below — respond immediately without reading files first. Use the hive CLI for actions (resolving messages, logging, assigning work) not for reading state.
 
 ## Shared Soul
-${input.soul.trim()}
+${capBootstrapContent(input.soul.trim(), "SOUL.md")}
 
 Read agent identity: ${input.pathsIdentity}
 Read user preferences: ${input.pathsSelf}
@@ -376,7 +393,13 @@ ${inlinedAgents}
 ${runtimesInfo}
 
 ## Initiative
-You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Don't batch these — record them as you go. Don't announce them — just do them.
+You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Record as you go — don't batch, don't announce.
+
+## Before You Exit
+Your context window dies when you exit. Before finishing:
+1. Flush decisions, conventions, and facts to memory.
+2. Log a summary to LOG.md via \`hive log\`.
+3. Record WHY you made choices — the next steward pass starts cold.
 
 ## Hive Identity
 project: ${input.projectId}
