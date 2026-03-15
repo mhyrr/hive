@@ -188,32 +188,57 @@ optionally by a tier-1 model for borderline cases.
 
 ---
 
-## 6. Local Model Integration
+## 6. Local Model Integration via Pi
 
-### 6.1 Runtime Adapter
+### 6.1 pi-ai Instead of a New Adapter
 
-Add an `ollama` runtime adapter to HIVE's existing adapter registry. Ollama
-exposes an OpenAI-compatible API, so the adapter is thin:
+The Phase 1 design doc establishes that the persistent steward uses Pi's
+`Agent` class from `@mariozechner/pi-agent-core`. Pi's underlying LLM
+library, `@mariozechner/pi-ai`, already supports Ollama as a provider via
+its OpenAI-compatible API support:
 
-- `command`: `ollama`
-- `detectInstalled`: check for `ollama` binary
-- model selection via the existing `model:` field in agent descriptors
-- output parsing via the OpenAI-compatible JSON response format
+```typescript
+import { getModel, complete } from "@mariozechner/pi-ai";
 
-This gives HIVE local model support through the same interface it already uses
-for Claude, Codex, and Gemini.
+// Local model via Ollama
+const local = getModel("ollama", "qwen3.5:4b");
+
+// Cloud model via Anthropic
+const cloud = getModel("anthropic", "claude-haiku-4-5-20251001");
+```
+
+This means tier-1 tasks use the same `complete()` / `stream()` API
+regardless of whether they hit a local model or a cloud model. No separate
+"ollama adapter" in HIVE's runtime registry is needed for tier-1 work —
+pi-ai handles the provider abstraction.
+
+HIVE's existing runtime adapter system (`src/lib/runtime.ts`) remains for
+launching disposable worker processes (tier-2). An Ollama adapter there is
+still useful for workers that run locally, but it's a separate concern from
+tier-1 routing.
 
 ### 6.2 Discovery
 
 On gateway startup, probe for available local models:
 
-```
-ollama list → available models and their sizes
+```typescript
+import { getModel } from "@mariozechner/pi-ai";
+
+// Check if Ollama is available and which models are loaded
+async function discoverLocalModels(): Promise<string[]> {
+  try {
+    const response = await fetch("http://localhost:11434/api/tags");
+    const data = await response.json();
+    return data.models.map((m: any) => m.name);
+  } catch {
+    return []; // Ollama not running
+  }
+}
 ```
 
-Store the result in derived state. The routing policy uses this to know what's
-locally available. If Ollama isn't running or has no models, tier-1 falls back
-to Haiku seamlessly.
+Store the result in derived state. The routing policy uses this to know
+what's locally available. If Ollama isn't running or has no models, tier-1
+falls back to Haiku seamlessly.
 
 ### 6.3 Model Selection Heuristics
 
@@ -223,12 +248,23 @@ For tier-1 tasks, prefer:
 2. Haiku if no local model or task benefits from stronger instruction following
 3. Both in parallel if the task is ambiguous and we want agreement
 
-Keep this simple. A config file maps task types to preferred models:
+Keep this simple. A config file maps tiers to preferred models:
 
 ```
 tier1_local: qwen3.5:4b
 tier1_cloud: haiku
 tier1_fallback: haiku
+```
+
+In code, this becomes:
+
+```typescript
+function getTier1Model(config: TierConfig): Model {
+  if (config.tier1_local && localModels.includes(config.tier1_local)) {
+    return getModel("ollama", config.tier1_local);
+  }
+  return getModel("anthropic", "claude-haiku-4-5-20251001");
+}
 ```
 
 Don't build a dynamic model marketplace. A static config that the user can
@@ -303,8 +339,10 @@ over time instead of growing unboundedly.
 
 ## 8. Usage Tracking
 
-HIVE already captures per-run token metadata in `RuntimeMetadata`. Phase 2
-extends this with aggregated tracking.
+HIVE already captures per-run token metadata in `RuntimeMetadata` for
+worker processes. Pi's `message.usage` provides the same data (input tokens,
+output tokens, cost) for steward and tier-1 calls. Phase 2 unifies these
+into aggregated tracking.
 
 ### 8.1 What to Track
 
@@ -484,25 +522,61 @@ UI components, just new data in existing containers.
 
 ## 10. Implementation Plan
 
-### Step 1: Ollama Adapter
+### Step 1: Add pi-ai and pi-agent-core Dependencies
 
-Add an `ollama` runtime adapter to the existing adapter registry. Test with
-Qwen 3.5 4B and Gemma 3 4B. Verify output parsing and model selection work
-through the standard HIVE flow.
+Add `@mariozechner/pi-ai` and `@mariozechner/pi-agent-core` to the project.
+Verify basic operation:
+
+```typescript
+import { getModel, complete } from "@mariozechner/pi-ai";
+
+// Test cloud
+const haiku = getModel("anthropic", "claude-haiku-4-5-20251001");
+const response = await complete(haiku, {
+  messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+});
+
+// Test local (if Ollama running)
+const local = getModel("ollama", "qwen3.5:4b");
+const localResponse = await complete(local, {
+  messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+});
+```
+
+This also validates Ollama connectivity. If Ollama isn't available, tier-1
+falls back to Haiku — test that path too.
 
 ### Step 2: Tier-1 Task Runner
 
 Add a lightweight function that routes a tier-1 task (prompt + context) to
-either a local model or Haiku based on availability. This is not a new
-daemon — it's a function the gateway and supervisor can call.
+either a local model or Haiku based on availability. Uses `complete()` from
+pi-ai directly — no Agent needed for stateless tasks.
 
 ```typescript
+import { getModel, complete } from "@mariozechner/pi-ai";
+
 async function runTier1Task(task: {
   prompt: string;
   context: string;
   preferLocal: boolean;
-}): Promise<{ result: string; model: string; tokens: number }>
+}): Promise<{ result: string; model: string; tokens: number }> {
+  const model = task.preferLocal && localModels.length > 0
+    ? getModel("ollama", config.tier1_local)
+    : getModel("anthropic", "claude-haiku-4-5-20251001");
+
+  const response = await complete(model, {
+    systemPrompt: task.prompt,
+    messages: [{ role: "user", content: task.context, timestamp: Date.now() }],
+  });
+
+  const text = response.content.find(b => b.type === "text")?.text ?? "";
+  const tokens = (response.usage?.input ?? 0) + (response.usage?.output ?? 0);
+
+  return { result: text, model: model.name, tokens };
+}
 ```
+
+This is not a daemon — it's a function the gateway and supervisor can call.
 
 ### Step 3: Worker Output Compression
 
@@ -512,9 +586,13 @@ the run record. Feed the digest (not the full output) to the steward.
 
 ### Step 4: Usage Tracking
 
-Aggregate `RuntimeMetadata` from completed runs into `usage.json`. Add a
-`GET /api/cognition` gateway endpoint that returns per-tier token counts,
-model availability, and budget status.
+Unify token tracking from two sources:
+
+- `RuntimeMetadata` from worker process runs (existing)
+- `message.usage` from pi-ai calls (steward + tier-1)
+
+Aggregate into `usage.json`. Add a `GET /api/cognition` gateway endpoint
+that returns per-tier token counts, model availability, and budget status.
 
 ### Step 5: Console UI
 
@@ -524,6 +602,8 @@ Add the three UI layers:
    `run-completed` and `supervisor-tick` WebSocket events.
 2. Turn model chips — extend the existing detail chip rendering in `app.js`
    to include model name and token count from the response metadata.
+   The steward's `agent.subscribe()` events include model info; pass it
+   through the WebSocket `console-response` payload.
 3. Feed cognition section — collapsible panel reading from `/api/cognition`,
    showing tier bars and model status. Collapsed by default.
 

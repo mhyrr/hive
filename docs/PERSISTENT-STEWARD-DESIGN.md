@@ -126,15 +126,56 @@ A mixed pool of workers, unchanged from today:
 
 Pi is the session engine for the persistent steward.
 
-Pi provides:
+### 4.1 The Packages
 
-- session continuity across turns without prompt rebuild
-- hot conversational context with automatic compaction
-- tool and capability invocation
-- model and provider routing
-- a stable identity-bearing runtime object
+Two Pi packages matter for HIVE:
 
-Pi does not become:
+**`@mariozechner/pi-ai`** — unified multi-provider LLM API. Provides
+`getModel()`, `stream()`, `complete()`, and a serializable `Context` object.
+Handles token/cost tracking, tool schemas (TypeBox), and works across 20+
+providers including Ollama for local models. This is what HIVE uses for all
+model calls — steward, tier-1, and potentially workers.
+
+**`@mariozechner/pi-agent-core`** — agent runtime with tool calling and state
+management. Provides the `Agent` class: persistent message history, streaming
+events, tool execution, context transformation, steering/follow-up queues,
+and abort control. This is what HIVE uses for the persistent steward session.
+
+### 4.2 What Pi Provides
+
+**Session continuity.** The `Agent` class maintains message history across
+turns. No prompt rebuild. The steward's context grows incrementally with each
+human message and delta packet, exactly matching our context contract.
+
+**Context transformation.** `transformContext()` runs before every LLM call.
+This is where HIVE injects delta packets, prunes stale context, and enforces
+the bootstrap/refresh contract. The agent's full message history stays in
+memory, but the LLM only sees what the transform passes through.
+
+**Streaming.** `agent.subscribe()` emits granular events (`text_delta`,
+`tool_execution_start`, `tool_execution_end`, etc.) that map directly to
+WebSocket broadcasts in the gateway console. The human sees the steward
+thinking in real time.
+
+**Tool calling.** The steward's tools (read board, assign worker, check
+status, read file, update plan) are registered as `AgentTool` objects with
+TypeBox schemas. Pi handles argument validation, parallel/sequential
+execution, and result injection.
+
+**Steering.** If the human sends a message while the steward is mid-tool-call,
+`agent.steer()` interrupts cleanly — remaining tools get skipped, the
+steering message injects, and the steward responds to the interruption. This
+is critical for the conversational feel.
+
+**Model swapping.** `agent.setModel()` can change the underlying model
+mid-session. If budget pressure requires downgrading the steward temporarily,
+or if a specific turn benefits from a different model, this is a single call.
+
+**Provider routing.** `getModel()` works across Anthropic, OpenAI, Google,
+Ollama, and 15+ other providers. HIVE's tier-1 calls use the same API
+regardless of whether they hit a local Qwen model or cloud Haiku.
+
+### 4.3 What Pi Does Not Become
 
 - the durable memory system (HIVE files)
 - the project state system (HIVE substrate)
@@ -148,7 +189,7 @@ This preserves HIVE's runtime-agnostic stance. Workers still launch via any
 adapter. Only the steward uses Pi, because only the steward needs persistent
 sessions and fast interactive response.
 
-### 4.1 Runtime Access Policy
+### 4.4 Runtime Access Policy
 
 The important distinction is that **Pi is the session engine, not the
 authority on account policy**.
@@ -198,6 +239,227 @@ This keeps the design honest:
 Environment variables such as `HIVE_PI_PROVIDER` and `HIVE_PI_MODEL` remain
 valid as explicit overrides, but the file-backed policy should be the default
 source of truth because it is inspectable and versionable.
+
+### 4.5 Concrete Mapping
+
+```
+HIVE Concept                  Pi Implementation
+─────────────────────────────────────────────────────
+Persistent steward session    Agent instance in gateway
+Bootstrap context             initialState.systemPrompt + messages
+Delta packets                 Custom AgentMessage via declaration merging
+Context contract              transformContext() callback
+Steward tools                 AgentTool[] with TypeBox schemas
+Live console streaming        agent.subscribe() → WebSocket broadcast
+Human interrupts steward      agent.steer()
+Human follow-up               agent.followUp()
+Steward crash recovery        Re-create Agent from derived state + history
+Tier-1 task calls             complete() / stream() from pi-ai directly
+Model tiering                 getModel('anthropic', 'haiku') vs
+                              getModel('ollama', 'qwen3.5:4b') vs
+                              getModel('anthropic', 'opus')
+Token/cost tracking           message.usage.{input,output,cost}
+```
+
+### 4.6 The Steward Agent Skeleton
+
+```typescript
+import { Agent, AgentTool } from "@mariozechner/pi-agent-core";
+import { getModel, Type } from "@mariozechner/pi-ai";
+
+// Extend AgentMessage for HIVE-specific message types
+declare module "@mariozechner/pi-agent-core" {
+  interface CustomAgentMessages {
+    hiveDelta: {
+      role: "hiveDelta";
+      delta: HiveDeltaPacket;
+      timestamp: number;
+    };
+  }
+}
+
+// --- Tools the steward can call ---
+
+const readBoardTool: AgentTool<typeof readBoardSchema> = {
+  name: "read_board",
+  description: "Read the current BOARD.md state",
+  parameters: Type.Object({}),
+  execute: async () => {
+    const board = await readFile(paths.board());
+    return { result: board };
+  },
+};
+
+const assignWorkerTool: AgentTool<typeof assignWorkerSchema> = {
+  name: "assign_worker",
+  description: "Create an assignment message for a worker agent",
+  parameters: Type.Object({
+    agent: Type.String({ description: "Target agent (architect, craftsman, critic, scout)" }),
+    task: Type.String({ description: "The assignment body" }),
+    priority: Type.Optional(Type.String({ description: "high, normal, low" })),
+  }),
+  execute: async ({ agent, task, priority }) => {
+    await createAssignmentMessage(agent, task, priority);
+    return { result: `Assignment created for ${agent}` };
+  },
+};
+
+const readFileTool: AgentTool<typeof readFileSchema> = {
+  name: "read_file",
+  description: "Read a specific hive file when deeper context is needed",
+  parameters: Type.Object({
+    path: Type.String({ description: "Path relative to ~/.hive/" }),
+  }),
+  execute: async ({ path }) => {
+    const content = await readFile(resolve(paths.hiveHome(), path));
+    return { result: content };
+  },
+};
+
+// --- The steward agent ---
+
+function createStewardAgent(bootstrap: BootstrapContext): Agent {
+  const agent = new Agent({
+    initialState: {
+      systemPrompt: buildStewardSystemPrompt(bootstrap),
+      model: getModel("anthropic", "claude-opus-4-20250514"),
+      tools: [readBoardTool, assignWorkerTool, readFileTool, checkStatusTool, updatePlanTool],
+      messages: bootstrap.conversationTail ?? [],
+    },
+
+    // The context contract: prune and inject deltas before each LLM call
+    transformContext: async (messages, signal) => {
+      const delta = await getLatestDelta();
+      const llmMessages = messages
+        .filter(m => m.role !== "hiveDelta")  // strip raw deltas
+        .slice(-MAX_CONTEXT_MESSAGES);        // keep recent window
+
+      // Inject current delta as a system-like user message
+      if (delta.hasChanges) {
+        llmMessages.push({
+          role: "user",
+          content: formatDeltaForSteward(delta),
+          timestamp: Date.now(),
+        });
+      }
+
+      return llmMessages;
+    },
+  });
+
+  return agent;
+}
+```
+
+### 4.7 Gateway Integration
+
+```typescript
+// In gateway startup
+let steward: Agent | null = null;
+
+async function ensureSteward(): Promise<Agent> {
+  if (steward) return steward;
+
+  const bootstrap = await buildBootstrapContext(activeProject);
+  steward = createStewardAgent(bootstrap);
+
+  // Wire streaming to WebSocket
+  steward.subscribe((event) => {
+    if (event.type === "message_update") {
+      broadcast({
+        type: "console-response",
+        data: {
+          delta: event.assistantMessageEvent,
+          model: steward!.state.model.name,
+        },
+      });
+    }
+    if (event.type === "tool_execution_start") {
+      broadcast({
+        type: "steward-tool",
+        data: { tool: event.toolName, status: "started" },
+      });
+    }
+  });
+
+  return steward;
+}
+
+// Replace runDirectStewardTurn in POST /api/console/send
+async function handleConsoleSend(message: string) {
+  try {
+    const agent = await ensureSteward();
+
+    // Record the delta for this turn
+    await recordDeltaCheckpoint();
+
+    // Prompt the steward (streams via subscribe above)
+    await agent.prompt(message);
+
+    // Extract usage for tracking
+    const lastMsg = agent.state.messages.at(-1);
+    if (lastMsg?.usage) {
+      await recordUsage("tier3", lastMsg.usage);
+    }
+  } catch (err) {
+    // Steward died — fall back to one-shot
+    steward = null;
+    return runDirectStewardTurn(message);
+  }
+}
+
+// Human sends while steward is working
+async function handleSteeringMessage(message: string) {
+  const agent = await ensureSteward();
+  agent.steer({
+    role: "user",
+    content: message,
+    timestamp: Date.now(),
+  });
+}
+```
+
+### 4.8 Tier-1 via pi-ai Directly
+
+Tier-1 tasks don't need the full Agent. They use `complete()` from pi-ai:
+
+```typescript
+import { getModel, complete } from "@mariozechner/pi-ai";
+
+async function runTier1Task(task: {
+  prompt: string;
+  context: string;
+  preferLocal: boolean;
+}): Promise<{ result: string; model: string; tokens: number }> {
+  // Pick model based on availability
+  const model = task.preferLocal && ollamaAvailable
+    ? getModel("ollama", config.tier1_local)     // e.g. qwen3.5:4b
+    : getModel("anthropic", "claude-haiku-4-5-20251001");
+
+  const response = await complete(model, {
+    systemPrompt: "You are a concise summarization assistant. Respond with JSON only.",
+    messages: [
+      { role: "user", content: `${task.prompt}\n\n${task.context}`, timestamp: Date.now() },
+    ],
+  });
+
+  return {
+    result: response.content.find(b => b.type === "text")?.text ?? "",
+    model: model.name,
+    tokens: (response.usage?.input ?? 0) + (response.usage?.output ?? 0),
+  };
+}
+
+// Example: compress worker output after run completion
+async function compressWorkerOutput(runRecord: RunRecord): Promise<string> {
+  const { result } = await runTier1Task({
+    prompt: `Summarize this worker output as JSON: { "summary": "...", "outcome": "success|partial|blocked|failed", "key_decisions": [...], "files_changed": [...] }`,
+    context: runRecord.visibleOutput,
+    preferLocal: true,
+  });
+  return result;
+}
+```
 
 ---
 
