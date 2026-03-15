@@ -70,6 +70,40 @@ export async function createMessage(
   };
 }
 
+export async function createMessageRaw(
+  msgDir: string,
+  attributes: Record<string, string>,
+  body: string,
+): Promise<HiveMessage> {
+  await mkdir(msgDir, { recursive: true });
+
+  const from = attributes.from ?? "unknown";
+  const to = attributes.to ?? "unknown";
+  const timestamp = toIsoTimestamp();
+  const filename = [
+    toCompactTimestamp(),
+    sanitizeSegment(from),
+    "to",
+    sanitizeSegment(to),
+    crypto.randomUUID().slice(0, 8),
+  ].join("-");
+  const path = join(msgDir, `${filename}.md`);
+  const raw = stringifyFrontmatter(
+    { ...attributes, status: "open", ts: timestamp },
+    body,
+  );
+
+  await Bun.write(path, raw);
+
+  return {
+    path,
+    filename: `${filename}.md`,
+    attributes: parseFrontmatter(raw).attributes,
+    body: body.trim(),
+    raw,
+  };
+}
+
 export async function listMessages(msgDir: string): Promise<HiveMessage[]> {
   const dir = await readdir(msgDir, { withFileTypes: true }).catch(() => []);
   const filenames = dir

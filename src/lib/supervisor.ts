@@ -1,4 +1,5 @@
 import { parseBoard, minutesSince } from "./board";
+import { revertWorkerChanges, runVerifyCommand, VerifyCommandResult } from "./git";
 import { HiveMessage } from "./messages";
 import {
   extractProjectConfigValue,
@@ -283,6 +284,78 @@ export function selectWorkerLaunches(input: {
   }
 
   return { launches, skipped };
+}
+
+// --- Verification ---
+
+export type VerificationSpec = {
+  command: string;
+  maxAttempts: number;
+  autoRevert: boolean;
+};
+
+export type VerificationOutcome =
+  | { action: "keep"; verifyResult: VerifyCommandResult }
+  | { action: "retry"; attempt: number; maxAttempts: number; verifyResult: VerifyCommandResult; revertSummary: string }
+  | { action: "block"; attempt: number; maxAttempts: number; verifyResult: VerifyCommandResult; revertSummary: string }
+  | { action: "skip"; reason: string };
+
+export function extractVerificationSpec(message: HiveMessage | null): VerificationSpec | null {
+  if (!message) {
+    return null;
+  }
+
+  const verify = message.attributes.verify?.trim();
+
+  if (!verify) {
+    return null;
+  }
+
+  const maxAttempts = Math.max(1, parseInt(message.attributes["max-attempts"] ?? "1", 10) || 1);
+  const autoRevert = (message.attributes["auto-revert"] ?? "true").trim().toLowerCase() !== "false";
+
+  return { command: verify, maxAttempts, autoRevert };
+}
+
+export function countPriorAttempts(
+  sourceMessage: string,
+  historicalRuns: RunRecord[],
+): number {
+  return historicalRuns.filter((run) => run.sourceMessage === sourceMessage).length;
+}
+
+export function runVerification(input: {
+  spec: VerificationSpec;
+  repoPath: string;
+  attempt: number;
+}): VerificationOutcome {
+  const verifyResult = runVerifyCommand(input.repoPath, input.spec.command);
+
+  if (verifyResult.passed) {
+    return { action: "keep", verifyResult };
+  }
+
+  const revert = input.spec.autoRevert
+    ? revertWorkerChanges(input.repoPath)
+    : { reverted: false, summary: "auto-revert disabled" };
+
+  if (input.attempt >= input.spec.maxAttempts) {
+    return {
+      action: "block",
+      attempt: input.attempt,
+      maxAttempts: input.spec.maxAttempts,
+      verifyResult,
+      revertSummary: revert.summary,
+    };
+  }
+
+  return {
+    action: "retry",
+    attempt: input.attempt,
+    maxAttempts: input.spec.maxAttempts,
+    verifyResult,
+    revertSummary: revert.summary,
+  };
 }
 
 export function assessRecoveredRuns(
