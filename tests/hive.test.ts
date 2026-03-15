@@ -144,6 +144,22 @@ describe("HIVE CLI", () => {
     expect(output).toContain("gamma: idle");
   });
 
+  test("console dry run prompt encodes cognitive-depth routing guidance", async () => {
+    await initHive();
+    await addProject();
+
+    const output = await runCli(["console", "--dry-run"]);
+    const promptPath = output.match(/^Prompt:\s+(.+)$/m)?.[1]?.trim();
+
+    expect(output).toContain("Console dry run");
+    expect(promptPath).toBeString();
+
+    const prompt = await Bun.file(promptPath!).text();
+    expect(prompt).toContain("Treat every turn as a routing decision");
+    expect(prompt).toContain("Optimize for expected answer quality, not raw latency.");
+    expect(prompt).toContain('The human should not need to explicitly ask you to "use the hive"');
+  });
+
   test("inbox and message lifecycle commands keep open queues clean", async () => {
     await initHive();
     await addProject();
