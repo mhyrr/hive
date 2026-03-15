@@ -8,398 +8,521 @@ You should be able to say:
 hive dream "build a CLI tool that watches a git repo and posts a Slack digest on push"
 ```
 
-Go to sleep. Wake up to a working repo, tests, a README, and a plan for next steps.
+Go to sleep. Wake up to a working repo, tests, a shift briefing, and a
+recommendation to ship or iterate.
 
-This document describes what's missing between the current HIVE architecture
-and that capability, and how to close the gap.
+This is the endgame. It depends on everything below it in the stack being
+solid first.
+
+---
+
+## Prerequisites: What Must Exist First
+
+Overnight launch is Layer 4 of a four-layer system. Each layer depends on
+the ones below it.
+
+### Layer 1: Coordination Substrate (done)
+
+File-backed orchestration, supervisor, workers, board model, messaging,
+scope conflict detection, run ledger, gateway.
+
+### Layer 2: Persistent Steward (PERSISTENT-STEWARD-DESIGN.md)
+
+Maya as a live session. Delta-aware. Fast human interaction. Bootstrap once,
+refresh via deltas. Falls back to one-shot on failure. The gateway is the
+host.
+
+Without this, overnight launch has no head. The steward would cold-start on
+every cycle, losing the thread of an evolving multi-hour build.
+
+### Layer 3: Cognitive Resources (COGNITIVE-RESOURCE-MANAGEMENT.md)
+
+Tiered model routing. Local models for compression and triage. Usage
+tracking. The escalation ladder: deterministic → small model → worker →
+steward.
+
+Without this, overnight launch burns frontier tokens on summarization and
+triage. A 6-hour Opus session doing everything is expensive and wasteful.
+
+### Layer 4: Overnight Launch (this document)
+
+Entry point, planning, autonomous execution, synthesis, morning handoff.
+
+**Do not build this until Layers 2 and 3 are working.** The Felix/OpenClaw
+lesson learned the hard way: "overcomplicating memory on day one" and
+"running expensive models on cheap tasks" are real failure modes.
 
 ---
 
 ## What We Already Have
 
-Phase 4 and Phase 5 are complete. The pieces that matter:
+The coordination skeleton is real:
 
-- **Supervisor loop** (`hive supervise`): detached, file-backed, crash-safe,
-  parallel workers, one-run-per-assignment safety
-- **Board + message model**: steward assigns, supervisor launches, workers report
-- **Persistent steward**: live Pi-backed session with delta awareness
-- **Multi-runtime support**: claude, codex, gemini adapters all wired
-- **Gateway**: web UI, WebSocket feed, REST API
-- **Scope conflict detection**: workers don't stomp on each other
+- Supervisor loop: detached, crash-safe, parallel workers, scope safety
+- Board + message model: steward assigns, supervisor launches, workers report
+- Multi-runtime support: claude, codex, gemini adapters
+- Gateway: web UI, WebSocket feed, REST API
+- Trust ladder: internal-safe / code-safe / external-gated / forbidden
+- Event kernel: internal and external event recording
+- Memory architecture: layered, entity-aware, with derived state
 
-The coordination skeleton is real. The overnight loop already runs. What is
-missing is not infrastructure — it is the entry point, the routing, and the
-synthesis.
-
----
-
-## The Three Gaps
-
-### 1. Intent → Plan (missing entirely)
-
-Right now, a human writes PLAN.md and BOARD.md by hand. There is no automated
-path from "here is a vague idea" to "here is a structured, executable plan with
-assigned agents and scopes."
-
-The overnight launch collapses if this doesn't exist. You cannot delegate a
-task that hasn't been decomposed.
-
-### 2. Model Routing (partial)
-
-Agents have configured runtimes, but all tasks on a given agent go to the same
-model. There's no task-type aware routing: "use Opus for architecture, Sonnet
-for implementation, Haiku for verification."
-
-The current model is: one agent → one runtime → one model for everything.
-The needed model is: task characteristics → model selection → agent assignment.
-
-### 3. Synthesis (missing)
-
-Workers produce file changes. No agent currently reads those changes across
-multiple tasks and produces a coherent output: a unified README, a release
-checklist, a "here's what was built and what to do next" summary.
-
-Without synthesis, an overnight run produces a pile of commits. That's
-different from a product.
+What is missing is the entry point, the planning pass, and the terminal
+synthesis. The middle already works.
 
 ---
 
-## The Design
+## The Architecture
 
-### Entry Point: `hive dream`
+### How OpenClaw Does It (And Where We Differ)
 
-A new front-door command that takes an unstructured goal and hands it to a
-dedicated **planner** agent.
+OpenClaw's overnight architecture is built around the "Ralph loop" — a
+wrapper script that repeatedly launches a coding agent with the same prompt
+until the work is done. Each iteration starts fresh with zero accumulated
+context. The agent picks up where the last one left off by reading the file
+system and git history.
 
-```bash
-hive dream "build a CLI tool that watches a git repo and posts a Slack digest on push"
-hive dream --from file.md    # read goal from file
-hive dream --interactive     # iteratively refine before launching
-```
+The key insight: **context is a cache, not state.** If an agent can't
+reconstruct its situation from files alone, the architecture has a single
+point of failure sitting in a context window.
 
-`hive dream` does three things:
+OpenClaw's approach works for single-agent, single-codebase tasks. It's
+essentially a retry loop with fresh context on each attempt. The monitoring
+is simple: is the agent alive? Is it making progress? Are all PRD boxes
+checked? If not, kill and restart.
 
-1. Bootstraps a new project directory (or uses the active one)
-2. Runs a one-shot planner pass to produce PLAN.md + initial BOARD.md entries
-3. Emits a `nudge` to the orchestrator and starts supervision
+HIVE's architecture is different in two structural ways:
 
-The planner produces structured output, not prose. It must emit valid BOARD.md
-task rows and assignment messages with `launch: auto`. If it produces
-ambiguous output, dream should surface that before launching.
+1. **Multi-agent coordination, not single-agent retry.** HIVE decomposes
+   goals into parallel scoped tasks across multiple workers. This is more
+   powerful but harder to orchestrate — you need a live head that tracks
+   cross-agent state, not just a loop that restarts one process.
 
-**Planner persona**: not a generalist. Opinionated decomposer. Its job is to
-identify 4–8 parallelizable work units, assign them to typed agents, and
-specify scope. It should also identify the synthesis deliverable upfront:
-what does "done" look like?
+2. **File-backed coordination, not context-backed.** OpenClaw's agents
+   coordinate through the filesystem too, but HIVE formalizes this: the board
+   is the shared state, messages are the communication channel, the
+   supervisor is the process manager. This makes overnight runs inspectable
+   and recoverable at any point.
 
-### Typed Agents + Model Routing
+The overnight loop should combine the best of both:
+- OpenClaw's resilience model (agents are disposable, restart on failure)
+- HIVE's coordination model (steward plans, workers execute in parallel,
+  board tracks state)
 
-The current model has fixed agents with fixed runtimes. For overnight work,
-we need two changes:
-
-**1. Task type tags**
-
-Each board task gets a type: `arch`, `impl`, `test`, `review`, `doc`, `ops`.
-The planner assigns these. The supervisor uses them to select the right agent
-configuration.
-
-**2. Capability profiles in project-config**
-
-```md
-## Agent Profiles
-- architect | runtime: claude | model: claude-opus-4-6 | types: arch,review
-- alpha     | runtime: claude | model: claude-sonnet-4-6 | types: impl,doc
-- beta      | runtime: codex  | model: gpt-5-codex | types: impl,test
-- gamma     | runtime: claude | model: claude-sonnet-4-6 | types: test,review
-```
-
-When the planner assigns a task, it picks from the profile list by type.
-When two tasks have the same type, they go to different agents if non-conflicting.
-
-This doesn't require redesigning the supervisor loop. Profiles are config.
-The assignment message already carries `agent:` — the planner populates it
-based on profiles.
-
-### Synthesis Pass
-
-After all board tasks are done, a **synthesizer** agent runs:
-
-1. Reads all completed task result.md files
-2. Reads the current repo state (changed files, git log)
-3. Produces the synthesis deliverable defined at plan time
-
-Synthesis deliverables are explicit:
-- `readme`: update README with what was built
-- `handoff`: a human-facing summary of what was done and what's left
-- `release-prep`: CHANGELOG, release notes, version bump
-- `brief`: a short paragraph suitable for a Slack/email update
-
-The synthesizer is triggered by the supervisor when:
-- all board tasks are done
-- the synthesis task is still open
-
-It is just another agent with a specific role. Not a special code path.
-
-### Synthesizer as Chief of Staff
-
-The synthesizer should not be a prettifier. It should act more like a chief of
-staff:
-
-- read all agent outputs, not just the winning one
-- extract disagreements, tradeoffs, and unresolved risks
-- force a decision when the team produced multiple valid paths
-- explain why the chosen path beat the alternatives
-- produce a final recommendation that a human can approve, reject, or ship
-
-That means the synthesizer needs explicit inputs:
-- task results from implementers, reviewers, researchers, and operators
-- the original intent from PLAN.md
-- repo reality: tests, git diff, docs, generated artifacts
-- trust constraints: what actions were approved vs still gated
-
-And explicit outputs:
-- **decision memo**: what we built, what we chose not to build, why
-- **pros/cons table**: where the team disagreed and how the tie was broken
-- **risk register**: what is still shaky, unverified, or blocked on humans
-- **ship recommendation**: ship / pause / ask-human, with reasons
-
-This persona matters because overnight work will often produce a lot of local
-optimizations and not enough global judgment. The synthesizer is the layer that
-turns many competent specialist passes into a coherent executive decision.
-
-### Stale Goal Detection
-
-Overnight runs fail silently if an agent gets stuck. Currently: the board
-says active, but the process is hanging or looping.
-
-Add to the supervisor: **task timeout with escalation**.
-
-If a task has been active for more than `N` minutes (configurable, default 30):
-- mark it stale
-- emit a feed event
-- trigger steward reassessment with the stale context
-
-The steward decides: retry, reassign, or escalate to human inbox.
-
-This is a small addition to the supervisor loop. The supervisor already reads
-run state; it just needs to check timestamps.
-
----
-
-## The Full Overnight Loop
+### The Three Phases of an Overnight Run
 
 ```
 hive dream "idea"
     │
     ▼
-Planner pass
-    │ produces PLAN.md, BOARD.md, assignment messages (launch: auto)
+PHASE 1: PLAN (Maya, one pass)
+    │ Decompose goal → PLAN.md + BOARD.md + assignment messages
+    │ Validate: scopes don't overlap, tasks are atomic, "done" is testable
+    │ Estimate cost, show plan, wait for confirmation (or --go to skip)
+    │
     ▼
-hive supervise (detached)
+PHASE 2: EXECUTE (supervisor + workers, parallel)
+    │ Workers run scoped tasks
+    │ Steward monitors via deltas (Layer 2)
+    │ Tier-1 models compress worker output (Layer 3)
+    │ Stale task detection: timeout → retry or escalate
+    │ Steward intervenes only for conflicts or blocked workers
     │
-    ├── orchestrator reassessment pass
-    │       reads board, reads messages, assigns workers
+    ▼
+PHASE 3: SYNTHESIZE (Maya, one pass)
+    │ Read all results, repo state, git history
+    │ Produce handoff briefing
+    │ Surface conflicts, risks, and recommendations
+    │ Emit morning notification
     │
-    ├── workers run in parallel (scope-safe)
-    │       impl tasks, test tasks, doc tasks
-    │       each exits and leaves result.md
-    │
-    ├── orchestrator reassessment (after workers exit)
-    │       reviews results, closes assignments, identifies gaps
-    │       may spawn follow-up tasks
-    │
-    └── synthesizer pass (when board is clean)
-            reads all result.md files
-            reads repo state
-            writes synthesis deliverable
-            emits feed event: "overnight run complete"
+    ▼
+You wake up → shift briefing → review → ship or iterate
 ```
-
-You wake up, run `hive ask` or open the gateway, and see the summary.
 
 ---
 
-## What's Actually Hard
+## Phase 1: Planning
 
-**Planner output quality.** If the planner produces bad task decomposition or
-ambiguous scope assignments, the overnight run produces garbage confidently.
-The planner needs tight output constraints and validation before launching.
+### Maya as Planner
 
-Recommended: `hive dream --dry-run` shows the proposed plan without launching.
-You review, iterate, then `hive dream --go`.
+The planner is not a new persona. It's Maya doing a specific job: taking a
+vague goal and producing a structured, executable plan.
 
-**Non-deterministic agents.** Workers may produce conflicting changes even
-with scope separation. The synthesizer needs to detect and surface conflicts,
-not paper over them.
+Why not a separate planner persona? Because planning is the most
+context-sensitive task in the system. It needs to know Greg's preferences,
+the project's conventions, the team's capabilities, and the codebase's
+patterns. Maya has all of this. A new persona would start cold.
 
-**The goal of "launch overnight"** implicitly requires external actions:
-create a repo, push code, buy a domain, call an API. Those all require the
-trust ladder (already designed in HIVE-TRUST-LADDER.md). Overnight launch
-without trust gates is a bad idea. The loop should know which actions require
-human approval and pause, not proceed blindly.
+### What the Planner Produces
+
+1. **PLAN.md** — structured goal decomposition with task assignments
+2. **BOARD.md entries** — one row per task, with status, agent, and scope
+3. **Assignment messages** — one per task, with `launch: auto` frontmatter
+
+### Plan Validation
+
+Before launching, the plan is validated:
+
+- Every task has a scope (list of files/directories it may touch)
+- No two tasks have overlapping scopes
+- Every task has a testable "done" condition (not "implement auth" but
+  "auth endpoint returns 200 with valid JWT and 401 without")
+- Task count is between 2 and 8 (fewer means the goal is too small for
+  overnight; more means the decomposition is too fine)
+- Cost estimate is shown (based on expected token usage per task type)
+
+If validation fails, Maya fixes the plan or surfaces the issue.
+
+### Entry Point
+
+```bash
+hive dream "build a CLI tool that watches a git repo and posts Slack digest"
+hive dream --from spec.md     # read goal from file
+hive dream --dry-run          # show plan without launching
+hive dream --go               # skip confirmation, launch immediately
+```
+
+`hive dream` does:
+
+1. Bootstrap a project directory (or use active project)
+2. Run Maya in planning mode
+3. Show the plan, cost estimate, and task breakdown
+4. On confirmation, emit assignment messages and start supervision
+
+---
+
+## Phase 2: Execution
+
+Execution uses the existing supervisor loop. The overnight additions are:
+
+### Worker Resilience
+
+Workers are disposable. The supervisor already handles crash recovery. For
+overnight runs, add:
+
+- **Task timeout**: if a worker has been active for >30 minutes with no
+  file changes, mark it stale
+- **Stale recovery**: kill the process, restart with a fresh context (the
+  Ralph loop insight — a fresh agent reading files is better than a confused
+  agent in a corrupted context window)
+- **Retry budget**: max 3 restarts per task before escalating to human inbox
+
+### Steward Oversight
+
+The persistent steward (Layer 2) monitors via delta packets:
+
+- Worker completions trigger tier-1 summarization (Layer 3)
+- Maya sees compact digests, not raw output
+- She intervenes only for: cross-agent conflicts, blocked workers that
+  exhausted retries, plan-level problems
+
+Most overnight cycles, Maya does nothing. The workers work. The supervisor
+supervises. Maya sleeps unless something needs judgment.
+
+### Worker Isolation
+
+Each worker gets its own git worktree:
+
+```bash
+git worktree add -b task/auth /tmp/hive-worker-alpha main
+git worktree add -b task/api  /tmp/hive-worker-beta  main
+```
+
+Workers can't stomp on each other's files. When a worker completes, its
+branch is ready for review or merge. The synthesizer reads all branches.
+
+---
+
+## Phase 3: Synthesis
+
+### What Synthesis Actually Is
+
+When all board tasks are done (or a configurable timeout is reached), Maya
+runs a synthesis pass. This is not a new persona — it's Maya in a different
+mode.
+
+The synthesizer reads:
+- All completed task results
+- The current repo state across all worker branches
+- Git diffs from each branch
+- The original goal from PLAN.md
+- Any conflicts or unresolved issues
+
+The synthesizer produces:
+- **Handoff briefing**: what was built, what's left, what to look at first
+- **Branch status**: which branches are clean, which have conflicts
+- **Risk notes**: anything the steward noticed during the run that the
+  leader should know about
+- **Ship recommendation**: ship / iterate / needs-human, with reasons
+
+### What This Looks Like When You Wake Up
+
+```
+━━━ MORNING BRIEFING ━━━━━━━━━━━━━━━━━━━━━━━
+
+  Overnight run: 5h 42m · 6 tasks · $8.14
+
+  ✓ CLI scaffold with arg parsing and config
+  ✓ Git watcher using fsnotify
+  ✓ Slack webhook integration with formatting
+  ✓ Unit tests (23 passing)
+  ✓ Integration test with mock Slack endpoint
+  ✓ README with usage and installation
+
+  ⚠ One thing to look at:
+  The git watcher polls every 5 seconds. I considered
+  using inotify but it's not portable to macOS. If you
+  want cross-platform file watching, we should discuss
+  the approach.
+
+  Branches: 4 merged to main cleanly. No conflicts.
+  Tests: all passing.
+
+  Recommendation: ship. The core functionality works.
+  The polling interval is configurable if 5s is too
+  aggressive.
+
+  → `hive review` to see diffs
+  → `hive ship` to push
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+This is the Leadership UI briefing system (HIVE-LEADERSHIP-UI.md) in action.
+The shift briefing format already describes this — overnight launch is just
+the longest possible "since you left" window.
+
+---
+
+## Trust and Safety
+
+Overnight runs operate within the existing trust ladder:
+
+- **internal-safe + code-safe**: workers act freely (read, write, test, build)
+- **external-gated**: anything touching the network goes to the approval
+  queue. Workers cannot push, deploy, or send external messages without
+  approval.
+- **forbidden**: money, contracts, production data — never.
+
+This means overnight runs produce *local* artifacts: branches, tests, code,
+documentation. They do not push, deploy, or communicate externally. The
+morning handoff is where the human reviews and takes external action.
+
+If the goal requires external actions (e.g., "deploy to staging"), those
+steps get queued as approval requests. The human wakes up, reviews the code,
+approves the deploy.
+
+### Cost Controls
+
+Before launching, `hive dream` shows an estimated cost based on:
+- Number of tasks × expected tokens per task type
+- Model tier per task (Layer 3 routing)
+- Steward oversight budget (typically low — mostly idle)
+- A 2x safety margin
+
+The estimate is not a hard cap. But it sets expectations. If the human
+approves a $10 overnight run and it's trending toward $30, Maya should pause
+and escalate.
+
+---
+
+## Failure Modes
+
+### "Planner produces bad decomposition"
+
+The most dangerous failure. Mitigation: validation constraints (scope
+overlap check, done-condition check, task count bounds). Also: `--dry-run`
+as default for the first few uses. Build trust in the planner before
+trusting it to launch unsupervised.
+
+### "Worker gets stuck in a loop"
+
+The Ralph loop insight: a stuck agent should be killed and restarted, not
+coaxed. Fresh context from files is better than accumulated confusion.
+Mitigation: task timeout + retry budget + stale detection.
+
+### "Workers produce conflicting changes"
+
+Git worktree isolation prevents file conflicts. But semantic conflicts
+(incompatible API assumptions across tasks) can still happen. Mitigation:
+the steward monitors for cross-agent conflicts via summarized outputs.
+The synthesis pass also explicitly checks for contradictions.
+
+### "Overnight run goes off the rails"
+
+The trust ladder prevents catastrophic action (no push, no deploy, no
+external messages). The worst case for an overnight run is wasted tokens
+and incorrect local code — both are reversible. The morning briefing
+surfaces problems before the human takes any action.
+
+### "Everything completed but the result is wrong"
+
+The synthesis pass includes a recommendation, not just a status report.
+Maya should flag uncertainty: "all tests pass but the architecture feels
+over-engineered for what you asked for" or "this works but I'm not confident
+about the error handling approach."
+
+The human reviews before shipping. Overnight launch produces candidates,
+not releases.
 
 ---
 
 ## Implementation Order
 
-1. **Planner agent + `hive dream` entry point**
-   - New persona: `planner.md`
-   - New command: `src/commands/dream.ts`
-   - Validates output format before launching
-   - `--dry-run` mode first
+### Step 1: `hive dream` Entry Point
 
-2. **Capability profiles in project-config**
-   - Add `## Agent Profiles` section to template
-   - Planner reads profiles to assign agents
-   - Supervisor reads profiles to select model/runtime per launch
+- New command: `src/commands/dream.ts`
+- Maya runs in planning mode with structured output validation
+- `--dry-run` shows plan without launching
+- `--go` launches supervision after plan validation
 
-3. **Task timeout + stale detection in supervisor**
-   - Small addition to supervisor tick
-   - Steward reassessment gets stale task context
+### Step 2: Plan Validation
 
-4. **Synthesizer persona + synthesis task**
-   - New persona: `synthesizer.md`
-   - Standard board task, supervisor triggers it when board is otherwise clean
-   - Supports 4 deliverable types initially
+- Scope overlap detection (reuse existing scope conflict logic)
+- Done-condition format validation
+- Task count bounds
+- Cost estimation
 
-5. **`hive dream --interactive`**
-   - Iterative refinement before commit
-   - Lower priority but important for trust
+### Step 3: Worker Isolation via Worktrees
+
+- Each worker gets a git worktree
+- Supervisor manages worktree lifecycle (create on launch, clean on
+  completion, merge on success)
+- Branch naming convention: `task/<task-id>`
+
+### Step 4: Task Timeout and Stale Recovery
+
+- Supervisor checks worker age and file change recency
+- Stale workers: kill, restart with fresh context
+- Retry budget with escalation to human inbox
+
+### Step 5: Synthesis Pass
+
+- Maya reads all completed task results + repo state
+- Produces handoff briefing in shift-briefing format
+- Emits morning notification (feed event, optional system notification)
+
+### Step 6: `hive dream --go` (Full Autonomy)
+
+- Skip confirmation, launch immediately
+- Only enable after the planner has been validated through `--dry-run` use
+- This is trust-ladder Rung 4: full autonomy for low-stakes, reversible
+  actions
 
 ---
 
 ## What This Is Not
 
-This is not a framework. There is no new runtime, no plugin system, no
-agent-to-agent API.
+This is not a framework. There is no agent-to-agent API, no plugin system,
+no new runtime.
 
-Every piece of this runs through the existing file-backed coordination model:
-- planner writes PLAN.md and BOARD.md
-- supervisor reads those and launches workers
-- synthesizer reads result.md files and writes a deliverable
-- everything is inspectable on disk at any point
+Every piece runs through existing file-backed coordination:
+- Maya writes PLAN.md and BOARD.md
+- Supervisor reads those and launches workers
+- Workers produce code in git worktrees
+- Maya reads results and writes a briefing
+- Everything is inspectable on disk at any point
 
-The overnight loop is the existing loop, with better entry points and
-better terminal behavior.
-
----
-
-## Relation To openclaw / Devin-style Systems
-
-The difference between hive and agent-to-agent frameworks:
-
-- **Them**: agents coordinate by calling each other, sharing context via
-  memory stores or API, often ephemeral
-- **HIVE**: agents coordinate through shared files on disk, with a supervisor
-  that doesn't think — it just reads files and launches processes
-
-The HIVE model is slower to bootstrap but more resilient: you can kill the
-process at any time, restart, and pick up where you left off. The files
-survive. The reasoning doesn't have to.
-
-The overnight launch goal doesn't require abandoning that. It just requires
-making the entry point and the terminal conditions as clear as the middle.
+The overnight loop is the existing loop, with a structured entry point,
+resilient execution, and a synthesized terminal condition.
 
 ---
 
-## Notional Architecture Changes To Reduce Slowness
+## Relationship to OpenClaw
 
-If the file-backed model starts to feel slow, the right move is not to abandon
-files as source of truth. The right move is to add acceleration layers that are
-**derived from files** and disposable.
+OpenClaw and HIVE aim at the same outcome — make an AI useful overnight —
+with fundamentally different architectures.
 
-### 1. Materialized state views
+### The Critical Difference
 
-HIVE is already inching this way with `board-summary.json`, `open-messages.json`,
-and other state files. Lean into that.
+OpenClaw is **session-oriented**. Each run is bounded, serialized, and has
+a timeout. There is no built-in goal tracker that persists and drives work
+across sessions. Autonomy is assembled from composable primitives — cron
+jobs fire at intervals, heartbeats check in every 30 minutes, sub-agents
+decompose parallel work — but the continuation impulse must come from
+outside: a cron schedule, a Ralph loop bash script, or the user.
 
-Idea:
-- keep markdown and message files as the durable truth
-- maintain machine-friendly summaries alongside them
-- let agents bootstrap from the summaries first, then lazily read the source
-  files only when precision matters
+HIVE is **goal-oriented**. The board IS the goal tracker. The supervisor IS
+the continuation engine. `hive dream` sets a goal, the board tracks progress
+toward it, and the supervisor keeps driving work until the board is clean.
+No external script needed. The system itself knows when it's done.
 
-This preserves inspectability while cutting repeated full-file parsing.
+This is why `hive dream` is genuinely novel, not just a wrapper around
+existing agent patterns.
 
-### 2. Append-only event log + projections
+### Architecture Comparison
 
-Instead of repeatedly scanning BOARD.md, LOG.md, and msg/ from scratch, write a
-small append-only event stream whenever state changes, then derive projections
-from it.
+| | OpenClaw | HIVE |
+|---|---|---|
+| **Identity** | Single agent, SOUL.md injected every turn (20K char cap per file) | Multi-persona hive, SOUL.md inlined in prompt, identity files by reference |
+| **Continuation** | Session-oriented. External trigger needed (cron, Ralph, user) | Goal-oriented. Board + supervisor drive work until done |
+| **Coordination** | Sub-agents via Gateway RPC. Depth-limited. Push-based completion | File-backed board + messages. Workers scoped. Supervisor launches |
+| **Resilience** | Ralph loop (external bash script, restart single agent) | Supervisor + worktrees (restart individual workers, multiple in parallel) |
+| **Context** | Compaction (summarize old turns). Pre-flush: agent writes facts to disk before compression | Delta packets (only changes since last turn). Workers start fresh each time |
+| **Trust** | Approval via messaging channel (Telegram/Slack) | File-backed approval queue + trust ladder + gateway UI |
+| **Memory** | Two-layer (daily logs + curated MEMORY.md) + optional vector search | Four-layer (operating knowledge, project memory, journal, entities) |
+| **Wake-up** | Morning check-in via Telegram | Shift briefing via gateway or CLI |
 
-Example projections:
-- current board summary
-- per-agent inbox summary
-- open decisions
-- active runs by project
+### What HIVE Should Learn From OpenClaw
 
-The key constraint: the event log is a rebuildable cache, not the only truth.
-If it gets corrupted, you can regenerate it from the files.
+**Workers should be as disposable as Ralph loop iterations.** Fresh context
+from files beats accumulated confusion. Kill and restart, don't coax.
 
-### 3. Scoped context packs
+**The "is it done?" check should be mechanical.** OpenClaw's Ralph loop
+checks if PRD boxes are ticked. No negotiating with a confused model. HIVE's
+board tasks should have the same binary clarity.
 
-Most agents do not need the entire hive state. They need a tight packet:
-- the task contract
-- relevant files for their scope
-- the last 1-3 decisions touching that area
-- any open messages addressed to them
+**The morning handoff should feel personal.** OpenClaw's conversational
+interface creates intimacy. HIVE's briefing system should create the same
+feeling through narrative, not chat — "while you were away, here's what
+your team built" is more compelling than a status table.
 
-Build these as disposable context packs on launch. That cuts prompt assembly
-cost without changing the underlying storage model.
+**Pre-compaction memory flush is smart.** Before context compression,
+OpenClaw gives the agent a turn to write durable facts to disk. HIVE
+workers should do something similar before exiting — flush learnings to
+the log and memory before the context window dies.
 
-### 4. Hot-path structured sidecars
+**Sub-agents get minimal context.** OpenClaw only gives sub-agents AGENTS.md
+and TOOLS.md, not the full identity stack. HIVE workers should get their
+assignment, their persona, and the relevant scope — not the full hive state.
+Layer 3 (cognitive resources) already designs for this.
 
-Some markdown is for humans, some data is for machines. Stop forcing the latter
-through prose.
+### Where HIVE Is Structurally Better
 
-For frequently-read state, keep a structured sidecar near the human-readable
-file:
-- `BOARD.md` + `state/board-summary.json`
-- `LOG.md` + `state/recent-results.json`
-- `result.md` + `result.json`
+**Parallel execution.** OpenClaw's sub-agents can parallelize but it's
+Gateway-mediated and depth-limited. HIVE's supervisor natively manages
+multiple workers in parallel with scope isolation. An overnight run with
+4 workers completing 4 tasks simultaneously is 4x faster than serial.
 
-Humans inspect the markdown. Agents and supervisors hit the sidecar first.
+**Inspectable coordination.** OpenClaw's coordination lives in context
+windows and Gateway memory. HIVE's lives in files on disk. You can kill
+every process, restart, and the board + messages tell the system exactly
+where to pick up. Nothing is lost.
 
-### 5. Local event bus over file writes
+**Goal persistence.** OpenClaw's Ralph loop reads a PRD file but doesn't
+maintain cross-session state about what's been tried, what failed, and why.
+HIVE's board tracks task status, worker results, and steward decisions
+across any number of restarts.
 
-You can keep file-backed durability while making the live system feel less
-poll-y. When a file changes, emit a local event so the supervisor, gateway, and
-persistent steward do not all rediscover it by re-reading the world.
+---
 
-That gives you faster reaction time without making the event bus authoritative.
-Lose the bus, and the files still let you recover.
+## The Full Stack
 
-### 6. Optional indexed store as a cache, not a replacement
+```
+Layer 4: Overnight Launch
+         hive dream → plan → execute → synthesize → brief
+         (this document)
+              │
+Layer 3: Cognitive Resources
+         tiered models, local inference, usage tracking
+         (COGNITIVE-RESOURCE-MANAGEMENT.md)
+              │
+Layer 2: Persistent Steward
+         live Maya session, delta-aware, fast interaction
+         (PERSISTENT-STEWARD-DESIGN.md)
+              │
+Layer 1: Coordination Substrate
+         files, board, messages, supervisor, workers, gateway
+         (implemented — Phase 1-5)
+```
 
-If HIVE grows large enough, add SQLite or a tiny embedded index for search,
-lookup, and relationship queries — but keep it explicitly derivative.
-
-Good use cases:
-- "show me all unresolved decisions touching runtime selection"
-- "find every task that modified routes.ts in the last week"
-- "what did beta conclude the last three times supervision flaked?"
-
-Bad use case:
-- making the database the thing that must survive for HIVE to function
-
-### 7. Aggressive lazy loading in the steward
-
-This is partly architecture, partly discipline: compact state should orient the
-steward, not seduce it into pretending it already knows.
-
-The fast path should be:
-1. load summaries
-2. decide what primary sources matter
-3. read only those
-4. answer or delegate
-
-That keeps latency down without repeating my earlier mistake of trusting a
-proxy instead of the file.
-
-## The Principle
-
-The durable layer should stay boring: files, markdown, append-only logs,
-inspectable state. The fast layer can get much smarter: projections, indexes,
-watchers, caches, scoped context assembly.
-
-In other words: **keep truth simple; make reads fast.**
+Build up. Each layer makes the next one possible.
