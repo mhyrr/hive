@@ -489,4 +489,29 @@ path: ${context.repo}
       ).exists(),
     ).toBeFalse();
   });
+
+  test("runtimes shows direct auth and Pi routing policy from config", async () => {
+    await initHive();
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      [
+        "# Hive Config",
+        "",
+        "runtime: claude",
+        "model: claude-sonnet-4-6",
+        "direct-auth-codex: cli",
+        "pi-provider-claude: anthropic",
+        "pi-model-claude: claude-sonnet-4-6",
+        "pi-auth-anthropic: oauth-only",
+      ].join("\n"),
+    );
+
+    const output = await runCli(["runtimes"]);
+
+    expect(output).toContain("Available runtimes:");
+    expect(output).toContain("direct auth: subscription");
+    expect(output).toContain("pi route: config -> anthropic | model: claude-sonnet-4-6 | auth: oauth-only");
+    expect(output).toContain("pi route: not configured by default -> direct runtime fallback");
+    expect(output).toContain(`config: ${join(context.hiveHome, "config.md")}`);
+  });
 });

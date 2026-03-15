@@ -42,6 +42,7 @@ import {
   switchSessionProject,
   takePendingSessionTurns,
   updateSessionMeta,
+  updateSessionProjectState,
   type SessionTurnDetails,
 } from "../lib/sessions";
 import {
@@ -50,6 +51,11 @@ import {
   type ProjectRuntimeState,
 } from "../lib/state";
 import { runDirectStewardTurn } from "../lib/steward";
+import {
+  abortPersistentStewardTurn,
+  isPersistentStewardTurnActive,
+  runPersistentStewardTurn,
+} from "../lib/persistent-steward";
 import { getAdapter, listRuntimeAdapters, resolveRuntimeHints } from "../lib/runtime";
 import {
   findPlanAgent,
@@ -311,33 +317,6 @@ function buildQueuedFollowUpLead(queuedCount: number): string {
 function buildInterruptedFollowUpLead(queuedCount: number): string {
   const countLabel = `${queuedCount} follow-up${queuedCount === 1 ? "" : "s"}`;
   return `I'm interrupting the current live steward draft so you don't have to wait for it to finish. ${countLabel} ${queuedCount === 1 ? "is" : "are"} lined up behind the restart.`;
-}
-
-function buildDirectTurnPlaceholder(message: string): string {
-  const normalized = message.trim().toLowerCase();
-
-  if (
-    normalized.includes("codex") ||
-    normalized.includes("claude") ||
-    normalized.includes("runtime") ||
-    normalized.includes("model") ||
-    normalized.includes("switch")
-  ) {
-    return "One second. I'm checking which runtime this steward session is using and how the project is wired.";
-  }
-
-  if (
-    normalized.includes("what's happening") ||
-    normalized.includes("what is happening") ||
-    normalized.includes("going on") ||
-    normalized.includes("right now") ||
-    normalized.includes("status") ||
-    normalized.includes("progress")
-  ) {
-    return "One second. I'm checking the live board, runs, and inbox.";
-  }
-
-  return "One second. Let me check the board, recent runs, and open messages before I answer.";
 }
 
 function shouldPreemptLiveStewardTurn(input: {
@@ -1920,20 +1899,10 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
 
   let supervisorLine = "Supervisor state updated.";
   const statusNotes: string[] = [];
-  let placeholderTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    broadcastSessionStream({
-      broadcast: input.broadcast,
-      sessionId: input.sessionId,
-      project: input.project,
-      content: buildDirectTurnPlaceholder(input.message),
-    });
-  }, 700);
 
   function clearPlaceholderTimer(): void {
-    if (placeholderTimer) {
-      clearTimeout(placeholderTimer);
-      placeholderTimer = null;
-    }
+    // The UI already shows a local thinking state immediately after submit.
+    // Avoid injecting synthetic filler copy while waiting for the first real reply chunk.
   }
 
   try {
@@ -2050,8 +2019,179 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
     return;
   }
 
+  let streamedReply = "";
+
+  if (process.env.HIVE_ENABLE_PERSISTENT_STEWARD !== "0") {
+    if (isPersistentStewardTurnActive({
+      hivePaths: input.options.hivePaths,
+      sessionId: input.sessionId,
+    })) {
+      clearPlaceholderTimer();
+      if (input.origin === "queued-follow-up") {
+        await enqueuePendingSessionTurn({
+          sessionsDir: input.options.hivePaths.sessionsDir,
+          sessionId: input.sessionId,
+          projectId: input.project,
+          content: input.message,
+        });
+        void schedulePendingSessionTurnDrain({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+        });
+        return;
+      }
+
+      const queuedState = await enqueuePendingSessionTurn({
+        sessionsDir: input.options.hivePaths.sessionsDir,
+        sessionId: input.sessionId,
+        projectId: input.project,
+        content: input.message,
+      });
+      const queuedCount = getPendingSessionTurns(queuedState, input.project).length;
+      const aborted = await abortPersistentStewardTurn({
+        hivePaths: input.options.hivePaths,
+        sessionId: input.sessionId,
+      });
+
+      pushStatusNote(statusNotes, "Live persistent steward turn already active via Pi.");
+
+      if (aborted) {
+        pushStatusNote(statusNotes, "Requested abort for the live persistent steward turn.");
+        pushStatusNote(statusNotes, `Queued ${queuedCount} follow-up message(s) behind the restart.`);
+      } else {
+        pushStatusNote(statusNotes, `Queued ${queuedCount} follow-up message(s) for the live steward.`);
+      }
+
+      const currentActivity = await buildCurrentActivitySummary({
+        options: input.options,
+        project: input.project,
+        lead: aborted
+          ? buildInterruptedFollowUpLead(queuedCount)
+          : buildQueuedFollowUpLead(queuedCount),
+      });
+
+      await appendSessionTurnAndBroadcast({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+        project: input.project,
+        role: "assistant",
+        content: currentActivity.summary,
+        source: "system",
+        details: buildSessionTurnDetails({
+          project: input.project,
+          state: currentActivity.state,
+          runtime: "pi",
+          statusNotes,
+        }),
+      });
+      void schedulePendingSessionTurnDrain({
+        options: input.options,
+        broadcast: input.broadcast,
+        sessionId: input.sessionId,
+      });
+      return;
+    }
+
+    const persistent = await runPersistentStewardTurn({
+      hivePaths: input.options.hivePaths,
+      projectId: input.project,
+      sessionId: input.sessionId,
+      humanMessage: input.message,
+      onOutput: (chunk) => {
+        if (!chunk.trim()) {
+          return;
+        }
+
+        clearPlaceholderTimer();
+        streamedReply += chunk;
+        broadcastSessionStream({
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+          project: input.project,
+          content: streamedReply.trimEnd(),
+        });
+      },
+    });
+
+    if (persistent.mode === "persistent") {
+      clearPlaceholderTimer();
+
+      if (persistent.status === "cancelled") {
+        pushStatusNote(statusNotes, "Persistent steward turn interrupted before it produced a final reply.");
+        void schedulePendingSessionTurnDrain({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+        });
+        return;
+      }
+
+      if (persistent.finalVisibleOutput.trim()) {
+        pushStatusNote(statusNotes, "Persistent steward turn completed via Pi.");
+        const finalState = await refreshProjectRuntimeState({
+          hivePaths: input.options.hivePaths,
+          projectId: input.project,
+          projectPaths,
+        });
+
+        await appendSessionTurnAndBroadcast({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+          project: input.project,
+          role: "assistant",
+          content: persistent.finalVisibleOutput.trim(),
+          source: "model",
+          details: buildSessionTurnDetails({
+            project: input.project,
+            state: finalState,
+            runtime: persistent.runtime,
+            model: persistent.model,
+            authMode: "unknown",
+            durationMs: persistent.usage.durationMs,
+            numTurns: persistent.usage.numTurns,
+            costUsd: persistent.usage.costUsd,
+            inputTokens: persistent.usage.inputTokens,
+            outputTokens: persistent.usage.outputTokens,
+            cacheCreationInputTokens: persistent.usage.cacheCreationInputTokens,
+            cacheReadInputTokens: persistent.usage.cacheReadInputTokens,
+            totalTokens: persistent.usage.totalTokens,
+            statusNotes,
+          }),
+        });
+
+        const syncedState = await refreshProjectRuntimeState({
+          hivePaths: input.options.hivePaths,
+          projectId: input.project,
+          projectPaths,
+        });
+        await updateSessionProjectState({
+          sessionsDir: input.options.hivePaths.sessionsDir,
+          sessionId: input.sessionId,
+          projectId: input.project,
+          lastRevisionSeen: syncedState.revision.revision,
+        });
+        void schedulePendingSessionTurnDrain({
+          options: input.options,
+          broadcast: input.broadcast,
+          sessionId: input.sessionId,
+        });
+        return;
+      }
+
+      pushStatusNote(
+        statusNotes,
+        "Persistent steward produced no visible reply; falling back to the direct steward path.",
+      );
+    } else {
+      pushStatusNote(statusNotes, `Persistent steward unavailable: ${persistent.reason}`);
+    }
+  }
+
   try {
-    let streamedReply = "";
+    streamedReply = "";
     const direct = await runDirectStewardTurn({
       hivePaths: input.options.hivePaths,
       projectId: input.project,

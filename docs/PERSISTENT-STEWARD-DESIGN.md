@@ -148,6 +148,57 @@ This preserves HIVE's runtime-agnostic stance. Workers still launch via any
 adapter. Only the steward uses Pi, because only the steward needs persistent
 sessions and fast interactive response.
 
+### 4.1 Runtime Access Policy
+
+The important distinction is that **Pi is the session engine, not the
+authority on account policy**.
+
+HIVE should explicitly describe two separate lanes in `~/.hive/config.md`:
+
+- the direct runtime lane for one-shot worker and fallback launches
+- the Pi route for the persistent steward
+
+That policy needs to answer:
+
+- which direct CLI runtime is the default (`claude`, `codex`, `gemini`)
+- what auth lane that runtime is expected to use (`subscription`, `cli`,
+  `api`, `unknown`)
+- which Pi provider/model should back a given session runtime
+- what auth policy Pi should enforce for that provider
+
+For example:
+
+```md
+direct-auth-claude: subscription
+direct-auth-codex: cli
+direct-auth-gemini: cli
+
+pi-provider-claude: anthropic
+pi-model-claude: claude-sonnet-4-6
+pi-auth-anthropic: oauth-only
+
+pi-provider-codex: openai
+pi-model-codex: gpt-5
+pi-auth-openai: env
+
+pi-provider-gemini: google
+pi-model-gemini: gemini-2.5-pro
+pi-auth-google: env
+```
+
+This keeps the design honest:
+
+- the direct `claude` lane can remain subscription-backed through Claude Code
+- the persistent steward can still be Pi-first
+- Pi's Anthropic lane can be forced onto OAuth/subscription instead of silently
+  consuming API credits
+- Codex and Gemini can remain on their direct CLI-backed lanes by default, and
+  only become Pi provider routes when explicitly configured
+
+Environment variables such as `HIVE_PI_PROVIDER` and `HIVE_PI_MODEL` remain
+valid as explicit overrides, but the file-backed policy should be the default
+source of truth because it is inspectable and versionable.
+
 ---
 
 ## 5. The Token-Efficient Runtime Model
@@ -337,6 +388,35 @@ POST /api/console/send
 The gateway keeps its existing responsibilities (supervisor management,
 WebSocket broadcast, session tracking, static assets). The persistent steward
 session is one more long-lived resource alongside the supervisor.
+
+### 9.1 Runtime Resolution in Practice
+
+At turn time, the gateway should resolve the steward session in this order:
+
+1. Determine the HIVE session runtime/model (`claude`, `codex`, `gemini`, etc.)
+2. Read `~/.hive/config.md` runtime-access policy
+3. Resolve the Pi route for that session runtime
+4. Spawn or reuse the live Pi session with that provider/model/auth policy
+5. If Pi fails, fall back to `runDirectStewardTurn()` using the direct runtime
+   lane
+
+This means the direct runtime and the Pi route are related, but not identical.
+A `claude` session may mean:
+
+- direct fallback uses the Claude Code CLI lane
+- persistent Pi route uses `anthropic`
+- Pi auth policy for Anthropic is `oauth-only`
+
+Likewise:
+
+- a `codex` session should stay on the direct Codex CLI lane unless
+  `pi-provider-codex` is explicitly configured
+- a `gemini` session should stay on the direct Gemini CLI lane unless
+  `pi-provider-gemini` is explicitly configured
+
+The key architectural rule is that **the mapping is explicit**. HIVE should be
+able to print the resolved direct auth lane and the resolved Pi route on
+demand. If the operator cannot inspect it, the design is too implicit.
 
 ### Fallback
 

@@ -191,6 +191,22 @@ Set a default per-project in `~/.hive/projects/<project>/config.md`:
 runtime: claude
 ```
 
+Global runtime/auth policy lives in `~/.hive/config.md`. That file can now
+explicitly document both the direct CLI auth lane and the persistent Pi route,
+for example:
+
+```markdown
+direct-auth-claude: subscription
+direct-auth-codex: cli
+direct-auth-gemini: cli
+pi-provider-claude: anthropic
+pi-auth-anthropic: oauth-only
+```
+
+By default, only the Claude steward runtime has an implicit Pi route.
+`codex` and `gemini` stay on their direct CLI-backed lanes unless you
+explicitly configure `pi-provider-codex` or `pi-provider-gemini`.
+
 Or override per-agent at launch time:
 
 ```bash

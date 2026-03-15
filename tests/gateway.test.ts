@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,10 @@ import { appendEvent } from "../src/lib/events";
 import { createMessage, listProjectMessages } from "../src/lib/messages";
 import { ensureHiveScaffold, getProjectPaths, type HivePaths } from "../src/lib/paths";
 import {
+  disposePersistentStewardsForHome,
+  runPersistentStewardTurn,
+} from "../src/lib/persistent-steward";
+import {
   createRunDraft,
   finalizeRun,
   getRunOutputPath,
@@ -23,7 +27,7 @@ import {
   readRunRecord,
   writeRunResult,
 } from "../src/lib/runs";
-import { getSession, getSessionHistory, getSessionState } from "../src/lib/sessions";
+import { getSession, getSessionHistory, getSessionState, updateSessionMeta } from "../src/lib/sessions";
 
 type TestContext = {
   root: string;
@@ -33,6 +37,9 @@ type TestContext = {
 };
 
 let context: TestContext;
+let originalPath = process.env.PATH;
+let originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+let originalAnthropicOAuthToken = process.env.ANTHROPIC_OAUTH_TOKEN;
 
 function randomPort(): number {
   return 12000 + Math.floor(Math.random() * 30000);
@@ -55,13 +62,316 @@ async function setupContext(): Promise<TestContext> {
 
 beforeEach(async () => {
   context = await setupContext();
+  originalPath = process.env.PATH;
+  originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  originalAnthropicOAuthToken = process.env.ANTHROPIC_OAUTH_TOKEN;
+  process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "0";
 });
 
 afterEach(async () => {
+  process.env.PATH = originalPath;
   delete process.env.HIVE_HOME;
   delete process.env.HIVE_FIXED_NOW;
+  delete process.env.HIVE_PI_IDLE_MS;
+  delete process.env.HIVE_ENABLE_PERSISTENT_STEWARD;
+  delete process.env.HIVE_TEST_PI_BEHAVIOR;
+  if (originalAnthropicApiKey === undefined) {
+    delete process.env.ANTHROPIC_API_KEY;
+  } else {
+    process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+  }
+  if (originalAnthropicOAuthToken === undefined) {
+    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+  } else {
+    process.env.ANTHROPIC_OAUTH_TOKEN = originalAnthropicOAuthToken;
+  }
+  await disposePersistentStewardsForHome(context.paths.home);
   await rm(context.root, { recursive: true, force: true });
 });
+
+async function installMockPi(root: string): Promise<void> {
+  const binDir = join(root, "bin");
+  const scriptPath = join(binDir, "pi");
+
+  await mkdir(binDir, { recursive: true });
+  await Bun.write(
+    scriptPath,
+    `#!/usr/bin/env node
+const readline = require("node:readline");
+
+const args = process.argv.slice(2);
+const providerIndex = args.indexOf("--provider");
+const modelIndex = args.indexOf("--model");
+const provider = providerIndex >= 0 ? args[providerIndex + 1] : "anthropic";
+const model = modelIndex >= 0 ? args[modelIndex + 1] : "mock-steward";
+const behavior = process.env.HIVE_TEST_PI_BEHAVIOR || "reply";
+const anthropicAuth = process.env.ANTHROPIC_OAUTH_TOKEN
+  ? (process.env.ANTHROPIC_API_KEY ? "both" : "oauth")
+  : (process.env.ANTHROPIC_API_KEY ? "api" : "none");
+let isStreaming = false;
+let pendingMessageCount = 0;
+let assistantMessages = 0;
+let userMessages = 0;
+let totalInput = 0;
+let totalOutput = 0;
+let totalCost = 0;
+let lastAssistantText = "";
+let activeTimers = [];
+let idleTimer = null;
+
+function scheduleIdleExit() {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => process.exit(0), 800);
+}
+
+function clearActiveTimers() {
+  for (const timer of activeTimers) clearTimeout(timer);
+  activeTimers = [];
+}
+
+function out(value) {
+  process.stdout.write(JSON.stringify(value) + "\\n");
+}
+
+function success(id, command, data) {
+  out(data === undefined
+    ? { id, type: "response", command, success: true }
+    : { id, type: "response", command, success: true, data });
+}
+
+function state() {
+  return {
+    model: { provider, id: model },
+    isStreaming,
+    pendingMessageCount,
+    messageCount: assistantMessages + userMessages,
+    sessionFile: null,
+    sessionId: "mock-pi-session",
+  };
+}
+
+function stats() {
+  return {
+    sessionId: "mock-pi-session",
+    assistantMessages,
+    userMessages,
+    tokens: {
+      input: totalInput,
+      output: totalOutput,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: totalInput + totalOutput,
+    },
+    cost: totalCost,
+  };
+}
+
+function emitAssistantReply(reply) {
+  clearActiveTimers();
+  isStreaming = true;
+  pendingMessageCount = 1;
+  const halfway = Math.max(1, Math.floor(reply.length / 2));
+  const partial = reply.slice(0, halfway);
+  const baseDelay = behavior === "slow" ? 900 : 0;
+
+  activeTimers.push(setTimeout(() => {
+    out({ type: "agent_start" });
+    out({ type: "turn_start" });
+  }, baseDelay + 10));
+
+  activeTimers.push(setTimeout(() => {
+    out({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: partial }],
+      },
+    });
+  }, baseDelay + 20));
+
+  activeTimers.push(setTimeout(() => {
+    out({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+      },
+    });
+  }, baseDelay + 40));
+
+  activeTimers.push(setTimeout(() => {
+    assistantMessages += 1;
+    totalInput += 21;
+    totalOutput += 13;
+    totalCost += 0.02;
+    lastAssistantText = reply;
+    isStreaming = false;
+    pendingMessageCount = 0;
+    out({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+        usage: {
+          input: 21,
+          output: 13,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { total: 0.02 },
+        },
+      },
+    });
+    out({
+      type: "turn_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+      },
+      toolResults: [],
+    });
+    out({
+      type: "agent_end",
+      messages: [{
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+      }],
+    });
+    scheduleIdleExit();
+  }, baseDelay + 70));
+}
+
+function emitAssistantFailure(errorMessage) {
+  clearActiveTimers();
+  isStreaming = true;
+  pendingMessageCount = 1;
+
+  activeTimers.push(setTimeout(() => {
+    out({ type: "agent_start" });
+    out({ type: "turn_start" });
+    out({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        provider,
+        model,
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { total: 0 },
+        },
+        stopReason: "stop",
+      },
+    });
+  }, 10));
+
+  activeTimers.push(setTimeout(() => {
+    isStreaming = false;
+    pendingMessageCount = 0;
+    const failedMessage = {
+      role: "assistant",
+      content: [],
+      provider,
+      model,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { total: 0 },
+      },
+      stopReason: "error",
+      errorMessage,
+    };
+
+    out({ type: "message_end", message: failedMessage });
+    out({ type: "turn_end", message: failedMessage, toolResults: [] });
+    out({ type: "agent_end", messages: [failedMessage] });
+  }, 40));
+
+  activeTimers.push(setTimeout(() => {
+    out({
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 1,
+      delayMs: 10,
+      errorMessage,
+    });
+  }, 180));
+
+  activeTimers.push(setTimeout(() => {
+    out({
+      type: "auto_retry_end",
+      success: false,
+      attempt: 1,
+      finalError: errorMessage,
+    });
+    scheduleIdleExit();
+  }, 220));
+}
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  crlfDelay: Infinity,
+});
+
+scheduleIdleExit();
+
+rl.on("line", (line) => {
+  scheduleIdleExit();
+  const command = JSON.parse(line);
+
+  switch (command.type) {
+    case "get_state":
+      success(command.id, "get_state", state());
+      return;
+    case "get_session_stats":
+      success(command.id, "get_session_stats", stats());
+      return;
+    case "get_last_assistant_text":
+      success(command.id, "get_last_assistant_text", { text: lastAssistantText });
+      return;
+    case "abort":
+      clearActiveTimers();
+      isStreaming = false;
+      pendingMessageCount = 0;
+      success(command.id, "abort");
+      return;
+    case "prompt": {
+      userMessages += 1;
+      success(command.id, "prompt");
+      if (behavior === "error") {
+        emitAssistantFailure("Connection error.");
+        return;
+      }
+      const humanTurnMatch = /## Human Turn\\n([\\s\\S]*)$/m.exec(command.message || "");
+      const humanTurn = humanTurnMatch ? humanTurnMatch[1].trim() : "mock task";
+      const replyPrefix = behavior === "auth"
+        ? "Mock persistent steward auth: " + anthropicAuth + " | "
+        : "Mock persistent steward reply: ";
+      emitAssistantReply(replyPrefix + humanTurn);
+      return;
+    }
+    default:
+      out({
+        id: command.id,
+        type: "response",
+        command: command.type,
+        success: false,
+        error: "Unknown command: " + command.type,
+      });
+  }
+});
+`,
+  );
+  await chmod(scriptPath, 0o755);
+  process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+  process.env.HIVE_PI_IDLE_MS = "200";
+}
 
 describe("Gateway HTTP Server", () => {
   test("serves static index.html at /", async () => {
@@ -567,6 +877,268 @@ path: ${context.repo}
     expect(
       sessionContext.recentTurns.some((turn) => turn.content.includes("Heard. I'm on it.")),
     ).toBe(false);
+  });
+
+  test("console send uses the persistent Pi steward when Pi is available", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Summarize the current state." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    const [turns, activeRun, sessionState] = await Promise.all([
+      getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId),
+      readActiveRun(projectPaths, "console"),
+      getSessionState(join(context.hiveHome, "sessions"), data.sessionId),
+    ]);
+
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward reply:")
+    )).toBe(true);
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.details?.runtime === "pi"
+    )).toBe(true);
+    expect(activeRun).toBeNull();
+    expect(sessionState?.projectStates.testproj?.lastRevisionSeen).toBeGreaterThan(0);
+  });
+
+  test("persistent Pi prefers Anthropic OAuth over API key when both are present", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    process.env.HIVE_TEST_PI_BEHAVIOR = "auth";
+    process.env.ANTHROPIC_API_KEY = "test-api-key";
+    process.env.ANTHROPIC_OAUTH_TOKEN = "test-oauth-token";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Which Anthropic auth lane did you use?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward auth: oauth |")
+    )).toBe(true);
+  });
+
+  test("persistent Pi does not inherit Anthropic API keys from the shell env", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    process.env.HIVE_TEST_PI_BEHAVIOR = "auth";
+    process.env.ANTHROPIC_API_KEY = "test-api-key";
+    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Which Anthropic auth lane did you use?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward auth: none |")
+    )).toBe(true);
+  });
+
+  test("persistent steward falls back when Pi ends with an error and no visible reply", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_TEST_PI_BEHAVIOR = "error";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(createRes.status).toBe(200);
+
+    const createData = await createRes.json() as { sessionId: string };
+    const result = await runPersistentStewardTurn({
+      hivePaths: context.paths,
+      projectId: "testproj",
+      sessionId: createData.sessionId,
+      humanMessage: "Say hello.",
+    });
+
+    expect(result.mode).toBe("fallback");
+    if (result.mode === "fallback") {
+      expect(result.reason).toContain("Connection error.");
+    }
+  });
+
+  test("persistent steward falls back for codex sessions when no Pi route is configured", async () => {
+    await installMockPi(context.root);
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(createRes.status).toBe(200);
+
+    const createData = await createRes.json() as { sessionId: string };
+    await updateSessionMeta({
+      sessionsDir: join(context.hiveHome, "sessions"),
+      sessionId: createData.sessionId,
+      runtime: "codex",
+      model: null,
+    });
+
+    const result = await runPersistentStewardTurn({
+      hivePaths: context.paths,
+      projectId: "testproj",
+      sessionId: createData.sessionId,
+      humanMessage: "Say hello.",
+    });
+
+    expect(result.mode).toBe("fallback");
+    if (result.mode === "fallback") {
+      expect(result.reason).toContain("No Pi provider route is configured for runtime 'codex'");
+    }
+  });
+
+  test("console send does not persist an empty Pi completion status when the persistent steward fails", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_TEST_PI_BEHAVIOR = "error";
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Morning team." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.content.includes("The persistent steward turn finished without a visible reply.")
+    )).toBe(false);
+  });
+
+  test("console send does not broadcast synthetic one-second filler while waiting for a live Pi reply", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_TEST_PI_BEHAVIOR = "slow";
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const events: Array<{ type?: string; data?: { content?: string } | null }> = [];
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Hello there." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      (event) => {
+        events.push(event as { type?: string; data?: { content?: string } | null });
+      },
+    );
+    expect(res.status).toBe(200);
+
+    await Bun.sleep(800);
+
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      (event.data?.content || "").includes("One second")
+    )).toBe(false);
+
+    await Bun.sleep(500);
+
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      (event.data?.content || "").includes("Mock persistent steward reply:")
+    )).toBe(true);
   });
 
   test("console send routes follow-up work to the session project, not the current active project", async () => {
