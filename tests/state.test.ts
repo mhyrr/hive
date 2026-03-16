@@ -175,6 +175,18 @@ describe("project runtime state", () => {
       changedFiles: ["src/lib/state.ts"],
       gitSummaryLines: ["Added derived state and revision tracking."],
       finalVisibleOutput: "State monitor landed.",
+      cognitiveDigest: {
+        provider: "ollama",
+        model: "qwen3:4b",
+        summary: "State monitor landed and derived state revisions now update correctly.",
+        outcome: "success",
+        keyDecisions: ["Derived state writes happen after run completion."],
+        filesChanged: ["src/lib/state.ts"],
+        inputTokens: 92,
+        outputTokens: 24,
+        totalTokens: 116,
+        durationMs: 1200,
+      },
     });
 
     const completedState = await refreshProjectRuntimeState({
@@ -186,6 +198,12 @@ describe("project runtime state", () => {
     expect(completedState.revision.revision).toBe(3);
     expect(completedState.delta.changes.some((change) => change.type === "worker-result")).toBeTrue();
     expect(completedState.delta.changes.some((change) => change.type === "run-finished")).toBeTrue();
+    expect(completedState.recentResultsSummary.items[0]?.summary).toBe(
+      "State monitor landed and derived state revisions now update correctly.",
+    );
+    expect(completedState.delta.changes.some((change) =>
+      change.summary.includes("State monitor landed and derived state revisions now update correctly."),
+    )).toBeTrue();
 
     const revision = await Bun.file(projectPaths.stateRevision).json() as {
       revision: number;

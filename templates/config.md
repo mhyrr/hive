@@ -49,8 +49,9 @@ archive-curation: deferred
 # cognitive-max-parallel: 2       # concurrent worker cap for disjoint scopes
 
 ## Tier-1 Small Models
-# Preferred local small-model lane for routine cognition. Point this at a
-# model you have already pulled into Ollama.
+# Preferred local small-model lane for routine cognition. Setting this enables
+# tier-1 compression for completed non-steward worker runs when Ollama is up.
+# Point it at a model you have already pulled into Ollama.
 # tier1_local: qwen3:4b
 # Alternative starter:
 # tier1_local: gemma3:4b

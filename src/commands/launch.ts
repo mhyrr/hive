@@ -35,6 +35,7 @@ import {
   readRunRecord,
   writeRunResult,
 } from "../lib/runs";
+import { compressCompletedRunOutput } from "../lib/tier1";
 import { orchestrateCommand } from "./orchestrate";
 import { promptCommand } from "./prompt";
 
@@ -139,6 +140,7 @@ export async function launchAgentPass(input: LaunchAgentInput): Promise<string> 
   const projectPaths = getProjectPaths(input.paths, input.activeProject);
   const projectConfig = await Bun.file(projectPaths.config).text();
   const plan = await Bun.file(projectPaths.plan).text();
+  const globalConfig = await Bun.file(input.paths.config).text().catch(() => "");
   const repoPath = extractRepoPath(projectConfig);
 
   if (!repoPath) {
@@ -157,7 +159,7 @@ export async function launchAgentPass(input: LaunchAgentInput): Promise<string> 
       ? await orchestrateCommand(input.goal ? [input.goal] : [])
       : await promptCommand([input.agentId]);
   const hints = resolveRuntimeHints({
-    globalConfig: await Bun.file(input.paths.config).text(),
+    globalConfig,
     teamAgent,
     planAgent,
     runtimeOverride: input.runtimeOverride,
@@ -284,6 +286,13 @@ Command: ${renderLaunchPreview(spec)}`;
   const assignmentAfterExit = run.sourceMessage
     ? await findMessage(input.paths.msgDir, run.sourceMessage, input.activeProject)
     : null;
+  const cognitiveDigest = await compressCompletedRunOutput({
+    run,
+    globalConfig,
+    finalVisibleOutput: result.visibleOutput,
+    changedFiles: gitDelta.changedFiles,
+    gitSummaryLines: gitDelta.summaryLines,
+  });
 
   await writeRunResult(run, {
     assignmentStatusAfterExit: assignmentAfterExit?.attributes.status ?? null,
@@ -300,6 +309,7 @@ Command: ${renderLaunchPreview(spec)}`;
     cacheCreationInputTokens: result.metadata?.cacheCreationInputTokens ?? null,
     cacheReadInputTokens: result.metadata?.cacheReadInputTokens ?? null,
     totalTokens: result.metadata?.totalTokens ?? null,
+    cognitiveDigest,
   });
 
   const feedDetails = [

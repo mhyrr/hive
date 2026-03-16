@@ -27,6 +27,7 @@ import {
   updateSessionProjectState,
 } from "./sessions";
 import { readStewardDeltaHistory, refreshProjectRuntimeState } from "./state";
+import { compressCompletedRunOutput } from "./tier1";
 import {
   buildLaunchSpec,
   formatRuntimeTokenSummary,
@@ -527,6 +528,13 @@ export async function runDirectStewardTurn(
   const afterGit = captureGitStatusSnapshot(repoPath);
   const gitDelta = diffGitStatusSnapshots(beforeGit, afterGit);
   const finalVisibleOutput = launchResult?.visibleOutput?.trim() || streamedOutput.trim();
+  const cognitiveDigest = await compressCompletedRunOutput({
+    run: finalRun,
+    globalConfig,
+    finalVisibleOutput,
+    changedFiles: gitDelta.changedFiles,
+    gitSummaryLines: gitDelta.summaryLines,
+  });
 
   await writeRunResult(finalRun, {
     changedFiles: gitDelta.changedFiles,
@@ -541,6 +549,7 @@ export async function runDirectStewardTurn(
     cacheCreationInputTokens: launchResult?.metadata?.cacheCreationInputTokens ?? null,
     cacheReadInputTokens: launchResult?.metadata?.cacheReadInputTokens ?? null,
     totalTokens: launchResult?.metadata?.totalTokens ?? null,
+    cognitiveDigest,
   });
 
   const refreshedState = await refreshProjectRuntimeState({
