@@ -92,6 +92,7 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
   }
 
   const soul = await Bun.file(paths.soul).text();
+  const globalConfig = await Bun.file(paths.config).text().catch(() => "");
   const projectConfig = await Bun.file(projectPaths.config).text();
   const board = await Bun.file(projectPaths.board).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
@@ -123,6 +124,7 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
   return await buildOrchestratorPrompt({
     projectId: activeProject,
     pathsHome: paths.home,
+    globalConfig,
     repoPath,
     pathsSoul: paths.soul,
     pathsIdentity: paths.identity,

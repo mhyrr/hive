@@ -2,6 +2,10 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { appendLogEntry } from "../lib/log";
+import {
+  renderCognitiveRoutingPromptPolicy,
+  STEWARD_ESSENTIAL_SKILL_NAMES,
+} from "../lib/cognitive-routing";
 import { digestBoard, digestMessages, listSkills } from "../lib/digest";
 import { listOpenProjectMessages } from "../lib/messages";
 import {
@@ -85,6 +89,9 @@ function buildConsolePrompt(input: {
   projectId: string;
   repoPath: string;
   hiveHome: string;
+  globalConfig: string;
+  sessionRuntime: string;
+  sessionModel: string | null;
   pathsSoul: string;
   pathsIdentity: string;
   pathsSelf: string;
@@ -115,8 +122,7 @@ function buildConsolePrompt(input: {
   recentDecisionsDigest: string;
   projectEntityDigest: string;
 }): string {
-  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
-  const essentialSkillPaths = essentialSkills
+  const essentialSkillPaths = STEWARD_ESSENTIAL_SKILL_NAMES
     .filter((name) => input.availableSkillNames.includes(name))
     .map((name) => `${input.skillsDir}/${name}.md`);
 
@@ -140,6 +146,14 @@ Read your user's preferences: ${input.pathsSelf}
 
 ## How You Operate
 
+## Cognitive Routing Policy
+${renderCognitiveRoutingPromptPolicy({
+    globalConfig: input.globalConfig,
+    skillsDir: input.skillsDir,
+    sessionRuntime: input.sessionRuntime,
+    sessionModel: input.sessionModel,
+  })}
+
 ### You Take Initiative
 When the human states a preference → record it: \`hive memory convention "..."\`
 When a technical decision is made → record it: \`hive memory decision "..."\`
@@ -150,14 +164,6 @@ When an agent is stuck → nudge it or reassign the work
 When something significant happens → log it to feed
 
 You don't announce these actions to the human. You just do them. They'll see the results in the feed if it matters.
-
-### You Route Cognitive Depth
-- Treat every turn as a routing decision: direct answer, deeper state inspection, or plural synthesis.
-- Optimize for expected answer quality, not raw latency.
-- Spend extra time and multiple minds when the question is ambiguous, high-leverage, or shaped by meaningful trade-offs. Keep it local when extra coordination is unlikely to change the answer.
-- When you fan out, pull distinct perspectives from the configured team before you synthesize. Favor at least one generative angle and one critical angle when both are available.
-- If fresh worker output already covers the needed perspectives, use it instead of re-running work.
-- The human should not need to explicitly ask you to "use the hive" for deeper reasoning.
 
 ### You Manage the Team
 - Update BOARD.md directly — you own it
@@ -265,6 +271,11 @@ export async function consoleCommand(args: string[]): Promise<string> {
     projectId: activeProject,
     projectPaths,
   });
+  const hints = resolveRuntimeHints({
+    globalConfig,
+    runtimeOverride: options.runtimeOverride,
+    modelOverride: options.modelOverride,
+  });
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
   const memoryContext = await loadPromptMemoryContext(paths, activeProject);
 
@@ -288,6 +299,9 @@ export async function consoleCommand(args: string[]): Promise<string> {
     projectId: activeProject,
     repoPath,
     hiveHome: paths.home,
+    globalConfig,
+    sessionRuntime: hints.runtime,
+    sessionModel: hints.model,
     pathsSoul: paths.soul,
     pathsIdentity: paths.identity,
     pathsSelf: paths.self,
@@ -317,12 +331,6 @@ export async function consoleCommand(args: string[]): Promise<string> {
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,
-  });
-
-  const hints = resolveRuntimeHints({
-    globalConfig,
-    runtimeOverride: options.runtimeOverride,
-    modelOverride: options.modelOverride,
   });
 
   const spec = buildInteractiveLaunchSpec({

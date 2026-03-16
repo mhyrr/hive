@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { join } from "node:path";
 
+import { renderCognitiveRoutingPromptPolicy } from "./cognitive-routing";
 import { UsageError } from "./errors";
 import { loadPromptMemoryContext } from "./memory";
 import { HivePaths, ProjectPaths, getProjectPaths } from "./paths";
@@ -116,6 +117,7 @@ type PersistentStewardContext = {
   recentDecisionsPath: string;
   projectEntitySummaryPath: string;
   journalPath: string;
+  cognitiveRoutingPolicy: string;
 };
 
 type ActivePersistentTurn = {
@@ -353,8 +355,11 @@ function describePiModel(model: PiModelState | null | undefined): string | null 
   return `${model.provider}/${model.id}`;
 }
 
-function buildPersistentStewardSystemPrompt(sessionPrompt: string): string {
-  return `${sessionPrompt || "# HIVE Steward Session"}
+function buildPersistentStewardSystemPrompt(input: {
+  sessionPrompt: string;
+  cognitiveRoutingPolicy: string;
+}): string {
+  return `${input.sessionPrompt || "# HIVE Steward Session"}
 
 You are HIVE's persistent steward session.
 
@@ -364,16 +369,16 @@ the durable source of truth.
 
 Operating rules:
 - Answer the human directly and concretely.
-- Treat each turn as a routing decision: direct answer, deeper state inspection, or plural synthesis.
-- Optimize for expected answer quality, not raw latency.
 - Use compact state first. Only perform deeper reads when the turn actually needs them.
 - Use absolute paths when working across HIVE home and project files.
 - Update PLAN.md, BOARD.md, LOG.md, and message files yourself when the state changes.
 - Delegate through HIVE files or \`hive\` commands when specialized worker work is needed.
-- If the answer would materially improve from multiple perspectives, use the configured team and synthesize instead of defaulting to a solo reply.
-- If fresh worker output already covers the needed perspectives, use it instead of re-running work.
+- Follow the cognitive routing policy below instead of defaulting to either solo replies or broad fan-out.
 - Keep replies human-facing. Do not narrate internal session mechanics unless relevant.
 - If the HIVE session tail conflicts with your in-memory assumptions, trust the HIVE session tail.
+
+Cognitive routing policy:
+${input.cognitiveRoutingPolicy}
 `;
 }
 
@@ -419,6 +424,9 @@ ${input.soul}
 - recent-decisions-json: ${input.recentDecisionsPath}
 - project-entity-summary: ${input.projectEntitySummaryPath}
 - journal: ${input.journalPath}
+
+## Cognitive Routing Policy
+${input.cognitiveRoutingPolicy}
 
 ## Compact State
 ### Board
@@ -478,6 +486,9 @@ function buildPersistentStewardRefreshMessage(input: PersistentStewardContext & 
 - messages-dir: ${input.hivePaths.msgDir}
 - state-dir: ${input.projectPaths.stateDir}
 
+## Cognitive Routing Policy
+${input.cognitiveRoutingPolicy}
+
 ## Delta Since Last Seen
 ${renderDeltaHistory(input.deltaHistory, input.sessionRevision)}
 
@@ -517,8 +528,9 @@ async function loadPersistentStewardContext(input: {
   sessionId: string;
 }): Promise<PersistentStewardContext> {
   const projectPaths = getProjectPaths(input.hivePaths, input.projectId);
-  const [projectConfig, sessionMeta, sessionState, sessionPrompt, runtimeState, soul, memoryContext, history] =
+  const [globalConfig, projectConfig, sessionMeta, sessionState, sessionPrompt, runtimeState, soul, memoryContext, history] =
     await Promise.all([
+      Bun.file(input.hivePaths.config).text().catch(() => ""),
       Bun.file(projectPaths.config).text(),
       getSession(input.hivePaths.sessionsDir, input.sessionId),
       getSessionState(input.hivePaths.sessionsDir, input.sessionId),
@@ -571,6 +583,12 @@ async function loadPersistentStewardContext(input: {
     recentDecisionsPath: memoryContext.recentDecisionsPath,
     projectEntitySummaryPath: memoryContext.projectEntitySummaryPath,
     journalPath: memoryContext.journalPath,
+    cognitiveRoutingPolicy: renderCognitiveRoutingPromptPolicy({
+      globalConfig,
+      skillsDir: input.hivePaths.skillsDir,
+      sessionRuntime: sessionMeta?.runtime ?? "claude",
+      sessionModel: sessionMeta?.model ?? null,
+    }),
   };
 }
 
@@ -1245,7 +1263,10 @@ export async function runPersistentStewardTurn(input: {
       repoPath: context.repoPath,
       runtime: context.sessionRuntime,
       model: context.sessionModel,
-      systemPrompt: buildPersistentStewardSystemPrompt(context.sessionPrompt),
+      systemPrompt: buildPersistentStewardSystemPrompt({
+        sessionPrompt: context.sessionPrompt,
+        cognitiveRoutingPolicy: context.cognitiveRoutingPolicy,
+      }),
     });
     activeHandle = handle;
 

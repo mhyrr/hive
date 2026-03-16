@@ -1546,7 +1546,8 @@ body.modal-open {
 }
 
 .rail-panel--log-focus .rail-section--current-activity,
-.rail-panel--log-focus .rail-section--active-agents {
+.rail-panel--log-focus .rail-section--active-agents,
+.rail-panel--log-focus .rail-section--cognition {
   display: none;
 }
 
@@ -1568,6 +1569,7 @@ body.modal-open {
 
 .live-summary,
 .live-agents,
+.cognition-panel,
 .queue-list,
 .timeline-list {
   display: flex;
@@ -1578,6 +1580,107 @@ body.modal-open {
 
 .live-agents {
   min-height: 100%;
+}
+
+.cognition-principle {
+  padding: var(--s3);
+  border: 1px solid rgba(88, 136, 176, 0.2);
+  background:
+    linear-gradient(180deg, rgba(88, 136, 176, 0.07), transparent 70%),
+    rgba(13, 17, 23, 0.9);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.cognition-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s2);
+}
+
+.cognition-stat {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border);
+  background: rgba(13, 17, 23, 0.88);
+}
+
+.cognition-stat-label,
+.cognition-subsection-title {
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 2px;
+}
+
+.cognition-stat-value,
+.cognition-mode-body,
+.cognition-lane-route {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.cognition-context {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.cognition-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.cognition-mode-list,
+.cognition-lane-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cognition-row {
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--border);
+}
+
+.cognition-row:first-child {
+  border-top-color: rgba(255, 255, 255, 0.04);
+}
+
+.cognition-row-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.cognition-row-name {
+  color: var(--text-bright);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.cognition-row-kicker,
+.cognition-row-meta {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.cognition-row-body {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  margin-top: 1px;
+  word-break: break-word;
+}
+
+.cognition-row-meta {
+  margin-top: 1px;
 }
 
 .live-summary-block {
@@ -1643,9 +1746,25 @@ body.modal-open {
 }
 
 .agent-card {
-  min-height: 198px;
+  min-height: 0;
+  padding: var(--s3);
   border-color: rgba(90, 138, 74, 0.22);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.015);
+}
+
+.live-agents-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: 0 var(--s1);
+}
+
+.live-agents-toolbar-copy {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .queue-card--warning,
@@ -1706,6 +1825,12 @@ body.modal-open {
   line-height: 1.45;
 }
 
+.agent-card-summary {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
 .agent-card-output,
 .completion-card-summary,
 .queue-card-body {
@@ -1728,9 +1853,8 @@ body.modal-open {
 }
 
 .agent-card-output {
-  margin-top: auto;
-  padding: var(--s3);
-  min-height: 88px;
+  padding: var(--s2) var(--s3);
+  min-height: 0;
   white-space: pre-wrap;
   word-break: break-word;
   border: 1px solid rgba(212, 154, 0, 0.12);
@@ -2111,7 +2235,8 @@ body.modal-open {
     border-left: none;
   }
 
-  .live-summary-grid {
+  .live-summary-grid,
+  .cognition-grid {
     grid-template-columns: 1fr;
   }
 

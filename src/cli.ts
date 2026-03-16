@@ -2,6 +2,7 @@ import { archiveCommand } from "./commands/archive";
 import { approvalCommand } from "./commands/approval";
 import { askCommand } from "./commands/ask";
 import { chatCommand } from "./commands/chat";
+import { cognitionCommand } from "./commands/cognition";
 import { consoleCommand } from "./commands/console";
 import { eventsCommand } from "./commands/events";
 import { feedCommand, watchCommand } from "./commands/feed";
@@ -52,6 +53,8 @@ export async function runCli(args: string[]): Promise<string> {
       return orchestrateCommand(rest);
     case "chat":
       return chatCommand(rest);
+    case "cognition":
+      return cognitionCommand();
     case "console":
       return consoleCommand(rest);
     case "feed":
