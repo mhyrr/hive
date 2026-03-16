@@ -9,6 +9,21 @@ import { now, toCompactTimestamp, toDateParts, toIsoTimestamp } from "./time";
 
 export type RunStatus = "starting" | "active" | "exited" | "failed" | "cancelled";
 
+export type RunCognitiveDigestOutcome = "success" | "partial" | "blocked" | "failed";
+
+export type RunCognitiveDigest = {
+  provider: string;
+  model: string;
+  summary: string;
+  outcome: RunCognitiveDigestOutcome;
+  keyDecisions: string[];
+  filesChanged: string[];
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  durationMs: number | null;
+};
+
 export type RunRecord = {
   runId: string;
   projectId: string;
@@ -52,6 +67,7 @@ export type RunResult = {
   cacheCreationInputTokens: number | null;
   cacheReadInputTokens: number | null;
   totalTokens: number | null;
+  cognitiveDigest: RunCognitiveDigest | null;
 };
 
 type CreateRunInput = {
@@ -267,6 +283,27 @@ function toRunResult(path: string, raw: string): RunResult | null {
     cacheCreationInputTokens: toNullableNumber(attributes["cache-creation-input-tokens"]),
     cacheReadInputTokens: toNullableNumber(attributes["cache-read-input-tokens"]),
     totalTokens: toNullableNumber(attributes["total-tokens"]),
+    cognitiveDigest:
+      attributes["cognitive-summary"] && attributes["cognitive-model"] && attributes["cognitive-provider"]
+        ? {
+            provider: attributes["cognitive-provider"],
+            model: attributes["cognitive-model"],
+            summary: attributes["cognitive-summary"],
+            outcome:
+              attributes["cognitive-outcome"] === "success" ||
+              attributes["cognitive-outcome"] === "partial" ||
+              attributes["cognitive-outcome"] === "blocked" ||
+              attributes["cognitive-outcome"] === "failed"
+                ? attributes["cognitive-outcome"]
+                : "partial",
+            keyDecisions: toLines(attributes["cognitive-key-decisions"]),
+            filesChanged: toLines(attributes["cognitive-files-changed"]),
+            inputTokens: toNullableNumber(attributes["cognitive-input-tokens"]),
+            outputTokens: toNullableNumber(attributes["cognitive-output-tokens"]),
+            totalTokens: toNullableNumber(attributes["cognitive-total-tokens"]),
+            durationMs: toNullableNumber(attributes["cognitive-duration-ms"]),
+          }
+        : null,
   };
 }
 
@@ -480,6 +517,7 @@ export async function writeRunResult(
     cacheCreationInputTokens?: number | null;
     cacheReadInputTokens?: number | null;
     totalTokens?: number | null;
+    cognitiveDigest?: RunCognitiveDigest | null;
   },
 ): Promise<RunResult> {
   const path = join(run.path.replace(/run\.md$/, ""), "result.md");
@@ -548,6 +586,37 @@ export async function writeRunResult(
 
   if (input.totalTokens != null) {
     attributes["total-tokens"] = String(input.totalTokens);
+  }
+
+  if (input.cognitiveDigest) {
+    attributes["cognitive-provider"] = input.cognitiveDigest.provider;
+    attributes["cognitive-model"] = input.cognitiveDigest.model;
+    attributes["cognitive-summary"] = input.cognitiveDigest.summary;
+    attributes["cognitive-outcome"] = input.cognitiveDigest.outcome;
+
+    if (input.cognitiveDigest.keyDecisions.length > 0) {
+      attributes["cognitive-key-decisions"] = input.cognitiveDigest.keyDecisions.join(" | ");
+    }
+
+    if (input.cognitiveDigest.filesChanged.length > 0) {
+      attributes["cognitive-files-changed"] = input.cognitiveDigest.filesChanged.join(" | ");
+    }
+
+    if (input.cognitiveDigest.inputTokens != null) {
+      attributes["cognitive-input-tokens"] = String(input.cognitiveDigest.inputTokens);
+    }
+
+    if (input.cognitiveDigest.outputTokens != null) {
+      attributes["cognitive-output-tokens"] = String(input.cognitiveDigest.outputTokens);
+    }
+
+    if (input.cognitiveDigest.totalTokens != null) {
+      attributes["cognitive-total-tokens"] = String(input.cognitiveDigest.totalTokens);
+    }
+
+    if (input.cognitiveDigest.durationMs != null) {
+      attributes["cognitive-duration-ms"] = String(input.cognitiveDigest.durationMs);
+    }
   }
 
   await Bun.write(

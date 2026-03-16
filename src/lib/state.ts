@@ -85,6 +85,8 @@ export type RecentResultSummaryItem = {
   changedFiles: string[];
   gitSummaryLines: string[];
   summary: string;
+  cognitiveOutcome: "success" | "partial" | "blocked" | "failed" | null;
+  cognitiveModel: string | null;
   path: string;
 };
 
@@ -385,7 +387,9 @@ function summarizeRecentResults(
       assignmentMessage: result.assignmentMessage,
       changedFiles: result.changedFiles,
       gitSummaryLines: result.gitSummaryLines,
-      summary: firstLine(result.finalVisibleOutput),
+      summary: truncate(result.cognitiveDigest?.summary || firstLine(result.finalVisibleOutput)),
+      cognitiveOutcome: result.cognitiveDigest?.outcome ?? null,
+      cognitiveModel: result.cognitiveDigest?.model ?? null,
       path: result.path,
     })),
   };
