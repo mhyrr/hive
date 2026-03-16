@@ -1,5 +1,9 @@
 import { appendLogEntry } from "./log";
 import { appendFeedEntry } from "./feed";
+import {
+  renderCognitiveRoutingPromptPolicy,
+  STEWARD_ESSENTIAL_SKILL_NAMES,
+} from "./cognitive-routing";
 import { digestBoard, listSkills } from "./digest";
 import { HiveMessage, createMessage } from "./messages";
 import { HivePaths, ProjectPaths } from "./paths";
@@ -275,10 +279,9 @@ async function loadEssentialSkills(
   skillsDir: string,
   availableSkillNames: string[],
 ): Promise<string> {
-  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
   const loaded: string[] = [];
 
-  for (const name of essentialSkills) {
+  for (const name of STEWARD_ESSENTIAL_SKILL_NAMES) {
     if (!availableSkillNames.includes(name)) continue;
     const content = await readFileOrDefault(`${skillsDir}/${name}.md`, "");
     if (content) {
@@ -292,6 +295,7 @@ async function loadEssentialSkills(
 export async function buildOrchestratorPrompt(input: {
   projectId: string;
   pathsHome: string;
+  globalConfig: string;
   repoPath: string;
   pathsSoul: string;
   pathsIdentity: string;
@@ -359,6 +363,12 @@ ${renderModeInstructions(input.options)}
 ## Current Goal
 ${recentGoal}
 
+## Cognitive Routing Policy
+${renderCognitiveRoutingPromptPolicy({
+    globalConfig: input.globalConfig,
+    skillsDir: input.skillsDir,
+  })}
+
 ## CRITICAL: You MUST produce text output
 Your stdout text is what the human sees. After taking any actions (resolving messages, logging, assigning work), you MUST end with a brief text summary. If you only make tool calls with no text, the human sees nothing. Always finish with visible text.
 
@@ -367,6 +377,7 @@ Your stdout text is what the human sees. After taking any actions (resolving mes
 - If the goal is new or changed, decompose it into clear tasks and update PLAN.md and BOARD.md.
 - Send assignments or clarifications through message files. Do not rely on unrecorded context.
 - When you fully handle a message, resolve it or close it so the open queue stays clean.
+- Route depth, fan-out, and parallelism with the cognitive routing policy above. Reuse fresh worker output before relaunching work.
 - Log every orchestration action you take.
 
 ## Signals

@@ -22,6 +22,7 @@ Usage:
   hive supervise stop
   hive supervise logs
   hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
+  hive cognition                      # Show cognitive routing policy
   hive console [--runtime <runtime>] [--model <model>]
                                 # Interactive session with the hive
   hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>

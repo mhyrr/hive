@@ -1,4 +1,5 @@
 import { UsageError } from "./errors";
+import { renderCognitiveRoutingPromptPolicy } from "./cognitive-routing";
 import { appendFeedEntry } from "./feed";
 import { captureGitStatusSnapshot, diffGitStatusSnapshots } from "./git";
 import { appendLogEntry } from "./log";
@@ -92,6 +93,7 @@ type StewardPromptContext = {
   knowledgeDigest: string;
   recentDecisionsDigest: string;
   projectEntityDigest: string;
+  cognitiveRoutingPolicy: string;
   humanMessage: string;
 };
 
@@ -233,13 +235,10 @@ Read trust policy: ${input.trustPath}
 
 ## Operating Rules
 - Answer the human directly and concretely.
-- Treat each turn as a routing decision: direct answer, deeper state inspection, or plural synthesis.
-- Optimize for expected answer quality, not raw latency.
 - If action is needed, do it yourself through files or \`hive\` commands. Do not tell the human to operate the system for you.
 - BOARD.md is steward-owned. Update it directly when plan/task state changes.
 - When you delegate, create assignment messages with \`task:\`, \`launch: auto\`, and \`scope:\`.
-- If the answer would materially improve from multiple perspectives, use the configured team and synthesize instead of defaulting to a solo reply.
-- If fresh worker output already covers the needed perspectives, use it instead of re-running work.
+- Follow the cognitive routing policy below instead of defaulting to either solo replies or broad fan-out.
 - Keep LOG.md and feed.md high signal.
 - Use the compact runtime state first; raw markdown reads should be targeted.
 - Always end with visible text for the human. If you only make tool calls, the session will look broken.
@@ -265,6 +264,9 @@ Read trust policy: ${input.trustPath}
 - human-inbox-json: ${input.projectPaths.stateHumanInbox}
 - latest-delta-json: ${input.projectPaths.stateStewardDelta}
 - delta-history-jsonl: ${input.projectPaths.stateDeltaHistory}
+
+## Cognitive Routing Policy
+${input.cognitiveRoutingPolicy}
 
 ## Compact State
 ### Board
@@ -408,6 +410,12 @@ export async function runDirectStewardTurn(
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,
+    cognitiveRoutingPolicy: renderCognitiveRoutingPromptPolicy({
+      globalConfig,
+      skillsDir: input.hivePaths.skillsDir,
+      sessionRuntime: hints.runtime,
+      sessionModel: hints.model,
+    }),
     humanMessage: input.humanMessage,
   });
 

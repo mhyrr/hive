@@ -5,6 +5,10 @@ import type { GatewayBroadcast, GatewayOptions } from "./server";
 
 import { feedCommand } from "../commands/feed";
 import { parseStructuredFeedEntries } from "../lib/feed";
+import {
+  buildCognitiveRoutingSnapshot,
+  renderCognitiveRoutingInspectionSnapshot,
+} from "../lib/cognitive-routing";
 import { inboxCommand } from "../commands/inbox";
 import { logCommand } from "../commands/log";
 import { msgCommand, nudgeCommand } from "../commands/msg";
@@ -2596,6 +2600,48 @@ const getRoutes: Record<string, RouteHandler> = {
     try {
       const result = await runtimesCommand();
       return jsonOk(result);
+    } catch (err) {
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/cognition": async (_req, _url, options, _broadcast) => {
+    try {
+      const globalConfig = await Bun.file(options.hivePaths.config).text().catch(() => "");
+      const sessionsDir = join(options.hivePaths.home, "sessions");
+      const activeSession = await getActiveSession(sessionsDir);
+      const currentProject = activeSession
+        ? await getSessionProjectFocus({
+            sessionsDir,
+            sessionId: activeSession.sessionId,
+            fallbackProject: activeSession.project,
+          })
+        : null;
+      const snapshot = await buildCognitiveRoutingSnapshot({
+        globalConfig,
+        session: activeSession
+          ? {
+              sessionId: activeSession.sessionId,
+              project: currentProject ?? activeSession.project,
+              runtime: activeSession.runtime,
+              model: activeSession.model,
+            }
+          : null,
+      });
+
+      return jsonOk({
+        policy: snapshot.policy,
+        activeSession: snapshot.activeSession,
+        activeLane: snapshot.activeLane,
+        defaultLane: snapshot.defaultLane,
+        tier1: snapshot.tier1,
+        localModels: snapshot.localModels,
+        rendered: renderCognitiveRoutingInspectionSnapshot({
+          snapshot,
+          configPath: options.hivePaths.config,
+          skillsDir: options.hivePaths.skillsDir,
+        }),
+      });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }

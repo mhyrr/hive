@@ -27,7 +27,13 @@ import {
   readRunRecord,
   writeRunResult,
 } from "../src/lib/runs";
-import { getSession, getSessionHistory, getSessionState, updateSessionMeta } from "../src/lib/sessions";
+import {
+  createSession,
+  getSession,
+  getSessionHistory,
+  getSessionState,
+  updateSessionMeta,
+} from "../src/lib/sessions";
 
 type TestContext = {
   root: string;
@@ -40,6 +46,7 @@ let context: TestContext;
 let originalPath = process.env.PATH;
 let originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
 let originalAnthropicOAuthToken = process.env.ANTHROPIC_OAUTH_TOKEN;
+let originalFetch = globalThis.fetch;
 
 function randomPort(): number {
   return 12000 + Math.floor(Math.random() * 30000);
@@ -65,6 +72,7 @@ beforeEach(async () => {
   originalPath = process.env.PATH;
   originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
   originalAnthropicOAuthToken = process.env.ANTHROPIC_OAUTH_TOKEN;
+  originalFetch = globalThis.fetch;
   process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "0";
 });
 
@@ -85,6 +93,7 @@ afterEach(async () => {
   } else {
     process.env.ANTHROPIC_OAUTH_TOKEN = originalAnthropicOAuthToken;
   }
+  globalThis.fetch = originalFetch;
   await disposePersistentStewardsForHome(context.paths.home);
   await rm(context.root, { recursive: true, force: true });
 });
@@ -463,6 +472,105 @@ describe("Gateway REST API", () => {
     } finally {
       stopGateway(state);
     }
+  });
+
+  test("GET /api/cognition returns session-aware routing policy and local model discovery", async () => {
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      [
+        "# Hive Config",
+        "",
+        "runtime: claude",
+        "model: claude-sonnet-4-6",
+        "cognitive-bias: quality",
+        "cognitive-max-fanout: 4",
+        "cognitive-max-parallel: 3",
+        "tier1_local: qwen3:4b",
+        "pi-provider-codex: openai",
+        "pi-model-codex: gpt-5",
+      ].join("\n"),
+    );
+    const session = await createSession({
+      sessionsDir: context.paths.sessionsDir,
+      project: "hive",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      systemPrompt: "You are the steward.",
+    });
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+
+      if (url === "http://127.0.0.1:11434/api/tags") {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "qwen3:4b" }, { name: "gemma3:4b" }],
+          }),
+          { status: 200 },
+        );
+      }
+
+      return originalFetch(input);
+    }) as typeof fetch;
+    const req = new Request("http://localhost/api/cognition");
+    const res = await handleApi(req, new URL(req.url), {
+      hivePaths: context.paths,
+      projectsDir: context.paths.projectsDir,
+      runsActiveDir: "",
+    }, () => {});
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      rendered: string;
+      policy: {
+        bias: string;
+        maxFanOut: number;
+        maxParallel: number;
+        runtimeLanes: Array<{
+          runtime: string;
+          piRoute: {
+            provider: string | null;
+            model: string | null;
+          };
+        }>;
+      };
+      activeSession: {
+        sessionId: string;
+        project: string;
+        runtime: string;
+        model: string | null;
+      } | null;
+      activeLane: {
+        runtime: string;
+      } | null;
+      tier1: {
+        localModel: string;
+      };
+      localModels: {
+        available: boolean;
+        configuredModelStatus: string;
+        models: Array<{ name: string }>;
+      };
+    };
+    expect(data.rendered).toContain("Cognitive routing policy:");
+    expect(data.policy.bias).toBe("quality");
+    expect(data.policy.maxFanOut).toBe(4);
+    expect(data.policy.maxParallel).toBe(3);
+    expect(data.rendered).toContain(`active session: ${session.sessionId}`);
+    expect(data.activeSession?.runtime).toBe("codex");
+    expect(data.activeLane?.runtime).toBe("codex");
+    expect(data.tier1.localModel).toBe("qwen3:4b");
+    expect(data.localModels.available).toBeTrue();
+    expect(data.localModels.configuredModelStatus).toBe("available");
+    expect(data.localModels.models.map((model) => model.name)).toEqual([
+      "gemma3:4b",
+      "qwen3:4b",
+    ]);
+    expect(data.policy.runtimeLanes.some((lane) =>
+      lane.runtime === "codex" &&
+      lane.piRoute.provider === "openai" &&
+      lane.piRoute.model === "gpt-5",
+    )).toBeTrue();
   });
 
   test("GET /api/feed returns feed data", async () => {

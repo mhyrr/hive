@@ -1,12 +1,12 @@
 # Hive Config
 
 ## Hive Mind
-# Runtime options: claude, codex, ollama
+# Runtime options: claude, codex, gemini
 runtime: claude
 # Model options vary by runtime:
 #   claude: claude-sonnet-4-6 (default), claude-opus-4-6
 #   codex: codex (uses OpenAI Codex CLI)
-#   ollama: local-small, local-large (requires local Ollama server)
+#   gemini: gemini-2.5-pro (uses Gemini CLI)
 model: claude-sonnet-4-6
 
 ## Defaults
@@ -41,3 +41,21 @@ archive-curation: deferred
 # pi-auth-anthropic: oauth-only
 # pi-auth-openai: env
 # pi-auth-google: env
+
+## Cognitive Routing
+# How aggressively the steward should escalate beyond a direct answer.
+# cognitive-bias: balanced        # latency | balanced | quality
+# cognitive-max-fanout: 2         # cap for plural synthesis perspectives
+# cognitive-max-parallel: 2       # concurrent worker cap for disjoint scopes
+
+## Tier-1 Small Models
+# Preferred local small-model lane for routine cognition. Point this at a
+# model you have already pulled into Ollama.
+# tier1_local: qwen3:4b
+# Alternative starter:
+# tier1_local: gemma3:4b
+# Preferred cloud/fallback label for routine cognition when local models are
+# unavailable or not yet wired in for execution.
+# tier1_cloud: haiku
+# tier1_fallback: haiku
+# ollama-base-url: http://127.0.0.1:11434

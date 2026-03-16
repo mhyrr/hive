@@ -24,11 +24,13 @@ var state = {
   consoleStream: null,
   consoleDetailPayloads: [],
   consoleExpanded: {},
+  activeAgentExpanded: {},
   consoleView: 'conversation',
   sessionId: null,
   pendingSends: 0,
   liveSnapshot: null,
   processLogsSnapshot: null,
+  cognitionSnapshot: null,
   healthSnapshot: null,
   queueSnapshot: null,
   timelineItems: [],
@@ -37,6 +39,7 @@ var state = {
   processLogsFocus: null,
   processLogsStickToBottom: true,
   processLogsRefreshTimer: null,
+  cognitionRefreshTimer: null,
   agentSignals: {},
   notificationsPrimed: false,
   toastSeenKeys: {},
@@ -1576,10 +1579,22 @@ function scheduleProcessLogsRefresh(delay) {
   }, typeof delay === 'number' ? delay : 200);
 }
 
+function scheduleCognitionRefresh(delay) {
+  if (state.cognitionRefreshTimer) {
+    clearTimeout(state.cognitionRefreshTimer);
+  }
+
+  state.cognitionRefreshTimer = setTimeout(function () {
+    state.cognitionRefreshTimer = null;
+    refreshCognition();
+  }, typeof delay === 'number' ? delay : 220);
+}
+
 function scheduleOperationsRefresh(delay) {
   var base = typeof delay === 'number' ? delay : 180;
   scheduleLiveRefresh(base);
   scheduleProcessLogsRefresh(base + 30);
+  scheduleCognitionRefresh(base + 60);
   scheduleQueueRefresh(base + 90);
   scheduleTimelineRefresh(base + 150);
 }
@@ -2689,18 +2704,41 @@ function renderLiveAgents(agents) {
   }
 
   var html = '';
+  var expandedCount = 0;
+
+  for (var countIndex = 0; countIndex < visibleAgents.length; countIndex++) {
+    var countKey = getAgentKey(visibleAgents[countIndex]);
+    if (countKey && state.activeAgentExpanded[countKey]) {
+      expandedCount += 1;
+    }
+  }
+
+  html += '<div class="live-agents-toolbar">';
+  html += '<div class="live-agents-toolbar-copy">' + escapeHtml(countLabel(visibleAgents.length, 'active agent')) + '</div>';
+  html += renderRailActionButton(
+    expandedCount === visibleAgents.length ? 'Collapse all' : 'Expand all',
+    {
+      'data-rail-action': 'toggle-all-agents',
+      'data-rail-expanded': expandedCount === visibleAgents.length ? 'false' : 'true',
+    },
+    true,
+  );
+  html += '</div>';
+
   for (var i = 0; i < visibleAgents.length; i++) {
     var agent = visibleAgents[i];
+    var agentKey = getAgentKey(agent);
+    var expanded = Boolean(agentKey && state.activeAgentExpanded[agentKey]);
     var health = findAgentHealth(state.healthSnapshot, agent);
-    var outputPreview = '';
+    var outputDetail = '';
     var descriptor = agent.descriptor || '';
     if (descriptor && agent.persona && descriptor.toLowerCase() === String(agent.persona).toLowerCase()) {
       descriptor = '';
     }
     if (Array.isArray(agent.tail) && agent.tail.length > 0) {
-      outputPreview = truncateMultilineText(agent.tail.slice(-4).join('\n'), 420);
+      outputDetail = agent.tail.slice(-10).join('\n');
     } else if (agent.latestOutput) {
-      outputPreview = truncateMultilineText(agent.latestOutput, 320);
+      outputDetail = String(agent.latestOutput);
     }
     var meta = [
       agent.runtime || '',
@@ -2709,7 +2747,13 @@ function renderLiveAgents(agents) {
       agent.pid ? 'pid ' + agent.pid : '',
       agent.taskId ? 'task ' + agent.taskId : '',
     ];
-    html += '<div class="agent-card">';
+    var collapsedSummary = outputDetail ? truncateMultilineText(outputDetail, 180) : (health ? health.summary : '');
+    if (!collapsedSummary) {
+      collapsedSummary = agent.persona === 'steward'
+        ? 'Waiting for the first streamed update from the steward.'
+        : 'Waiting for the first visible update from this agent.';
+    }
+    html += '<div class="agent-card' + (expanded ? ' agent-card--expanded' : '') + '">';
     html += '<div class="agent-card-header">';
     html += '<div class="agent-card-header-copy">';
     html += '<div class="agent-card-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</div>';
@@ -2721,24 +2765,248 @@ function renderLiveAgents(agents) {
     html += '</div>';
     html += '</div>';
     html += '<div class="agent-card-meta">' + escapeHtml(joinMeta(meta)) + '</div>';
-    if (health) {
+    html += '<div class="agent-card-summary">' + escapeHtml(truncateMultilineText(collapsedSummary, expanded ? 320 : 180)) + '</div>';
+    if (expanded && health) {
       html += '<div class="agent-card-health-note">' + escapeHtml(health.summary) + '</div>';
     }
-    if (outputPreview) {
-      html += '<div class="agent-card-output">' + escapeHtml(outputPreview) + '</div>';
-    } else {
+    if (expanded && outputDetail) {
+      html += '<div class="agent-card-output">' + escapeHtml(truncateMultilineText(outputDetail, 1200)) + '</div>';
+    } else if (expanded) {
       var emptyOutput = agent.persona === 'steward'
         ? 'Waiting for the first streamed update from the steward.'
         : 'Waiting for the first visible update from this agent.';
       html += '<div class="agent-card-output agent-card-output--empty">' + escapeHtml(emptyOutput) + '</div>';
     }
     html += '<div class="agent-card-actions">';
+    html += renderRailActionButton(expanded ? 'Collapse' : 'Expand', {
+      'data-rail-action': 'toggle-agent',
+      'data-rail-agent-key': agentKey,
+    }, true);
     html += renderRailActionButton(state.processLogsFocus === (agent.runId || '') ? 'Watching' : 'Logs', {
       'data-rail-action': 'log',
       'data-rail-run-id': agent.runId || '',
     }, state.processLogsFocus === (agent.runId || ''));
     html += '</div>';
     html += '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function formatCognitionLaneRoute(lane) {
+  if (!lane || !lane.piRoute || !lane.piRoute.provider) {
+    return 'direct CLI-backed by default';
+  }
+
+  var route = lane.piRoute;
+  var source = route.providerSource === 'env'
+    ? 'env'
+    : route.providerSource === 'config'
+      ? 'config'
+      : 'implicit';
+  var parts = ['Pi ' + source, route.provider];
+
+  if (route.model) parts.push(route.model);
+  if (route.authPolicy) parts.push(route.authPolicy);
+
+  return parts.join(' \u00b7 ');
+}
+
+function findCognitionLane(policy, runtime) {
+  if (!policy || !runtime || !Array.isArray(policy.runtimeLanes)) {
+    return null;
+  }
+
+  for (var i = 0; i < policy.runtimeLanes.length; i++) {
+    if (policy.runtimeLanes[i] && policy.runtimeLanes[i].runtime === runtime) {
+      return policy.runtimeLanes[i];
+    }
+  }
+
+  return null;
+}
+
+function formatCognitionLaneSummary(lane, model) {
+  if (!lane) {
+    return 'No runtime lane configured.';
+  }
+
+  return joinMeta([
+    lane.runtime || '',
+    model || '',
+    formatCognitionLaneRoute(lane),
+  ]);
+}
+
+function formatTier1LocalStatus(snapshot) {
+  var localModels = snapshot && snapshot.localModels ? snapshot.localModels : null;
+
+  if (!localModels) {
+    return 'not inspected';
+  }
+
+  if (!localModels.available) {
+    return joinMeta([
+      'ollama unavailable',
+      localModels.reason || '',
+    ]);
+  }
+
+  if (localModels.configuredModelStatus === 'available') {
+    return 'available locally';
+  }
+
+  if (localModels.configuredModelStatus === 'missing') {
+    return 'configured but not pulled';
+  }
+
+  if (localModels.configuredModelStatus === 'unconfigured') {
+    return 'not configured';
+  }
+
+  return 'unverified';
+}
+
+function renderCognition(snapshot) {
+  var container = document.getElementById('cognition-panel');
+  if (!container) return;
+
+  var policy = snapshot && snapshot.policy ? snapshot.policy : null;
+
+  if (!policy) {
+    container.innerHTML = '<div class="rail-empty">Cognitive routing policy unavailable.</div>';
+    return;
+  }
+
+  var activeLane = snapshot && snapshot.activeLane
+    ? snapshot.activeLane
+    : findCognitionLane(policy, snapshot && snapshot.activeSession ? snapshot.activeSession.runtime : null);
+  var defaultLane = snapshot && snapshot.defaultLane
+    ? snapshot.defaultLane
+    : findCognitionLane(policy, policy.defaultRuntime);
+  var laneLabel = activeLane
+    ? formatCognitionLaneSummary(activeLane, snapshot.activeSession && snapshot.activeSession.model)
+    : defaultLane
+      ? formatCognitionLaneSummary(defaultLane, policy.defaultModel)
+      : 'No default runtime configured.';
+  var laneLabelTitle = activeLane ? 'Current Lane' : 'Default Lane';
+  var activeSessionLabel = snapshot && snapshot.activeSession
+    ? joinMeta([
+      snapshot.activeSession.project || '',
+      snapshot.activeSession.sessionId || '',
+      snapshot.activeSession.model || snapshot.activeSession.runtime || '',
+    ])
+    : 'No default runtime configured.';
+  var localModels = snapshot && snapshot.localModels ? snapshot.localModels : null;
+  var discoveredLocalModels = localModels && Array.isArray(localModels.models)
+    ? localModels.models
+    : [];
+  var html = '<div class="cognition-principle">' +
+    escapeHtml(policy.principle || '') +
+    '</div>';
+  html += '<div class="cognition-grid">';
+  html += '<div class="cognition-stat"><div class="cognition-stat-label">Bias</div><div class="cognition-stat-value">' + escapeHtml(policy.bias || 'balanced') + '</div></div>';
+  html += '<div class="cognition-stat"><div class="cognition-stat-label">' + escapeHtml(laneLabelTitle) + '</div><div class="cognition-stat-value">' + escapeHtml(laneLabel) + '</div></div>';
+  html += '<div class="cognition-stat"><div class="cognition-stat-label">Max Fan-out</div><div class="cognition-stat-value">' + escapeHtml(String(policy.maxFanOut || 0)) + '</div></div>';
+  html += '<div class="cognition-stat"><div class="cognition-stat-label">Max Parallel</div><div class="cognition-stat-value">' + escapeHtml(String(policy.maxParallel || 0)) + '</div></div>';
+  html += '</div>';
+
+  if (snapshot && snapshot.activeSession) {
+    html += '<div class="cognition-context">' + escapeHtml('Live session \u00b7 ' + activeSessionLabel) + '</div>';
+  }
+
+  if (snapshot && snapshot.tier1) {
+    html += '<div class="cognition-subsection">';
+    html += '<div class="cognition-subsection-title">Tier-1</div>';
+    html += '<div class="cognition-lane-list">';
+    html += '<div class="cognition-row cognition-row--lane">';
+    html += '<div class="cognition-row-header">';
+    html += '<div class="cognition-row-name">local</div>';
+    html += '<div class="cognition-row-kicker">' + escapeHtml(formatTier1LocalStatus(snapshot)) + '</div>';
+    html += '</div>';
+    html += '<div class="cognition-row-body">' + escapeHtml(joinMeta([
+      snapshot.tier1.localModel || '',
+      localModels ? localModels.baseUrl || '' : '',
+    ])) + '</div>';
+    html += '</div>';
+    html += '<div class="cognition-row cognition-row--lane">';
+    html += '<div class="cognition-row-header">';
+    html += '<div class="cognition-row-name">cloud</div>';
+    html += '<div class="cognition-row-kicker">fallback ' + escapeHtml(snapshot.tier1.fallbackModel || '') + '</div>';
+    html += '</div>';
+    html += '<div class="cognition-row-body">' + escapeHtml(snapshot.tier1.cloudModel || '') + '</div>';
+    html += '</div>';
+    if (localModels && localModels.reason && !localModels.available) {
+      html += '<div class="cognition-row cognition-row--lane">';
+      html += '<div class="cognition-row-header">';
+      html += '<div class="cognition-row-name">discovery</div>';
+      html += '<div class="cognition-row-kicker">offline</div>';
+      html += '</div>';
+      html += '<div class="cognition-row-body">' + escapeHtml(localModels.reason) + '</div>';
+      html += '</div>';
+    }
+    html += '</div></div>';
+  }
+
+  if (discoveredLocalModels.length > 0) {
+    html += '<div class="cognition-subsection">';
+    html += '<div class="cognition-subsection-title">Local Models</div>';
+    html += '<div class="cognition-lane-list">';
+    for (var m = 0; m < discoveredLocalModels.length; m++) {
+      var model = discoveredLocalModels[m];
+      if (!model) continue;
+      html += '<div class="cognition-row cognition-row--lane">';
+      html += '<div class="cognition-row-header">';
+      html += '<div class="cognition-row-name">' + escapeHtml(model.name || 'model') + '</div>';
+      html += '<div class="cognition-row-kicker">' + escapeHtml(snapshot.tier1 && snapshot.tier1.localModel === model.name ? 'preferred local' : 'discovered') + '</div>';
+      html += '</div>';
+      html += '<div class="cognition-row-body">' + escapeHtml(joinMeta([
+        model.modifiedAt || '',
+        model.digest ? model.digest.slice(0, 12) : '',
+      ])) + '</div>';
+      html += '</div>';
+    }
+    html += '</div></div>';
+  }
+
+  if (Array.isArray(policy.modes) && policy.modes.length > 0) {
+    html += '<div class="cognition-subsection">';
+    html += '<div class="cognition-subsection-title">Modes</div>';
+    html += '<div class="cognition-mode-list">';
+    for (var i = 0; i < policy.modes.length; i++) {
+      var mode = policy.modes[i];
+      if (!mode) continue;
+      html += '<div class="cognition-row cognition-row--mode">';
+      html += '<div class="cognition-row-header">';
+      html += '<div class="cognition-row-name">' + escapeHtml(mode.label || mode.id || 'mode') + '</div>';
+      html += '<div class="cognition-row-kicker">' + escapeHtml(mode.id || '') + '</div>';
+      html += '</div>';
+      html += '<div class="cognition-row-body">' + escapeHtml(mode.useWhen || '') + '</div>';
+      html += '<div class="cognition-row-meta">' + escapeHtml(joinMeta([
+        mode.fanOut || '',
+        mode.parallelism || '',
+      ])) + '</div>';
+      html += '</div>';
+    }
+    html += '</div></div>';
+  }
+
+  if (Array.isArray(policy.runtimeLanes) && policy.runtimeLanes.length > 0) {
+    html += '<div class="cognition-subsection">';
+    html += '<div class="cognition-subsection-title">Runtime Lanes</div>';
+    html += '<div class="cognition-lane-list">';
+    for (var j = 0; j < policy.runtimeLanes.length; j++) {
+      var lane = policy.runtimeLanes[j];
+      if (!lane) continue;
+      html += '<div class="cognition-row cognition-row--lane">';
+      html += '<div class="cognition-row-header">';
+      html += '<div class="cognition-row-name">' + escapeHtml(lane.runtime || 'runtime') + '</div>';
+      html += '<div class="cognition-row-kicker">direct ' + escapeHtml(lane.directAuth || 'unknown') + '</div>';
+      html += '</div>';
+      html += '<div class="cognition-row-body">' + escapeHtml(formatCognitionLaneRoute(lane)) + '</div>';
+      html += '</div>';
+    }
+    html += '</div></div>';
   }
 
   container.innerHTML = html;
@@ -3186,6 +3454,18 @@ async function refreshProcessLogs() {
   }
 }
 
+async function refreshCognition() {
+  try {
+    var data = await apiGet('/cognition');
+    state.cognitionSnapshot = data;
+    renderCognition(data);
+  } catch (e) {
+    console.error('Cognition refresh failed:', e);
+    state.cognitionSnapshot = null;
+    renderCognition(null);
+  }
+}
+
 
 // --- Status Updates ---
 
@@ -3408,6 +3688,26 @@ function toggleConsoleItemExpanded(key) {
   renderConsoleHistory();
 }
 
+function toggleActiveAgentExpanded(key) {
+  if (!key) return;
+  state.activeAgentExpanded[key] = !state.activeAgentExpanded[key];
+  renderLiveAgents(state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : []);
+}
+
+function setAllActiveAgentsExpanded(agents, expanded) {
+  var visibleAgents = buildVisibleLiveAgents(agents);
+  var next = {};
+
+  for (var i = 0; i < visibleAgents.length; i++) {
+    var key = getAgentKey(visibleAgents[i]);
+    if (!key) continue;
+    next[key] = Boolean(expanded);
+  }
+
+  state.activeAgentExpanded = next;
+  renderLiveAgents(agents);
+}
+
 function setupSessionToolbar() {
   var newBtn = document.getElementById('new-session-btn');
   var sessionsBtn = document.getElementById('sessions-btn');
@@ -3512,6 +3812,19 @@ function setupLeadershipActions() {
       return;
     }
 
+    if (action === 'toggle-agent') {
+      toggleActiveAgentExpanded(railButton.getAttribute('data-rail-agent-key') || '');
+      return;
+    }
+
+    if (action === 'toggle-all-agents') {
+      setAllActiveAgentsExpanded(
+        state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : [],
+        railButton.getAttribute('data-rail-expanded') === 'true'
+      );
+      return;
+    }
+
     if (action === 'log') {
       focusProcessLog(railButton.getAttribute('data-rail-run-id') || '');
     }
@@ -3608,6 +3921,7 @@ async function init() {
   renderConsoleActivity(null);
   renderLiveSummary(null);
   renderLiveAgents([]);
+  renderCognition(null);
   renderQueueSnapshot(null);
   renderTimeline([]);
   renderProcessLogs(null);
@@ -3619,6 +3933,7 @@ async function init() {
   await Promise.all([
     refreshLiveSnapshot(),
     refreshProcessLogs(),
+    refreshCognition(),
     refreshQueueSnapshot(),
     refreshTimeline(),
   ]);
@@ -3630,6 +3945,10 @@ async function init() {
   setInterval(function () {
     refreshProcessLogs();
   }, 2500);
+
+  setInterval(function () {
+    refreshCognition();
+  }, 10000);
 
   setInterval(function () {
     refreshQueueSnapshot();

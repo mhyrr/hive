@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli";
+import { createSession } from "../src/lib/sessions";
 
 type TestContext = {
   root: string;
@@ -12,6 +13,7 @@ type TestContext = {
 };
 
 let context: TestContext;
+let originalFetch = globalThis.fetch;
 
 async function initHive(): Promise<string> {
   return runCli(["init"]);
@@ -36,11 +38,13 @@ async function setupContext(): Promise<TestContext> {
 
 beforeEach(async () => {
   context = await setupContext();
+  originalFetch = globalThis.fetch;
 });
 
 afterEach(async () => {
   delete process.env.HIVE_HOME;
   delete process.env.HIVE_FIXED_NOW;
+  globalThis.fetch = originalFetch;
   await rm(context.root, { recursive: true, force: true });
 });
 
@@ -155,9 +159,23 @@ describe("HIVE CLI", () => {
     expect(promptPath).toBeString();
 
     const prompt = await Bun.file(promptPath!).text();
-    expect(prompt).toContain("Treat every turn as a routing decision");
-    expect(prompt).toContain("Optimize for expected answer quality, not raw latency.");
-    expect(prompt).toContain('The human should not need to explicitly ask you to "use the hive"');
+    expect(prompt).toContain("## Cognitive Routing Policy");
+    expect(prompt).toContain("cognitive-resource-routing.md");
+    expect(prompt).toContain("current steward lane: claude");
+    expect(prompt).toContain("plural-synthesis");
+  });
+
+  test("orchestrate prompt inlines the cognitive routing skill and policy", async () => {
+    await initHive();
+    await addProject();
+
+    const output = await runCli(["orchestrate"]);
+
+    expect(output).toContain("## Cognitive Routing Policy");
+    expect(output).toContain("cognitive-resource-routing.md");
+    expect(output).toContain("direct-answer");
+    expect(output).toContain("plural-synthesis");
+    expect(output).toContain("Skill: Cognitive Resource Routing");
   });
 
   test("inbox and message lifecycle commands keep open queues clean", async () => {
@@ -529,5 +547,62 @@ path: ${context.repo}
     expect(output).toContain("pi route: config -> anthropic | model: claude-sonnet-4-6 | auth: oauth-only");
     expect(output).toContain("pi route: not configured by default -> direct runtime fallback");
     expect(output).toContain(`config: ${join(context.hiveHome, "config.md")}`);
+  });
+
+  test("cognition shows inspectable routing policy and lane map", async () => {
+    await initHive();
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      [
+        "# Hive Config",
+        "",
+        "runtime: claude",
+        "model: claude-sonnet-4-6",
+        "cognitive-bias: quality",
+        "cognitive-max-fanout: 4",
+        "cognitive-max-parallel: 3",
+        "tier1_local: qwen3:4b",
+        "pi-provider-codex: openai",
+        "pi-model-codex: gpt-5",
+        "pi-auth-openai: env",
+      ].join("\n"),
+    );
+    const session = await createSession({
+      sessionsDir: join(context.hiveHome, "sessions"),
+      project: "default",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      systemPrompt: "You are the steward.",
+    });
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+
+      if (url === "http://127.0.0.1:11434/api/tags") {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "qwen3:4b" }, { name: "gemma3:4b" }],
+          }),
+          { status: 200 },
+        );
+      }
+
+      return originalFetch(input);
+    }) as typeof fetch;
+
+    const output = await runCli(["cognition"]);
+
+    expect(output).toContain("Cognitive routing policy:");
+    expect(output).toContain("bias: quality");
+    expect(output).toContain("max fan-out: 4");
+    expect(output).toContain("max parallel workers: 3");
+    expect(output).toContain(`active session: ${session.sessionId}`);
+    expect(output).toContain("current lane: codex (gpt-5-codex)");
+    expect(output).toContain("local model: qwen3:4b");
+    expect(output).toContain("configured local status: available");
+    expect(output).toContain("discovered local models: gemma3:4b, qwen3:4b");
+    expect(output).toContain("pi route: Pi implicit -> anthropic | auth: oauth-only");
+    expect(output).toContain("pi route: Pi config -> openai | model: gpt-5 | auth: env");
+    expect(output).toContain(`Skill: ${join(context.hiveHome, "skills", "cognitive-resource-routing.md")}`);
+    expect(output).toContain(`Config: ${join(context.hiveHome, "config.md")}`);
   });
 });

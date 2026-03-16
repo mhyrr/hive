@@ -2,6 +2,10 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { appendLogEntry } from "../lib/log";
+import {
+  renderCognitiveRoutingPromptPolicy,
+  STEWARD_ESSENTIAL_SKILL_NAMES,
+} from "../lib/cognitive-routing";
 import { digestBoard, digestMessages, listSkills } from "../lib/digest";
 import { listOpenProjectMessages } from "../lib/messages";
 import {
@@ -86,6 +90,9 @@ function buildChatPrompt(input: {
   projectId: string;
   repoPath: string;
   hiveHome: string;
+  globalConfig: string;
+  sessionRuntime: string;
+  sessionModel: string | null;
   pathsSoul: string;
   pathsIdentity: string;
   pathsSelf: string;
@@ -116,8 +123,7 @@ function buildChatPrompt(input: {
   projectEntityDigest: string;
   message: string;
 }): string {
-  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
-  const essentialSkillPaths = essentialSkills
+  const essentialSkillPaths = STEWARD_ESSENTIAL_SKILL_NAMES
     .filter((name) => input.availableSkillNames.includes(name))
     .map((name) => `${input.skillsDir}/${name}.md`);
 
@@ -135,6 +141,7 @@ Read trust policy: ${input.pathsTrust}
 
 ## Operating Rules
 - Read essential skills before acting: ${essentialSkillPaths.join(", ") || "(none)"}
+- Follow the cognitive routing policy below instead of defaulting to either shallow replies or broad fan-out.
 - Answer the human directly and concretely.
 - When the human changes priorities, scope, or team behavior, update the relevant files instead of only describing the change.
 - Use msg/ for work handoffs or nudges to agents.
@@ -142,6 +149,14 @@ Read trust policy: ${input.pathsTrust}
 - Keep feed.md high-signal. If you make a meaningful change, append a concise feed entry.
 - Keep LOG.md durable. Record important decisions or redirections there.
 - The authoritative hive files are not in the repo root. Use the absolute paths below.
+
+## Cognitive Routing Policy
+${renderCognitiveRoutingPromptPolicy({
+    globalConfig: input.globalConfig,
+    skillsDir: input.skillsDir,
+    sessionRuntime: input.sessionRuntime,
+    sessionModel: input.sessionModel,
+  })}
 
 ## Human Message
 ${input.message}
@@ -216,11 +231,19 @@ export async function chatCommand(args: string[]): Promise<string> {
   const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
   const memoryContext = await loadPromptMemoryContext(paths, activeProject);
+  const hints = resolveRuntimeHints({
+    globalConfig,
+    runtimeOverride: options.runtimeOverride,
+    modelOverride: options.modelOverride,
+  });
 
   const prompt = buildChatPrompt({
     projectId: activeProject,
     repoPath,
     hiveHome: paths.home,
+    globalConfig,
+    sessionRuntime: hints.runtime,
+    sessionModel: hints.model,
     pathsSoul: paths.soul,
     pathsIdentity: paths.identity,
     pathsSelf: paths.self,
@@ -250,11 +273,6 @@ export async function chatCommand(args: string[]): Promise<string> {
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,
     message: options.message,
-  });
-  const hints = resolveRuntimeHints({
-    globalConfig,
-    runtimeOverride: options.runtimeOverride,
-    modelOverride: options.modelOverride,
   });
   const spec = buildLaunchSpec({
     runtime: hints.runtime,

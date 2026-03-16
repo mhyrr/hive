@@ -17,6 +17,7 @@ import logTemplate from "../../templates/LOG.md" with { type: "text" };
 import projectMemoryTemplate from "../../templates/project-memory.md" with { type: "text" };
 import stateEfficientOpsSkill from "../../templates/skills/state-efficient-ops.md" with { type: "text" };
 import autonomousOpsSkill from "../../templates/skills/autonomous-ops.md" with { type: "text" };
+import cognitiveResourceRoutingSkill from "../../templates/skills/cognitive-resource-routing.md" with { type: "text" };
 
 export const baseTemplates = {
   "SOUL.md": soulTemplate.trim(),
@@ -41,6 +42,7 @@ export const personaTemplates: Record<string, string> = {
 export const skillTemplates: Record<string, string> = {
   "state-efficient-ops": stateEfficientOpsSkill.trim(),
   "autonomous-ops": autonomousOpsSkill.trim(),
+  "cognitive-resource-routing": cognitiveResourceRoutingSkill.trim(),
 };
 
 function renderTemplate(
