@@ -575,9 +575,9 @@ export type RuntimeHints = {
 
 export type RuntimeAuthPolicy = "subscription" | "cli" | "api" | "unknown";
 
-export type PiProviderAuthPolicy = "oauth-only" | "env";
+type PiProviderAuthPolicy = "oauth-only" | "env";
 
-export type RuntimeAccessPolicy = {
+type RuntimeAccessPolicy = {
   defaultRuntime: string | null;
   defaultModel: string | null;
   directAuthByRuntime: Record<string, RuntimeAuthPolicy>;
@@ -585,7 +585,6 @@ export type RuntimeAccessPolicy = {
   piModel: string | null;
   piProviderByRuntime: Record<string, string | null>;
   piModelByRuntime: Record<string, string | null>;
-  piAuthByProvider: Record<string, PiProviderAuthPolicy>;
 };
 
 export type PiRuntimeRoute = {
@@ -725,15 +724,6 @@ export function readRuntimeAccessPolicy(globalConfig: string): RuntimeAccessPoli
       extractConfigValue(globalConfig, `pi-model-${adapter.name}`);
   }
 
-  const piAuthByProvider: Record<string, PiProviderAuthPolicy> = {};
-
-  for (const provider of ["anthropic", "openai", "google"]) {
-    piAuthByProvider[provider] =
-      parsePiProviderAuthPolicy(extractConfigValue(globalConfig, `pi-auth-${provider}`)) ??
-      defaultPiAuthPolicyForProvider(provider) ??
-      "env";
-  }
-
   return {
     defaultRuntime: normalizeRuntimeName(extractConfigValue(globalConfig, "runtime")),
     defaultModel: extractConfigValue(globalConfig, "model"),
@@ -742,7 +732,6 @@ export function readRuntimeAccessPolicy(globalConfig: string): RuntimeAccessPoli
     piModel: extractConfigValue(globalConfig, "pi-model"),
     piProviderByRuntime,
     piModelByRuntime,
-    piAuthByProvider,
   };
 }
 
@@ -777,7 +766,8 @@ export function resolvePiRuntimeRoute(input: {
   const model = envModel ?? configuredModel ?? null;
   const providerContext = provider ?? implicitProvider;
   const authPolicy = providerContext
-    ? policy.piAuthByProvider[providerContext] ?? defaultPiAuthPolicyForProvider(providerContext)
+    ? parsePiProviderAuthPolicy(extractConfigValue(input.globalConfig, `pi-auth-${providerContext}`)) ??
+      defaultPiAuthPolicyForProvider(providerContext)
     : null;
 
   return {

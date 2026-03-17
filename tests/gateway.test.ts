@@ -99,6 +99,8 @@ afterEach(async () => {
 });
 
 async function installMockPi(root: string): Promise<void> {
+  process.env.HIVE_TEST_PI_BEHAVIOR ||= "reply";
+
   const binDir = join(root, "bin");
   const scriptPath = join(binDir, "pi");
 
