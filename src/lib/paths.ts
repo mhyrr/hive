@@ -71,6 +71,7 @@ export type ProjectPaths = {
   stateStewardDelta: string;
   stateDeltaHistory: string;
   stateSessionContext: string;
+  stateUsage: string;
 };
 
 export function resolveHiveHome(): string {
@@ -218,6 +219,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     stateStewardDelta: join(stateDir, "steward-delta.json"),
     stateDeltaHistory: join(stateDir, "delta-history.jsonl"),
     stateSessionContext: join(stateDir, "session-context.json"),
+    stateUsage: join(stateDir, "usage.json"),
   };
 }
 

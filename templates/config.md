@@ -47,6 +47,11 @@ archive-curation: deferred
 # cognitive-bias: balanced        # latency | balanced | quality
 # cognitive-max-fanout: 2         # cap for plural synthesis perspectives
 # cognitive-max-parallel: 2       # concurrent worker cap for disjoint scopes
+# cognitive-window-hours: 24      # rolling usage window for cognition budgets
+# cognitive-budget-tier1-tokens: 50000
+# cognitive-budget-tier2-tokens: 200000
+# cognitive-budget-tier3-tokens: 50000
+# cognitive-budget-warn-ratio: 0.9
 
 ## Tier-1 Small Models
 # Preferred local small-model lane for routine cognition. Setting this enables
@@ -56,7 +61,11 @@ archive-curation: deferred
 # Alternative starter:
 # tier1_local: gemma3:4b
 # Preferred cloud/fallback label for routine cognition when local models are
-# unavailable or not yet wired in for execution.
+# unavailable. Use the explicit provider/model keys below for pi-ai execution.
 # tier1_cloud: haiku
+# tier1_cloud_provider: anthropic
+# tier1_cloud_model: claude-haiku-4-5-20251001
 # tier1_fallback: haiku
+# tier1_fallback_provider: anthropic
+# tier1_fallback_model: claude-haiku-4-5-20251001
 # ollama-base-url: http://127.0.0.1:11434

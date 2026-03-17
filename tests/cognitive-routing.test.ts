@@ -71,8 +71,15 @@ describe("cognitive routing policy", () => {
     const tier1 = readCognitiveTier1Config("");
 
     expect(tier1.localModel).toBe("qwen3:4b");
+    expect(tier1.localConfigured).toBeFalse();
     expect(tier1.cloudModel).toBe("haiku");
+    expect(tier1.cloudConfigured).toBeFalse();
+    expect(tier1.cloudProvider).toBe("anthropic");
+    expect(tier1.cloudModelId).toBe("claude-haiku-4-5-20251001");
     expect(tier1.fallbackModel).toBe("haiku");
+    expect(tier1.fallbackConfigured).toBeFalse();
+    expect(tier1.fallbackProvider).toBe("anthropic");
+    expect(tier1.fallbackModelId).toBe("claude-haiku-4-5-20251001");
     expect(tier1.ollamaBaseUrl).toBe("http://127.0.0.1:11434");
   });
 
@@ -104,6 +111,8 @@ describe("cognitive routing policy", () => {
       globalConfig: [
         "runtime: claude",
         "model: claude-sonnet-4-6",
+        "pi-provider-claude: anthropic",
+        "pi-model-claude: claude-haiku-4-5-20251001",
         "tier1_local: gemma3:4b",
       ].join("\n"),
       session: {
@@ -112,6 +121,7 @@ describe("cognitive routing policy", () => {
         runtime: "claude",
         model: "claude-opus-4-6",
       },
+      persistentStewardEnabled: true,
       fetchImpl: (async () =>
         new Response(
           JSON.stringify({
@@ -124,6 +134,41 @@ describe("cognitive routing policy", () => {
     expect(snapshot.activeLane?.runtime).toBe("claude");
     expect(snapshot.defaultLane?.runtime).toBe("claude");
     expect(snapshot.activeSession?.project).toBe("hive");
+    expect(snapshot.activeExecution?.mode).toBe("persistent-pi");
+    expect(snapshot.activeExecution?.selectedModel).toBe("claude-opus-4-6");
+    expect(snapshot.activeExecution?.executedModel).toBe("claude-haiku-4-5-20251001");
+    expect(snapshot.defaultExecution?.mode).toBe("persistent-pi");
+    expect(snapshot.defaultExecution?.executedModel).toBe("claude-haiku-4-5-20251001");
     expect(snapshot.localModels.configuredModelStatus).toBe("missing");
+  });
+
+  test("routing snapshot falls back to direct execution when persistent stewardship is disabled", async () => {
+    const snapshot = await buildCognitiveRoutingSnapshot({
+      globalConfig: [
+        "runtime: codex",
+        "model: gpt-5-codex",
+        "pi-provider-codex: openai",
+        "pi-model-codex: gpt-5",
+      ].join("\n"),
+      session: {
+        sessionId: "20260316-005525Z",
+        project: "hive",
+        runtime: "codex",
+        model: "gpt-5-codex",
+      },
+      persistentStewardEnabled: false,
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({
+            models: [],
+          }),
+          { status: 200 },
+        )) as typeof fetch,
+    });
+
+    expect(snapshot.activeExecution?.mode).toBe("direct-runtime");
+    expect(snapshot.activeExecution?.executedModel).toBe("gpt-5-codex");
+    expect(snapshot.defaultExecution?.mode).toBe("direct-runtime");
+    expect(snapshot.defaultExecution?.executedModel).toBe("gpt-5-codex");
   });
 });

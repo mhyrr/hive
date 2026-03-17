@@ -189,6 +189,7 @@ It now reports:
 - the active session lane when a live steward session exists
 - the default lane when no session is active
 - tier-1 local/cloud preferences
+- per-project tier usage and budget status when a live project is in focus
 - discovered Ollama models at the configured base URL
 
 Config knobs:
@@ -197,9 +198,18 @@ Config knobs:
 cognitive-bias: balanced
 cognitive-max-fanout: 2
 cognitive-max-parallel: 2
+cognitive-window-hours: 24
+cognitive-budget-tier1-tokens: 50000
+cognitive-budget-tier2-tokens: 200000
+cognitive-budget-tier3-tokens: 50000
+cognitive-budget-warn-ratio: 0.9
 tier1_local: qwen3:4b
 tier1_cloud: haiku
+tier1_cloud_provider: anthropic
+tier1_cloud_model: claude-haiku-4-5-20251001
 tier1_fallback: haiku
+tier1_fallback_provider: anthropic
+tier1_fallback_model: claude-haiku-4-5-20251001
 ollama-base-url: http://127.0.0.1:11434
 ```
 
@@ -230,7 +240,13 @@ It provides:
 - process log inspection
 - leadership queue and timeline surfaces
 - session history and steering
-- a cognition panel that exposes routing policy, the active session lane, and local-model discovery
+- a cognition panel that exposes routing policy, active execution lane, local-model discovery, and rolling tier usage
+- a topbar tier-3 budget chip with a dropdown breakdown by tier
+- per-turn model/tier routing chips plus route traces in the detail modal
+- conservative front-door routing for console turns:
+  - tier-0 deterministic answers for obvious status, project, runtime, and time queries
+  - tier-1 local/cloud preprocessing for short context-bound questions
+  - steward escalation when the preprocessor says the turn still needs depth
 
 ### Local Tier-1 Setup
 
@@ -247,7 +263,11 @@ Then add one of them to `~/.hive/config.md`:
 ```md
 tier1_local: qwen3:4b
 tier1_cloud: haiku
+tier1_cloud_provider: anthropic
+tier1_cloud_model: claude-haiku-4-5-20251001
 tier1_fallback: haiku
+tier1_fallback_provider: anthropic
+tier1_fallback_model: claude-haiku-4-5-20251001
 ollama-base-url: http://127.0.0.1:11434
 ```
 
@@ -257,8 +277,23 @@ Verify with:
 hive cognition
 ```
 
-The current preparation layer will show whether Ollama is reachable and which
-models are present. The actual tier-1 executor is still a separate next step.
+The current cognition surface will show whether Ollama is reachable and which
+models are present. When `tier1_local` is set, completed non-steward worker
+runs are compressed through that local model, and short console questions can
+be preprocessed through the same tier-1 lane before the steward wakes. When
+`tier1_cloud_*` is explicitly configured, HIVE can fall back to Haiku through
+`pi-ai` for both worker compression and message preprocessing.
+
+To try a persistent steward on Haiku instead of the default Claude route:
+
+```md
+pi-provider-claude: anthropic
+pi-model-claude: claude-haiku-4-5-20251001
+pi-auth-anthropic: env
+```
+
+Then start a fresh steward session or switch the live session runtime/model so
+the active session stops using the older lane.
 
 References:
 
@@ -398,7 +433,11 @@ cognitive-max-fanout: 2
 cognitive-max-parallel: 2
 tier1_local: qwen3:4b
 tier1_cloud: haiku
+tier1_cloud_provider: anthropic
+tier1_cloud_model: claude-haiku-4-5-20251001
 tier1_fallback: haiku
+tier1_fallback_provider: anthropic
+tier1_fallback_model: claude-haiku-4-5-20251001
 ollama-base-url: http://127.0.0.1:11434
 ```
 
@@ -413,7 +452,8 @@ Optional, depending on how you run workers and steward turns:
 - `codex`
 - `gemini`
 - `pi` for persistent steward sessions
-- `ollama` for local tier-1 discovery and future small-model execution
+- `ollama` for local tier-1 discovery and execution
+- Anthropic credentials if you want Haiku via `pi-ai`
 
 ## Development
 
@@ -441,14 +481,17 @@ Implemented:
 - persistent steward path via Pi
 - inspectable runtime lane policy
 - inspectable cognitive routing policy
-- local tier-1 config and discovery surface
+- local tier-1 config, discovery, and worker-output compression
+- front-door tier-0/tier-1 console routing for deterministic status/meta replies and conservative simple-query preprocessing
+- Pi-backed cloud tier-1 route via `pi-ai`
+- per-turn routing telemetry in the console
+- rolling usage and budget tracking in `/api/cognition` and the gateway
 
 Still to do:
 
-- tier-1 local/cheap cognition execution path
-- richer usage/budget tracking in the UI
-- per-turn routing telemetry in the console
-- memory curation automation
+- diff triage for steward-worthiness
+- idle log and memory compression / curation
+- migrate the persistent steward off the external `pi` CLI and onto the in-process Pi dependency
 - external transport adapters
 
 ## Further Reading

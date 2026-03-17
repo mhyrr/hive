@@ -770,9 +770,9 @@ export async function listRecentRuns(
   return listArchivedRuns(projectPaths, limit);
 }
 
-export async function listRecentRunResults(
+async function listArchivedRunResults(
   projectPaths: ProjectPaths,
-  limit = 5,
+  limit?: number,
 ): Promise<RunResult[]> {
   const years = await readdir(projectPaths.runsDir, { withFileTypes: true }).catch(() => []);
   const results: RunResult[] = [];
@@ -811,7 +811,7 @@ export async function listRecentRunResults(
           results.push(result);
         }
 
-        if (results.length >= limit) {
+        if (limit !== undefined && results.length >= limit) {
           return results;
         }
       }
@@ -819,6 +819,19 @@ export async function listRecentRunResults(
   }
 
   return results;
+}
+
+export async function listAllRunResults(
+  projectPaths: ProjectPaths,
+): Promise<RunResult[]> {
+  return listArchivedRunResults(projectPaths);
+}
+
+export async function listRecentRunResults(
+  projectPaths: ProjectPaths,
+  limit = 5,
+): Promise<RunResult[]> {
+  return listArchivedRunResults(projectPaths, limit);
 }
 
 export async function reconcileActiveConsoleRun(

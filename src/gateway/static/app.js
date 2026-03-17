@@ -563,6 +563,15 @@ function formatInteger(value) {
   return number.toLocaleString('en-US');
 }
 
+function formatCompactInteger(value) {
+  if (value === null || value === undefined || value === '') return '';
+  var number = Number(value);
+  if (!isFinite(number)) return '';
+  if (Math.abs(number) >= 1000000) return (number / 1000000).toFixed(number % 1000000 === 0 ? 0 : 1) + 'M';
+  if (Math.abs(number) >= 1000) return (number / 1000).toFixed(number % 1000 === 0 ? 0 : 1) + 'k';
+  return String(Math.round(number));
+}
+
 function buildTokenSummary(details) {
   if (!details) return '';
 
@@ -583,6 +592,42 @@ function buildTokenSummary(details) {
     parts.push('total ' + formatInteger(details.totalTokens));
   }
   return parts.join(' · ');
+}
+
+function buildTurnTokenChipLabel(details) {
+  if (!details) return '';
+
+  var total = details.totalTokens;
+  if (total === null || total === undefined) {
+    var derived = 0;
+    if (details.inputTokens !== null && details.inputTokens !== undefined) derived += Number(details.inputTokens) || 0;
+    if (details.outputTokens !== null && details.outputTokens !== undefined) derived += Number(details.outputTokens) || 0;
+    if (details.cacheCreationInputTokens !== null && details.cacheCreationInputTokens !== undefined) derived += Number(details.cacheCreationInputTokens) || 0;
+    if (details.cacheReadInputTokens !== null && details.cacheReadInputTokens !== undefined) derived += Number(details.cacheReadInputTokens) || 0;
+    total = derived > 0 ? derived : null;
+  }
+
+  return total !== null && total !== undefined ? formatInteger(total) + ' tk' : '';
+}
+
+function simplifyModelLabel(model) {
+  var normalized = String(model || '').trim();
+  if (!normalized) return '';
+
+  var slashIndex = normalized.lastIndexOf('/');
+  return slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
+}
+
+function buildTurnModelChipLabel(details) {
+  if (!details) return '';
+  if (details.model) return simplifyModelLabel(details.model);
+  if (details.routing && details.routing.handledBy) return details.routing.handledBy;
+  return '';
+}
+
+function buildTurnTierChipLabel(details) {
+  if (!details || !details.routing || !details.routing.tier) return '';
+  return details.routing.tier.toUpperCase();
 }
 
 function normalizeStatusNote(note) {
@@ -641,6 +686,7 @@ function hasTurnDetails(details) {
     details.inputTokens !== null && details.inputTokens !== undefined ||
     details.outputTokens !== null && details.outputTokens !== undefined ||
     details.totalTokens !== null && details.totalTokens !== undefined ||
+    details.routing ||
     details.board ||
     details.messages ||
     details.runs ||
@@ -947,6 +993,14 @@ function renderDetailChip(item) {
     '</button>';
 }
 
+function renderTurnMetaChip(label, modifier) {
+  if (!label) return '';
+
+  return '<span class="turn-meta-chip' + (modifier ? ' turn-meta-chip--' + escapeAttr(modifier) : '') + '">' +
+    escapeHtml(label) +
+    '</span>';
+}
+
 function renderConsoleExpandChip(item) {
   var preview = buildCollapsedConsolePreview(item);
   if (!preview) return '';
@@ -978,6 +1032,9 @@ function renderConsoleItem(item) {
   html += '<div class="turn-header">';
   html += '<div class="turn-role">' + escapeHtml(presentation.label) + '</div>';
   html += '<div class="turn-header-right">';
+  html += renderTurnMetaChip(buildTurnTierChipLabel(item.details), 'tier');
+  html += renderTurnMetaChip(buildTurnModelChipLabel(item.details), 'model');
+  html += renderTurnMetaChip(buildTurnTokenChipLabel(item.details), 'tokens');
   html += renderConsoleExpandChip(item);
   html += renderDetailChip(item);
   html += '<span class="turn-time">' + escapeHtml(formatTime(item.ts || nowISO())) + '</span>';
@@ -1129,6 +1186,8 @@ function openConsoleDetailModal(index) {
   var details = payload.details || {};
   var usageRows = [];
   var contextRows = [];
+  var routingRows = [];
+  var routingTraceRows = [];
   var statusRows = [];
   var tokenSummary = buildTokenSummary(details);
 
@@ -1171,6 +1230,26 @@ function openConsoleDetailModal(index) {
   if (details.runs) {
     contextRows.push('active runs: ' + formatInteger(details.runs.activeCount));
   }
+  if (details.routing) {
+    if (details.routing.tier) routingRows.push('tier: ' + details.routing.tier);
+    if (details.routing.mode) routingRows.push('mode: ' + details.routing.mode);
+    if (details.routing.handledBy) routingRows.push('handled by: ' + details.routing.handledBy);
+    if (details.routing.lane) routingRows.push('lane: ' + details.routing.lane);
+    if (details.routing.fanOutUsed !== null && details.routing.fanOutUsed !== undefined) {
+      routingRows.push('fan-out used: ' + formatInteger(details.routing.fanOutUsed));
+    }
+    if (details.routing.parallelismUsed !== null && details.routing.parallelismUsed !== undefined) {
+      routingRows.push('parallelism used: ' + formatInteger(details.routing.parallelismUsed));
+    }
+    if (details.routing.reusedFreshWorkerOutput !== null && details.routing.reusedFreshWorkerOutput !== undefined) {
+      routingRows.push('reused fresh worker output: ' + (details.routing.reusedFreshWorkerOutput ? 'yes' : 'no'));
+    }
+    if (Array.isArray(details.routing.trace)) {
+      for (var routeIndex = 0; routeIndex < details.routing.trace.length; routeIndex++) {
+        routingTraceRows.push(details.routing.trace[routeIndex]);
+      }
+    }
+  }
 
   if (payload.fullText) {
     statusRows.push(payload.fullText);
@@ -1192,6 +1271,8 @@ function openConsoleDetailModal(index) {
   }
   html += renderDetailSection('Usage', usageRows);
   html += renderDetailSection('Context', contextRows);
+  html += renderDetailSection('Routing', routingRows);
+  html += renderDetailSection('Route Trace', routingTraceRows);
   if (statusRows.length > 0) {
     html += '<section class="turn-detail-section">';
     html += '<div class="turn-detail-section-title">Hidden Ops</div>';
@@ -1501,6 +1582,81 @@ function toggleAgentDropdown() {
 function closeAgentDropdown() {
   var dropdown = document.getElementById('agent-dropdown');
   if (dropdown) dropdown.classList.remove('agent-dropdown--open');
+}
+
+function toggleBudgetDropdown() {
+  var dropdown = document.getElementById('budget-dropdown');
+  if (!dropdown) return;
+  dropdown.classList.toggle('budget-dropdown--open');
+}
+
+function closeBudgetDropdown() {
+  var dropdown = document.getElementById('budget-dropdown');
+  if (dropdown) dropdown.classList.remove('budget-dropdown--open');
+}
+
+function renderBudgetDropdown(snapshot) {
+  var list = document.getElementById('budget-dropdown-list');
+  if (!list) return;
+
+  var usage = snapshot && snapshot.usage ? snapshot.usage : null;
+
+  if (!usage) {
+    list.innerHTML = '<div class="budget-dropdown-empty">No cognition usage yet.</div>';
+    return;
+  }
+
+  var tiers = ['tier3', 'tier2', 'tier1'];
+  var html = '<div class="budget-dropdown-section">';
+  for (var i = 0; i < tiers.length; i++) {
+    var tierKey = tiers[i];
+    var budget = usage.budgets && usage.budgets[tierKey] ? usage.budgets[tierKey] : null;
+    var totals = usage.tiers && usage.tiers[tierKey] ? usage.tiers[tierKey] : null;
+    var limitLabel = budget && budget.tokenLimit
+      ? formatCompactInteger(budget.usedTokens) + '/' + formatCompactInteger(budget.tokenLimit) + ' tk'
+      : formatCompactInteger(totals ? totals.totalTokens : 0) + ' tk';
+    html += '<div class="budget-dropdown-row">';
+    html += '<span class="budget-dropdown-label">' + escapeHtml(tierKey.replace('tier', 'T')) + '</span>';
+    html += '<span class="budget-dropdown-value">' + escapeHtml(limitLabel) + '</span>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  html += '<div class="budget-dropdown-section">';
+  html += '<div class="budget-dropdown-row"><span class="budget-dropdown-label">project</span><span class="budget-dropdown-value">' + escapeHtml(usage.project || '') + '</span></div>';
+  html += '<div class="budget-dropdown-row"><span class="budget-dropdown-label">window</span><span class="budget-dropdown-value">' + escapeHtml(String(usage.windowHours || 24) + 'h') + '</span></div>';
+  html += '<div class="budget-dropdown-row"><span class="budget-dropdown-label">steward wakes</span><span class="budget-dropdown-value">' + escapeHtml(formatInteger(usage.summary && usage.summary.stewardWakes || 0)) + '</span></div>';
+  html += '<div class="budget-dropdown-row"><span class="budget-dropdown-label">worker runs</span><span class="budget-dropdown-value">' + escapeHtml(formatInteger(usage.summary && usage.summary.workerRuns || 0)) + '</span></div>';
+  html += '<div class="budget-dropdown-row"><span class="budget-dropdown-label">tier-1 calls</span><span class="budget-dropdown-value">' + escapeHtml(formatInteger(usage.summary && usage.summary.tier1Calls || 0)) + '</span></div>';
+  html += '<div class="budget-dropdown-row"><span class="budget-dropdown-label">last wake</span><span class="budget-dropdown-value">' + escapeHtml(usage.summary && usage.summary.lastStewardWakeAt ? formatRelativeAge(usage.summary.lastStewardWakeAt) : 'none') + '</span></div>';
+  if (usage.summary && usage.summary.estimatedCostUsd !== null && usage.summary.estimatedCostUsd !== undefined) {
+    html += '<div class="budget-dropdown-row"><span class="budget-dropdown-label">est. cost</span><span class="budget-dropdown-value">$' + escapeHtml(Number(usage.summary.estimatedCostUsd).toFixed(4)) + '</span></div>';
+  }
+  html += '</div>';
+
+  list.innerHTML = html;
+}
+
+function updateBudgetChip(snapshot) {
+  var chip = document.getElementById('budget-chip');
+  var label = chip ? chip.querySelector('.topbar-budget-label') : null;
+  if (!chip || !label) return;
+
+  renderBudgetDropdown(snapshot);
+
+  var usage = snapshot && snapshot.usage ? snapshot.usage : null;
+  var budget = usage && usage.budgets ? usage.budgets.tier3 : null;
+  var status = budget ? budget.status : 'unconfigured';
+  var text = 'T3 \u2014';
+
+  if (usage && budget) {
+    text = budget.tokenLimit
+      ? formatCompactInteger(budget.usedTokens) + '/' + formatCompactInteger(budget.tokenLimit) + ' T3'
+      : formatCompactInteger((usage.tiers && usage.tiers.tier3 ? usage.tiers.tier3.totalTokens : 0)) + ' T3';
+  }
+
+  chip.className = 'topbar-budget topbar-budget--' + status;
+  label.textContent = text;
 }
 
 function refreshAgentOverview() {
@@ -2826,15 +2982,37 @@ function findCognitionLane(policy, runtime) {
   return null;
 }
 
-function formatCognitionLaneSummary(lane, model) {
-  if (!lane) {
+function formatCognitionSelection(runtime, model) {
+  if (!runtime) {
+    return 'No runtime selected.';
+  }
+
+  return model ? runtime + ' (' + model + ')' : runtime + ' (default model)';
+}
+
+function formatCognitionExecutionSummary(execution) {
+  if (!execution) {
     return 'No runtime lane configured.';
   }
 
+  if (execution.mode === 'persistent-pi') {
+    var provider = execution.piRoute && (execution.piRoute.provider || execution.piRoute.providerContext)
+      ? (execution.piRoute.provider || execution.piRoute.providerContext)
+      : 'provider unset';
+    var executedModel = execution.executedModel || 'provider default model';
+
+    return joinMeta([
+      'persistent steward via Pi',
+      (execution.runtime || 'runtime') + ' -> ' + provider,
+      executedModel,
+      execution.piRoute && execution.piRoute.authPolicy ? 'auth ' + execution.piRoute.authPolicy : '',
+    ]);
+  }
+
   return joinMeta([
-    lane.runtime || '',
-    model || '',
-    formatCognitionLaneRoute(lane),
+    'direct runtime',
+    formatCognitionSelection(execution.runtime, execution.executedModel),
+    execution.directAuth ? 'auth ' + execution.directAuth : '',
   ]);
 }
 
@@ -2867,11 +3045,47 @@ function formatTier1LocalStatus(snapshot) {
   return 'unverified';
 }
 
+function formatTier1CloudRoute(label, provider, modelId) {
+  return joinMeta([
+    label || '',
+    provider || '',
+    modelId || '',
+  ]) || 'route unset';
+}
+
+function formatUsageBudgetLabel(budget, totals) {
+  if (!budget) {
+    return formatCompactInteger(totals ? totals.totalTokens : 0) + ' tk';
+  }
+
+  if (budget.tokenLimit) {
+    return formatCompactInteger(budget.usedTokens) + '/' + formatCompactInteger(budget.tokenLimit) + ' tk';
+  }
+
+  return formatCompactInteger(totals ? totals.totalTokens : budget.usedTokens) + ' tk';
+}
+
+function renderCognitionUsageMeter(label, budget, totals) {
+  var used = totals && totals.totalTokens ? totals.totalTokens : 0;
+  var ratio = budget && budget.tokenLimit ? Math.min(1, used / budget.tokenLimit) : 0;
+  var percent = Math.max(3, Math.round(ratio * 100));
+  var tone = budget ? budget.status : 'unconfigured';
+  var html = '<div class="cognition-meter">';
+  html += '<div class="cognition-meter-header">';
+  html += '<div class="cognition-meter-label">' + escapeHtml(label) + '</div>';
+  html += '<div class="cognition-meter-value">' + escapeHtml(formatUsageBudgetLabel(budget, totals)) + '</div>';
+  html += '</div>';
+  html += '<div class="cognition-meter-track"><div class="cognition-meter-fill cognition-meter-fill--' + escapeAttr(tone) + '" style="width:' + percent + '%"></div></div>';
+  html += '</div>';
+  return html;
+}
+
 function renderCognition(snapshot) {
   var container = document.getElementById('cognition-panel');
   if (!container) return;
 
   var policy = snapshot && snapshot.policy ? snapshot.policy : null;
+  updateBudgetChip(snapshot);
 
   if (!policy) {
     container.innerHTML = '<div class="rail-empty">Cognitive routing policy unavailable.</div>';
@@ -2881,23 +3095,25 @@ function renderCognition(snapshot) {
   var activeLane = snapshot && snapshot.activeLane
     ? snapshot.activeLane
     : findCognitionLane(policy, snapshot && snapshot.activeSession ? snapshot.activeSession.runtime : null);
-  var defaultLane = snapshot && snapshot.defaultLane
-    ? snapshot.defaultLane
-    : findCognitionLane(policy, policy.defaultRuntime);
-  var laneLabel = activeLane
-    ? formatCognitionLaneSummary(activeLane, snapshot.activeSession && snapshot.activeSession.model)
-    : defaultLane
-      ? formatCognitionLaneSummary(defaultLane, policy.defaultModel)
-      : 'No default runtime configured.';
-  var laneLabelTitle = activeLane ? 'Current Lane' : 'Default Lane';
+  var execution = snapshot && snapshot.activeExecution
+    ? snapshot.activeExecution
+    : snapshot && snapshot.defaultExecution
+      ? snapshot.defaultExecution
+      : null;
+  var laneLabel = formatCognitionExecutionSummary(execution);
+  var laneLabelTitle = snapshot && snapshot.activeExecution ? 'Current Execution' : 'Default Execution';
+  var selectionLabel = snapshot && snapshot.activeSession
+    ? formatCognitionSelection(snapshot.activeSession.runtime, snapshot.activeSession.model)
+    : formatCognitionSelection(policy.defaultRuntime, policy.defaultModel);
   var activeSessionLabel = snapshot && snapshot.activeSession
     ? joinMeta([
       snapshot.activeSession.project || '',
       snapshot.activeSession.sessionId || '',
-      snapshot.activeSession.model || snapshot.activeSession.runtime || '',
+      'selection ' + selectionLabel,
     ])
-    : 'No default runtime configured.';
+    : 'Default selection · ' + selectionLabel;
   var localModels = snapshot && snapshot.localModels ? snapshot.localModels : null;
+  var usage = snapshot && snapshot.usage ? snapshot.usage : null;
   var discoveredLocalModels = localModels && Array.isArray(localModels.models)
     ? localModels.models
     : [];
@@ -2913,6 +3129,42 @@ function renderCognition(snapshot) {
 
   if (snapshot && snapshot.activeSession) {
     html += '<div class="cognition-context">' + escapeHtml('Live session \u00b7 ' + activeSessionLabel) + '</div>';
+  } else {
+    html += '<div class="cognition-context">' + escapeHtml(activeSessionLabel) + '</div>';
+  }
+
+  if (usage) {
+    html += '<div class="cognition-subsection">';
+    html += '<div class="cognition-subsection-title">Usage (' + escapeHtml(String(usage.windowHours || 24)) + 'h)</div>';
+    html += '<div class="cognition-lane-list">';
+    html += '<div class="cognition-row cognition-row--lane">';
+    html += '<div class="cognition-row-header">';
+    html += '<div class="cognition-row-name">activity</div>';
+    html += '<div class="cognition-row-kicker">' + escapeHtml(usage.project || '') + '</div>';
+    html += '</div>';
+    html += '<div class="cognition-row-body">' + escapeHtml(joinMeta([
+      formatInteger(usage.summary && usage.summary.stewardWakes || 0) + ' steward wakes',
+      formatInteger(usage.summary && usage.summary.workerRuns || 0) + ' worker runs',
+      formatInteger(usage.summary && usage.summary.tier1Calls || 0) + ' tier-1 calls',
+    ])) + '</div>';
+    html += '</div>';
+    html += '<div class="cognition-meter-list">';
+    html += renderCognitionUsageMeter('T3', usage.budgets && usage.budgets.tier3, usage.tiers && usage.tiers.tier3);
+    html += renderCognitionUsageMeter('T2', usage.budgets && usage.budgets.tier2, usage.tiers && usage.tiers.tier2);
+    html += renderCognitionUsageMeter('T1', usage.budgets && usage.budgets.tier1, usage.tiers && usage.tiers.tier1);
+    html += '</div>';
+    html += '<div class="cognition-row cognition-row--lane">';
+    html += '<div class="cognition-row-header">';
+    html += '<div class="cognition-row-name">last wake</div>';
+    html += '<div class="cognition-row-kicker">' + escapeHtml(usage.summary && usage.summary.lastStewardWakeAt ? formatRelativeAge(usage.summary.lastStewardWakeAt) : 'none') + '</div>';
+    html += '</div>';
+    html += '<div class="cognition-row-body">' + escapeHtml(
+      usage.summary && usage.summary.estimatedCostUsd !== null && usage.summary.estimatedCostUsd !== undefined
+        ? 'estimated cost $' + Number(usage.summary.estimatedCostUsd).toFixed(4)
+        : 'estimated cost unavailable'
+    ) + '</div>';
+    html += '</div>';
+    html += '</div></div>';
   }
 
   if (snapshot && snapshot.tier1) {
@@ -2934,7 +3186,22 @@ function renderCognition(snapshot) {
     html += '<div class="cognition-row-name">cloud</div>';
     html += '<div class="cognition-row-kicker">fallback ' + escapeHtml(snapshot.tier1.fallbackModel || '') + '</div>';
     html += '</div>';
-    html += '<div class="cognition-row-body">' + escapeHtml(snapshot.tier1.cloudModel || '') + '</div>';
+    html += '<div class="cognition-row-body">' + escapeHtml(formatTier1CloudRoute(
+      snapshot.tier1.cloudModel,
+      snapshot.tier1.cloudProvider,
+      snapshot.tier1.cloudModelId
+    )) + '</div>';
+    html += '</div>';
+    html += '<div class="cognition-row cognition-row--lane">';
+    html += '<div class="cognition-row-header">';
+    html += '<div class="cognition-row-name">fallback</div>';
+    html += '<div class="cognition-row-kicker">cloud backup</div>';
+    html += '</div>';
+    html += '<div class="cognition-row-body">' + escapeHtml(formatTier1CloudRoute(
+      snapshot.tier1.fallbackModel,
+      snapshot.tier1.fallbackProvider,
+      snapshot.tier1.fallbackModelId
+    )) + '</div>';
     html += '</div>';
     if (localModels && localModels.reason && !localModels.available) {
       html += '<div class="cognition-row cognition-row--lane">';
@@ -3759,6 +4026,16 @@ function setupAgentDropdown() {
   }
 }
 
+function setupBudgetDropdown() {
+  var chip = document.getElementById('budget-chip');
+  if (!chip) return;
+
+  chip.addEventListener('click', function (e) {
+    e.stopPropagation();
+    toggleBudgetDropdown();
+  });
+}
+
 function setupLeadershipActions() {
   var attentionBadge = document.getElementById('attention-badge');
   if (attentionBadge) {
@@ -3880,6 +4157,7 @@ function setupKeyboardShortcuts() {
 function setupGlobalClickHandler() {
   document.addEventListener('click', function () {
     closeAgentDropdown();
+    closeBudgetDropdown();
     closeSessionsDropdown();
   });
 }
@@ -3896,6 +4174,7 @@ async function init() {
 
   // Set up agent dropdown
   setupAgentDropdown();
+  setupBudgetDropdown();
   setupLeadershipActions();
   setupRailTabs();
   setRailTab(state.railTab);
