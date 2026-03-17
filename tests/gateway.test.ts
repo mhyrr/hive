@@ -543,6 +543,18 @@ describe("Gateway REST API", () => {
       activeLane: {
         runtime: string;
       } | null;
+      activeExecution: {
+        mode: string;
+        runtime: string;
+        selectedModel: string | null;
+        executedModel: string | null;
+      } | null;
+      defaultExecution: {
+        mode: string;
+        runtime: string;
+        selectedModel: string | null;
+        executedModel: string | null;
+      } | null;
       tier1: {
         localModel: string;
       };
@@ -551,17 +563,34 @@ describe("Gateway REST API", () => {
         configuredModelStatus: string;
         models: Array<{ name: string }>;
       };
+      usage: {
+        project: string;
+        summary: {
+          stewardWakes: number;
+          workerRuns: number;
+          tier1Calls: number;
+        };
+      } | null;
     };
     expect(data.rendered).toContain("Cognitive routing policy:");
     expect(data.policy.bias).toBe("quality");
     expect(data.policy.maxFanOut).toBe(4);
     expect(data.policy.maxParallel).toBe(3);
     expect(data.rendered).toContain(`active session: ${session.sessionId}`);
+    expect(data.rendered).toContain("session selection: codex (gpt-5-codex)");
+    expect(data.rendered).toContain("current execution: direct runtime | codex (gpt-5-codex) | auth: cli");
     expect(data.activeSession?.runtime).toBe("codex");
     expect(data.activeLane?.runtime).toBe("codex");
+    expect(data.activeExecution?.mode).toBe("direct-runtime");
+    expect(data.activeExecution?.executedModel).toBe("gpt-5-codex");
+    expect(data.defaultExecution?.mode).toBe("direct-runtime");
     expect(data.tier1.localModel).toBe("qwen3:4b");
     expect(data.localModels.available).toBeTrue();
     expect(data.localModels.configuredModelStatus).toBe("available");
+    expect(data.usage?.project).toBe("hive");
+    expect(data.usage?.summary.stewardWakes).toBe(0);
+    expect(data.usage?.summary.workerRuns).toBe(0);
+    expect(data.usage?.summary.tier1Calls).toBe(0);
     expect(data.localModels.models.map((model) => model.name)).toEqual([
       "gemma3:4b",
       "qwen3:4b",
@@ -571,6 +600,48 @@ describe("Gateway REST API", () => {
       lane.piRoute.provider === "openai" &&
       lane.piRoute.model === "gpt-5",
     )).toBeTrue();
+  });
+
+  test("GET /api/cognition surfaces Pi execution for persistent steward sessions", async () => {
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      [
+        "# Hive Config",
+        "",
+        "runtime: codex",
+        "model: gpt-5-codex",
+        "pi-provider-codex: openai",
+        "pi-model-codex: gpt-5",
+      ].join("\n"),
+    );
+    await createSession({
+      sessionsDir: context.paths.sessionsDir,
+      project: "hive",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      systemPrompt: "You are the steward.",
+    });
+    const req = new Request("http://localhost/api/cognition");
+    const res = await handleApi(req, new URL(req.url), {
+      hivePaths: context.paths,
+      projectsDir: context.paths.projectsDir,
+      runsActiveDir: "",
+    }, () => {});
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      rendered: string;
+      activeExecution: {
+        mode: string;
+        executedModel: string | null;
+      } | null;
+    };
+
+    expect(data.activeExecution?.mode).toBe("persistent-pi");
+    expect(data.activeExecution?.executedModel).toBe("gpt-5");
+    expect(data.rendered).toContain("current execution: persistent steward via Pi | codex -> openai | model: gpt-5 | auth: env");
   });
 
   test("GET /api/feed returns feed data", async () => {
@@ -987,6 +1058,144 @@ path: ${context.repo}
     ).toBe(false);
   });
 
+  test("console send answers explicit status checks from deterministic state without waking the steward", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    let workerRun = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "Inspect the failing tests.",
+      source: "gateway-test",
+    });
+    workerRun = await markRunActive(projectPaths, workerRun, 81234);
+    await Bun.write(getRunOutputPath(workerRun), "checking failing specs\n");
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "What's happening right now?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(250);
+
+    const [turns, activeConsoleRun] = await Promise.all([
+      getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId),
+      readActiveRun(projectPaths, "console"),
+    ]);
+
+    const statusTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "system" &&
+      turn.content.includes("Here's what the hive is doing right now:")
+    );
+    expect(statusTurn).toBeDefined();
+    expect(statusTurn?.details?.runtime).toBe("deterministic");
+    expect(statusTurn?.details?.routing?.tier).toBe("tier0");
+    expect(statusTurn?.details?.routing?.handledBy).toBe("deterministic-status");
+    expect(statusTurn?.details?.routing?.lane).toBe("deterministic gateway preprocessor");
+    expect(activeConsoleRun).toBeNull();
+  });
+
+  test("console send uses tier-1 preprocessing for short status-like questions", async () => {
+    await runCli(["init"]);
+    await Bun.write(context.paths.config, "tier1_local: qwen3:4b\n");
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    globalThis.fetch = (async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "http://127.0.0.1:11434/api/tags") {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "qwen3:4b" }],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url === "http://127.0.0.1:11434/api/chat") {
+        const body = JSON.parse(String(init?.body)) as {
+          messages: Array<{ role: string; content: string }>;
+        };
+        expect(body.messages[1]?.content).toContain("Should I be paying attention right now?");
+
+        return new Response(
+          JSON.stringify({
+            message: {
+              content: JSON.stringify({
+                classification: "status_check",
+                answer: "",
+                reason: "This is asking whether current activity needs attention, which can be answered from live state.",
+              }),
+            },
+            prompt_eval_count: 52,
+            eval_count: 21,
+            total_duration: 900_000_000,
+          }),
+          { status: 200 },
+        );
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Should I be paying attention right now?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(250);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    const tier1Turn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "system" &&
+      turn.content.includes("Here's what the hive is doing right now:")
+    );
+
+    expect(tier1Turn).toBeDefined();
+    expect(tier1Turn?.details?.runtime).toBe("ollama");
+    expect(tier1Turn?.details?.model).toBe("qwen3:4b");
+    expect(tier1Turn?.details?.routing?.tier).toBe("tier1");
+    expect(tier1Turn?.details?.routing?.handledBy).toBe("tier1-preprocessor");
+    expect(tier1Turn?.details?.routing?.lane).toBe("tier-1 local via Ollama | model: qwen3:4b");
+  });
+
   test("console send uses the persistent Pi steward when Pi is available", async () => {
     await installMockPi(context.root);
     process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
@@ -1020,17 +1229,98 @@ path: ${context.repo}
       getSessionState(join(context.hiveHome, "sessions"), data.sessionId),
     ]);
 
-    expect(turns.some((turn) =>
+    const modelTurn = turns.find((turn) =>
       turn.role === "assistant" &&
       turn.source === "model" &&
       turn.content.includes("Mock persistent steward reply:")
-    )).toBe(true);
-    expect(turns.some((turn) =>
-      turn.role === "assistant" &&
-      turn.details?.runtime === "pi"
-    )).toBe(true);
+    );
+    expect(modelTurn).toBeDefined();
+    expect(modelTurn?.details?.runtime).toBe("pi");
+    expect(modelTurn?.details?.routing?.tier).toBe("tier3");
+    expect(modelTurn?.details?.routing?.handledBy).toBe("persistent-steward");
+    expect(modelTurn?.details?.routing?.trace[0]).toContain("persistent steward lane");
     expect(activeRun).toBeNull();
     expect(sessionState?.projectStates.testproj?.lastRevisionSeen).toBeGreaterThan(0);
+  });
+
+  test("tier-1 preprocessing falls back to the steward when the question still needs depth", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await Bun.write(context.paths.config, "tier1_local: qwen3:4b\n");
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    let preprocessCalls = 0;
+    globalThis.fetch = (async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "http://127.0.0.1:11434/api/tags") {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "qwen3:4b" }],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url === "http://127.0.0.1:11434/api/chat") {
+        preprocessCalls += 1;
+        return new Response(
+          JSON.stringify({
+            message: {
+              content: JSON.stringify({
+                classification: "complex",
+                answer: "",
+                reason: "Choosing the next refactor needs judgment and planning.",
+              }),
+            },
+            prompt_eval_count: 48,
+            eval_count: 16,
+            total_duration: 850_000_000,
+          }),
+          { status: 200 },
+        );
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Should we tackle the gateway next?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    const modelTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward reply:")
+    );
+
+    expect(preprocessCalls).toBe(1);
+    expect(modelTurn).toBeDefined();
+    expect(modelTurn?.details?.routing?.tier).toBe("tier3");
+    expect(turns.some((turn) => turn.details?.routing?.tier === "tier1")).toBe(false);
   });
 
   test("persistent Pi prefers Anthropic OAuth over API key when both are present", async () => {
@@ -1992,10 +2282,11 @@ path: ${context.repo}
     await Bun.write(getRunOutputPath(run), "Inspecting recent progress\nChecking latest activity\n");
 
     try {
+      const followUpMessage = "take the next step on the current goal";
       const req = new Request("http://localhost/api/console/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "what's happening right now?" }),
+        body: JSON.stringify({ message: followUpMessage }),
       });
       const res = await handleApi(
         req,
@@ -2032,7 +2323,7 @@ path: ${context.repo}
       const messages = await listProjectMessages(context.paths.msgDir, "testproj");
       expect(messages.some((message) =>
         message.attributes.type === "nudge" &&
-        message.body.includes("what's happening right now?")
+        message.body.includes(followUpMessage)
       )).toBe(false);
     } finally {
       try {
@@ -2063,10 +2354,11 @@ path: ${context.repo}
     run = await markRunActive(projectPaths, run, process.pid);
     await Bun.write(getRunOutputPath(run), "Inspecting recent progress\nChecking latest activity\n");
 
+    const followUpMessage = "take the next step on the current goal";
     const req = new Request("http://localhost/api/console/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "what's happening right now?" }),
+      body: JSON.stringify({ message: followUpMessage }),
     });
     const res = await handleApi(
       req,
@@ -2093,7 +2385,7 @@ path: ${context.repo}
       turn.role === "assistant" &&
       turn.details?.statusNotes?.some((note) => note.includes("Queued 1 follow-up message(s) for the live steward"))
     )).toBe(true);
-    expect(sessionState?.pendingTurns.map((item) => item.content)).toContain("what's happening right now?");
+    expect(sessionState?.pendingTurns.map((item) => item.content)).toContain(followUpMessage);
     expect(persistedRun?.stopRequestedAt).toBeNull();
   });
 

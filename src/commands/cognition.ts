@@ -2,6 +2,7 @@ import {
   buildCognitiveRoutingSnapshot,
   renderCognitiveRoutingInspectionSnapshot,
 } from "../lib/cognitive-routing";
+import { refreshProjectCognitiveUsageSnapshot } from "../lib/cognitive-usage";
 import { ensureHiveScaffold } from "../lib/paths";
 import { getActiveSession, getSessionState } from "../lib/sessions";
 
@@ -23,10 +24,19 @@ export async function cognitionCommand(): Promise<string> {
           model: activeSession.model,
         }
       : null,
+    persistentStewardEnabled: process.env.HIVE_ENABLE_PERSISTENT_STEWARD !== "0",
   });
+  const usage = currentProject && currentProject !== "default"
+    ? await refreshProjectCognitiveUsageSnapshot({
+        hivePaths: paths,
+        projectId: currentProject,
+        globalConfig,
+      })
+    : null;
 
   return renderCognitiveRoutingInspectionSnapshot({
     snapshot,
+    usage,
     configPath: paths.config,
     skillsDir: paths.skillsDir,
   });

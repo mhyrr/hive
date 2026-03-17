@@ -44,6 +44,7 @@ beforeEach(async () => {
 afterEach(async () => {
   delete process.env.HIVE_HOME;
   delete process.env.HIVE_FIXED_NOW;
+  delete process.env.HIVE_ENABLE_PERSISTENT_STEWARD;
   globalThis.fetch = originalFetch;
   await rm(context.root, { recursive: true, force: true });
 });
@@ -551,6 +552,7 @@ path: ${context.repo}
 
   test("cognition shows inspectable routing policy and lane map", async () => {
     await initHive();
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
     await Bun.write(
       join(context.hiveHome, "config.md"),
       [
@@ -596,7 +598,8 @@ path: ${context.repo}
     expect(output).toContain("max fan-out: 4");
     expect(output).toContain("max parallel workers: 3");
     expect(output).toContain(`active session: ${session.sessionId}`);
-    expect(output).toContain("current lane: codex (gpt-5-codex)");
+    expect(output).toContain("session selection: codex (gpt-5-codex)");
+    expect(output).toContain("current execution: persistent steward via Pi | codex -> openai | model: gpt-5 | auth: env");
     expect(output).toContain("local model: qwen3:4b");
     expect(output).toContain("configured local status: available");
     expect(output).toContain("discovered local models: gemma3:4b, qwen3:4b");

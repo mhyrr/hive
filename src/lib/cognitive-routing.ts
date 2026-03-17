@@ -6,6 +6,7 @@ import {
   type PiRuntimeRoute,
   type RuntimeAuthPolicy,
 } from "./runtime";
+import type { CognitiveUsageSnapshot } from "./cognitive-usage";
 
 export const COGNITIVE_ROUTING_SKILL_NAME = "cognitive-resource-routing";
 
@@ -51,8 +52,15 @@ export type CognitiveRoutingPolicy = {
 
 export type CognitiveTier1Config = {
   localModel: string;
+  localConfigured: boolean;
   cloudModel: string;
+  cloudConfigured: boolean;
+  cloudProvider: string | null;
+  cloudModelId: string | null;
   fallbackModel: string;
+  fallbackConfigured: boolean;
+  fallbackProvider: string | null;
+  fallbackModelId: string | null;
   ollamaBaseUrl: string;
 };
 
@@ -78,11 +86,24 @@ export type CognitiveSessionContext = {
   model: string | null;
 };
 
+export type CognitiveExecutionMode = "persistent-pi" | "direct-runtime";
+
+export type CognitiveExecutionLane = {
+  mode: CognitiveExecutionMode;
+  runtime: string;
+  selectedModel: string | null;
+  executedModel: string | null;
+  directAuth: RuntimeAuthPolicy;
+  piRoute: PiRuntimeRoute;
+};
+
 export type CognitiveRoutingSnapshot = {
   policy: CognitiveRoutingPolicy;
   activeSession: CognitiveSessionContext | null;
   activeLane: CognitiveRuntimeLane | null;
+  activeExecution: CognitiveExecutionLane | null;
   defaultLane: CognitiveRuntimeLane | null;
+  defaultExecution: CognitiveExecutionLane | null;
   tier1: CognitiveTier1Config;
   localModels: CognitiveLocalModelDiscovery;
 };
@@ -104,6 +125,18 @@ function extractConfigValue(input: string, key: string): string | null {
   const match = input.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
 
   return match ? match[1].trim() : null;
+}
+
+function extractConfigValueAlias(input: string, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = extractConfigValue(input, key);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function normalizeConfigText(value: string | null | undefined): string | null {
@@ -171,6 +204,50 @@ function formatDiscoveryFailure(error: unknown): string {
   }
 
   return "Ollama unavailable";
+}
+
+function resolveTier1CloudRoute(input: {
+  label: string | null;
+  provider: string | null;
+  modelId: string | null;
+}): {
+  provider: string | null;
+  modelId: string | null;
+} {
+  if (input.provider || input.modelId) {
+    return {
+      provider: input.provider,
+      modelId: input.modelId,
+    };
+  }
+
+  const normalized = input.label?.trim().toLowerCase();
+
+  if (normalized === "haiku") {
+    return {
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5-20251001",
+    };
+  }
+
+  if (normalized === "sonnet") {
+    return {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+    };
+  }
+
+  if (normalized === "opus") {
+    return {
+      provider: "anthropic",
+      modelId: "claude-opus-4-1-20250805",
+    };
+  }
+
+  return {
+    provider: null,
+    modelId: null,
+  };
 }
 
 function buildModes(input: {
@@ -262,20 +339,57 @@ export function readCognitiveRoutingPolicy(globalConfig: string): CognitiveRouti
 }
 
 export function readCognitiveTier1Config(globalConfig: string): CognitiveTier1Config {
-  const cloudModel =
-    normalizeConfigText(extractConfigValue(globalConfig, "tier1_cloud")) ??
-    DEFAULT_TIER1_CLOUD_MODEL;
+  const localModelConfig = normalizeConfigText(
+    extractConfigValueAlias(globalConfig, ["tier1_local", "tier1-local"]),
+  );
+  const cloudModelConfig = normalizeConfigText(
+    extractConfigValueAlias(globalConfig, ["tier1_cloud", "tier1-cloud"]),
+  );
+  const fallbackModelConfig = normalizeConfigText(
+    extractConfigValueAlias(globalConfig, ["tier1_fallback", "tier1-fallback"]),
+  );
+  const cloudProviderConfig = normalizeConfigText(
+    extractConfigValueAlias(globalConfig, ["tier1_cloud_provider", "tier1-cloud-provider"]),
+  );
+  const cloudModelIdConfig = normalizeConfigText(
+    extractConfigValueAlias(globalConfig, ["tier1_cloud_model", "tier1-cloud-model"]),
+  );
+  const fallbackProviderConfig = normalizeConfigText(
+    extractConfigValueAlias(globalConfig, ["tier1_fallback_provider", "tier1-fallback-provider"]),
+  );
+  const fallbackModelIdConfig = normalizeConfigText(
+    extractConfigValueAlias(globalConfig, ["tier1_fallback_model", "tier1-fallback-model"]),
+  );
+  const cloudModel = cloudModelConfig ?? DEFAULT_TIER1_CLOUD_MODEL;
+  const fallbackModel = fallbackModelConfig ?? cloudModel;
+  const cloudRoute = resolveTier1CloudRoute({
+    label: cloudModel,
+    provider: cloudProviderConfig,
+    modelId: cloudModelIdConfig,
+  });
+  const fallbackRoute = resolveTier1CloudRoute({
+    label: fallbackModel,
+    provider: fallbackProviderConfig,
+    modelId: fallbackModelIdConfig,
+  });
 
   return {
-    localModel:
-      normalizeConfigText(extractConfigValue(globalConfig, "tier1_local")) ??
-      DEFAULT_TIER1_LOCAL_MODEL,
+    localModel: localModelConfig ?? DEFAULT_TIER1_LOCAL_MODEL,
+    localConfigured: localModelConfig !== null,
     cloudModel,
-    fallbackModel:
-      normalizeConfigText(extractConfigValue(globalConfig, "tier1_fallback")) ??
-      cloudModel,
+    cloudConfigured:
+      cloudModelConfig !== null || cloudProviderConfig !== null || cloudModelIdConfig !== null,
+    cloudProvider: cloudRoute.provider,
+    cloudModelId: cloudRoute.modelId,
+    fallbackModel,
+    fallbackConfigured:
+      fallbackModelConfig !== null ||
+      fallbackProviderConfig !== null ||
+      fallbackModelIdConfig !== null,
+    fallbackProvider: fallbackRoute.provider,
+    fallbackModelId: fallbackRoute.modelId,
     ollamaBaseUrl: normalizeOllamaBaseUrl(
-      extractConfigValue(globalConfig, "ollama-base-url"),
+      extractConfigValueAlias(globalConfig, ["ollama-base-url", "ollama_base_url"]),
     ),
   };
 }
@@ -289,6 +403,59 @@ export function findCognitiveRuntimeLane(
   }
 
   return policy.runtimeLanes.find((lane) => lane.runtime === runtime) ?? null;
+}
+
+function isPersistentStewardEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.HIVE_ENABLE_PERSISTENT_STEWARD !== "0";
+}
+
+function formatRuntimeSelection(
+  runtime: string | null | undefined,
+  model: string | null | undefined,
+): string | null {
+  if (!runtime) {
+    return null;
+  }
+
+  return `${runtime}${model ? ` (${model})` : " (default model)"}`;
+}
+
+function buildCognitiveExecutionLane(input: {
+  lane: CognitiveRuntimeLane | null;
+  selectedModel: string | null | undefined;
+  persistentStewardEnabled: boolean;
+}): CognitiveExecutionLane | null {
+  if (!input.lane) {
+    return null;
+  }
+
+  const selectedModel = normalizeConfigText(input.selectedModel);
+  const usesPi = input.persistentStewardEnabled && Boolean(input.lane.piRoute.provider);
+
+  return {
+    mode: usesPi ? "persistent-pi" : "direct-runtime",
+    runtime: input.lane.runtime,
+    selectedModel,
+    executedModel: usesPi ? input.lane.piRoute.model : selectedModel,
+    directAuth: input.lane.directAuth,
+    piRoute: input.lane.piRoute,
+  };
+}
+
+export function resolveCognitiveExecutionLane(input: {
+  globalConfig: string;
+  runtime: string | null | undefined;
+  selectedModel?: string | null;
+  persistentStewardEnabled?: boolean;
+}): CognitiveExecutionLane | null {
+  const policy = readCognitiveRoutingPolicy(input.globalConfig);
+
+  return buildCognitiveExecutionLane({
+    lane: findCognitiveRuntimeLane(policy, input.runtime),
+    selectedModel: input.selectedModel ?? null,
+    persistentStewardEnabled:
+      input.persistentStewardEnabled ?? isPersistentStewardEnabled(),
+  });
 }
 
 function formatPiRoute(route: PiRuntimeRoute): string {
@@ -310,6 +477,72 @@ function formatPiRoute(route: PiRuntimeRoute): string {
 
 function formatLaneLine(lane: CognitiveRuntimeLane): string {
   return `- ${lane.runtime}: direct auth ${lane.directAuth} | ${formatPiRoute(lane.piRoute)}`;
+}
+
+function formatExecutionSummary(execution: CognitiveExecutionLane | null): string | null {
+  if (!execution) {
+    return null;
+  }
+
+  if (execution.mode === "persistent-pi") {
+    const provider = execution.piRoute.provider ?? execution.piRoute.providerContext ?? "provider unset";
+    const model = execution.executedModel ?? "provider default model";
+    const auth = execution.piRoute.authPolicy ? ` | auth: ${execution.piRoute.authPolicy}` : "";
+
+    return `persistent steward via Pi | ${execution.runtime} -> ${provider} | model: ${model}${auth}`;
+  }
+
+  return `direct runtime | ${formatRuntimeSelection(execution.runtime, execution.executedModel)} | auth: ${execution.directAuth}`;
+}
+
+export function renderCognitiveExecutionSummary(
+  execution: CognitiveExecutionLane | null,
+): string | null {
+  return formatExecutionSummary(execution);
+}
+
+function formatTier1CloudRoute(input: {
+  label: string;
+  provider: string | null;
+  modelId: string | null;
+}): string {
+  if (!input.provider || !input.modelId) {
+    return `${input.label} | route unset`;
+  }
+
+  return `${input.label} | ${input.provider} | ${input.modelId}`;
+}
+
+function appendUsageInspectionLines(lines: string[], usage: CognitiveUsageSnapshot | null | undefined): void {
+  if (!usage) {
+    return;
+  }
+
+  lines.push("");
+  lines.push(`Usage (${usage.windowHours}h):`);
+  lines.push(`  project: ${usage.project}`);
+  lines.push(
+    `  tier-3: ${usage.tiers.tier3.totalTokens} tokens | ${usage.summary.stewardWakes} steward wake(s)`,
+  );
+  lines.push(
+    `  tier-2: ${usage.tiers.tier2.totalTokens} tokens | ${usage.summary.workerRuns} worker run(s)`,
+  );
+  lines.push(
+    `  tier-1: ${usage.tiers.tier1.totalTokens} tokens | ${usage.summary.tier1Calls} call(s)`,
+  );
+  lines.push(
+    `  budget tier-3: ${
+      usage.budgets.tier3.tokenLimit
+        ? `${usage.budgets.tier3.usedTokens}/${usage.budgets.tier3.tokenLimit} (${usage.budgets.tier3.status})`
+        : `${usage.budgets.tier3.usedTokens} (${usage.budgets.tier3.status})`
+    }`,
+  );
+  lines.push(
+    `  estimated cost: ${
+      usage.summary.estimatedCostUsd != null ? `$${usage.summary.estimatedCostUsd.toFixed(4)}` : "(unknown)"
+    }`,
+  );
+  lines.push(`  last steward wake: ${usage.summary.lastStewardWakeAt ?? "(none)"}`);
 }
 
 function normalizeDiscoveredModel(
@@ -454,24 +687,41 @@ function formatLaneSummary(
     return null;
   }
 
-  const runtimeLabel = `${lane.runtime}${model ? ` (${model})` : ""}`;
+  const runtimeLabel = formatRuntimeSelection(lane.runtime, model);
 
-  return `${runtimeLabel} | direct auth ${lane.directAuth} | ${formatPiRoute(lane.piRoute)}`;
+  return runtimeLabel
+    ? `${runtimeLabel} | direct auth ${lane.directAuth} | ${formatPiRoute(lane.piRoute)}`
+    : null;
 }
 
 export async function buildCognitiveRoutingSnapshot(input: {
   globalConfig: string;
   session?: CognitiveSessionContext | null;
+  persistentStewardEnabled?: boolean;
   fetchImpl?: FetchLike;
 }): Promise<CognitiveRoutingSnapshot> {
   const policy = readCognitiveRoutingPolicy(input.globalConfig);
   const tier1 = readCognitiveTier1Config(input.globalConfig);
+  const activeLane = findCognitiveRuntimeLane(policy, input.session?.runtime);
+  const defaultLane = findCognitiveRuntimeLane(policy, policy.defaultRuntime);
+  const persistentStewardEnabled =
+    input.persistentStewardEnabled ?? isPersistentStewardEnabled();
 
   return {
     policy,
     activeSession: input.session ?? null,
-    activeLane: findCognitiveRuntimeLane(policy, input.session?.runtime),
-    defaultLane: findCognitiveRuntimeLane(policy, policy.defaultRuntime),
+    activeLane,
+    activeExecution: buildCognitiveExecutionLane({
+      lane: activeLane,
+      selectedModel: input.session?.model ?? null,
+      persistentStewardEnabled,
+    }),
+    defaultLane,
+    defaultExecution: buildCognitiveExecutionLane({
+      lane: defaultLane,
+      selectedModel: policy.defaultModel,
+      persistentStewardEnabled,
+    }),
     tier1,
     localModels: await discoverLocalModels({
       baseUrl: tier1.ollamaBaseUrl,
@@ -550,6 +800,11 @@ export function renderCognitiveRoutingInspection(input: {
 }): string {
   const policy = readCognitiveRoutingPolicy(input.globalConfig);
   const tier1 = readCognitiveTier1Config(input.globalConfig);
+  const defaultExecution = buildCognitiveExecutionLane({
+    lane: findCognitiveRuntimeLane(policy, policy.defaultRuntime),
+    selectedModel: policy.defaultModel,
+    persistentStewardEnabled: isPersistentStewardEnabled(),
+  });
   const lines: string[] = [
     "Cognitive routing policy:",
     "",
@@ -559,11 +814,20 @@ export function renderCognitiveRoutingInspection(input: {
     `  default model: ${policy.defaultModel ?? "(unset)"}`,
     `  max fan-out: ${policy.maxFanOut}`,
     `  max parallel workers: ${policy.maxParallel}`,
+    `  default execution: ${formatExecutionSummary(defaultExecution) ?? "(unset)"}`,
     "",
     "Tier 1:",
     `  local model: ${tier1.localModel}`,
-    `  cloud model: ${tier1.cloudModel}`,
-    `  fallback model: ${tier1.fallbackModel}`,
+    `  cloud route: ${formatTier1CloudRoute({
+      label: tier1.cloudModel,
+      provider: tier1.cloudProvider,
+      modelId: tier1.cloudModelId,
+    })}`,
+    `  fallback route: ${formatTier1CloudRoute({
+      label: tier1.fallbackModel,
+      provider: tier1.fallbackProvider,
+      modelId: tier1.fallbackModelId,
+    })}`,
     `  ollama base url: ${tier1.ollamaBaseUrl}`,
     "",
     "Modes:",
@@ -599,6 +863,7 @@ export function renderCognitiveRoutingInspection(input: {
 
 export function renderCognitiveRoutingInspectionSnapshot(input: {
   snapshot: CognitiveRoutingSnapshot;
+  usage?: CognitiveUsageSnapshot | null;
   configPath: string;
   skillsDir?: string | null;
 }): string {
@@ -615,35 +880,45 @@ export function renderCognitiveRoutingInspectionSnapshot(input: {
 
   if (input.snapshot.activeSession) {
     lines.push(
-      `  active session: ${input.snapshot.activeSession.sessionId} | project ${input.snapshot.activeSession.project} | runtime ${input.snapshot.activeSession.runtime}${input.snapshot.activeSession.model ? ` (${input.snapshot.activeSession.model})` : ""}`,
+      `  active session: ${input.snapshot.activeSession.sessionId} | project ${input.snapshot.activeSession.project}`,
+    );
+    lines.push(
+      `  session selection: ${
+        formatRuntimeSelection(
+          input.snapshot.activeSession.runtime,
+          input.snapshot.activeSession.model,
+        ) ?? "(unset)"
+      }`,
     );
   } else {
     lines.push("  active session: (none)");
   }
 
-  const activeLaneSummary = formatLaneSummary(
-    input.snapshot.activeLane,
-    input.snapshot.activeSession?.model ?? null,
-  );
+  const activeExecutionSummary = formatExecutionSummary(input.snapshot.activeExecution);
 
-  if (activeLaneSummary) {
-    lines.push(`  current lane: ${activeLaneSummary}`);
+  if (activeExecutionSummary) {
+    lines.push(`  current execution: ${activeExecutionSummary}`);
   }
 
-  const defaultLaneSummary = formatLaneSummary(
-    input.snapshot.defaultLane,
-    input.snapshot.policy.defaultModel,
-  );
+  const defaultExecutionSummary = formatExecutionSummary(input.snapshot.defaultExecution);
 
-  if (defaultLaneSummary) {
-    lines.push(`  default lane: ${defaultLaneSummary}`);
+  if (defaultExecutionSummary) {
+    lines.push(`  default execution: ${defaultExecutionSummary}`);
   }
 
   lines.push("");
   lines.push("Tier 1:");
   lines.push(`  local model: ${input.snapshot.tier1.localModel}`);
-  lines.push(`  cloud model: ${input.snapshot.tier1.cloudModel}`);
-  lines.push(`  fallback model: ${input.snapshot.tier1.fallbackModel}`);
+  lines.push(`  cloud route: ${formatTier1CloudRoute({
+    label: input.snapshot.tier1.cloudModel,
+    provider: input.snapshot.tier1.cloudProvider,
+    modelId: input.snapshot.tier1.cloudModelId,
+  })}`);
+  lines.push(`  fallback route: ${formatTier1CloudRoute({
+    label: input.snapshot.tier1.fallbackModel,
+    provider: input.snapshot.tier1.fallbackProvider,
+    modelId: input.snapshot.tier1.fallbackModelId,
+  })}`);
   lines.push(`  ollama base url: ${input.snapshot.localModels.baseUrl}`);
   lines.push(
     `  local discovery: ${input.snapshot.localModels.available ? "available" : "unavailable"}${input.snapshot.localModels.reason ? ` | ${input.snapshot.localModels.reason}` : ""}`,
@@ -678,6 +953,8 @@ export function renderCognitiveRoutingInspectionSnapshot(input: {
     lines.push(`    direct auth: ${lane.directAuth}`);
     lines.push(`    pi route: ${formatPiRoute(lane.piRoute)}`);
   }
+
+  appendUsageInspectionLines(lines, input.usage ?? null);
 
   if (input.skillsDir) {
     lines.push("");

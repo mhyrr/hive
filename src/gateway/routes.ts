@@ -7,8 +7,11 @@ import { feedCommand } from "../commands/feed";
 import { parseStructuredFeedEntries } from "../lib/feed";
 import {
   buildCognitiveRoutingSnapshot,
+  renderCognitiveExecutionSummary,
   renderCognitiveRoutingInspectionSnapshot,
+  resolveCognitiveExecutionLane,
 } from "../lib/cognitive-routing";
+import { refreshProjectCognitiveUsageSnapshot } from "../lib/cognitive-usage";
 import { inboxCommand } from "../commands/inbox";
 import { logCommand } from "../commands/log";
 import { msgCommand, nudgeCommand } from "../commands/msg";
@@ -70,6 +73,8 @@ import {
 import { UsageError } from "../lib/errors";
 import { listApprovals, type ApprovalRequest } from "../lib/approvals";
 import { listRecentEvents, type EventRecord } from "../lib/events";
+import { preprocessHumanMessage } from "../lib/tier1";
+import { now, toIsoTimestamp } from "../lib/time";
 
 const pendingSessionTurnDrains = new Map<string, Promise<void>>();
 
@@ -368,6 +373,361 @@ function formatRuntimeSelection(runtime: string, model: string | null): string {
   return model ? `${runtime} (${model})` : `${runtime} (default model)`;
 }
 
+type SessionTurnRoutingDetails = NonNullable<SessionTurnDetails["routing"]>;
+
+async function readGatewayGlobalConfig(options: GatewayOptions): Promise<string> {
+  return Bun.file(options.hivePaths.config).text().catch(() => "");
+}
+
+function normalizeRoutingTrace(trace: string[] | undefined): string[] {
+  return [...new Set((trace ?? []).map(normalizeStatusNote).filter(Boolean))];
+}
+
+function buildSessionTurnRouting(input: {
+  tier: SessionTurnRoutingDetails["tier"];
+  mode?: SessionTurnRoutingDetails["mode"];
+  handledBy?: string | null;
+  globalConfig: string;
+  runtime?: string | null;
+  model?: string | null;
+  persistentStewardEnabled?: boolean;
+  laneOverride?: string | null;
+  fanOutUsed?: number | null;
+  parallelismUsed?: number | null;
+  reusedFreshWorkerOutput?: boolean | null;
+  trace?: string[];
+}): SessionTurnRoutingDetails {
+  const execution = resolveCognitiveExecutionLane({
+    globalConfig: input.globalConfig,
+    runtime: input.runtime ?? null,
+    selectedModel: input.model ?? null,
+    persistentStewardEnabled: input.persistentStewardEnabled,
+  });
+
+  return {
+    tier: input.tier,
+    mode: input.mode ?? null,
+    handledBy: input.handledBy ?? null,
+    lane: input.laneOverride?.trim() || renderCognitiveExecutionSummary(execution),
+    fanOutUsed: input.fanOutUsed ?? null,
+    parallelismUsed: input.parallelismUsed ?? null,
+    reusedFreshWorkerOutput: input.reusedFreshWorkerOutput ?? null,
+    trace: normalizeRoutingTrace(input.trace),
+  };
+}
+
+function normalizeConsoleMessageForMatch(message: string): string {
+  return message.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isStatusCheckMessage(message: string): boolean {
+  const normalized = normalizeConsoleMessageForMatch(message);
+
+  return /\b(what's happening|what is happening|what's going on|what is going on|current status|status check|current activity|active agents|anything blocked|what changed in the last run)\b/.test(normalized);
+}
+
+function isTimeQueryMessage(message: string): boolean {
+  const normalized = normalizeConsoleMessageForMatch(message);
+
+  return /\b(what time is it|what's the time|what is the time|current time|what's the date|what is the date|today's date|todays date|current date)\b/.test(normalized);
+}
+
+function isProjectMetaQueryMessage(message: string): boolean {
+  const normalized = normalizeConsoleMessageForMatch(message);
+
+  return /\b(current project|active project|which project|what project)\b/.test(normalized);
+}
+
+function isRuntimeMetaQueryMessage(message: string): boolean {
+  const normalized = normalizeConsoleMessageForMatch(message);
+
+  return /\b(current runtime|current model|current lane|active runtime|active model|which runtime|which model|which lane|what runtime|what model|what lane)\b/.test(normalized);
+}
+
+function renderTier1LaneSummary(input: {
+  provider: string;
+  model: string;
+}): string {
+  if (input.provider === "ollama") {
+    return `tier-1 local via Ollama | model: ${input.model}`;
+  }
+
+  return `tier-1 cloud via ${input.provider} | model: ${input.model}`;
+}
+
+type DirectConsoleResponse = {
+  content: string;
+  source: "system" | "model";
+  details: SessionTurnDetails;
+};
+
+async function resolveDirectConsoleResponse(input: {
+  options: GatewayOptions;
+  project: string;
+  message: string;
+  globalConfig: string;
+  sessionRuntime: string;
+  sessionModel: string | null;
+  persistentStewardEnabled: boolean;
+}): Promise<DirectConsoleResponse | null> {
+  if (!input.project || input.project === "default") {
+    return null;
+  }
+
+  const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
+  const execution = resolveCognitiveExecutionLane({
+    globalConfig: input.globalConfig,
+    runtime: input.sessionRuntime,
+    selectedModel: input.sessionModel,
+    persistentStewardEnabled: input.persistentStewardEnabled,
+  });
+  const selectionSummary = formatRuntimeSelection(input.sessionRuntime, input.sessionModel);
+  let cachedState: ProjectRuntimeState | null = null;
+  let cachedCurrentActivity: { summary: string; state: ProjectRuntimeState } | null = null;
+
+  async function getState(): Promise<ProjectRuntimeState> {
+    if (!cachedState) {
+      cachedState = await refreshProjectRuntimeState({
+        hivePaths: input.options.hivePaths,
+        projectId: input.project,
+        projectPaths,
+      });
+    }
+
+    return cachedState;
+  }
+
+  async function getCurrentActivity(): Promise<{ summary: string; state: ProjectRuntimeState }> {
+    if (!cachedCurrentActivity) {
+      cachedCurrentActivity = await buildCurrentActivitySummary({
+        options: input.options,
+        project: input.project,
+      });
+      cachedState = cachedCurrentActivity.state;
+    }
+
+    return cachedCurrentActivity;
+  }
+
+  if (isTimeQueryMessage(input.message)) {
+    const state = await getState();
+
+    return {
+      content: `Current UTC time: ${toIsoTimestamp(now())}.`,
+      source: "system",
+      details: buildSessionTurnDetails({
+        project: input.project,
+        state,
+        runtime: "deterministic",
+        routing: buildSessionTurnRouting({
+          tier: "tier0",
+          mode: "direct-answer",
+          handledBy: "deterministic-time",
+          globalConfig: input.globalConfig,
+          runtime: input.sessionRuntime,
+          model: input.sessionModel,
+          persistentStewardEnabled: input.persistentStewardEnabled,
+          laneOverride: "deterministic gateway preprocessor",
+          fanOutUsed: 0,
+          parallelismUsed: 1,
+          trace: [
+            "The gateway handled an obvious time/date query before waking the steward.",
+            "No model was invoked because the answer came from deterministic local time.",
+          ],
+        }),
+      }),
+    };
+  }
+
+  if (isProjectMetaQueryMessage(input.message)) {
+    const state = await getState();
+
+    return {
+      content: `Current project focus: ${input.project}.`,
+      source: "system",
+      details: buildSessionTurnDetails({
+        project: input.project,
+        state,
+        runtime: "deterministic",
+        routing: buildSessionTurnRouting({
+          tier: "tier0",
+          mode: "direct-answer",
+          handledBy: "deterministic-project-meta",
+          globalConfig: input.globalConfig,
+          runtime: input.sessionRuntime,
+          model: input.sessionModel,
+          persistentStewardEnabled: input.persistentStewardEnabled,
+          laneOverride: "deterministic gateway preprocessor",
+          fanOutUsed: 0,
+          parallelismUsed: 1,
+          trace: [
+            "The gateway answered a session metadata query before waking the steward.",
+            "No model was invoked because the answer came from current session state.",
+          ],
+        }),
+      }),
+    };
+  }
+
+  if (isRuntimeMetaQueryMessage(input.message)) {
+    const state = await getState();
+
+    return {
+      content: [
+        `Session selection: ${selectionSummary}.`,
+        `Current execution: ${renderCognitiveExecutionSummary(execution)}.`,
+      ].join("\n"),
+      source: "system",
+      details: buildSessionTurnDetails({
+        project: input.project,
+        state,
+        runtime: "deterministic",
+        routing: buildSessionTurnRouting({
+          tier: "tier0",
+          mode: "direct-answer",
+          handledBy: "deterministic-runtime-meta",
+          globalConfig: input.globalConfig,
+          runtime: input.sessionRuntime,
+          model: input.sessionModel,
+          persistentStewardEnabled: input.persistentStewardEnabled,
+          laneOverride: "deterministic gateway preprocessor",
+          fanOutUsed: 0,
+          parallelismUsed: 1,
+          trace: [
+            "The gateway answered a runtime/model query from current session routing state.",
+            "No model was invoked because the answer came from the active cognitive route map.",
+          ],
+        }),
+      }),
+    };
+  }
+
+  if (isStatusCheckMessage(input.message)) {
+    const currentActivity = await getCurrentActivity();
+
+    return {
+      content: currentActivity.summary,
+      source: "system",
+      details: buildSessionTurnDetails({
+        project: input.project,
+        state: currentActivity.state,
+        runtime: "deterministic",
+        routing: buildSessionTurnRouting({
+          tier: "tier0",
+          mode: "direct-answer",
+          handledBy: "deterministic-status",
+          globalConfig: input.globalConfig,
+          runtime: input.sessionRuntime,
+          model: input.sessionModel,
+          persistentStewardEnabled: input.persistentStewardEnabled,
+          laneOverride: "deterministic gateway preprocessor",
+          fanOutUsed: 0,
+          parallelismUsed: 1,
+          trace: [
+            "The gateway recognized an explicit status check before waking the steward.",
+            "The reply came from live derived state and current activity, not from a model turn.",
+          ],
+        }),
+      }),
+    };
+  }
+
+  const currentActivity = await getCurrentActivity();
+  const recentResult = currentActivity.state.recentResultsSummary.items[0] ?? null;
+  const compactContext = [
+    `project: ${input.project}`,
+    `session-selection: ${selectionSummary}`,
+    `current-execution: ${renderCognitiveExecutionSummary(execution)}`,
+    `current-time-utc: ${toIsoTimestamp(now())}`,
+    `active-runs: ${currentActivity.state.activeRunsSummary.count}`,
+    `open-human-items: ${currentActivity.state.humanInboxSummary.pendingHumanReplies}`,
+    recentResult ? `recent-result: ${summarizeRecentResult(recentResult)}` : "recent-result: none",
+    "",
+    "current-activity:",
+    currentActivity.summary,
+  ].join("\n");
+
+  const preprocessed = await preprocessHumanMessage({
+    globalConfig: input.globalConfig,
+    message: input.message,
+    compactContext,
+  });
+
+  if (!preprocessed || preprocessed.classification === "complex" || preprocessed.classification === "directive") {
+    return null;
+  }
+
+  if (preprocessed.classification === "status_check") {
+    return {
+      content: currentActivity.summary,
+      source: "system",
+      details: buildSessionTurnDetails({
+        project: input.project,
+        state: currentActivity.state,
+        runtime: preprocessed.provider,
+        model: preprocessed.model,
+        authMode: "unknown",
+        durationMs: preprocessed.durationMs,
+        inputTokens: preprocessed.inputTokens,
+        outputTokens: preprocessed.outputTokens,
+        totalTokens: preprocessed.totalTokens,
+        routing: buildSessionTurnRouting({
+          tier: "tier1",
+          mode: "direct-answer",
+          handledBy: "tier1-preprocessor",
+          globalConfig: input.globalConfig,
+          runtime: input.sessionRuntime,
+          model: input.sessionModel,
+          persistentStewardEnabled: input.persistentStewardEnabled,
+          laneOverride: renderTier1LaneSummary(preprocessed),
+          fanOutUsed: 0,
+          parallelismUsed: 1,
+          trace: [
+            "A conservative tier-1 preprocessor classified the message as a status check.",
+            preprocessed.reason || "The gateway answered from compact live state without waking the steward.",
+          ],
+        }),
+      }),
+    };
+  }
+
+  if (preprocessed.classification === "simple_query" && preprocessed.answer.trim()) {
+    return {
+      content: preprocessed.answer.trim(),
+      source: "model",
+      details: buildSessionTurnDetails({
+        project: input.project,
+        state: currentActivity.state,
+        runtime: preprocessed.provider,
+        model: preprocessed.model,
+        authMode: "unknown",
+        durationMs: preprocessed.durationMs,
+        inputTokens: preprocessed.inputTokens,
+        outputTokens: preprocessed.outputTokens,
+        totalTokens: preprocessed.totalTokens,
+        routing: buildSessionTurnRouting({
+          tier: "tier1",
+          mode: "direct-answer",
+          handledBy: "tier1-preprocessor",
+          globalConfig: input.globalConfig,
+          runtime: input.sessionRuntime,
+          model: input.sessionModel,
+          persistentStewardEnabled: input.persistentStewardEnabled,
+          laneOverride: renderTier1LaneSummary(preprocessed),
+          fanOutUsed: 0,
+          parallelismUsed: 1,
+          trace: [
+            "A conservative tier-1 preprocessor answered the message directly from compact context.",
+            preprocessed.reason || "The steward was not woken because extra depth was unlikely to change the answer.",
+          ],
+        }),
+      }),
+    };
+  }
+
+  return null;
+}
+
 function renderSlashCommandHelp(input: {
   currentProject: string;
   currentRuntime: string;
@@ -415,12 +775,14 @@ function buildSessionTurnDetails(input: {
   cacheCreationInputTokens?: number | null;
   cacheReadInputTokens?: number | null;
   totalTokens?: number | null;
+  routing?: SessionTurnDetails["routing"];
   statusNotes?: string[];
 }): SessionTurnDetails {
   const uniqueNotes = [...new Set((input.statusNotes ?? []).map(normalizeStatusNote).filter(Boolean))];
 
   return {
     project: input.project,
+    recordedAt: null,
     runId: input.runId ?? null,
     runtime: input.runtime ?? null,
     model: input.model ?? null,
@@ -448,6 +810,7 @@ function buildSessionTurnDetails(input: {
     runs: {
       activeCount: input.state.activeRunsSummary.count,
     },
+    routing: input.routing ?? null,
     statusNotes: uniqueNotes.length > 0 ? uniqueNotes : null,
   };
 }
@@ -1664,6 +2027,7 @@ async function continueQueuedWorkflow(input: {
   statusNotes?: string[];
 }): Promise<void> {
   const firedAt = new Date().toISOString();
+  const globalConfig = await readGatewayGlobalConfig(input.options);
   const statusNotes = [...(input.statusNotes ?? [])];
 
   try {
@@ -1705,6 +2069,9 @@ async function continueQueuedWorkflow(input: {
   const announcedAssignmentFiles = new Set<string>();
   const announcedWorkerRuns = new Set<string>();
   let announcedOrchestratorRun = false;
+  let totalAssignments = 0;
+  let totalWorkerRuns = 0;
+  let maxParallelWorkers = 0;
   const deadline = Date.now() + 180_000;
   let lastKnownState: ProjectRuntimeState | null = null;
 
@@ -1743,6 +2110,7 @@ async function continueQueuedWorkflow(input: {
       for (const message of freshAssignments) {
         announcedAssignmentFiles.add(message.filename);
       }
+      totalAssignments += freshAssignments.length;
 
       const recipients = [
         ...new Set(freshAssignments.map((message) => message.attributes.to ?? "unknown")),
@@ -1778,6 +2146,11 @@ async function continueQueuedWorkflow(input: {
       for (const run of freshWorkerRuns) {
         announcedWorkerRuns.add(run.runId);
       }
+      totalWorkerRuns += freshWorkerRuns.length;
+      maxParallelWorkers = Math.max(
+        maxParallelWorkers,
+        activeRuns.filter((run) => run.agentId !== "orchestrator" && run.agentId !== "console").length,
+      );
 
       const workers = freshWorkerRuns.map((run) =>
         run.taskId ? `${run.agentId} on ${run.taskId}` : run.agentId,
@@ -1833,7 +2206,28 @@ async function continueQueuedWorkflow(input: {
             outputTokens: finalResult.outputTokens,
             cacheCreationInputTokens: finalResult.cacheCreationInputTokens,
             cacheReadInputTokens: finalResult.cacheReadInputTokens,
-            totalTokens: finalResult.totalTokens,
+          totalTokens: finalResult.totalTokens,
+            routing: buildSessionTurnRouting({
+              tier: "tier2",
+              mode: totalWorkerRuns > 1 ? "plural-synthesis" : "targeted-inspection",
+              handledBy: "background-coordination",
+              globalConfig,
+              runtime: finalRun?.runtime ?? null,
+              model: finalRun?.model ?? null,
+              persistentStewardEnabled: false,
+              fanOutUsed: totalAssignments > 0 ? totalAssignments : totalWorkerRuns,
+              parallelismUsed: maxParallelWorkers > 0 ? maxParallelWorkers : null,
+              reusedFreshWorkerOutput: false,
+              trace: [
+                "Message was routed through background coordination instead of the live steward path.",
+                announcedOrchestratorRun
+                  ? "A disposable orchestrator pass synthesized the final reply."
+                  : "No persistent steward lane was used for this reply.",
+                totalWorkerRuns > 0
+                  ? `Observed ${totalWorkerRuns} worker run(s) during coordination.`
+                  : "No fresh worker runs were observed before the orchestrator replied.",
+              ],
+            }),
             statusNotes,
           }),
         });
@@ -1863,6 +2257,27 @@ async function continueQueuedWorkflow(input: {
           cacheCreationInputTokens: finalResult.cacheCreationInputTokens,
           cacheReadInputTokens: finalResult.cacheReadInputTokens,
           totalTokens: finalResult.totalTokens,
+          routing: buildSessionTurnRouting({
+            tier: "tier2",
+            mode: totalWorkerRuns > 1 ? "plural-synthesis" : "targeted-inspection",
+            handledBy: "background-coordination",
+            globalConfig,
+            runtime: finalRun?.runtime ?? null,
+            model: finalRun?.model ?? null,
+            persistentStewardEnabled: false,
+            fanOutUsed: totalAssignments > 0 ? totalAssignments : totalWorkerRuns,
+            parallelismUsed: maxParallelWorkers > 0 ? maxParallelWorkers : null,
+            reusedFreshWorkerOutput: false,
+            trace: [
+              "Message was routed through background coordination instead of the live steward path.",
+              announcedOrchestratorRun
+                ? "A disposable orchestrator pass synthesized the final reply."
+                : "No persistent steward lane was used for this reply.",
+              totalWorkerRuns > 0
+                ? `Observed ${totalWorkerRuns} worker run(s) during coordination.`
+                : "The orchestrator replied without launching new workers.",
+            ],
+          }),
           statusNotes,
         }),
       });
@@ -1891,12 +2306,62 @@ async function continueQueuedWorkflow(input: {
     details: buildSessionTurnDetails({
       project: input.project,
       state: lastKnownState,
+      routing: buildSessionTurnRouting({
+        tier: "tier2",
+        mode: totalWorkerRuns > 1 ? "plural-synthesis" : "targeted-inspection",
+        handledBy: "background-coordination",
+        globalConfig,
+        persistentStewardEnabled: false,
+        fanOutUsed: totalAssignments > 0 ? totalAssignments : totalWorkerRuns,
+        parallelismUsed: maxParallelWorkers > 0 ? maxParallelWorkers : null,
+        reusedFreshWorkerOutput: false,
+        trace: [
+          "Message remains in background coordination because no final reply was ready before the timeout window.",
+          totalWorkerRuns > 0
+            ? `Observed ${totalWorkerRuns} worker run(s) still in flight.`
+            : "The orchestrator has not emitted a final visible reply yet.",
+        ],
+      }),
       statusNotes,
     }),
   });
 }
 
 async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Promise<void> {
+  const globalConfig = await readGatewayGlobalConfig(input.options);
+  const sessionMeta = await getSession(input.options.hivePaths.sessionsDir, input.sessionId);
+  const sessionRuntime = sessionMeta?.runtime ?? "claude";
+  const sessionModel = sessionMeta?.model ?? null;
+  const persistentStewardEnabled = process.env.HIVE_ENABLE_PERSISTENT_STEWARD !== "0";
+  const directResponse = await resolveDirectConsoleResponse({
+    options: input.options,
+    project: input.project,
+    message: input.message,
+    globalConfig,
+    sessionRuntime,
+    sessionModel,
+    persistentStewardEnabled,
+  });
+
+  if (directResponse) {
+    await appendSessionTurnAndBroadcast({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+      project: input.project,
+      role: "assistant",
+      content: directResponse.content,
+      source: directResponse.source,
+      details: directResponse.details,
+    });
+    void schedulePendingSessionTurnDrain({
+      options: input.options,
+      broadcast: input.broadcast,
+      sessionId: input.sessionId,
+    });
+    return;
+  }
+
   if (!input.project || input.project === "default") {
     return;
   }
@@ -2012,6 +2477,23 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
         runId: existingConsoleRun.runId,
         runtime: existingConsoleRun.runtime,
         model: existingConsoleRun.model,
+        routing: buildSessionTurnRouting({
+          tier: "tier3",
+          mode: null,
+          handledBy: "live-direct-steward",
+          globalConfig,
+          runtime: existingConsoleRun.runtime,
+          model: existingConsoleRun.model,
+          persistentStewardEnabled: false,
+          fanOutUsed: 0,
+          parallelismUsed: 1,
+          trace: [
+            "A live direct steward run was already active, so the new message was queued behind it.",
+            canPreempt
+              ? "The existing direct steward run was asked to stop so the queued follow-up can restart cleanly."
+              : "The active steward run kept ownership of the lane.",
+          ],
+        }),
         statusNotes,
       }),
     });
@@ -2025,7 +2507,7 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
 
   let streamedReply = "";
 
-  if (process.env.HIVE_ENABLE_PERSISTENT_STEWARD !== "0") {
+  if (persistentStewardEnabled) {
     if (isPersistentStewardTurnActive({
       hivePaths: input.options.hivePaths,
       sessionId: input.sessionId,
@@ -2087,6 +2569,24 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
           project: input.project,
           state: currentActivity.state,
           runtime: "pi",
+          model: sessionModel,
+          routing: buildSessionTurnRouting({
+            tier: "tier3",
+            mode: null,
+            handledBy: "live-persistent-steward",
+            globalConfig,
+            runtime: sessionRuntime,
+            model: sessionModel,
+            persistentStewardEnabled: true,
+            fanOutUsed: 0,
+            parallelismUsed: 1,
+            trace: [
+              "A live persistent steward turn was already active, so the new message was queued behind it.",
+              aborted
+                ? "The active persistent turn was asked to abort so the queued follow-up can restart."
+                : "The active persistent steward kept ownership of the lane.",
+            ],
+          }),
           statusNotes,
         }),
       });
@@ -2162,6 +2662,23 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
             cacheCreationInputTokens: persistent.usage.cacheCreationInputTokens,
             cacheReadInputTokens: persistent.usage.cacheReadInputTokens,
             totalTokens: persistent.usage.totalTokens,
+            routing: buildSessionTurnRouting({
+              tier: "tier3",
+              mode: "direct-answer",
+              handledBy: "persistent-steward",
+              globalConfig,
+              runtime: sessionRuntime,
+              model: sessionModel,
+              persistentStewardEnabled: true,
+              fanOutUsed: 0,
+              parallelismUsed: 1,
+              reusedFreshWorkerOutput: false,
+              trace: [
+                "The message was routed to the persistent steward lane.",
+                "Pi handled the turn using the configured steward runtime route.",
+                "No separate tier-1 or worker pre-router intercepted the message before the steward.",
+              ],
+            }),
             statusNotes,
           }),
         });
@@ -2263,6 +2780,20 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
           details: buildSessionTurnDetails({
             project: input.project,
             state: currentActivity.state,
+            routing: buildSessionTurnRouting({
+              tier: "tier3",
+              mode: null,
+              handledBy: "queued-direct-steward",
+              globalConfig,
+              runtime: sessionRuntime,
+              model: sessionModel,
+              persistentStewardEnabled: false,
+              fanOutUsed: 0,
+              parallelismUsed: 1,
+              trace: [
+                "The direct steward lane was busy, so the message was queued behind the current live steward turn.",
+              ],
+            }),
             statusNotes,
           }),
         });
@@ -2331,6 +2862,22 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
           cacheCreationInputTokens: direct.result.metadata?.cacheCreationInputTokens ?? null,
           cacheReadInputTokens: direct.result.metadata?.cacheReadInputTokens ?? null,
           totalTokens: direct.result.metadata?.totalTokens ?? null,
+          routing: buildSessionTurnRouting({
+            tier: "tier3",
+            mode: "direct-answer",
+            handledBy: "direct-steward",
+            globalConfig,
+            runtime: direct.finalRun.runtime,
+            model: direct.finalRun.model,
+            persistentStewardEnabled: false,
+            fanOutUsed: 0,
+            parallelismUsed: 1,
+            reusedFreshWorkerOutput: false,
+            trace: [
+              "The persistent steward lane was unavailable or bypassed, so the direct steward runtime handled the turn.",
+              "This reply came from a disposable direct steward run rather than the long-lived Pi session.",
+            ],
+          }),
           statusNotes,
         }),
       });
@@ -2350,11 +2897,11 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
       role: "assistant",
       content: "The direct turn finished without a visible reply.",
       source: "system",
-      details: buildSessionTurnDetails({
-        project: input.project,
-        state: finalState,
-        runId: direct.finalRun.runId,
-        runtime: direct.finalRun.runtime,
+        details: buildSessionTurnDetails({
+          project: input.project,
+          state: finalState,
+          runId: direct.finalRun.runId,
+          runtime: direct.finalRun.runtime,
         model: direct.finalRun.model,
         authMode: direct.result.metadata?.authMode ?? null,
         durationMs: direct.result.metadata?.durationMs ?? null,
@@ -2362,12 +2909,27 @@ async function continueConsoleWorkflow(input: ContinueConsoleWorkflowInput): Pro
         costUsd: direct.result.metadata?.costUsd ?? null,
         inputTokens: direct.result.metadata?.inputTokens ?? null,
         outputTokens: direct.result.metadata?.outputTokens ?? null,
-        cacheCreationInputTokens: direct.result.metadata?.cacheCreationInputTokens ?? null,
-        cacheReadInputTokens: direct.result.metadata?.cacheReadInputTokens ?? null,
-        totalTokens: direct.result.metadata?.totalTokens ?? null,
-        statusNotes,
-      }),
-    });
+          cacheCreationInputTokens: direct.result.metadata?.cacheCreationInputTokens ?? null,
+          cacheReadInputTokens: direct.result.metadata?.cacheReadInputTokens ?? null,
+          totalTokens: direct.result.metadata?.totalTokens ?? null,
+          routing: buildSessionTurnRouting({
+            tier: "tier3",
+            mode: "direct-answer",
+            handledBy: "direct-steward",
+            globalConfig,
+            runtime: direct.finalRun.runtime,
+            model: direct.finalRun.model,
+            persistentStewardEnabled: false,
+            fanOutUsed: 0,
+            parallelismUsed: 1,
+            reusedFreshWorkerOutput: false,
+            trace: [
+              "The direct steward runtime completed the turn but did not emit a visible reply.",
+            ],
+          }),
+          statusNotes,
+        }),
+      });
     void schedulePendingSessionTurnDrain({
       options: input.options,
       broadcast: input.broadcast,
@@ -2607,7 +3169,7 @@ const getRoutes: Record<string, RouteHandler> = {
 
   "/api/cognition": async (_req, _url, options, _broadcast) => {
     try {
-      const globalConfig = await Bun.file(options.hivePaths.config).text().catch(() => "");
+      const globalConfig = await readGatewayGlobalConfig(options);
       const sessionsDir = join(options.hivePaths.home, "sessions");
       const activeSession = await getActiveSession(sessionsDir);
       const currentProject = activeSession
@@ -2627,17 +3189,29 @@ const getRoutes: Record<string, RouteHandler> = {
               model: activeSession.model,
             }
           : null,
+        persistentStewardEnabled: process.env.HIVE_ENABLE_PERSISTENT_STEWARD !== "0",
       });
+      const usage = currentProject && currentProject !== "default"
+        ? await refreshProjectCognitiveUsageSnapshot({
+            hivePaths: options.hivePaths,
+            projectId: currentProject,
+            globalConfig,
+          })
+        : null;
 
       return jsonOk({
         policy: snapshot.policy,
         activeSession: snapshot.activeSession,
         activeLane: snapshot.activeLane,
+        activeExecution: snapshot.activeExecution,
         defaultLane: snapshot.defaultLane,
+        defaultExecution: snapshot.defaultExecution,
         tier1: snapshot.tier1,
         localModels: snapshot.localModels,
+        usage,
         rendered: renderCognitiveRoutingInspectionSnapshot({
           snapshot,
+          usage,
           configPath: options.hivePaths.config,
           skillsDir: options.hivePaths.skillsDir,
         }),
