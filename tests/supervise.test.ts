@@ -13,6 +13,7 @@ import {
   listRecentRunResults,
   markRunActive,
   markRunStopRequested,
+  writeRunResult,
 } from "../src/lib/runs";
 
 type TestContext = {
@@ -325,6 +326,15 @@ Recover stale runs.
 Task: Keep the board current.
 `,
     );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
+      `# Board: MyProject
+
+## Agents
+- orchestrator | status: idle | role: steward
+- alpha | status: idle | role: worker
+`,
+    );
 
     const paths = await ensureHiveScaffold();
     const projectPaths = getProjectPaths(paths, "myproject");
@@ -388,5 +398,97 @@ Task: Keep the board current.
     expect(recoveredBeta?.status).toBe("cancelled");
     expect(alphaResult?.gitSummaryLines[0]).toContain("no longer alive");
     expect(betaResult?.finalVisibleOutput).toContain("cancelled run");
+  });
+
+  test("diff triage suppresses routine worker results before waking the steward", async () => {
+    await installFakeCodex();
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Keep routine test churn from waking the steward.
+
+## Agents
+### orchestrator (steward)
+Task: Keep the board current.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
+      `# Board: MyProject
+
+## Agents
+- orchestrator | status: idle | role: steward
+- alpha | status: idle | role: worker
+`,
+    );
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:04:00Z";
+    let stewardRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "orchestrator",
+      runtime: "codex",
+      model: null,
+      prompt: "# Steward Prompt",
+      source: "hive supervise",
+      scope: null,
+    });
+
+    stewardRun = await finalizeRun({
+      projectPaths,
+      run: stewardRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:05:00Z";
+    let alphaRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: null,
+      prompt: "# Alpha Prompt",
+      source: "hive launch",
+      scope: ["tests"],
+    });
+
+    alphaRun = await finalizeRun({
+      projectPaths,
+      run: alphaRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    await writeRunResult(alphaRun, {
+      changedFiles: ["tests/state.test.ts"],
+      gitSummaryLines: ["M tests/state.test.ts"],
+      finalVisibleOutput: "Updated the regression coverage.",
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:05:30Z";
+    const output = await runCli(["supervise", "--once"]);
+    const allRuns = await listAllRuns(projectPaths);
+    const orchestratorRuns = allRuns.filter((run) => run.agentId === "orchestrator");
+
+    expect(output).toContain("Decision: no action");
+    expect(output).toContain("Diff Triage");
+    expect(output).toContain("alpha | routine");
+    expect(orchestratorRuns).toHaveLength(1);
   });
 });

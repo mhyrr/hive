@@ -1,5 +1,17 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { mkdir, readdir } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
+
+import {
+  getModels,
+  Type,
+  getEnvApiKey,
+  getModel,
+  type AssistantMessage,
+  type KnownProvider,
+  type Tool,
+} from "@mariozechner/pi-ai";
+import { Agent, ProviderTransport } from "@mariozechner/pi-agent";
 
 import { renderCognitiveRoutingPromptPolicy } from "./cognitive-routing";
 import { UsageError } from "./errors";
@@ -7,6 +19,7 @@ import { loadPromptMemoryContext } from "./memory";
 import { HivePaths, ProjectPaths, getProjectPaths } from "./paths";
 import { extractRepoPath } from "./project";
 import { resolvePiRuntimeRoute } from "./runtime";
+import { isPiModelSupported, isPiProviderSupported } from "./pi";
 import {
   getProjectSessionState,
   getSession,
@@ -42,48 +55,6 @@ type PiMessage = {
       total?: number;
     };
   };
-};
-
-type PiModelState = {
-  provider?: string;
-  id?: string;
-};
-
-type PiSessionState = {
-  model?: PiModelState | null;
-  isStreaming?: boolean;
-  pendingMessageCount?: number;
-  messageCount?: number;
-  sessionFile?: string | null;
-  sessionId?: string | null;
-};
-
-type PiSessionStats = {
-  sessionId?: string;
-  assistantMessages?: number;
-  userMessages?: number;
-  tokens?: {
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-    total?: number;
-  };
-  cost?: number;
-};
-
-type PiResponseEnvelope = {
-  id?: string;
-  type?: string;
-  command?: string;
-  success?: boolean;
-  data?: unknown;
-  error?: string;
-};
-
-type PiCommandResult = {
-  command: string;
-  data: unknown;
 };
 
 type DeltaHistoryEntry = {
@@ -126,20 +97,12 @@ type ActivePersistentTurn = {
   latestAssistantText: string;
   lastEmittedText: string;
   abortRequested: boolean;
-  agentRunStarted: boolean;
-  agentRunCompleted: boolean;
-  retryPending: boolean;
   lastEventAt: number;
   completedAt: number | null;
   lastAssistantError: string | null;
   finalError: string | null;
-};
-
-type PendingPiCommand = {
-  command: string;
-  timeout: ReturnType<typeof setTimeout>;
-  resolve: (value: PiCommandResult) => void;
-  reject: (error: Error) => void;
+  abortController: AbortController | null;
+  outputChain: Promise<void>;
 };
 
 type PersistentStewardHandle = {
@@ -148,16 +111,23 @@ type PersistentStewardHandle = {
   sessionId: string;
   repoPath: string;
   runtimeSignature: string;
-  process: ChildProcessWithoutNullStreams;
-  stdoutBuffer: string;
-  stderrBuffer: string[];
-  pendingCommands: Map<string, PendingPiCommand>;
-  commandCounter: number;
-  ready: Promise<void>;
+  provider: string;
+  modelId: string;
+  systemPrompt: string;
+  authPolicy: "oauth-only" | "env" | null;
+  agent: Agent;
   bootstrapped: boolean;
   activeTurn: ActivePersistentTurn | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
   disposed: boolean;
+};
+
+type PersistentStewardTool = Tool & {
+  execute: (
+    toolCallId: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => Promise<string>;
 };
 
 type PersistentUsageSummary = {
@@ -187,11 +157,10 @@ export type PersistentStewardTurnResult =
 
 const persistentStewardHandles = new Map<string, PersistentStewardHandle>();
 
-const PI_READY_TIMEOUT_MS = 10_000;
-const PI_COMMAND_TIMEOUT_MS = 15_000;
 const PI_TURN_TIMEOUT_MS = 300_000;
 const PI_IDLE_MS = 600_000;
-const PI_TURN_SETTLE_GRACE_MS = 250;
+const PI_TOOL_OUTPUT_MAX_CHARS = 12_000;
+const PI_BASH_TIMEOUT_MS = 20_000;
 
 function getHandleKey(hiveHome: string, sessionId: string): string {
   return `${hiveHome}:${sessionId}`;
@@ -199,16 +168,6 @@ function getHandleKey(hiveHome: string, sessionId: string): string {
 
 function normalizeInlineText(value: string): string {
   return value.replace(/\r\n/g, "\n").trim();
-}
-
-function truncate(value: string, max = 220): string {
-  const normalized = normalizeInlineText(value).replace(/\s+/g, " ");
-
-  if (normalized.length <= max) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, max - 1).trimEnd()}…`;
 }
 
 function extractPiMessageText(message: unknown): string {
@@ -347,12 +306,11 @@ function renderDeltaHistory(deltaHistory: DeltaHistoryEntry[], lastSeenRevision:
     .join("\n\n");
 }
 
-function describePiModel(model: PiModelState | null | undefined): string | null {
-  if (!model?.provider || !model.id) {
-    return null;
-  }
-
-  return `${model.provider}/${model.id}`;
+function describePiModel(input: {
+  provider: string;
+  modelId: string;
+}): string {
+  return `${input.provider}/${input.modelId}`;
 }
 
 function buildPersistentStewardSystemPrompt(input: {
@@ -592,65 +550,6 @@ async function loadPersistentStewardContext(input: {
   };
 }
 
-function buildPiLaunchArgs(input: {
-  sessionFile: string;
-  provider: string | null;
-  piModel: string | null;
-  systemPrompt: string;
-}): string[] {
-  const args = [
-    "--mode",
-    "rpc",
-    "--session",
-    input.sessionFile,
-    "--system-prompt",
-    input.systemPrompt,
-    "--tools",
-    "read,bash,edit,write,grep,find,ls",
-    "--no-extensions",
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--offline",
-  ];
-
-  if (input.provider) {
-    args.push("--provider", input.provider);
-  }
-
-  if (input.piModel) {
-    args.push("--model", input.piModel);
-  }
-
-  return args;
-}
-
-function buildPiProcessEnv(
-  baseEnv: NodeJS.ProcessEnv,
-  input: {
-    localAgentDir?: string | null;
-    providerContext?: string | null;
-    authPolicy?: "oauth-only" | "env" | null;
-  },
-): NodeJS.ProcessEnv {
-  const env = {
-    ...baseEnv,
-  };
-
-  // Make the Anthropic lane explicit for Pi. Claude-oriented persistent turns
-  // should use OAuth/subscription unless the policy explicitly allows raw env
-  // credentials through.
-  if (input.providerContext === "anthropic" && input.authPolicy === "oauth-only") {
-    delete env.ANTHROPIC_API_KEY;
-  }
-
-  if (input.localAgentDir) {
-    env.PI_CODING_AGENT_DIR = input.localAgentDir;
-  }
-
-  return env;
-}
-
 function clearIdleTimer(handle: PersistentStewardHandle): void {
   if (handle.idleTimer) {
     clearTimeout(handle.idleTimer);
@@ -673,302 +572,365 @@ function scheduleIdleShutdown(handle: PersistentStewardHandle): void {
   }, idleMs);
 }
 
-function rejectPendingCommand(command: PendingPiCommand, error: Error): void {
-  clearTimeout(command.timeout);
-  command.reject(error);
+type PersistentStewardRuntimeConfig = {
+  provider: string;
+  modelId: string;
+  authPolicy: "oauth-only" | "env" | null;
+  runtimeSignature: string;
+};
+
+type PersistentStewardExecutionContext = {
+  hiveHome: string;
+  repoPath: string;
+  allowedRoots: string[];
+};
+
+function isWithinRoot(path: string, root: string): boolean {
+  const relation = relative(root, path);
+
+  return relation === "" || (!relation.startsWith("..") && relation !== "");
 }
 
-function rejectAllPending(handle: PersistentStewardHandle, error: Error): void {
-  for (const pending of handle.pendingCommands.values()) {
-    rejectPendingCommand(pending, error);
-  }
-  handle.pendingCommands.clear();
+function getAllowedRoots(input: {
+  hiveHome: string;
+  repoPath: string;
+}): string[] {
+  return [...new Set([resolve(input.repoPath), resolve(input.hiveHome)])];
 }
 
-function shouldRetryWithLocalAgentDir(error: Error): boolean {
-  return /settings\.json\.lock/i.test(error.message) && /EPERM|EACCES|permission/i.test(error.message);
-}
-
-function handlePiLine(handle: PersistentStewardHandle, line: string): void {
-  const trimmed = line.trim();
+function resolveStewardPath(
+  execution: PersistentStewardExecutionContext,
+  requestedPath: string,
+  cwd = execution.repoPath,
+): string {
+  const trimmed = requestedPath.trim();
 
   if (!trimmed) {
-    return;
+    throw new Error("A non-empty path is required.");
   }
 
-  let parsed: unknown;
+  const candidate = resolve(cwd, trimmed);
 
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return;
+  if (!execution.allowedRoots.some((root) => isWithinRoot(candidate, root))) {
+    throw new Error(`Path escapes the steward workspace: ${candidate}`);
   }
 
-  const envelope = parsed as PiResponseEnvelope;
+  return candidate;
+}
 
-  if (envelope.type === "response") {
-    const id = typeof envelope.id === "string" ? envelope.id : null;
+function normalizeMultilineText(value: string): string {
+  return value.replace(/\r\n/g, "\n").trim();
+}
 
-    if (!id) {
-      return;
+function truncateToolOutput(value: string, maxChars = PI_TOOL_OUTPUT_MAX_CHARS): string {
+  const normalized = normalizeMultilineText(value);
+
+  if (!normalized) {
+    return "(empty)";
+  }
+
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const headLength = Math.max(200, Math.floor((maxChars - 40) / 2));
+  const tailLength = Math.max(120, maxChars - headLength - 40);
+
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    "",
+    "[... steward tool output truncated ...]",
+    "",
+    normalized.slice(-tailLength).trimStart(),
+  ].join("\n");
+}
+
+function countMatches(text: string, needle: string): number {
+  if (!needle) {
+    return 0;
+  }
+
+  let count = 0;
+  let cursor = 0;
+
+  while (true) {
+    const matchIndex = text.indexOf(needle, cursor);
+
+    if (matchIndex === -1) {
+      return count;
     }
 
-    const pending = handle.pendingCommands.get(id);
-
-    if (!pending) {
-      return;
-    }
-
-    handle.pendingCommands.delete(id);
-    clearTimeout(pending.timeout);
-
-    if (envelope.success) {
-      pending.resolve({
-        command: pending.command,
-        data: envelope.data,
-      });
-    } else {
-      pending.reject(new Error(envelope.error || `Pi command failed: ${pending.command}`));
-    }
-    return;
-  }
-
-  if (!handle.activeTurn) {
-    return;
-  }
-
-  const turn = handle.activeTurn;
-  noteActiveTurnEvent(turn);
-
-  if (envelope.type === "agent_start") {
-    turn.agentRunStarted = true;
-    turn.agentRunCompleted = false;
-    turn.completedAt = null;
-    return;
-  }
-
-  if (envelope.type === "agent_end") {
-    const messages = Array.isArray((envelope as { messages?: unknown }).messages)
-      ? ((envelope as { messages?: unknown[] }).messages ?? [])
-      : [];
-
-    for (const message of messages) {
-      if (message && typeof message === "object" && (message as { role?: string }).role === "assistant") {
-        observeAssistantMessage(turn, message, true);
-      }
-    }
-
-    turn.agentRunCompleted = true;
-    turn.completedAt = Date.now();
-    return;
-  }
-
-  if (envelope.type === "auto_retry_start") {
-    const errorMessage =
-      typeof (envelope as { errorMessage?: unknown }).errorMessage === "string"
-        ? normalizeInlineText((envelope as { errorMessage?: string }).errorMessage || "")
-        : "";
-
-    turn.retryPending = true;
-    turn.agentRunCompleted = false;
-    turn.completedAt = null;
-
-    if (errorMessage) {
-      turn.lastAssistantError = errorMessage;
-    }
-
-    return;
-  }
-
-  if (envelope.type === "auto_retry_end") {
-    const retrySucceeded = (envelope as { success?: unknown }).success === true;
-    const finalError =
-      typeof (envelope as { finalError?: unknown }).finalError === "string"
-        ? normalizeInlineText((envelope as { finalError?: string }).finalError || "")
-        : "";
-
-    turn.retryPending = false;
-
-    if (retrySucceeded) {
-      turn.lastAssistantError = null;
-      turn.finalError = null;
-    } else if (finalError) {
-      turn.finalError = finalError;
-    }
-
-    return;
-  }
-
-  if (envelope.type === "turn_end") {
-    const message = (envelope as { message?: unknown }).message;
-
-    if (
-      message &&
-      typeof message === "object" &&
-      (message as { role?: string }).role === "assistant"
-    ) {
-      observeAssistantMessage(turn, message, true);
-    }
-
-    return;
-  }
-
-  if (
-    (envelope.type === "message_update" || envelope.type === "message_end") &&
-    envelope &&
-    typeof envelope === "object" &&
-    "message" in envelope
-  ) {
-    const message = (envelope as { message?: unknown }).message;
-
-    if (
-      message &&
-      typeof message === "object" &&
-      (message as { role?: string }).role === "assistant"
-    ) {
-      observeAssistantMessage(turn, message, envelope.type === "message_end");
-    }
+    count += 1;
+    cursor = matchIndex + needle.length;
   }
 }
 
-function wirePersistentStewardStreams(handle: PersistentStewardHandle): void {
-  handle.process.stdout.on("data", (chunk) => {
-    handle.stdoutBuffer += chunk.toString();
+async function runCommand(input: {
+  command: string;
+  args: string[];
+  cwd: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+    let timedOut = false;
+    let aborted = false;
+    let timeoutKiller: ReturnType<typeof setTimeout> | null = null;
+    const child = spawn(input.command, input.args, {
+      cwd: input.cwd,
+      env: {
+        ...process.env,
+        HIVE_HOME: process.env.HIVE_HOME ?? undefined,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
 
-    while (true) {
-      const newlineIndex = handle.stdoutBuffer.indexOf("\n");
+    const cleanup = () => {
+      if (timeoutKiller) {
+        clearTimeout(timeoutKiller);
+      }
+      clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", onAbort);
+    };
 
-      if (newlineIndex === -1) {
-        break;
+    const finish = (fn: () => void) => {
+      if (settled) {
+        return;
       }
 
-      const line = handle.stdoutBuffer.slice(0, newlineIndex);
-      handle.stdoutBuffer = handle.stdoutBuffer.slice(newlineIndex + 1);
-      handlePiLine(handle, line);
-    }
-  });
+      settled = true;
+      cleanup();
+      fn();
+    };
 
-  handle.process.stderr.on("data", (chunk) => {
-    const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
+    const requestKill = () => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Ignore process cleanup failures.
+      }
 
-    handle.stderrBuffer.push(...lines.map((line) => truncate(line, 500)));
+      timeoutKiller = setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Ignore process cleanup failures.
+        }
+      }, 150);
+    };
 
-    if (handle.stderrBuffer.length > 20) {
-      handle.stderrBuffer.splice(0, handle.stderrBuffer.length - 20);
-    }
-  });
+    const onAbort = () => {
+      aborted = true;
+      requestKill();
+    };
 
-  const onExit = (event: "close" | "error", detail: string): void => {
-    if (handle.disposed) {
-      return;
-    }
-
-    handle.disposed = true;
-    clearIdleTimer(handle);
-    rejectAllPending(
-      handle,
-      new Error(`Pi steward process ${event}d: ${detail}${handle.stderrBuffer.length ? `\n${handle.stderrBuffer.join("\n")}` : ""}`),
-    );
-    persistentStewardHandles.delete(handle.key);
-  };
-
-  handle.process.once("error", (error) => {
-    onExit("error", error.message);
-  });
-
-  handle.process.once("close", (code, signal) => {
-    onExit("close", `code ${code ?? "null"}${signal ? `, signal ${signal}` : ""}`);
-  });
-}
-
-async function sendPiCommand(
-  handle: PersistentStewardHandle,
-  input: {
-    type: string;
-    payload?: Record<string, unknown>;
-    timeoutMs?: number;
-  },
-): Promise<PiCommandResult> {
-  if (handle.disposed) {
-    throw new Error("Pi steward process is not available.");
-  }
-
-  const id = `cmd-${++handle.commandCounter}`;
-  const timeoutMs = input.timeoutMs ?? PI_COMMAND_TIMEOUT_MS;
-
-  const command = {
-    id,
-    type: input.type,
-    ...(input.payload ?? {}),
-  };
-
-  const result = await new Promise<PiCommandResult>((resolve, reject) => {
     const timeout = setTimeout(() => {
-      handle.pendingCommands.delete(id);
-      reject(new Error(`Timed out waiting for Pi command: ${input.type}`));
-    }, timeoutMs);
+      timedOut = true;
+      requestKill();
+    }, input.timeoutMs);
 
-    handle.pendingCommands.set(id, {
-      command: input.type,
-      timeout,
-      resolve,
-      reject,
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
     });
 
-    try {
-      handle.process.stdin.write(`${JSON.stringify(command)}\n`);
-    } catch (error) {
-      handle.pendingCommands.delete(id);
-      clearTimeout(timeout);
-      reject(error instanceof Error ? error : new Error(String(error)));
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.once("error", (error) => {
+      finish(() => {
+        rejectPromise(error);
+      });
+    });
+
+    child.once("close", (code) => {
+      finish(() => {
+        if (aborted) {
+          rejectPromise(new Error("The steward command was aborted."));
+          return;
+        }
+
+        if (timedOut) {
+          rejectPromise(new Error(`The steward command timed out after ${input.timeoutMs}ms.`));
+          return;
+        }
+
+        resolvePromise({
+          stdout,
+          stderr,
+          exitCode: code,
+        });
+      });
+    });
+  });
+}
+
+async function renderDirectoryTree(input: {
+  rootPath: string;
+  depth: number;
+  includeHidden: boolean;
+  maxEntries: number;
+}): Promise<string> {
+  const lines: string[] = [];
+  let emitted = 0;
+
+  const walk = async (currentPath: string, currentDepth: number, prefix: string): Promise<void> => {
+    if (emitted >= input.maxEntries || currentDepth < 0) {
+      return;
     }
-  });
 
-  return result;
+    let entries = await readdir(currentPath, { withFileTypes: true });
+    entries = entries
+      .filter((entry) => input.includeHidden || !entry.name.startsWith("."))
+      .sort((left, right) => {
+        if (left.isDirectory() && !right.isDirectory()) {
+          return -1;
+        }
+
+        if (!left.isDirectory() && right.isDirectory()) {
+          return 1;
+        }
+
+        return left.name.localeCompare(right.name);
+      });
+
+    for (const entry of entries) {
+      if (emitted >= input.maxEntries) {
+        lines.push(`${prefix}…`);
+        return;
+      }
+
+      emitted += 1;
+      lines.push(`${prefix}${entry.isDirectory() ? `${entry.name}/` : entry.name}`);
+
+      if (entry.isDirectory() && currentDepth > 0) {
+        await walk(join(currentPath, entry.name), currentDepth - 1, `${prefix}  `);
+      }
+    }
+  };
+
+  try {
+    await readdir(input.rootPath);
+  } catch {
+    return input.rootPath;
+  }
+
+  await walk(input.rootPath, input.depth, "");
+  return lines.length > 0 ? lines.join("\n") : "(empty)";
 }
 
-async function getPiState(handle: PersistentStewardHandle): Promise<PiSessionState> {
-  const response = await sendPiCommand(handle, {
-    type: "get_state",
-    timeoutMs: PI_COMMAND_TIMEOUT_MS,
-  });
+async function runNameSearch(input: {
+  rootPath: string;
+  query: string;
+  type: "file" | "dir" | "any";
+  maxResults: number;
+}): Promise<string[]> {
+  const matches: string[] = [];
+  const normalizedQuery = input.query.trim().toLowerCase();
 
-  return (response.data ?? {}) as PiSessionState;
+  const walk = async (currentPath: string): Promise<void> => {
+    if (matches.length >= input.maxResults) {
+      return;
+    }
+
+    const entries = await readdir(currentPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (matches.length >= input.maxResults) {
+        return;
+      }
+
+      if (entry.name.startsWith(".")) {
+        continue;
+      }
+
+      const nextPath = join(currentPath, entry.name);
+      const kind =
+        entry.isDirectory()
+          ? "dir"
+          : entry.isFile()
+            ? "file"
+            : "any";
+      const relativePath = relative(input.rootPath, nextPath) || entry.name;
+      const matchesKind = input.type === "any" || input.type === kind;
+      const matchesQuery =
+        !normalizedQuery ||
+        relativePath.toLowerCase().includes(normalizedQuery) ||
+        entry.name.toLowerCase().includes(normalizedQuery);
+
+      if (matchesKind && matchesQuery) {
+        matches.push(relativePath);
+      }
+
+      if (entry.isDirectory()) {
+        await walk(nextPath);
+      }
+    }
+  };
+
+  await walk(input.rootPath);
+  return matches;
 }
 
-async function getPiSessionStats(handle: PersistentStewardHandle): Promise<PiSessionStats> {
-  const response = await sendPiCommand(handle, {
-    type: "get_session_stats",
-    timeoutMs: PI_COMMAND_TIMEOUT_MS,
-  });
+function resolvePiApiKey(
+  provider: string,
+  input: {
+    authPolicy: "oauth-only" | "env" | null;
+  },
+): string | undefined {
+  if (provider === "anthropic" && input.authPolicy === "oauth-only") {
+    return process.env.ANTHROPIC_OAUTH_TOKEN?.trim() || undefined;
+  }
 
-  return (response.data ?? {}) as PiSessionStats;
+  const apiKey = getEnvApiKey(provider);
+  return typeof apiKey === "string" && apiKey.trim() ? apiKey : undefined;
 }
 
-async function getPiLastAssistantText(handle: PersistentStewardHandle): Promise<string> {
-  const response = await sendPiCommand(handle, {
-    type: "get_last_assistant_text",
-    timeoutMs: PI_COMMAND_TIMEOUT_MS,
-  });
-  const data = (response.data ?? {}) as { text?: unknown };
+function resolvePersistentStewardModel(input: {
+  provider: string;
+  configuredModel: string | null;
+  sessionModel: string | null;
+}): string {
+  if (input.configuredModel) {
+    if (!isPiModelSupported(input.provider, input.configuredModel)) {
+      throw new UsageError(
+        `Configured Pi model '${input.configuredModel}' is not supported for provider '${input.provider}'.`,
+      );
+    }
 
-  return typeof data.text === "string" ? data.text.trim() : "";
+    return input.configuredModel;
+  }
+
+  if (input.sessionModel && isPiModelSupported(input.provider, input.sessionModel)) {
+    return input.sessionModel;
+  }
+
+  const fallback = getModels(input.provider as KnownProvider)[0]?.id ?? null;
+
+  if (!fallback) {
+    throw new UsageError(`No Pi model is available for provider '${input.provider}'.`);
+  }
+
+  return fallback;
 }
 
-async function startPersistentStewardHandle(input: {
-  hivePaths: HivePaths;
-  sessionId: string;
-  repoPath: string;
+function resolvePersistentStewardRuntime(input: {
+  globalConfig: string;
   runtime: string;
-  model: string | null;
-  systemPrompt: string;
-  localAgentDir?: string | null;
-}): Promise<PersistentStewardHandle> {
-  const sessionFile = join(input.hivePaths.sessionsDir, input.sessionId, "pi-session.jsonl");
-  const command = process.env.HIVE_PI_COMMAND?.trim() || "pi";
-  const globalConfig = await Bun.file(input.hivePaths.config).text().catch(() => "");
+  sessionModel: string | null;
+  repoPath: string;
+}): PersistentStewardRuntimeConfig {
   const piRoute = resolvePiRuntimeRoute({
-    globalConfig,
+    globalConfig: input.globalConfig,
     runtime: input.runtime,
   });
 
@@ -978,72 +940,555 @@ async function startPersistentStewardHandle(input: {
     );
   }
 
-  const args = buildPiLaunchArgs({
-    sessionFile,
+  if (!isPiProviderSupported(piRoute.provider)) {
+    throw new UsageError(`Pi provider '${piRoute.provider}' is not supported in-process.`);
+  }
+
+  const modelId = resolvePersistentStewardModel({
     provider: piRoute.provider,
-    piModel: piRoute.model,
-    systemPrompt: input.systemPrompt,
+    configuredModel: piRoute.model,
+    sessionModel: input.sessionModel,
   });
-  const runtimeSignature = [
-    input.runtime,
-    input.model ?? "",
-    piRoute.provider ?? "",
-    piRoute.model ?? "",
-    piRoute.authPolicy ?? "",
-    input.repoPath,
-  ].join(":");
-  const env = buildPiProcessEnv(process.env, {
-    localAgentDir: input.localAgentDir,
-    providerContext: piRoute.providerContext,
+
+  return {
+    provider: piRoute.provider,
+    modelId,
     authPolicy: piRoute.authPolicy,
-  });
+    runtimeSignature: [
+      input.runtime,
+      modelId,
+      piRoute.provider,
+      piRoute.authPolicy ?? "",
+      input.repoPath,
+    ].join(":"),
+  };
+}
 
-  const processHandle = spawn(command, args, {
-    cwd: input.repoPath,
-    env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+function buildPersistentStewardTools(input: {
+  hiveHome: string;
+  repoPath: string;
+}): PersistentStewardTool[] {
+  const execution: PersistentStewardExecutionContext = {
+    hiveHome: input.hiveHome,
+    repoPath: input.repoPath,
+    allowedRoots: getAllowedRoots({
+      hiveHome: input.hiveHome,
+      repoPath: input.repoPath,
+    }),
+  };
 
+  return [
+    {
+      name: "read",
+      description: "Read a file from the repo or HIVE home. Use absolute paths when possible.",
+      parameters: Type.Object({
+        path: Type.String(),
+        startLine: Type.Optional(Type.Integer({ minimum: 1 })),
+        endLine: Type.Optional(Type.Integer({ minimum: 1 })),
+      }),
+      async execute(_toolCallId, args) {
+        const path = resolveStewardPath(execution, String(args.path ?? ""));
+        const file = Bun.file(path);
+
+        if (!(await file.exists())) {
+          throw new Error(`File not found: ${path}`);
+        }
+
+        const text = (await file.text()).replace(/\r\n/g, "\n");
+        const lines = text.split("\n");
+        const startLine = Math.min(lines.length || 1, Math.max(1, Number(args.startLine ?? 1)));
+        const defaultEnd = Math.min(lines.length || startLine, startLine + 199);
+        const endLine = Math.min(
+          lines.length || startLine,
+          Math.max(startLine, Number(args.endLine ?? defaultEnd)),
+        );
+        const selected = lines
+          .slice(startLine - 1, endLine)
+          .map((line, index) => `${startLine + index}| ${line}`);
+
+        return truncateToolOutput(
+          [`path: ${path}`, `lines: ${startLine}-${endLine} of ${lines.length}`, "", selected.join("\n")].join("\n"),
+        );
+      },
+    },
+    {
+      name: "write",
+      description: "Write a full file in the repo or HIVE home. This overwrites existing content.",
+      parameters: Type.Object({
+        path: Type.String(),
+        content: Type.String(),
+      }),
+      async execute(_toolCallId, args) {
+        const path = resolveStewardPath(execution, String(args.path ?? ""));
+        const content = String(args.content ?? "");
+
+        await mkdir(dirname(path), { recursive: true });
+        await Bun.write(path, content);
+
+        return `Wrote ${content.length} bytes to ${path}.`;
+      },
+    },
+    {
+      name: "edit",
+      description: "Edit an existing file by replacing exact text. Set replaceAll true only when every match should change.",
+      parameters: Type.Object({
+        path: Type.String(),
+        oldText: Type.String(),
+        newText: Type.String(),
+        replaceAll: Type.Optional(Type.Boolean()),
+      }),
+      async execute(_toolCallId, args) {
+        const path = resolveStewardPath(execution, String(args.path ?? ""));
+        const oldText = String(args.oldText ?? "");
+        const newText = String(args.newText ?? "");
+        const replaceAll = args.replaceAll === true;
+        const file = Bun.file(path);
+
+        if (!(await file.exists())) {
+          throw new Error(`File not found: ${path}`);
+        }
+
+        if (!oldText) {
+          throw new Error("edit requires a non-empty oldText.");
+        }
+
+        const current = await file.text();
+        const matches = countMatches(current, oldText);
+
+        if (matches === 0) {
+          throw new Error(`oldText was not found in ${path}.`);
+        }
+
+        if (matches > 1 && !replaceAll) {
+          throw new Error(
+            `oldText matched ${matches} times in ${path}. Set replaceAll: true or provide a more specific snippet.`,
+          );
+        }
+
+        const next = replaceAll
+          ? current.split(oldText).join(newText)
+          : current.replace(oldText, newText);
+
+        await Bun.write(path, next);
+
+        return `Edited ${path} (${replaceAll ? `${matches} replacements` : "1 replacement"}).`;
+      },
+    },
+    {
+      name: "ls",
+      description: "List files or directories beneath a path.",
+      parameters: Type.Object({
+        path: Type.Optional(Type.String()),
+        depth: Type.Optional(Type.Integer({ minimum: 0, maximum: 6 })),
+        includeHidden: Type.Optional(Type.Boolean()),
+      }),
+      async execute(_toolCallId, args) {
+        const path = resolveStewardPath(execution, String(args.path ?? execution.repoPath));
+        const tree = await renderDirectoryTree({
+          rootPath: path,
+          depth: Number(args.depth ?? 2),
+          includeHidden: args.includeHidden === true,
+          maxEntries: 160,
+        });
+
+        return truncateToolOutput([`path: ${path}`, "", tree].join("\n"));
+      },
+    },
+    {
+      name: "find",
+      description: "Find files or directories by name substring.",
+      parameters: Type.Object({
+        path: Type.Optional(Type.String()),
+        query: Type.Optional(Type.String()),
+        type: Type.Optional(Type.Union([
+          Type.Literal("file"),
+          Type.Literal("dir"),
+          Type.Literal("any"),
+        ])),
+        maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+      }),
+      async execute(_toolCallId, args) {
+        const path = resolveStewardPath(execution, String(args.path ?? execution.repoPath));
+        const matches = await runNameSearch({
+          rootPath: path,
+          query: typeof args.query === "string" ? args.query : "",
+          type:
+            args.type === "file" || args.type === "dir" || args.type === "any"
+              ? args.type
+              : "any",
+          maxResults: Number(args.maxResults ?? 40),
+        });
+
+        return truncateToolOutput(
+          [`path: ${path}`, "", matches.length > 0 ? matches.join("\n") : "(no matches)"].join("\n"),
+        );
+      },
+    },
+    {
+      name: "grep",
+      description: "Search file contents with ripgrep. Use this before broad reads when you only need a few facts.",
+      parameters: Type.Object({
+        pattern: Type.String(),
+        path: Type.Optional(Type.String()),
+        contextLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 6 })),
+        maxMatches: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+      }),
+      async execute(_toolCallId, args, signal) {
+        const pattern = String(args.pattern ?? "").trim();
+
+        if (!pattern) {
+          throw new Error("grep requires a non-empty pattern.");
+        }
+
+        const path = resolveStewardPath(execution, String(args.path ?? execution.repoPath));
+        const result = await runCommand({
+          command: "rg",
+          args: [
+            "-n",
+            "--hidden",
+            "--no-heading",
+            "--color",
+            "never",
+            "-C",
+            String(Number(args.contextLines ?? 1)),
+            "--max-count",
+            String(Number(args.maxMatches ?? 40)),
+            pattern,
+            path,
+          ],
+          cwd: execution.repoPath,
+          timeoutMs: PI_BASH_TIMEOUT_MS,
+          signal,
+        }).catch(async (error) => {
+          if (!(error instanceof Error) || !/ENOENT/i.test(error.message)) {
+            throw error;
+          }
+
+          return runCommand({
+            command: "grep",
+            args: ["-R", "-n", pattern, path],
+            cwd: execution.repoPath,
+            timeoutMs: PI_BASH_TIMEOUT_MS,
+            signal,
+          });
+        });
+
+        if (result.exitCode === 1 && !result.stdout.trim()) {
+          return "(no matches)";
+        }
+
+        return truncateToolOutput(result.stdout || result.stderr || `(exit ${result.exitCode ?? "unknown"})`);
+      },
+    },
+    {
+      name: "bash",
+      description: "Run a shell command from the repo or HIVE home when reading or editing files alone is not enough.",
+      parameters: Type.Object({
+        command: Type.String(),
+        cwd: Type.Optional(Type.String()),
+        timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: PI_BASH_TIMEOUT_MS })),
+      }),
+      async execute(_toolCallId, args, signal) {
+        const command = String(args.command ?? "").trim();
+
+        if (!command) {
+          throw new Error("bash requires a non-empty command.");
+        }
+
+        const cwd = args.cwd
+          ? resolveStewardPath(execution, String(args.cwd), execution.repoPath)
+          : execution.repoPath;
+        const result = await runCommand({
+          command: "/bin/sh",
+          args: ["-lc", command],
+          cwd,
+          timeoutMs: Number(args.timeoutMs ?? PI_BASH_TIMEOUT_MS),
+          signal,
+        });
+
+        return truncateToolOutput(
+          [
+            `cwd: ${cwd}`,
+            `exit: ${result.exitCode ?? "unknown"}`,
+            result.stdout.trim() ? `stdout:\n${result.stdout.trimEnd()}` : "",
+            result.stderr.trim() ? `stderr:\n${result.stderr.trimEnd()}` : "",
+          ].filter(Boolean).join("\n\n"),
+        );
+      },
+    },
+  ];
+}
+
+function summarizePersistentUsage(input: {
+  generatedMessages: unknown[];
+  durationMs: number;
+}): PersistentUsageSummary {
+  const assistants = input.generatedMessages.filter(
+    (message): message is AssistantMessage =>
+      Boolean(message) &&
+      typeof message === "object" &&
+      (message as { role?: string }).role === "assistant",
+  );
+  let costUsd = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheCreationInputTokens = 0;
+  let cacheReadInputTokens = 0;
+  let totalTokens = 0;
+  let sawCost = false;
+  let sawInput = false;
+  let sawOutput = false;
+  let sawCacheCreation = false;
+  let sawCacheRead = false;
+  let sawTotal = false;
+
+  for (const message of assistants) {
+    if (typeof message.usage?.cost?.total === "number") {
+      costUsd += message.usage.cost.total;
+      sawCost = true;
+    }
+
+    if (typeof message.usage?.input === "number") {
+      inputTokens += message.usage.input;
+      sawInput = true;
+    }
+
+    if (typeof message.usage?.output === "number") {
+      outputTokens += message.usage.output;
+      sawOutput = true;
+    }
+
+    if (typeof message.usage?.cacheWrite === "number") {
+      cacheCreationInputTokens += message.usage.cacheWrite;
+      sawCacheCreation = true;
+    }
+
+    if (typeof message.usage?.cacheRead === "number") {
+      cacheReadInputTokens += message.usage.cacheRead;
+      sawCacheRead = true;
+    }
+
+    if (typeof message.usage?.totalTokens === "number") {
+      totalTokens += message.usage.totalTokens;
+      sawTotal = true;
+    }
+  }
+
+  return {
+    durationMs: input.durationMs,
+    numTurns: assistants.length > 0 ? assistants.length : null,
+    costUsd: sawCost ? costUsd : null,
+    inputTokens: sawInput ? inputTokens : null,
+    outputTokens: sawOutput ? outputTokens : null,
+    cacheCreationInputTokens: sawCacheCreation ? cacheCreationInputTokens : null,
+    cacheReadInputTokens: sawCacheRead ? cacheReadInputTokens : null,
+    totalTokens: sawTotal ? totalTokens : null,
+  };
+}
+
+function queuePersistentTurnOutput(input: {
+  turn: ActivePersistentTurn;
+  nextText: string;
+  onOutput?: (content: string) => Promise<void> | void;
+}): void {
+  if (input.nextText === input.turn.lastEmittedText) {
+    return;
+  }
+
+  const delta = input.nextText.startsWith(input.turn.lastEmittedText)
+    ? input.nextText.slice(input.turn.lastEmittedText.length)
+    : input.nextText;
+
+  input.turn.lastEmittedText = input.nextText;
+
+  if (!delta.trim()) {
+    return;
+  }
+
+  input.turn.outputChain = input.turn.outputChain.then(async () => {
+    await input.onOutput?.(delta);
+  });
+}
+
+function getMockAuthState(input: {
+  provider: string;
+  authPolicy: "oauth-only" | "env" | null;
+}): string {
+  if (input.provider !== "anthropic") {
+    return resolvePiApiKey(input.provider, { authPolicy: input.authPolicy }) ? "configured" : "none";
+  }
+
+  if (input.authPolicy === "oauth-only") {
+    return process.env.ANTHROPIC_OAUTH_TOKEN?.trim() ? "oauth" : "none";
+  }
+
+  if (process.env.ANTHROPIC_OAUTH_TOKEN?.trim()) {
+    return "oauth";
+  }
+
+  if (process.env.ANTHROPIC_API_KEY?.trim()) {
+    return "api";
+  }
+
+  return "none";
+}
+
+async function runMockPersistentStewardTurn(input: {
+  handle: PersistentStewardHandle;
+  turn: ActivePersistentTurn;
+  promptMessage: string;
+  onOutput?: (content: string) => Promise<void> | void;
+}): Promise<{
+  status: "completed" | "cancelled";
+  finalVisibleOutput: string;
+  usage: PersistentUsageSummary;
+}> {
+  const behavior = process.env.HIVE_TEST_PI_BEHAVIOR?.trim() || "reply";
+  const humanTurnMatch = /## Human Turn\n([\s\S]*)$/m.exec(input.promptMessage);
+  const humanTurn = humanTurnMatch?.[1]?.trim() || "mock task";
+  const replyPrefix =
+    behavior === "auth"
+      ? `Mock persistent steward auth: ${getMockAuthState({
+          provider: input.handle.provider,
+          authPolicy: input.handle.authPolicy,
+        })} | `
+      : "Mock persistent steward reply: ";
+  const reply = `${replyPrefix}${humanTurn}`;
+  const initialDelayMs = behavior === "slow" ? 650 : 25;
+  const finalDelayMs = behavior === "slow" ? 250 : 35;
+
+  input.turn.abortController = new AbortController();
+  noteActiveTurnEvent(input.turn);
+
+  const wait = async (ms: number) => {
+    if (ms > 0) {
+      await Bun.sleep(ms);
+    }
+
+    if (input.turn.abortRequested || input.turn.abortController?.signal.aborted) {
+      throw new Error("aborted");
+    }
+  };
+
+  try {
+    if (behavior === "error") {
+      await wait(40);
+      input.turn.lastAssistantError = "Connection error.";
+      input.turn.finalError = "Connection error.";
+      input.turn.completedAt = Date.now();
+      throw new Error("Connection error.");
+    }
+
+    await wait(initialDelayMs);
+    const halfway = Math.max(1, Math.floor(reply.length / 2));
+    input.turn.latestAssistantText = reply.slice(0, halfway);
+    queuePersistentTurnOutput({
+      turn: input.turn,
+      nextText: input.turn.latestAssistantText,
+      onOutput: input.onOutput,
+    });
+    noteActiveTurnEvent(input.turn);
+
+    await wait(finalDelayMs);
+    input.turn.latestAssistantText = reply;
+    queuePersistentTurnOutput({
+      turn: input.turn,
+      nextText: input.turn.latestAssistantText,
+      onOutput: input.onOutput,
+    });
+    input.turn.completedAt = Date.now();
+    noteActiveTurnEvent(input.turn);
+    await input.turn.outputChain;
+
+    return {
+      status: input.turn.abortRequested ? "cancelled" : "completed",
+      finalVisibleOutput: input.turn.abortRequested ? "" : reply,
+      usage: {
+        durationMs: initialDelayMs + finalDelayMs,
+        numTurns: 1,
+        costUsd: 0.02,
+        inputTokens: 21,
+        outputTokens: 13,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+        totalTokens: 34,
+      },
+    };
+  } catch (error) {
+    if (input.turn.abortRequested || input.turn.abortController?.signal.aborted) {
+      return {
+        status: "cancelled",
+        finalVisibleOutput: "",
+        usage: {
+          durationMs: null,
+          numTurns: null,
+          costUsd: null,
+          inputTokens: null,
+          outputTokens: null,
+          cacheCreationInputTokens: null,
+          cacheReadInputTokens: null,
+          totalTokens: null,
+        },
+      };
+    }
+
+    throw error;
+  }
+}
+
+async function startPersistentStewardHandle(input: {
+  hivePaths: HivePaths;
+  sessionId: string;
+  repoPath: string;
+  runtimeConfig: PersistentStewardRuntimeConfig;
+  systemPrompt: string;
+}): Promise<PersistentStewardHandle> {
   const key = getHandleKey(input.hivePaths.home, input.sessionId);
+  const agent = new Agent({
+    transport: new ProviderTransport({
+      getApiKey: (provider) =>
+        resolvePiApiKey(provider, {
+          authPolicy: input.runtimeConfig.authPolicy,
+        }),
+    }),
+  });
+
+  agent.setSystemPrompt(input.systemPrompt);
+  agent.setModel(getModel(input.runtimeConfig.provider as never, input.runtimeConfig.modelId as never));
+  agent.setTools(buildPersistentStewardTools({
+    hiveHome: input.hivePaths.home,
+    repoPath: input.repoPath,
+  }) as never);
+
+  if (!process.env.HIVE_TEST_PI_BEHAVIOR) {
+    const apiKey = resolvePiApiKey(input.runtimeConfig.provider, {
+      authPolicy: input.runtimeConfig.authPolicy,
+    });
+
+    if (!apiKey) {
+      throw new UsageError(
+        `No Pi credentials are available for provider '${input.runtimeConfig.provider}'.`,
+      );
+    }
+  }
+
   const handle: PersistentStewardHandle = {
     key,
     hiveHome: input.hivePaths.home,
     sessionId: input.sessionId,
     repoPath: input.repoPath,
-    runtimeSignature,
-    process: processHandle,
-    stdoutBuffer: "",
-    stderrBuffer: [],
-    pendingCommands: new Map(),
-    commandCounter: 0,
+    runtimeSignature: input.runtimeConfig.runtimeSignature,
+    provider: input.runtimeConfig.provider,
+    modelId: input.runtimeConfig.modelId,
+    systemPrompt: input.systemPrompt,
+    authPolicy: input.runtimeConfig.authPolicy,
+    agent,
     bootstrapped: false,
     activeTurn: null,
     idleTimer: null,
     disposed: false,
-    ready: Promise.resolve(),
   };
 
-  wirePersistentStewardStreams(handle);
-
-  handle.ready = (async () => {
-    const readyState = await Promise.race([
-      getPiState(handle),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error("Timed out waiting for Pi steward session to start."));
-        }, PI_READY_TIMEOUT_MS);
-      }),
-    ]);
-
-    handle.bootstrapped = (readyState.messageCount ?? 0) > 0;
-  })();
-
-  try {
-    await handle.ready;
-  } catch (error) {
-    await disposePersistentStewardHandle(handle, "startup-failed");
-    throw error;
-  }
   scheduleIdleShutdown(handle);
   return handle;
 }
@@ -1058,23 +1503,16 @@ async function acquirePersistentStewardHandle(input: {
 }): Promise<PersistentStewardHandle> {
   const key = getHandleKey(input.hivePaths.home, input.sessionId);
   const globalConfig = await Bun.file(input.hivePaths.config).text().catch(() => "");
-  const piRoute = resolvePiRuntimeRoute({
+  const runtimeConfig = resolvePersistentStewardRuntime({
     globalConfig,
     runtime: input.runtime,
+    sessionModel: input.model,
+    repoPath: input.repoPath,
   });
-  const runtimeSignature = [
-    input.runtime,
-    input.model ?? "",
-    piRoute.provider ?? "",
-    piRoute.model ?? "",
-    piRoute.authPolicy ?? "",
-    input.repoPath,
-  ].join(":");
   const existing = persistentStewardHandles.get(key);
 
-  if (existing && !existing.disposed && existing.runtimeSignature === runtimeSignature) {
+  if (existing && !existing.disposed && existing.runtimeSignature === runtimeConfig.runtimeSignature) {
     clearIdleTimer(existing);
-    await existing.ready;
     return existing;
   }
 
@@ -1082,137 +1520,15 @@ async function acquirePersistentStewardHandle(input: {
     await disposePersistentStewardHandle(existing, "restarting");
   }
 
-  const localAgentDir =
-    process.env.HIVE_PI_AGENT_DIR?.trim() || null;
-
-  try {
-    const handle = await startPersistentStewardHandle({
-      ...input,
-      localAgentDir,
-    });
-    persistentStewardHandles.set(key, handle);
-    return handle;
-  } catch (error) {
-    const typed = error instanceof Error ? error : new Error(String(error));
-
-    if (localAgentDir || !shouldRetryWithLocalAgentDir(typed)) {
-      throw typed;
-    }
-  }
-
-  const fallbackAgentDir = join(input.hivePaths.home, ".pi-agent");
-
-  try {
-    const handle = await startPersistentStewardHandle({
-      ...input,
-      localAgentDir: fallbackAgentDir,
-    });
-    persistentStewardHandles.set(key, handle);
-    return handle;
-  } catch (error) {
-    const typed = error instanceof Error ? error : new Error(String(error));
-    throw typed;
-  }
-}
-
-function subtractNumber(next: number | undefined, previous: number | undefined): number | null {
-  if (typeof next !== "number" || typeof previous !== "number") {
-    return null;
-  }
-
-  return next - previous;
-}
-
-function diffPersistentUsage(
-  beforeStats: PiSessionStats,
-  afterStats: PiSessionStats,
-): PersistentUsageSummary {
-  return {
-    durationMs: null,
-    numTurns: subtractNumber(afterStats.assistantMessages, beforeStats.assistantMessages),
-    costUsd: subtractNumber(afterStats.cost, beforeStats.cost),
-    inputTokens: subtractNumber(afterStats.tokens?.input, beforeStats.tokens?.input),
-    outputTokens: subtractNumber(afterStats.tokens?.output, beforeStats.tokens?.output),
-    cacheCreationInputTokens: subtractNumber(afterStats.tokens?.cacheWrite, beforeStats.tokens?.cacheWrite),
-    cacheReadInputTokens: subtractNumber(afterStats.tokens?.cacheRead, beforeStats.tokens?.cacheRead),
-    totalTokens: subtractNumber(afterStats.tokens?.total, beforeStats.tokens?.total),
-  };
-}
-
-async function waitForPersistentTurnCompletion(input: {
-  handle: PersistentStewardHandle;
-  turn: ActivePersistentTurn;
-  beforeStats: PiSessionStats;
-  onOutput?: (content: string) => Promise<void> | void;
-}): Promise<{
-  status: "completed" | "cancelled";
-  finalVisibleOutput: string;
-  model: string | null;
-  usage: PersistentUsageSummary;
-}> {
-  const deadline = Date.now() + PI_TURN_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    const state = await getPiState(input.handle);
-
-    const nextText = input.turn.latestAssistantText;
-
-    if (nextText && nextText !== input.turn.lastEmittedText) {
-      const delta = nextText.startsWith(input.turn.lastEmittedText)
-        ? nextText.slice(input.turn.lastEmittedText.length)
-        : nextText;
-
-      input.turn.lastEmittedText = nextText;
-
-      if (delta.trim()) {
-        await input.onOutput?.(delta);
-      }
-    }
-
-    const isIdle = !state.isStreaming && (state.pendingMessageCount ?? 0) === 0;
-    const completionObserved =
-      input.turn.agentRunCompleted ||
-      Boolean(input.turn.latestAssistantText) ||
-      Boolean(input.turn.finalError);
-    const settledLongEnough =
-      Date.now() - (input.turn.completedAt ?? input.turn.lastEventAt) >= PI_TURN_SETTLE_GRACE_MS;
-
-    if (
-      isIdle &&
-      !input.turn.retryPending &&
-      input.turn.agentRunStarted &&
-      completionObserved &&
-      settledLongEnough
-    ) {
-      const [afterStats, finalText, finalState] = await Promise.all([
-        getPiSessionStats(input.handle),
-        getPiLastAssistantText(input.handle),
-        getPiState(input.handle),
-      ]);
-      const finalVisibleOutput = input.turn.abortRequested
-        ? ""
-        : finalText || input.turn.latestAssistantText;
-
-      if (!input.turn.abortRequested && !finalVisibleOutput.trim()) {
-        throw new Error(
-          input.turn.finalError ||
-            input.turn.lastAssistantError ||
-            "Persistent steward completed without a visible reply.",
-        );
-      }
-
-      return {
-        status: input.turn.abortRequested ? "cancelled" : "completed",
-        finalVisibleOutput,
-        model: describePiModel(finalState.model),
-        usage: diffPersistentUsage(input.beforeStats, afterStats),
-      };
-    }
-
-    await Bun.sleep(120);
-  }
-
-  throw new Error("Timed out waiting for the persistent steward turn to finish.");
+  const handle = await startPersistentStewardHandle({
+    hivePaths: input.hivePaths,
+    sessionId: input.sessionId,
+    repoPath: input.repoPath,
+    runtimeConfig,
+    systemPrompt: input.systemPrompt,
+  });
+  persistentStewardHandles.set(key, handle);
+  return handle;
 }
 
 export function isPersistentStewardTurnActive(input: {
@@ -1235,10 +1551,8 @@ export async function abortPersistentStewardTurn(input: {
   }
 
   handle.activeTurn.abortRequested = true;
-  await sendPiCommand(handle, {
-    type: "abort",
-    timeoutMs: PI_COMMAND_TIMEOUT_MS,
-  }).catch(() => {});
+  handle.activeTurn.abortController?.abort();
+  handle.agent.abort();
   return true;
 }
 
@@ -1257,16 +1571,17 @@ export async function runPersistentStewardTurn(input: {
       projectId: input.projectId,
       sessionId: input.sessionId,
     });
+    const systemPrompt = buildPersistentStewardSystemPrompt({
+      sessionPrompt: context.sessionPrompt,
+      cognitiveRoutingPolicy: context.cognitiveRoutingPolicy,
+    });
     const handle = await acquirePersistentStewardHandle({
       hivePaths: input.hivePaths,
       sessionId: input.sessionId,
       repoPath: context.repoPath,
       runtime: context.sessionRuntime,
       model: context.sessionModel,
-      systemPrompt: buildPersistentStewardSystemPrompt({
-        sessionPrompt: context.sessionPrompt,
-        cognitiveRoutingPolicy: context.cognitiveRoutingPolicy,
-      }),
+      systemPrompt,
     });
     activeHandle = handle;
 
@@ -1277,22 +1592,22 @@ export async function runPersistentStewardTurn(input: {
       };
     }
 
-    const beforeStats = await getPiSessionStats(handle);
     const turn: ActivePersistentTurn = {
       sessionId: input.sessionId,
       projectId: input.projectId,
       latestAssistantText: "",
       lastEmittedText: "",
       abortRequested: false,
-      agentRunStarted: false,
-      agentRunCompleted: false,
-      retryPending: false,
       lastEventAt: Date.now(),
       completedAt: null,
       lastAssistantError: null,
       finalError: null,
+      abortController: null,
+      outputChain: Promise.resolve(),
     };
     handle.activeTurn = turn;
+    handle.systemPrompt = systemPrompt;
+    handle.agent.setSystemPrompt(systemPrompt);
     clearIdleTimer(handle);
 
     const promptMessage = handle.bootstrapped
@@ -1306,20 +1621,92 @@ export async function runPersistentStewardTurn(input: {
           hivePaths: input.hivePaths,
           humanMessage: input.humanMessage,
         });
+    const unsubscribe = handle.agent.subscribe((event) => {
+      if (handle.activeTurn !== turn) {
+        return;
+      }
 
-    await sendPiCommand(handle, {
-      type: "prompt",
-      payload: {
-        message: promptMessage,
-      },
-      timeoutMs: PI_COMMAND_TIMEOUT_MS,
+      noteActiveTurnEvent(turn);
+
+      if ("message" in event && event.message?.role === "assistant") {
+        observeAssistantMessage(turn, event.message, event.type === "message_end");
+
+        if (turn.latestAssistantText) {
+          queuePersistentTurnOutput({
+            turn,
+            nextText: turn.latestAssistantText,
+            onOutput: input.onOutput,
+          });
+        }
+      }
+
+      if (event.type === "agent_end" || event.type === "turn_end") {
+        turn.completedAt = Date.now();
+      }
     });
 
-    const completion = await waitForPersistentTurnCompletion({
-      handle,
-      turn,
-      beforeStats,
-      onOutput: input.onOutput,
+    const startedAt = Date.now();
+    const messageCountBefore = handle.agent.state.messages.length;
+    const completion = await Promise.race([
+      (async () => {
+        if (process.env.HIVE_TEST_PI_BEHAVIOR) {
+          const mock = await runMockPersistentStewardTurn({
+            handle,
+            turn,
+            promptMessage,
+            onOutput: input.onOutput,
+          });
+
+          return {
+            ...mock,
+            model: describePiModel({
+              provider: handle.provider,
+              modelId: handle.modelId,
+            }),
+          };
+        }
+
+        await handle.agent.prompt(promptMessage);
+        await turn.outputChain;
+
+        const generatedMessages = handle.agent.state.messages.slice(messageCountBefore);
+        const finalVisibleOutput = turn.abortRequested ? "" : turn.latestAssistantText.trim();
+
+        if (!turn.abortRequested && !finalVisibleOutput) {
+          throw new Error(
+            turn.finalError ||
+              turn.lastAssistantError ||
+              "Persistent steward completed without a visible reply.",
+          );
+        }
+
+        return {
+          status: turn.abortRequested ? "cancelled" : "completed",
+          finalVisibleOutput,
+          model: describePiModel({
+            provider: handle.provider,
+            modelId: handle.modelId,
+          }),
+          usage: summarizePersistentUsage({
+            generatedMessages,
+            durationMs: Date.now() - startedAt,
+          }),
+        };
+      })(),
+      new Promise<never>((_, reject) => {
+        const timeout = setTimeout(() => {
+          turn.abortRequested = true;
+          turn.abortController?.abort();
+          handle.agent.abort();
+          reject(new Error("Timed out waiting for the persistent steward turn to finish."));
+        }, PI_TURN_TIMEOUT_MS);
+
+        turn.outputChain.finally(() => {
+          clearTimeout(timeout);
+        });
+      }),
+    ]).finally(() => {
+      unsubscribe();
     });
 
     handle.bootstrapped = true;
@@ -1349,7 +1736,7 @@ export async function runPersistentStewardTurn(input: {
 
 export async function disposePersistentStewardHandle(
   handle: PersistentStewardHandle,
-  reason = "shutdown",
+  _reason = "shutdown",
 ): Promise<void> {
   if (handle.disposed) {
     return;
@@ -1358,29 +1745,9 @@ export async function disposePersistentStewardHandle(
   handle.disposed = true;
   clearIdleTimer(handle);
   persistentStewardHandles.delete(handle.key);
-  rejectAllPending(handle, new Error(`Pi steward process disposed: ${reason}`));
-
-  try {
-    handle.process.stdin.end();
-  } catch {
-    // ignore
-  }
-
-  try {
-    handle.process.kill("SIGTERM");
-  } catch {
-    return;
-  }
-
-  await Bun.sleep(150);
-
-  if (!handle.process.killed) {
-    try {
-      handle.process.kill("SIGKILL");
-    } catch {
-      // ignore
-    }
-  }
+  handle.activeTurn?.abortController?.abort();
+  handle.agent.abort();
+  handle.activeTurn = null;
 }
 
 export async function disposePersistentStewardsForHome(hiveHome: string): Promise<void> {

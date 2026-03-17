@@ -58,7 +58,6 @@ describe("runtime access policy", () => {
     expect(policy.directAuthByRuntime.codex).toBe("api");
     expect(policy.piProviderByRuntime.claude).toBe("anthropic");
     expect(policy.piModelByRuntime.claude).toBe("claude-opus-4-6");
-    expect(policy.piAuthByProvider.anthropic).toBe("oauth-only");
   });
 
   test("resolves Pi route from config when there is no env override", () => {

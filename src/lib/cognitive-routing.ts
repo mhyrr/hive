@@ -16,14 +16,14 @@ export const STEWARD_ESSENTIAL_SKILL_NAMES = [
   COGNITIVE_ROUTING_SKILL_NAME,
 ] as const;
 
-export type CognitiveRoutingBias = "latency" | "balanced" | "quality";
+type CognitiveRoutingBias = "latency" | "balanced" | "quality";
 
-export type CognitiveRoutingModeId =
+type CognitiveRoutingModeId =
   | "direct-answer"
   | "targeted-inspection"
   | "plural-synthesis";
 
-export type CognitiveRoutingMode = {
+type CognitiveRoutingMode = {
   id: CognitiveRoutingModeId;
   label: string;
   useWhen: string;
@@ -33,13 +33,13 @@ export type CognitiveRoutingMode = {
   parallelism: string;
 };
 
-export type CognitiveRuntimeLane = {
+type CognitiveRuntimeLane = {
   runtime: string;
   directAuth: RuntimeAuthPolicy;
   piRoute: PiRuntimeRoute;
 };
 
-export type CognitiveRoutingPolicy = {
+type CognitiveRoutingPolicy = {
   principle: string;
   bias: CognitiveRoutingBias;
   defaultRuntime: string | null;
@@ -50,7 +50,7 @@ export type CognitiveRoutingPolicy = {
   runtimeLanes: CognitiveRuntimeLane[];
 };
 
-export type CognitiveTier1Config = {
+type CognitiveTier1Config = {
   localModel: string;
   localConfigured: boolean;
   cloudModel: string;
@@ -64,14 +64,14 @@ export type CognitiveTier1Config = {
   ollamaBaseUrl: string;
 };
 
-export type CognitiveLocalModel = {
+type CognitiveLocalModel = {
   name: string;
   sizeBytes: number | null;
   modifiedAt: string | null;
   digest: string | null;
 };
 
-export type CognitiveLocalModelDiscovery = {
+type CognitiveLocalModelDiscovery = {
   baseUrl: string;
   available: boolean;
   reason: string | null;
@@ -79,16 +79,16 @@ export type CognitiveLocalModelDiscovery = {
   models: CognitiveLocalModel[];
 };
 
-export type CognitiveSessionContext = {
+type CognitiveSessionContext = {
   sessionId: string;
   project: string;
   runtime: string;
   model: string | null;
 };
 
-export type CognitiveExecutionMode = "persistent-pi" | "direct-runtime";
+type CognitiveExecutionMode = "persistent-pi" | "direct-runtime";
 
-export type CognitiveExecutionLane = {
+type CognitiveExecutionLane = {
   mode: CognitiveExecutionMode;
   runtime: string;
   selectedModel: string | null;
@@ -97,7 +97,7 @@ export type CognitiveExecutionLane = {
   piRoute: PiRuntimeRoute;
 };
 
-export type CognitiveRoutingSnapshot = {
+type CognitiveRoutingSnapshot = {
   policy: CognitiveRoutingPolicy;
   activeSession: CognitiveSessionContext | null;
   activeLane: CognitiveRuntimeLane | null;
@@ -545,6 +545,68 @@ function appendUsageInspectionLines(lines: string[], usage: CognitiveUsageSnapsh
   lines.push(`  last steward wake: ${usage.summary.lastStewardWakeAt ?? "(none)"}`);
 }
 
+function appendTier1InspectionLines(input: {
+  lines: string[];
+  tier1: CognitiveTier1Config;
+  localModels?: CognitiveLocalModelDiscovery | null;
+}): void {
+  input.lines.push("");
+  input.lines.push("Tier 1:");
+  input.lines.push(`  local model: ${input.tier1.localModel}`);
+  input.lines.push(`  cloud route: ${formatTier1CloudRoute({
+    label: input.tier1.cloudModel,
+    provider: input.tier1.cloudProvider,
+    modelId: input.tier1.cloudModelId,
+  })}`);
+  input.lines.push(`  fallback route: ${formatTier1CloudRoute({
+    label: input.tier1.fallbackModel,
+    provider: input.tier1.fallbackProvider,
+    modelId: input.tier1.fallbackModelId,
+  })}`);
+  input.lines.push(`  ollama base url: ${input.localModels?.baseUrl ?? input.tier1.ollamaBaseUrl}`);
+
+  if (!input.localModels) {
+    return;
+  }
+
+  input.lines.push(
+    `  local discovery: ${input.localModels.available ? "available" : "unavailable"}${input.localModels.reason ? ` | ${input.localModels.reason}` : ""}`,
+  );
+  input.lines.push(`  configured local status: ${input.localModels.configuredModelStatus}`);
+  input.lines.push(
+    `  discovered local models: ${
+      input.localModels.models.length > 0
+        ? input.localModels.models.map((model) => model.name).join(", ")
+        : "(none)"
+    }`,
+  );
+}
+
+function appendModeInspectionLines(lines: string[], modes: CognitiveRoutingMode[]): void {
+  lines.push("");
+  lines.push("Modes:");
+
+  for (const mode of modes) {
+    lines.push(`  ${mode.id}`);
+    lines.push(`    when: ${mode.useWhen}`);
+    lines.push(`    depth: ${mode.depth}`);
+    lines.push(`    runtime: ${mode.runtime}`);
+    lines.push(`    fan-out: ${mode.fanOut}`);
+    lines.push(`    parallelism: ${mode.parallelism}`);
+  }
+}
+
+function appendRuntimeLaneInspectionLines(lines: string[], lanes: CognitiveRuntimeLane[]): void {
+  lines.push("");
+  lines.push("Runtime lanes:");
+
+  for (const lane of lanes) {
+    lines.push(`  ${lane.runtime}`);
+    lines.push(`    direct auth: ${lane.directAuth}`);
+    lines.push(`    pi route: ${formatPiRoute(lane.piRoute)}`);
+  }
+}
+
 function normalizeDiscoveredModel(
   value: unknown,
 ): CognitiveLocalModel | null {
@@ -679,21 +741,6 @@ export async function discoverLocalModels(input?: {
   }
 }
 
-function formatLaneSummary(
-  lane: CognitiveRuntimeLane | null,
-  model: string | null | undefined,
-): string | null {
-  if (!lane) {
-    return null;
-  }
-
-  const runtimeLabel = formatRuntimeSelection(lane.runtime, model);
-
-  return runtimeLabel
-    ? `${runtimeLabel} | direct auth ${lane.directAuth} | ${formatPiRoute(lane.piRoute)}`
-    : null;
-}
-
 export async function buildCognitiveRoutingSnapshot(input: {
   globalConfig: string;
   session?: CognitiveSessionContext | null;
@@ -793,74 +840,6 @@ export function renderCognitiveRoutingPromptPolicy(input: {
   return lines.join("\n");
 }
 
-export function renderCognitiveRoutingInspection(input: {
-  globalConfig: string;
-  configPath: string;
-  skillsDir?: string | null;
-}): string {
-  const policy = readCognitiveRoutingPolicy(input.globalConfig);
-  const tier1 = readCognitiveTier1Config(input.globalConfig);
-  const defaultExecution = buildCognitiveExecutionLane({
-    lane: findCognitiveRuntimeLane(policy, policy.defaultRuntime),
-    selectedModel: policy.defaultModel,
-    persistentStewardEnabled: isPersistentStewardEnabled(),
-  });
-  const lines: string[] = [
-    "Cognitive routing policy:",
-    "",
-    `  principle: ${policy.principle}`,
-    `  bias: ${policy.bias}`,
-    `  default runtime: ${policy.defaultRuntime ?? "(unset)"}`,
-    `  default model: ${policy.defaultModel ?? "(unset)"}`,
-    `  max fan-out: ${policy.maxFanOut}`,
-    `  max parallel workers: ${policy.maxParallel}`,
-    `  default execution: ${formatExecutionSummary(defaultExecution) ?? "(unset)"}`,
-    "",
-    "Tier 1:",
-    `  local model: ${tier1.localModel}`,
-    `  cloud route: ${formatTier1CloudRoute({
-      label: tier1.cloudModel,
-      provider: tier1.cloudProvider,
-      modelId: tier1.cloudModelId,
-    })}`,
-    `  fallback route: ${formatTier1CloudRoute({
-      label: tier1.fallbackModel,
-      provider: tier1.fallbackProvider,
-      modelId: tier1.fallbackModelId,
-    })}`,
-    `  ollama base url: ${tier1.ollamaBaseUrl}`,
-    "",
-    "Modes:",
-  ];
-
-  for (const mode of policy.modes) {
-    lines.push(`  ${mode.id}`);
-    lines.push(`    when: ${mode.useWhen}`);
-    lines.push(`    depth: ${mode.depth}`);
-    lines.push(`    runtime: ${mode.runtime}`);
-    lines.push(`    fan-out: ${mode.fanOut}`);
-    lines.push(`    parallelism: ${mode.parallelism}`);
-  }
-
-  lines.push("");
-  lines.push("Runtime lanes:");
-
-  for (const lane of policy.runtimeLanes) {
-    lines.push(`  ${lane.runtime}`);
-    lines.push(`    direct auth: ${lane.directAuth}`);
-    lines.push(`    pi route: ${formatPiRoute(lane.piRoute)}`);
-  }
-
-  if (input.skillsDir) {
-    lines.push("");
-    lines.push(`Skill: ${input.skillsDir}/${COGNITIVE_ROUTING_SKILL_NAME}.md`);
-  }
-
-  lines.push(`Config: ${input.configPath}`);
-
-  return lines.join("\n");
-}
-
 export function renderCognitiveRoutingInspectionSnapshot(input: {
   snapshot: CognitiveRoutingSnapshot;
   usage?: CognitiveUsageSnapshot | null;
@@ -906,53 +885,13 @@ export function renderCognitiveRoutingInspectionSnapshot(input: {
     lines.push(`  default execution: ${defaultExecutionSummary}`);
   }
 
-  lines.push("");
-  lines.push("Tier 1:");
-  lines.push(`  local model: ${input.snapshot.tier1.localModel}`);
-  lines.push(`  cloud route: ${formatTier1CloudRoute({
-    label: input.snapshot.tier1.cloudModel,
-    provider: input.snapshot.tier1.cloudProvider,
-    modelId: input.snapshot.tier1.cloudModelId,
-  })}`);
-  lines.push(`  fallback route: ${formatTier1CloudRoute({
-    label: input.snapshot.tier1.fallbackModel,
-    provider: input.snapshot.tier1.fallbackProvider,
-    modelId: input.snapshot.tier1.fallbackModelId,
-  })}`);
-  lines.push(`  ollama base url: ${input.snapshot.localModels.baseUrl}`);
-  lines.push(
-    `  local discovery: ${input.snapshot.localModels.available ? "available" : "unavailable"}${input.snapshot.localModels.reason ? ` | ${input.snapshot.localModels.reason}` : ""}`,
-  );
-  lines.push(
-    `  configured local status: ${input.snapshot.localModels.configuredModelStatus}`,
-  );
-  lines.push(
-    `  discovered local models: ${
-      input.snapshot.localModels.models.length > 0
-        ? input.snapshot.localModels.models.map((model) => model.name).join(", ")
-        : "(none)"
-    }`,
-  );
-  lines.push("");
-  lines.push("Modes:");
-
-  for (const mode of input.snapshot.policy.modes) {
-    lines.push(`  ${mode.id}`);
-    lines.push(`    when: ${mode.useWhen}`);
-    lines.push(`    depth: ${mode.depth}`);
-    lines.push(`    runtime: ${mode.runtime}`);
-    lines.push(`    fan-out: ${mode.fanOut}`);
-    lines.push(`    parallelism: ${mode.parallelism}`);
-  }
-
-  lines.push("");
-  lines.push("Runtime lanes:");
-
-  for (const lane of input.snapshot.policy.runtimeLanes) {
-    lines.push(`  ${lane.runtime}`);
-    lines.push(`    direct auth: ${lane.directAuth}`);
-    lines.push(`    pi route: ${formatPiRoute(lane.piRoute)}`);
-  }
+  appendTier1InspectionLines({
+    lines,
+    tier1: input.snapshot.tier1,
+    localModels: input.snapshot.localModels,
+  });
+  appendModeInspectionLines(lines, input.snapshot.policy.modes);
+  appendRuntimeLaneInspectionLines(lines, input.snapshot.policy.runtimeLanes);
 
   appendUsageInspectionLines(lines, input.usage ?? null);
 

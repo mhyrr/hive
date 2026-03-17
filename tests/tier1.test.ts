@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { compressCompletedRunOutput, preprocessHumanMessage } from "../src/lib/tier1";
-import type { RunRecord } from "../src/lib/runs";
+import {
+  compressCompletedRunOutput,
+  preprocessHumanMessage,
+  triageRunDiffForSteward,
+} from "../src/lib/tier1";
+import type { RunRecord, RunResult } from "../src/lib/runs";
 
 function createRun(overrides?: Partial<RunRecord>): RunRecord {
   return {
@@ -23,6 +27,45 @@ function createRun(overrides?: Partial<RunRecord>): RunRecord {
     stopRequestedAt: null,
     stopRequestedBy: null,
     path: "/tmp/run.md",
+    ...overrides,
+  };
+}
+
+function createResult(overrides?: Partial<RunResult>): RunResult {
+  return {
+    runId: "20260316-010000-alpha",
+    agentId: "architect",
+    status: "exited",
+    exitCode: 0,
+    assignmentMessage: "20260316-architect-task.md",
+    assignmentStatusAfterExit: "resolved",
+    assignmentResolvedByWorker: true,
+    changedFiles: ["tests/state.test.ts"],
+    gitSummaryLines: ["M tests/state.test.ts"],
+    finalVisibleOutput: "Updated the regression coverage.",
+    ended: "2026-03-16T01:01:00Z",
+    path: "/tmp/result.md",
+    authMode: "api",
+    costUsd: null,
+    durationMs: null,
+    numTurns: null,
+    inputTokens: null,
+    outputTokens: null,
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens: null,
+    totalTokens: null,
+    cognitiveDigest: {
+      provider: "ollama",
+      model: "qwen3:4b",
+      summary: "Updated the regression coverage.",
+      outcome: "success",
+      keyDecisions: [],
+      filesChanged: ["tests/state.test.ts"],
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      durationMs: null,
+    },
     ...overrides,
   };
 }
@@ -260,5 +303,32 @@ describe("tier-1 human message preprocessing", () => {
 
     expect(result).toBeNull();
     expect(fetchCalled).toBeFalse();
+  });
+});
+
+describe("tier-1 diff triage", () => {
+  test("suppresses steward wakeups for routine support diffs when no tier-1 model is configured", async () => {
+    const decision = await triageRunDiffForSteward({
+      globalConfig: "",
+      result: createResult(),
+    });
+
+    expect(decision.stewardWorthy).toBeFalse();
+    expect(decision.handledBy).toBe("deterministic");
+    expect(decision.reason).toContain("routine support files");
+  });
+
+  test("forces steward review when the diff touches steward-owned coordination files", async () => {
+    const decision = await triageRunDiffForSteward({
+      globalConfig: "",
+      result: createResult({
+        changedFiles: ["PLAN.md"],
+        gitSummaryLines: ["M PLAN.md"],
+      }),
+    });
+
+    expect(decision.stewardWorthy).toBeTrue();
+    expect(decision.handledBy).toBe("deterministic");
+    expect(decision.reason).toContain("coordination file");
   });
 });

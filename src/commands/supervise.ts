@@ -44,6 +44,7 @@ import {
 } from "../lib/supervisor";
 import { toIsoTimestamp } from "../lib/time";
 import { refreshProjectRuntimeState } from "../lib/state";
+import { triageRunDiffForSteward } from "../lib/tier1";
 import { launchAgentPass } from "./launch";
 
 type SuperviseOptions = {
@@ -64,6 +65,16 @@ type ProjectState = {
   recentRuns: Awaited<ReturnType<typeof listRecentRuns>>;
   allRuns: Awaited<ReturnType<typeof listAllRuns>>;
   recentRunResults: Awaited<ReturnType<typeof listRecentRunResults>>;
+};
+
+type StewardDiffTriageEntry = {
+  runId: string;
+  agentId: string;
+  stewardWorthy: boolean;
+  reason: string;
+  handledBy: "deterministic" | "tier1";
+  provider: string;
+  model: string;
 };
 
 function parseOptions(args: string[]): SuperviseOptions {
@@ -171,6 +182,29 @@ async function readProjectState(input: {
   };
 }
 
+function endedAfter(value: string, reference: string | null): boolean {
+  if (!reference) {
+    return true;
+  }
+
+  return new Date(value).getTime() > new Date(reference).getTime();
+}
+
+function formatStewardDiffTriage(entries: StewardDiffTriageEntry[]): string {
+  if (entries.length === 0) {
+    return "- none";
+  }
+
+  return entries
+    .map((entry) =>
+      [
+        `- ${entry.agentId} | ${entry.stewardWorthy ? "wake" : "routine"} | ${entry.reason}`,
+        `  via: ${entry.handledBy}${entry.handledBy === "tier1" ? ` (${entry.provider} ${entry.model})` : ""}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
 function formatLaunchSettledResult(
   agentId: string,
   result: PromiseSettledResult<string>,
@@ -251,6 +285,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
 
   const projectPaths = getProjectPaths(paths, activeProject);
   let state = await readProjectState({ activeProject, paths });
+  const globalConfig = await Bun.file(paths.config).text().catch(() => "");
   const recoveredRuns = assessRecoveredRuns(state.activeRuns);
 
   if (recoveredRuns.length > 0) {
@@ -265,12 +300,48 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
 
   const initialActiveOrchestratorRun =
     state.activeRuns.find((run) => run.agentId === "orchestrator") ?? null;
+  const lastStewardRun =
+    state.recentRuns.find((run) => run.agentId === "orchestrator" && Boolean(run.ended)) ?? null;
+  const resultsSinceLastSteward = state.recentRunResults.filter(
+    (result) => result.agentId !== "orchestrator" && endedAfter(result.ended, lastStewardRun?.ended ?? null),
+  );
+  const diffTriageEntries: StewardDiffTriageEntry[] = [];
+  const triagedRunResults: typeof state.recentRunResults = [];
+
+  for (const result of state.recentRunResults) {
+    const needsTriage = resultsSinceLastSteward.some((candidate) => candidate.runId === result.runId);
+
+    if (!needsTriage) {
+      triagedRunResults.push(result);
+      continue;
+    }
+
+    const decision = await triageRunDiffForSteward({
+      globalConfig,
+      result,
+    });
+
+    diffTriageEntries.push({
+      runId: result.runId,
+      agentId: result.agentId,
+      stewardWorthy: decision.stewardWorthy,
+      reason: decision.reason,
+      handledBy: decision.handledBy,
+      provider: decision.provider,
+      model: decision.model,
+    });
+
+    if (decision.stewardWorthy) {
+      triagedRunResults.push(result);
+    }
+  }
+
   const assessment = assessStewardLaunch({
     boardText: state.boardText,
     openMessages: state.openMessages,
     activeRuns: state.activeRuns,
     recentRuns: state.recentRuns,
-    recentRunResults: state.recentRunResults,
+    recentRunResults: triagedRunResults,
     reassessSeconds: DEFAULT_STEWARD_REASSESS_SECONDS,
   });
 
@@ -282,12 +353,14 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
         ? assessment.reasons.map((reason) => `- ${reason}`).join("\n")
         : "- none",
     ),
+    section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
   ].join("\n\n");
 
   if (initialActiveOrchestratorRun) {
     stewardSection = [
       "Decision: skipped",
       section("Reasons", assessment.reasons.map((reason) => `- ${reason}`).join("\n") || "- none"),
+      section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
       section(
         "Active Orchestrator Run",
         [
@@ -313,6 +386,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     stewardSection = [
       "Decision: launched orchestrator",
       section("Reasons", assessment.reasons.map((reason) => `- ${reason}`).join("\n")),
+      section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
       section("Launch", launchSummary),
     ].join("\n\n");
 
