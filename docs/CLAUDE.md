@@ -6,7 +6,7 @@ Agents are transient. The hive persists.
 ## Read First
 `NEXT-SESSION-PROMPT.md` — the current continuity brief and next-session prompt.
 `PERSISTENT-STEWARD-RUNTIME.md` — the new runtime architecture for a live steward, state monitor, and structured derived state.
-`HIVE-COMPILED-MULTI-MIND.md` — target architecture for compiled working sets, shared mind seats, and multi-model coordination.
+`HIVE-WORKING-SET-COMPILER.md` — working-set compiler architecture: packets, workbench, compilation modes, and consumer rebase.
 `FINAL-PRD.md` — the complete PRD with architecture, memory design, and all conventions.
 `PHASE-4-AUTO-LAUNCH.md` — the next-phase design for supervisor-driven auto-launch and parallel workers.
 
