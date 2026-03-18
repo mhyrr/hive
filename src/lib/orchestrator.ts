@@ -191,7 +191,7 @@ function summarizeSignals(
       );
     }
 
-    if (message.attributes.type === "nudge" && message.attributes.to === "orchestrator") {
+    if (message.attributes.type === "nudge" && message.attributes.to === "steward") {
       signals.push(`Human nudge pending: ${message.body.split("\n")[0]}`);
     }
   }
@@ -231,7 +231,7 @@ export async function enqueueGoalForOrchestrator(
 ): Promise<string> {
   const message = await createMessage(paths.msgDir, {
     from: "human",
-    to: "orchestrator",
+    to: "steward",
     type: "nudge",
     project: projectId,
     body: goal,
@@ -239,12 +239,12 @@ export async function enqueueGoalForOrchestrator(
 
   await appendLogEntry(
     projectPaths.log,
-    "human → orchestrator",
+    "human → steward",
     `Goal: ${goal}\nMessage: ${message.filename}`,
   );
   await appendFeedEntry(paths, {
     project: projectId,
-    headline: `Orchestrator goal queued`,
+    headline: `Steward goal queued`,
     details: [goal],
   });
 
@@ -333,7 +333,7 @@ export async function buildOrchestratorPrompt(input: {
     input.options.goal?.trim() ||
     input.openMessages.find(
       (message) =>
-        message.attributes.type === "nudge" && message.attributes.to === "orchestrator",
+        message.attributes.type === "nudge" && message.attributes.to === "steward",
     )?.body ||
     "(none)";
 
@@ -349,7 +349,7 @@ export async function buildOrchestratorPrompt(input: {
 
   return `# HIVE Steward Prompt
 
-You are the steward/orchestrator for project ${input.projectId}. All context you need is below — respond immediately without reading files first. Use the hive CLI for actions (resolving messages, logging, assigning work) not for reading state.
+You are the steward for project ${input.projectId}. All context you need is below — respond immediately without reading files first. Use the hive CLI for actions (resolving messages, logging, assigning work) not for reading state.
 
 ## Shared Soul
 ${capBootstrapContent(input.soul.trim(), "SOUL.md")}
@@ -393,7 +393,7 @@ ${inlinedAgents}
 - BOARD.md is yours to maintain. Other agents should update you via msg/.
 - The authoritative hive files are not in the repo root. Use the absolute paths below instead of repo-relative guesses like \`BOARD.md\` or \`LOG.md\`.
 - Answer human nudges before anything else.
-- Resolve handled nudges and answered questions with \`hive msg resolve <message> orchestrator <answer>\` or \`./hive msg resolve <message> orchestrator <answer>\`. Close obsolete threads with \`hive msg close <message> orchestrator [note]\` or \`./hive msg close <message> orchestrator [note]\`.
+- Resolve handled nudges and answered questions with \`hive msg resolve <message> steward <answer>\` or \`./hive msg resolve <message> steward <answer>\`. Close obsolete threads with \`hive msg close <message> steward [note]\` or \`./hive msg close <message> steward [note]\`.
 - Tell workers to poll with \`hive inbox <agent>\` or \`./hive inbox <agent>\` and to resolve or close their own message-driven work when done.
 - When you create an assignment message, include machine-usable frontmatter: \`task:\` for the work id, \`launch:\` (\`auto\` or \`manual\`), and conservative \`scope:\` roots whenever parallel launch is safe.
 - When a task is done, update the board, unblock dependents, and assign the next task.

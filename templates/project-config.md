@@ -15,7 +15,7 @@ path: {{repo_path}}
 # testing: bun test
 
 ## Default Team
-- orchestrator: steward
+- steward: steward
 - alpha: craftsman
 - beta: craftsman
 - gamma: critic

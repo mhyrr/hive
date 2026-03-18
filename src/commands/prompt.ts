@@ -140,7 +140,7 @@ Read trust policy: ${paths.trust}
 - Check \`hive inbox ${agentId}\` between major steps. Use \`./hive inbox ${agentId}\` when the binary is built locally but not installed on PATH.
 - When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or \`./hive msg resolve <message> ${agentId} <answer>\`.
 - Close obsolete threads with \`hive msg close <message> ${agentId} [note]\` or \`./hive msg close <message> ${agentId} [note]\`.
-- Stay inside your stated scope unless the orchestrator or human reassigns you.
+- Stay inside your stated scope unless the steward or human reassigns you.
 
 ## Initiative
 You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Record as you go — don't batch.

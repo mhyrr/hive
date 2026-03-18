@@ -145,7 +145,7 @@ describe("HIVE CLI", () => {
     const output = await runCli(["ask"]);
 
     expect(output).toContain("4 tasks: 1 active, 2 done, 1 waiting/queued");
-    expect(output).toContain("orchestrator: active");
+    expect(output).toContain("steward: active");
     expect(output).toContain("gamma: idle");
   });
 
@@ -237,7 +237,7 @@ describe("HIVE CLI", () => {
       "msg",
       "--type",
       "notify",
-      "orchestrator",
+      "steward",
       "alpha",
       "Hold",
       "for",
@@ -282,7 +282,7 @@ describe("HIVE CLI", () => {
 Ship the login flow.
 
 ## Agents
-### orchestrator (steward)
+### steward (steward)
 Task: Run the board.
 
 ### alpha (craftsman -> src/api/**)
@@ -370,13 +370,13 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("## File Paths");
     expect(prompt).toContain(`IDENTITY.md: ${join(context.hiveHome, "IDENTITY.md")}`);
     expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myproject", "BOARD.md")}`);
-    expect(prompt).toContain("hive msg resolve <message> orchestrator <answer>");
-    expect(prompt).toContain("./hive msg resolve <message> orchestrator <answer>");
+    expect(prompt).toContain("hive msg resolve <message> steward <answer>");
+    expect(prompt).toContain("./hive msg resolve <message> steward <answer>");
     expect(prompt).toContain("hive inbox <agent>");
     expect(prompt).toContain("./hive inbox <agent>");
     expect(log).toContain("Goal: Build the auth flow");
     expect(messageText).toContain("type: nudge");
-    expect(messageText).toContain("to: orchestrator");
+    expect(messageText).toContain("to: steward");
   });
 
   test("orchestrate loop mode resumes state and surfaces stale-agent signals", async () => {
@@ -449,7 +449,7 @@ model: gpt-5.4-medium
 runtime: codex
 
 ## Defaults
-orchestrator: steward
+steward: steward
 message-check-seconds: 30
 archive-curation: deferred
 `,
@@ -466,7 +466,7 @@ path: ${context.repo}
 - Bun + TypeScript
 
 ## Default Team
-- orchestrator: steward, gpt-5.4-medium via codex
+- steward: steward, gpt-5.4-medium via codex
 - alpha: craftsman, gpt-5.4-medium via codex
 - beta: craftsman
 - gamma: critic

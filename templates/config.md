@@ -10,7 +10,7 @@ runtime: claude
 model: claude-sonnet-4-6
 
 ## Defaults
-orchestrator: steward
+steward: steward
 message-check-seconds: 30
 archive-curation: deferred
 

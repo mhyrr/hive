@@ -28,6 +28,21 @@ type UpdateMessageInput = {
   project?: string;
 };
 
+/** Normalize legacy "orchestrator" agent IDs to "steward" when reading messages. */
+function normalizeMessageAttributes(attributes: Record<string, string>): Record<string, string> {
+  const result = { ...attributes };
+
+  if (result.from === "orchestrator") {
+    result.from = "steward";
+  }
+
+  if (result.to === "orchestrator") {
+    result.to = "steward";
+  }
+
+  return result;
+}
+
 function sanitizeSegment(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -86,7 +101,7 @@ export async function listMessages(msgDir: string): Promise<HiveMessage[]> {
     messages.push({
       path,
       filename,
-      attributes: parsed.attributes,
+      attributes: normalizeMessageAttributes(parsed.attributes),
       body: parsed.body,
       raw: raw.trim(),
     });

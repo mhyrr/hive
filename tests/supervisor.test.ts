@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 describe("supervisor assessment", () => {
-  test("requests a steward pass when worker results landed after the last orchestrator run", () => {
+  test("requests a steward pass when worker results landed after the last steward run", () => {
     const assessment = assessStewardLaunch({
       boardText: `# Board
 
@@ -35,7 +35,7 @@ last-active: 14:52
         {
           runId: "20260310-140000Z-orchestrator",
           projectId: "myproject",
-          agentId: "orchestrator",
+          agentId: "steward",
           status: "exited",
           runtime: "codex",
           model: null,
@@ -108,7 +108,7 @@ last-active: 15:07
         {
           runId: "20260309-150800Z-orchestrator",
           projectId: "myproject",
-          agentId: "orchestrator",
+          agentId: "steward",
           status: "exited",
           runtime: "codex",
           model: null,
@@ -151,7 +151,7 @@ Task: Build the settings screen.
           path: "/tmp/alpha.md",
           filename: "alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -165,7 +165,7 @@ Task: Build the settings screen.
           path: "/tmp/beta.md",
           filename: "beta.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "beta",
             type: "assign",
             status: "open",
@@ -208,7 +208,7 @@ Task: Review the change.
           path: "/tmp/alpha.md",
           filename: "alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -223,7 +223,7 @@ Task: Review the change.
           path: "/tmp/beta.md",
           filename: "beta.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "beta",
             type: "assign",
             status: "open",
@@ -237,7 +237,7 @@ Task: Review the change.
           path: "/tmp/gamma.md",
           filename: "gamma.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "gamma",
             type: "assign",
             status: "open",
@@ -310,7 +310,7 @@ Task: Review the change.
           path: "/tmp/alpha.md",
           filename: "alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -360,7 +360,7 @@ Task: Review the change.
           path: "/tmp/alpha.md",
           filename: "alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",

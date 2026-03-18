@@ -153,7 +153,7 @@ export async function nudgeCommand(args: string[]): Promise<string> {
 
   const message = await createMessage(paths.msgDir, {
     from: "human",
-    to: "orchestrator",
+    to: "steward",
     type: "nudge",
     project: activeProject,
     body,

@@ -9,7 +9,7 @@ describe("feed formatting", () => {
       "",
       renderFeedEntry({
         project: "hive",
-        headline: "orchestrator exited",
+        headline: "steward exited",
         details: [
           "runtime: claude",
           "auth: subscription",
@@ -23,7 +23,7 @@ describe("feed formatting", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0]?.project).toBe("hive");
-    expect(entries[0]?.headline).toBe("orchestrator exited");
+    expect(entries[0]?.headline).toBe("steward exited");
     expect(entries[0]?.details).toEqual([
       "runtime: claude",
       "auth: subscription",

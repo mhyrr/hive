@@ -967,7 +967,7 @@ describe("Gateway session endpoints", () => {
 path: ${context.repo}
 
 ## Default Team
-- orchestrator: steward, claude-sonnet-4-6 via claude
+- steward: steward, claude-sonnet-4-6 via claude
 - alpha: craftsman via codex
 `,
     );
@@ -1769,7 +1769,7 @@ path: ${context.repo}
 path: ${context.repo}
 
 ## Default Team
-- orchestrator: steward, claude-sonnet-4-6 via claude
+- steward: steward, claude-sonnet-4-6 via claude
 - alpha: craftsman via codex
 `,
     );

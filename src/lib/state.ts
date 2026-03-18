@@ -429,7 +429,7 @@ function summarizeHumanInbox(
     .filter((message) =>
       message.attributes.from === "human" ||
       message.attributes.to === "human" ||
-      (message.attributes.type === "nudge" && message.attributes.to === "orchestrator"),
+      (message.attributes.type === "nudge" && message.attributes.to === "steward"),
     )
     .map((message) => ({
       filename: message.filename,
@@ -621,7 +621,7 @@ function buildMessageChanges(
       changes.push({
         type:
           item.from === "human" ||
-          (item.type === "nudge" && item.to === "orchestrator")
+          (item.type === "nudge" && item.to === "steward")
             ? "human-message"
             : "message-opened",
         summary: `${item.from} -> ${item.to}: ${item.summary}`,
@@ -669,7 +669,7 @@ function buildResultChanges(
   return currentResults.items
     .filter((item) => !previousRunIds.has(item.runId))
     .map((item) => ({
-      type: item.agentId === "orchestrator" ? "steward-result" : "worker-result",
+      type: item.agentId === "steward" ? "steward-result" : "worker-result",
       summary: `${item.agentId}: ${item.summary || item.status}`,
       agent: item.agentId,
       runId: item.runId,

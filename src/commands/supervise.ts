@@ -299,11 +299,11 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
   }
 
   const initialActiveOrchestratorRun =
-    state.activeRuns.find((run) => run.agentId === "orchestrator") ?? null;
+    state.activeRuns.find((run) => run.agentId === "steward") ?? null;
   const lastStewardRun =
-    state.recentRuns.find((run) => run.agentId === "orchestrator" && Boolean(run.ended)) ?? null;
+    state.recentRuns.find((run) => run.agentId === "steward" && Boolean(run.ended)) ?? null;
   const resultsSinceLastSteward = state.recentRunResults.filter(
-    (result) => result.agentId !== "orchestrator" && endedAfter(result.ended, lastStewardRun?.ended ?? null),
+    (result) => result.agentId !== "steward" && endedAfter(result.ended, lastStewardRun?.ended ?? null),
   );
   const diffTriageEntries: StewardDiffTriageEntry[] = [];
   const triagedRunResults: typeof state.recentRunResults = [];
@@ -374,7 +374,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     const launchSummary = await launchAgentPass({
       activeProject,
       paths,
-      agentId: "orchestrator",
+      agentId: "steward",
       goal: null,
       runtimeOverride: null,
       modelOverride: null,
@@ -384,7 +384,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     });
 
     stewardSection = [
-      "Decision: launched orchestrator",
+      "Decision: launched steward",
       section("Reasons", assessment.reasons.map((reason) => `- ${reason}`).join("\n")),
       section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
       section("Launch", launchSummary),
@@ -441,7 +441,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
       boardText: state.boardText,
     });
     const workerRuns = state.activeRuns.filter(
-      (r) => r.agentId !== "orchestrator" && r.source !== "console",
+      (r) => r.agentId !== "steward" && r.source !== "console",
     );
     const pulseText = formatPulse(pulseSignals, workerRuns.length);
 

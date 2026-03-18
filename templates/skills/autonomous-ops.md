@@ -41,7 +41,7 @@ When a task is done:
 
 When scope creep appears:
 → Record it as a memory question
-→ Surface it to the human or orchestrator
+→ Surface it to the human or steward
 → Don't silently absorb unbounded work
 
 ### Block Nothing

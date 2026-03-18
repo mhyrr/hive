@@ -1,3 +1,4 @@
+import { extractConfigValue, extractConfigValueAlias, parsePositiveInt } from "./config";
 import {
   getConfiguredDirectAuthPolicy,
   listRuntimeAdapters,
@@ -121,24 +122,6 @@ type LocalModelDiscoveryCacheEntry = {
 
 const localModelDiscoveryCache = new Map<string, LocalModelDiscoveryCacheEntry>();
 
-function extractConfigValue(input: string, key: string): string | null {
-  const match = input.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-
-  return match ? match[1].trim() : null;
-}
-
-function extractConfigValueAlias(input: string, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = extractConfigValue(input, key);
-
-    if (value) {
-      return value;
-    }
-  }
-
-  return null;
-}
-
 function normalizeConfigText(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
 
@@ -153,16 +136,6 @@ function parseBias(value: string | null | undefined): CognitiveRoutingBias | nul
   }
 
   return null;
-}
-
-function parsePositiveInt(value: string | null | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = Number(value.trim());
-
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -13,7 +13,7 @@
 ## Agents
 <!-- Format: - agentId | status | task: description | last-active: timestamp
      Example:
-- orchestrator | active | task: monitoring auth implementation | last-active: 2026-03-13T14:00:00Z
+- steward | active | task: monitoring auth implementation | last-active: 2026-03-13T14:00:00Z
 - alpha | idle | task: done PROJ-001 | runtime: claude
 -->
 (none yet)

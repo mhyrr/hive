@@ -133,8 +133,8 @@ function parseOptions(args: string[]): LaunchOptions {
 }
 
 export async function launchAgentPass(input: LaunchAgentInput): Promise<string> {
-  if (input.agentId !== "orchestrator" && input.goal) {
-    throw new UsageError("Goals can only be passed when launching `orchestrator`.");
+  if (input.agentId !== "steward" && input.goal) {
+    throw new UsageError("Goals can only be passed when launching `steward`.");
   }
 
   const projectPaths = getProjectPaths(input.paths, input.activeProject);
@@ -150,12 +150,12 @@ export async function launchAgentPass(input: LaunchAgentInput): Promise<string> 
   const planAgent = findPlanAgent(plan, input.agentId);
   const teamAgent = parseDefaultTeam(projectConfig).find((agent) => agent.id === input.agentId);
 
-  if (input.agentId !== "orchestrator" && !planAgent && !teamAgent) {
+  if (input.agentId !== "steward" && !planAgent && !teamAgent) {
     throw new UsageError(`Unknown agent: ${input.agentId}`);
   }
 
   const prompt =
-    input.agentId === "orchestrator"
+    input.agentId === "steward"
       ? await orchestrateCommand(input.goal ? [input.goal] : [])
       : await promptCommand([input.agentId]);
   const hints = resolveRuntimeHints({
@@ -198,11 +198,11 @@ Command: ${renderLaunchPreview(spec)}`;
   }
 
   const assignmentMessage =
-    input.agentId === "orchestrator"
+    input.agentId === "steward"
       ? null
       : await findOpenAssignmentMessage(input.paths.msgDir, input.activeProject, input.agentId);
   const scope =
-    input.agentId === "orchestrator"
+    input.agentId === "steward"
       ? null
       : resolveAgentScopeRoots({
           plan,

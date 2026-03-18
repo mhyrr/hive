@@ -234,7 +234,7 @@ runtime: codex
 Ship the auth flow.
 
 ## Agents
-### orchestrator (steward)
+### steward (steward)
 Task: Keep the board current.
 
 ### alpha (craftsman -> src/api/**, tests/**)
@@ -242,9 +242,9 @@ Task: Build the auth endpoint.
 `,
     );
     await Bun.write(
-      join(context.hiveHome, "msg", "20260309-150000Z-orchestrator-to-alpha-HIVE-006.md"),
+      join(context.hiveHome, "msg", "20260309-150000Z-steward-to-alpha-HIVE-006.md"),
       `---
-from: orchestrator
+from: steward
 to: alpha
 type: assign
 status: open
@@ -264,7 +264,7 @@ Build the auth endpoint.
     let stewardRun = await createRunDraft({
       projectId: "myproject",
       projectPaths,
-      agentId: "orchestrator",
+      agentId: "steward",
       runtime: "codex",
       model: null,
       prompt: "# Steward Prompt",
@@ -289,7 +289,7 @@ Build the auth endpoint.
     expect(output).toContain("max-parallel: 2");
     expect(alphaRuns).toHaveLength(1);
     expect(alphaRuns[0]?.sourceMessage).toBe(
-      "20260309-150000Z-orchestrator-to-alpha-HIVE-006.md",
+      "20260309-150000Z-steward-to-alpha-HIVE-006.md",
     );
     expect(alphaRuns[0]?.scope).toEqual(["src/api", "tests"]);
 
@@ -322,7 +322,7 @@ runtime: codex
 Recover stale runs.
 
 ## Agents
-### orchestrator (steward)
+### steward (steward)
 Task: Keep the board current.
 `,
     );
@@ -331,7 +331,7 @@ Task: Keep the board current.
       `# Board: MyProject
 
 ## Agents
-- orchestrator | status: idle | role: steward
+- steward | status: idle | role: steward
 - alpha | status: idle | role: worker
 `,
     );
@@ -341,7 +341,7 @@ Task: Keep the board current.
     let stewardRun = await createRunDraft({
       projectId: "myproject",
       projectPaths,
-      agentId: "orchestrator",
+      agentId: "steward",
       runtime: "codex",
       model: null,
       prompt: "# Steward Prompt",
@@ -420,7 +420,7 @@ runtime: codex
 Keep routine test churn from waking the steward.
 
 ## Agents
-### orchestrator (steward)
+### steward (steward)
 Task: Keep the board current.
 `,
     );
@@ -429,7 +429,7 @@ Task: Keep the board current.
       `# Board: MyProject
 
 ## Agents
-- orchestrator | status: idle | role: steward
+- steward | status: idle | role: steward
 - alpha | status: idle | role: worker
 `,
     );
@@ -441,7 +441,7 @@ Task: Keep the board current.
     let stewardRun = await createRunDraft({
       projectId: "myproject",
       projectPaths,
-      agentId: "orchestrator",
+      agentId: "steward",
       runtime: "codex",
       model: null,
       prompt: "# Steward Prompt",
@@ -484,7 +484,7 @@ Task: Keep the board current.
     process.env.HIVE_FIXED_NOW = "2026-03-09T15:05:30Z";
     const output = await runCli(["supervise", "--once"]);
     const allRuns = await listAllRuns(projectPaths);
-    const orchestratorRuns = allRuns.filter((run) => run.agentId === "orchestrator");
+    const orchestratorRuns = allRuns.filter((run) => run.agentId === "steward");
 
     expect(output).toContain("Decision: no action");
     expect(output).toContain("Diff Triage");
