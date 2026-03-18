@@ -323,15 +323,40 @@ When five worker results land between supervisor ticks:
 
 This directly fixes the "serial triage loop" in the current supervisor.
 
+When workers are launched as a batch (e.g., four craftsman workers for one
+initiative), the scheduler can batch diff-triage and signal the steward once
+when the batch completes rather than waking it four times. The `diff-triage`
+packets accumulate; the supervisor checks whether the batch is complete
+before deciding to wake the steward.
+
 ---
 
-## 8. Caching
+## 8. Caching and Fingerprinting
 
 Packets are cached by `kind` + `fingerprint`.
 
-The fingerprint is computed from source inputs: the revision of the files or
-state that the task reads. If the sources haven't changed, the cached packet
-is returned without re-execution.
+The fingerprint is computed from source inputs: the content or revision of
+the files and state that the task reads. A fast hash (xxhash or similar) of
+the concatenated inputs is sufficient — the consequence of a false positive
+(stale packet served) is low, because the steward can always read raw files
+if something seems off.
+
+Two levels of freshness checking:
+
+1. **Global revision** (cheap): HIVE's existing revision counter in
+   `state.ts` increments when any state changes. If the revision hasn't
+   changed since the last compile, skip all tasks. This is the fast path.
+
+2. **Per-task fingerprint** (precise): If the global revision changed, each
+   task computes a fingerprint from only the inputs it reads. A
+   `board-health` task fingerprints BOARD.md + active runs + open messages.
+   A `run-result` task fingerprints the specific run's output. If the
+   per-task fingerprint matches the cached packet, that task still skips.
+
+This means most compile cycles are a single integer comparison (revision
+unchanged → do nothing). Only when state actually changed do per-task
+fingerprints get computed, and even then most tasks skip because their
+specific inputs didn't change.
 
 Cache storage is simple: JSON files in derived state.
 
@@ -358,13 +383,26 @@ and the workbench rebuilds from source on next compile.
 
 ## 9. Token Economics
 
-### The Laws
+### The Real Goal
+
+"Maximizing tokens" means: use limited API quotas (Claude, Codex, Gemini)
+smartly. Prepare context locally with cheap models, then send well-packaged,
+high-signal working sets to frontier models so they produce maximum useful
+work per turn. The compiler is the preparation step.
+
+### Guidelines
+
+These are guidelines, not hard rules. When in doubt, use the smarter model.
+Quality comes first.
 
 1. **Never spend frontier tokens to reconstruct cheap state.** If tier-0 or
    tier-1 can compile it, the steward should not be reading raw logs.
 
 2. **Spend cheap tokens to save expensive tokens.** A 4B local model compressing
-   5,000 tokens into 120 tokens for the steward is a net gain.
+   5,000 tokens into 120 tokens for the steward is a net gain — but only if
+   the compression is reliable for the specific task. Tier-1 is for extraction
+   and classification, not for reasoning. If there's doubt about whether a
+   cheap model handles the task well, escalate.
 
 3. **Compile once, reuse everywhere.** A `run-result` packet serves the steward,
    the UI, `hive ask`, and worker prompt assembly.
@@ -374,6 +412,11 @@ and the workbench rebuilds from source on next compile.
 5. **The steward should see the smallest sufficient working set.** Large context
    is a safety net, not the default operating mode.
 
+6. **Bias toward quality.** The fallback for any uncertain routing decision
+   is "use the better model." Tier-1 is an optimization you earn by proving
+   the cheap model handles the specific task reliably, not a default you
+   impose.
+
 ### Measurement
 
 Packets should track estimated token counts so HIVE can measure:
@@ -381,8 +424,10 @@ Packets should track estimated token counts so HIVE can measure:
 - tokens saved per packet reuse
 - cost of tier-1 compilation vs. cost of raw steward hydration
 - which compile tasks are most accretive
+- how often the steward requests raw files after seeing a packet (if frequent,
+  the packets aren't good enough)
 
-This makes "maximizing tokens" measurable, not rhetorical.
+This makes token optimization measurable, not rhetorical.
 
 ---
 
@@ -401,6 +446,39 @@ The steward remains the single persistent coordinator. It:
 The steward is the one process that needs continuity. Everything else is
 ephemeral.
 
+#### Steward Model Escalation
+
+The steward runs on a cheap model (Haiku-class) by default. Most steward
+turns are coordination: routing work, checking status, answering simple
+questions from compiled state. These don't need frontier reasoning.
+
+But some turns do. The steward should escalate its own model when:
+
+- **Planning**: breaking a large task into scoped worker assignments. This is
+  architecture. Scope boundaries, dependency ordering, and non-overlapping
+  assignments require frontier reasoning. Bad scoping wastes every downstream
+  worker's tokens.
+- **Synthesis**: integrating results from multiple workers into a coherent
+  whole. If the synthesis is simple ("three workers finished, here's what
+  changed"), Haiku handles it. If reconciling conflicting proposals or
+  producing a design document, escalate.
+- **Judgment under ambiguity**: when the compiled state doesn't give a clear
+  answer and the steward needs to reason about tradeoffs.
+
+The heuristic: **if the turn produces artifacts that other agents will depend
+on (plans, assignments, scope boundaries, design decisions), use a frontier
+model. If the turn is routing, status, or conversation, stay cheap.**
+
+The steward should be biased toward escalation. A cheap steward that
+confidently produces mediocre plans is worse than one that recognizes "this
+needs a bigger model" and escalates. Quality first.
+
+Mechanically, this means the steward session can request a model change per
+turn. The runtime honors it for that turn and drops back to the default
+afterward. The cognitive routing modes map to this: direct-answer stays
+cheap, targeted-inspection usually stays cheap, plural-synthesis escalates
+for the synthesis step.
+
 ### Workers
 
 Workers are ephemeral. They:
@@ -413,6 +491,37 @@ Workers are ephemeral. They:
 
 Workers are the "map" in map-reduce. The steward launches them, they do work,
 their output gets compiled into packets, the steward integrates.
+
+#### Worker Reasoning Effort
+
+Not every worker task needs deep reasoning. The steward sets reasoning effort
+as part of the assignment:
+
+```
+task: implement the session middleware
+scope: src/middleware/session.ts, tests/session.test.ts
+launch: auto
+runtime: claude
+effort: low
+```
+
+Suggested defaults by task type:
+
+- **Implementation from clear spec**: `low` — fast, cheap, the spec does the thinking
+- **Implementation with design decisions**: `medium` — some judgment needed
+- **Architecture and interface design**: `high` — tradeoffs, boundary decisions
+- **Adversarial review / critique**: `high` — finding flaws requires thorough reasoning
+- **Research and exploration**: `low` — breadth over depth, the steward synthesizes
+- **Test writing from existing code**: `low` — mechanical, pattern-following
+
+The runtime adapter translates the abstract level to the provider-specific
+parameter (Claude's `reasoning.effort`, OpenAI's equivalent). Providers that
+don't support effort levels ignore the hint.
+
+The principle: **use the minimum reasoning effort that produces reliable
+results for the specific task type.** This is another form of "spend the
+cheapest sufficient tokens" — applied within a single model rather than
+across models.
 
 ### Personas
 
@@ -446,9 +555,116 @@ The pattern is map-reduce with a review step, not distributed coordination.
 
 ---
 
-## 11. Module Decomposition
+## 11. Scenario Walkthrough
 
-### 11.1 Steward Split
+"Design and build the new auth subsystem."
+
+This walkthrough shows the full flow: exploration, planning, building, review,
+and synthesis. It demonstrates steward model escalation, worker reasoning
+effort, multi-model coordination, persona lenses, and how compiled packets
+flow through the system.
+
+### Phase A: Exploration
+
+1. **Human**: "Design and build the new auth subsystem."
+
+2. **Steward** (Haiku): Reads compiled working set. Sees `board-health` packet
+   (no conflicting active work), `human-request` packet (classified as
+   `complex`). Recognizes this is plural-synthesis territory — multiple
+   perspectives needed before committing to a design.
+
+3. **Steward launches two workers**:
+   - Architect worker (Opus 4.6, effort: high): "Design the auth subsystem.
+     Propose architecture, interfaces, tradeoffs, migration path."
+   - Scout worker (GPT 5.4, effort: low): "Research auth patterns in systems
+     like ours. Compare session-based vs token-based vs hybrid. Identify risks."
+
+4. **Both workers finish.** Workbench event-compiles:
+   - `run-result:architect-auth` — 150 tokens summarizing the design proposal
+   - `run-result:scout-auth` — 120 tokens summarizing research findings
+   - `diff-triage` on each — both steward-worthy (design artifacts produced)
+
+5. **Steward escalates to Opus** for synthesis. Reads both `run-result`
+   packets. Reconciles the proposals. Writes a design section to PLAN.md.
+   Updates BOARD.md with the auth subsystem as an active initiative. Presents
+   the design to the human with key tradeoffs highlighted.
+
+6. **Human**: "Looks good. Use the token-based approach. Build it."
+
+### Phase B: Planning
+
+7. **Steward escalates to Opus** for planning. This turn produces artifacts
+   that every downstream worker depends on — bad scoping here wastes all
+   their tokens. Reads the design from PLAN.md. Breaks it into four scoped,
+   non-overlapping assignments:
+   - UX: login flow, token refresh UI, error states
+   - API: auth endpoints, middleware, token validation
+   - Data: user store, token store, migration
+   - Tests: integration tests across all three layers
+
+   Writes assignments to BOARD.md. Creates assignment messages in msg/.
+
+### Phase C: Building
+
+8. **Steward drops back to Haiku** for coordination. Launches four workers:
+   - Craftsman (Opus 4.6, effort: medium): UX implementation
+   - Craftsman (Codex, effort: low): API layer — clear spec, mechanical
+   - Craftsman (Codex, effort: low): Data layer + migrations — clear spec
+   - Craftsman (Codex, effort: low): Integration tests — pattern-following
+
+   Each worker receives a `worker-brief` packet containing: their specific
+   assignment, the relevant PLAN.md section, and `run-result` packets from
+   the architect and scout so they understand the design context.
+
+9. **Workers execute in parallel.** They write to their scoped files. They
+   never touch BOARD.md or PLAN.md. Results go to run records and msg/.
+
+10. **Workers finish.** Workbench event-compiles:
+    - Four `run-result` packets (one per worker)
+    - Four `diff-triage` packets — deterministic gates handle the Codex
+      workers (routine support files), tier-1 triages the UX worker (touched
+      component interfaces)
+
+### Phase D: Review
+
+11. **Steward** (Haiku): Reads the four `run-result` packets. Decides the
+    combined result is high-stakes (new subsystem, user-facing). Launches
+    a critic worker.
+
+12. **Critic worker** (Gemini 2.5 Pro, effort: high): Reviews all four
+    results against the original design. Different model from the builders
+    for epistemic diversity. Writes findings to msg/.
+
+13. **Workbench compiles** `run-result:critic-auth` — 180 tokens summarizing
+    findings, flagged issues, and recommendations.
+
+### Phase E: Synthesis
+
+14. **Steward escalates to Opus** for final synthesis. Reads the critic's
+    `run-result` packet. Integrates findings. Updates BOARD.md with
+    completed items and any follow-up tasks from the critique. Presents
+    the human with: what was built, what the critic found, and recommended
+    next steps.
+
+### What the compiler enabled
+
+Without the compiler, the steward would re-read raw files at every wake.
+The architect's full output (5,000+ tokens) would be re-parsed for each
+worker's prompt assembly. The scout's research would be re-read for synthesis.
+
+With the compiler:
+- Each `run-result` packet is produced once and consumed 5+ times
+- The `worker-brief` packets pre-assemble context so workers start fast
+- The steward's synthesis turn reads ~600 tokens of packets instead of
+  ~20,000 tokens of raw output
+- The `diff-triage` packets let the supervisor batch-signal instead of
+  waking the steward four times
+
+---
+
+## 12. Module Decomposition
+
+### 12.1 Steward Split
 
 Replace `src/lib/persistent-steward.ts` with:
 
@@ -468,7 +684,7 @@ src/lib/steward/
 
 This is a mechanical refactor. The seams are already visible.
 
-### 11.2 Working-Set Compiler
+### 12.2 Working-Set Compiler
 
 ```
 src/lib/cognition/
@@ -487,7 +703,7 @@ src/lib/cognition/
 Start with one file for the workbench (registry + scheduler + cache). Split
 when it earns the split, not before.
 
-### 11.3 Consumer Rebase
+### 12.3 Consumer Rebase
 
 After the workbench exists:
 
@@ -500,7 +716,7 @@ Prompt construction gets thinner and more uniform.
 
 ---
 
-## 12. Migration Plan
+## 13. Migration Plan
 
 ### Phase 1: Split the Steward
 
@@ -544,7 +760,7 @@ useful. The hive gets smarter while idle.
 
 ---
 
-## 13. Future Directions
+## 14. Future Directions
 
 ### Shared Coordination Substrate
 
@@ -577,7 +793,7 @@ local models being fast and the cache hit rate being high.
 
 ---
 
-## 14. What This Does Not Do
+## 15. What This Does Not Do
 
 - **No distributed coordination.** The steward is the single coordinator.
   Workers communicate through messages and run results, not shared mutable
@@ -597,7 +813,7 @@ local models being fast and the cache hit rate being high.
 
 ---
 
-## 15. Success Criteria
+## 16. Success Criteria
 
 1. The steward consumes compiled working sets instead of raw state.
 2. Tier-1 compaction is expressed as reusable compile tasks in one registry.
@@ -610,7 +826,7 @@ local models being fast and the cache hit rate being high.
 
 ---
 
-## 16. The Essence
+## 17. The Essence
 
 The shift is simple:
 

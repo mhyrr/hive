@@ -28,7 +28,7 @@ function parseTaskStatus(task: string): string | null {
   }
 
   return legacyMatch.find((segment) =>
-    ["active", "done", "queued", "waiting"].some(
+    ["active", "done", "queued", "waiting", "pending"].some(
       (status) => segment === status || segment.startsWith(`${status}-`),
     ),
   ) ?? null;
