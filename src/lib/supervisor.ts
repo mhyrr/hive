@@ -142,19 +142,19 @@ export function assessStewardLaunch(input: {
   const board = parseBoard(input.boardText);
   const reassessSeconds = input.reassessSeconds ?? DEFAULT_STEWARD_REASSESS_SECONDS;
   const lastStewardRun =
-    input.recentRuns.find((run) => run.agentId === "orchestrator" && Boolean(run.ended)) ?? null;
+    input.recentRuns.find((run) => run.agentId === "steward" && Boolean(run.ended)) ?? null;
   const lastStewardEnded = lastStewardRun?.ended ?? null;
   const messagesToOrchestrator = input.openMessages.filter(
-    (message) => message.attributes.to === "orchestrator",
+    (message) => message.attributes.to === "steward",
   );
   const workerActiveRuns = input.activeRuns.filter(
-    (run) => run.agentId !== "orchestrator" && run.source !== "console",
+    (run) => run.agentId !== "steward" && run.source !== "console",
   );
   const boardActiveAgents = board.agents.filter((agent) =>
     (agent.fields.status ?? "").toLowerCase().includes("active"),
   );
   const resultsSinceLastSteward = input.recentRunResults.filter(
-    (result) => result.agentId !== "orchestrator" && endedAfter(result.ended, lastStewardEnded),
+    (result) => result.agentId !== "steward" && endedAfter(result.ended, lastStewardEnded),
   );
 
   if (!lastStewardEnded) {
@@ -162,7 +162,7 @@ export function assessStewardLaunch(input: {
   }
 
   if (messagesToOrchestrator.length > 0) {
-    reasons.push(`${messagesToOrchestrator.length} open message(s) addressed to orchestrator`);
+    reasons.push(`${messagesToOrchestrator.length} open message(s) addressed to steward`);
   }
 
   if (resultsSinceLastSteward.length > 0) {
@@ -203,14 +203,14 @@ export function selectWorkerLaunches(input: {
   const launches: WorkerLaunchCandidate[] = [];
   const skipped: string[] = [];
   const activeWorkerRuns = input.activeRuns.filter(
-    (run) => run.agentId !== "orchestrator" && run.source !== "console",
+    (run) => run.agentId !== "steward" && run.source !== "console",
   );
-  const activeOrchestratorRun = input.activeRuns.find((run) => run.agentId === "orchestrator");
+  const activeOrchestratorRun = input.activeRuns.find((run) => run.agentId === "steward");
 
   if (activeOrchestratorRun) {
     return {
       launches,
-      skipped: [`orchestrator is already active (${activeOrchestratorRun.runId})`],
+      skipped: [`steward is already active (${activeOrchestratorRun.runId})`],
     };
   }
 
@@ -228,7 +228,7 @@ export function selectWorkerLaunches(input: {
   const assignments = input.openMessages
     .filter(
       (message) =>
-        message.attributes.type === "assign" && message.attributes.to !== "orchestrator",
+        message.attributes.type === "assign" && message.attributes.to !== "steward",
     )
     .sort((left, right) => {
       const leftTs = left.attributes.ts ?? left.filename;
@@ -332,7 +332,7 @@ export function assessPulse(input: {
   const board = parseBoard(input.boardText);
 
   for (const run of input.activeRuns) {
-    if (run.source === "console" || run.agentId === "orchestrator") {
+    if (run.source === "console" || run.agentId === "steward") {
       continue;
     }
 
@@ -347,7 +347,7 @@ export function assessPulse(input: {
   }
 
   const unansweredNudges = input.openMessages.filter(
-    (msg) => msg.attributes.type === "nudge" && msg.attributes.to === "orchestrator",
+    (msg) => msg.attributes.type === "nudge" && msg.attributes.to === "steward",
   );
 
   for (const nudge of unansweredNudges) {

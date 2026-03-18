@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream, writeFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
+import { extractConfigValue } from "./config";
 import { UsageError } from "./errors";
 import { PlanAgent, TeamAgent } from "./project";
 
@@ -606,12 +607,6 @@ type ResolveHintsInput = {
 };
 
 // --- Config / Descriptor Helpers ---
-
-function extractConfigValue(input: string, key: string): string | null {
-  const match = input.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-
-  return match ? match[1].trim() : null;
-}
 
 function extractBodyValue(input: string, key: string): string | null {
   const match = input.match(new RegExp(`^${key}:\\s*(.+)$`, "mi"));

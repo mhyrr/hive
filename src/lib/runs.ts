@@ -182,12 +182,17 @@ function getArchivedRunPathFromPrompt(promptPath: string): string | null {
   return promptPath.replace(/prompt\.md$/, "run.md");
 }
 
+/** Normalize legacy "orchestrator" agent IDs to "steward". */
+function normalizeAgentId(agentId: string): string {
+  return agentId === "orchestrator" ? "steward" : agentId;
+}
+
 function toRunRecord(path: string, raw: string): RunRecord | null {
   const parsed = parseFrontmatter(raw);
   const attributes = parsed.attributes;
   const runId = attributes.run;
   const projectId = attributes.project;
-  const agentId = attributes.agent;
+  const agentId = attributes.agent ? normalizeAgentId(attributes.agent) : undefined;
   const status = attributes.status as RunStatus | undefined;
   const runtime = attributes.runtime as RuntimeName | undefined;
   const started = attributes.started;
@@ -248,7 +253,7 @@ function toRunResult(path: string, raw: string): RunResult | null {
   const parsed = parseFrontmatter(raw);
   const attributes = parsed.attributes;
   const runId = attributes.run;
-  const agentId = attributes.agent;
+  const agentId = attributes.agent ? normalizeAgentId(attributes.agent) : undefined;
   const status = attributes.status as Extract<RunStatus, "exited" | "failed" | "cancelled"> | undefined;
   const ended = attributes.ended;
 

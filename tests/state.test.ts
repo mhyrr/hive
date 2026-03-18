@@ -117,7 +117,7 @@ describe("project runtime state", () => {
 
     const message = await createMessage(context.paths.msgDir, {
       from: "human",
-      to: "orchestrator",
+      to: "steward",
       type: "nudge",
       project: "myproject",
       body: "Implement the persistent steward runtime.",

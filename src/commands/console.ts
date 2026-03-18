@@ -167,9 +167,9 @@ You don't announce these actions to the human. You just do them. They'll see the
 
 ### You Manage the Team
 - Update BOARD.md directly — you own it
-- Send assignment messages with \`hive msg --type assign orchestrator <agent> <body>\` including \`task:\`, \`launch: auto\`, and \`scope:\` frontmatter
+- Send assignment messages with \`hive msg --type assign steward <agent> <body>\` including \`task:\`, \`launch: auto\`, and \`scope:\` frontmatter
 - Check agent progress: \`hive ps\`, \`hive inbox <agent>\`, read their LOG.md entries
-- Resolve handled messages: \`hive msg resolve <message> orchestrator <answer>\`
+- Resolve handled messages: \`hive msg resolve <message> steward <answer>\`
 - When creating or redirecting work, update PLAN.md too
 
 ### You Talk to the Human Like a Peer

@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import { extractConfigValue, extractConfigValueAlias, parsePositiveInt } from "./config";
 import { type HivePaths, getProjectPaths } from "./paths";
 import { listAllRunResults } from "./runs";
 import { getSessionHistory, listSessions, type SessionTurn } from "./sessions";
@@ -43,34 +44,6 @@ export type CognitiveUsageSnapshot = {
     lastStewardWakeAt: string | null;
   };
 };
-
-function extractConfigValue(input: string, key: string): string | null {
-  const match = input.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-
-  return match ? match[1].trim() : null;
-}
-
-function extractConfigValueAlias(input: string, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = extractConfigValue(input, key);
-
-    if (value) {
-      return value;
-    }
-  }
-
-  return null;
-}
-
-function parsePositiveInt(value: string | null | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = Number(value.trim());
-
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
 
 function parsePositiveFloat(value: string | null | undefined): number | null {
   if (!value) {

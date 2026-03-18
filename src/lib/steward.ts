@@ -219,7 +219,7 @@ function renderHumanInboxDigest(
 function buildStewardTurnPrompt(input: StewardPromptContext): string {
   return `${input.sessionPrompt || "# HIVE Steward Session"}
 
-You are the live steward for project ${input.projectId}. This is a continuing conversation with the human, not a fresh orchestrator bootstrap. Use the compact state and delta history first. Only read raw files when the current turn actually requires it.
+You are the live steward for project ${input.projectId}. This is a continuing conversation with the human, not a fresh steward bootstrap. Use the compact state and delta history first. Only read raw files when the current turn actually requires it.
 
 ## Session Contract
 - session: ${input.sessionId}

@@ -34,7 +34,7 @@ function makeRun(overrides: Partial<RunRecord>): RunRecord {
     exitCode: overrides.exitCode ?? null,
     pid: overrides.pid ?? null,
     promptPath: overrides.promptPath ?? "/tmp/prompt.md",
-    source: overrides.source ?? "orchestrator",
+    source: overrides.source ?? "steward",
     sourceMessage: overrides.sourceMessage ?? null,
     taskId: overrides.taskId ?? null,
     scope: overrides.scope ?? null,
@@ -52,7 +52,7 @@ describe("digestBoard", () => {
     expect(result).toContain("1 active");
     expect(result).toContain("2 done");
     expect(result).toContain("1 waiting/queued");
-    expect(result).toContain("orchestrator: active");
+    expect(result).toContain("steward: active");
     expect(result).toContain("gamma: idle");
     expect(result).not.toContain("Blockers:");
   });
@@ -187,7 +187,7 @@ describe("digestMessages", () => {
       makeMessage({
         filename: "msg-001.md",
         attributes: {
-          from: "orchestrator",
+          from: "steward",
           to: "alpha",
           type: "assign",
           status: "open",
@@ -201,7 +201,7 @@ describe("digestMessages", () => {
     const result = digestMessages(messages);
 
     expect(result).toBe(
-      "- [assign] orchestrator -> alpha: Implement the auth endpoint",
+      "- [assign] steward -> alpha: Implement the auth endpoint",
     );
   });
 
@@ -210,7 +210,7 @@ describe("digestMessages", () => {
       makeMessage({
         filename: "msg-001.md",
         attributes: {
-          from: "orchestrator",
+          from: "steward",
           to: "alpha",
           type: "assign",
           status: "open",
@@ -223,7 +223,7 @@ describe("digestMessages", () => {
         filename: "msg-002.md",
         attributes: {
           from: "alpha",
-          to: "orchestrator",
+          to: "steward",
           type: "question",
           status: "open",
           ts: "2026-03-09T15:05:00Z",
@@ -235,7 +235,7 @@ describe("digestMessages", () => {
         filename: "msg-003.md",
         attributes: {
           from: "beta",
-          to: "orchestrator",
+          to: "steward",
           type: "status",
           status: "open",
           ts: "2026-03-09T15:10:00Z",
@@ -250,13 +250,13 @@ describe("digestMessages", () => {
 
     expect(lines).toHaveLength(3);
     expect(lines[0]).toBe(
-      "- [assign] orchestrator -> alpha: Implement the auth endpoint",
+      "- [assign] steward -> alpha: Implement the auth endpoint",
     );
     expect(lines[1]).toBe(
-      "- [question] alpha -> orchestrator: Which OAuth provider should I use?",
+      "- [question] alpha -> steward: Which OAuth provider should I use?",
     );
     expect(lines[2]).toBe(
-      "- [status] beta -> orchestrator: DB migration complete",
+      "- [status] beta -> steward: DB migration complete",
     );
   });
 

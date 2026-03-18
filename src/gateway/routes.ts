@@ -1037,7 +1037,7 @@ function resolveAgentPresentation(input: {
     };
   }
 
-  if (input.agentId === "orchestrator") {
+  if (input.agentId === "steward") {
     return {
       displayName: "background steward",
       persona: "steward",
@@ -1529,7 +1529,7 @@ function describeLeadRun(run: RunRecord): string {
     return "I'm already working on the current conversation";
   }
 
-  if (run.agentId === "orchestrator") {
+  if (run.agentId === "steward") {
     return "The background steward is assessing the project and deciding the next moves";
   }
 
@@ -1541,7 +1541,7 @@ function summarizeRecentResult(input: {
   status: string;
   summary: string;
 }): string {
-  const base = input.agentId === "orchestrator"
+  const base = input.agentId === "steward"
     ? "The last completed background steward pass"
     : `The last completed step from ${input.agentId}`;
 
@@ -1566,7 +1566,7 @@ async function buildCurrentActivitySummary(input: {
   const activeRuns = state.activeRuns;
   const leadRun =
     activeRuns.find((run) => run.agentId === "console") ??
-    activeRuns.find((run) => run.agentId === "orchestrator") ??
+    activeRuns.find((run) => run.agentId === "steward") ??
     activeRuns[0] ??
     null;
   const lines: string[] = [];
@@ -1598,13 +1598,13 @@ async function buildCurrentActivitySummary(input: {
     lines.push("- Nothing is actively running at the moment.");
   }
 
-  const workerRuns = activeRuns.filter((run) => run.agentId !== "console" && run.agentId !== "orchestrator");
+  const workerRuns = activeRuns.filter((run) => run.agentId !== "console" && run.agentId !== "steward");
 
   if (workerRuns.length > 0) {
     lines.push(
       `- Active workers: ${workerRuns.map((run) => run.taskId ? `${run.agentId} on ${run.taskId}` : run.agentId).join(", ")}.`,
     );
-  } else if (activeRuns.some((run) => run.agentId === "orchestrator")) {
+  } else if (activeRuns.some((run) => run.agentId === "steward")) {
     lines.push("- No worker handoffs have been launched yet.");
   }
 
@@ -1688,8 +1688,8 @@ async function resolveGatewayStewardDefaults(input: {
 
   return resolveRuntimeHints({
     globalConfig,
-    teamAgent: parseDefaultTeam(projectConfig).find((agent) => agent.id === "orchestrator") ?? null,
-    planAgent: findPlanAgent(plan, "orchestrator"),
+    teamAgent: parseDefaultTeam(projectConfig).find((agent) => agent.id === "steward") ?? null,
+    planAgent: findPlanAgent(plan, "steward"),
   });
 }
 
@@ -2085,7 +2085,7 @@ async function continueQueuedWorkflow(input: {
     const { activeRuns, openMessages, recentResults } = state;
 
     const orchestratorRun = activeRuns.find(
-      (run) => run.agentId === "orchestrator" && run.started >= firedAt,
+      (run) => run.agentId === "steward" && run.started >= firedAt,
     );
 
     if (orchestratorRun && !announcedOrchestratorRun) {
@@ -2136,7 +2136,7 @@ async function continueQueuedWorkflow(input: {
 
     const freshWorkerRuns = activeRuns.filter(
       (run) =>
-        run.agentId !== "orchestrator" &&
+        run.agentId !== "steward" &&
         run.agentId !== "console" &&
         run.started >= firedAt &&
         !announcedWorkerRuns.has(run.runId),
@@ -2149,7 +2149,7 @@ async function continueQueuedWorkflow(input: {
       totalWorkerRuns += freshWorkerRuns.length;
       maxParallelWorkers = Math.max(
         maxParallelWorkers,
-        activeRuns.filter((run) => run.agentId !== "orchestrator" && run.agentId !== "console").length,
+        activeRuns.filter((run) => run.agentId !== "steward" && run.agentId !== "console").length,
       );
 
       const workers = freshWorkerRuns.map((run) =>
@@ -2168,7 +2168,7 @@ async function continueQueuedWorkflow(input: {
 
     const finalResult = recentResults.find(
       (result) =>
-        result.agentId === "orchestrator" &&
+        result.agentId === "steward" &&
         result.ended >= firedAt &&
         result.finalVisibleOutput.trim().length > 0,
     );
@@ -2221,11 +2221,11 @@ async function continueQueuedWorkflow(input: {
               trace: [
                 "Message was routed through background coordination instead of the live steward path.",
                 announcedOrchestratorRun
-                  ? "A disposable orchestrator pass synthesized the final reply."
+                  ? "A disposable steward pass synthesized the final reply."
                   : "No persistent steward lane was used for this reply.",
                 totalWorkerRuns > 0
                   ? `Observed ${totalWorkerRuns} worker run(s) during coordination.`
-                  : "No fresh worker runs were observed before the orchestrator replied.",
+                  : "No fresh worker runs were observed before the steward replied.",
               ],
             }),
             statusNotes,
@@ -2271,11 +2271,11 @@ async function continueQueuedWorkflow(input: {
             trace: [
               "Message was routed through background coordination instead of the live steward path.",
               announcedOrchestratorRun
-                ? "A disposable orchestrator pass synthesized the final reply."
+                ? "A disposable steward pass synthesized the final reply."
                 : "No persistent steward lane was used for this reply.",
               totalWorkerRuns > 0
                 ? `Observed ${totalWorkerRuns} worker run(s) during coordination.`
-                : "The orchestrator replied without launching new workers.",
+                : "The steward replied without launching new workers.",
             ],
           }),
           statusNotes,
@@ -2319,7 +2319,7 @@ async function continueQueuedWorkflow(input: {
           "Message remains in background coordination because no final reply was ready before the timeout window.",
           totalWorkerRuns > 0
             ? `Observed ${totalWorkerRuns} worker run(s) still in flight.`
-            : "The orchestrator has not emitted a final visible reply yet.",
+            : "The steward has not emitted a final visible reply yet.",
         ],
       }),
       statusNotes,

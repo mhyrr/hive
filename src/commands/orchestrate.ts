@@ -100,7 +100,7 @@ export async function orchestrateCommand(args: string[]): Promise<string> {
   const openMessages = await listOpenProjectMessages(paths.msgDir, activeProject);
   const activeRuns = await listActiveRuns(projectPaths);
   const recentRunResults = (await listRecentRunResults(projectPaths, 5)).filter(
-    (result) => result.agentId !== "orchestrator",
+    (result) => result.agentId !== "steward",
   );
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
   const memoryContext = await loadPromptMemoryContext(paths, activeProject);
