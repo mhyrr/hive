@@ -1,3 +1,4 @@
+import type { CompilationMetrics } from "../cognition";
 import type { HiveMessage } from "../messages";
 import type { HivePaths, ProjectPaths } from "../paths";
 import type { RunRecord, RunResult } from "../runs";
@@ -73,16 +74,31 @@ export function renderHumanInboxDigest(
     .join("\n");
 }
 
+function renderCompilationAnnotation(metrics: CompilationMetrics | null): string {
+  if (!metrics) {
+    return "";
+  }
+
+  const hitPct = `${Math.round(metrics.hitRate * 100)}%`;
+  const propagation = metrics.avgPropagationDelayMs != null
+    ? `avg propagation ${Math.round(metrics.avgPropagationDelayMs / 1000)}s`
+    : "no propagation data";
+  return `Working set: ${metrics.packetCount} packets, ~${metrics.workingSetTokenEstimate} tokens, ${metrics.compiledFields}/${metrics.totalFields} compiled (${hitPct} hit rate), ${propagation}.`;
+}
+
 export function renderCompactState(input: {
   boardDigest: string;
   openMessagesDigest: string;
   activeRunsDigest: string;
   recentResultsDigest: string;
   humanInboxDigest: string;
+  compilationMetrics?: CompilationMetrics | null;
   heading?: string;
 }): string {
+  const annotation = renderCompilationAnnotation(input.compilationMetrics ?? null);
   return [
     `## ${input.heading ?? "Compact State"}`,
+    ...(annotation ? [annotation, ""] : []),
     "### Board",
     input.boardDigest,
     "",

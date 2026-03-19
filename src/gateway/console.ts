@@ -555,6 +555,7 @@ function buildSessionTurnDetails(input: {
   cacheCreationInputTokens?: number | null;
   cacheReadInputTokens?: number | null;
   totalTokens?: number | null;
+  compilation?: SessionTurnDetails["compilation"];
   routing?: SessionTurnDetails["routing"];
   statusNotes?: string[];
 }): SessionTurnDetails {
@@ -575,6 +576,7 @@ function buildSessionTurnDetails(input: {
     cacheCreationInputTokens: input.cacheCreationInputTokens ?? null,
     cacheReadInputTokens: input.cacheReadInputTokens ?? null,
     totalTokens: input.totalTokens ?? null,
+    compilation: input.compilation ?? null,
     board: {
       taskCount: input.state.boardSummary.taskCount,
       activeCount: input.state.boardSummary.activeCount,

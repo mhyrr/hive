@@ -191,6 +191,44 @@ body {
   border-color: var(--amber-dim);
 }
 
+.topbar-stop-all-btn {
+  background: transparent;
+  border: 1px solid rgba(184, 72, 56, 0.4);
+  border-radius: var(--r);
+  color: var(--red);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 2px 8px;
+  line-height: 1.4;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.topbar-stop-all-btn:hover {
+  color: var(--red-bright);
+  border-color: var(--red-bright);
+  background: rgba(184, 72, 56, 0.12);
+}
+
+.topbar-stop-all-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rail-action-btn--stop {
+  border-color: rgba(184, 72, 56, 0.4);
+  background: rgba(184, 72, 56, 0.08);
+  color: var(--red);
+}
+
+.rail-action-btn--stop:hover,
+.rail-action-btn--stop:focus-visible {
+  color: var(--red-bright);
+  border-color: var(--red-bright);
+  background: rgba(184, 72, 56, 0.16);
+}
+
 .topbar-agents {
   position: relative;
   color: var(--text-secondary);

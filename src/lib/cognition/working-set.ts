@@ -13,6 +13,19 @@ import type {
   StewardWorkingSet,
 } from "./packets";
 
+export type CompilationMetrics = {
+  compiledFields: number;
+  fallbackFields: number;
+  totalFields: number;
+  hitRate: number;
+  packetCount: number;
+  workingSetTokenEstimate: number;
+  maxPropagationDelayMs: number | null;
+  avgPropagationDelayMs: number | null;
+  oldestPacketAge: string | null;
+  newestPacketAge: string | null;
+};
+
 export type CompiledStateView = {
   boardDigest: string;
   openDecisionsDigest: string;
@@ -20,6 +33,7 @@ export type CompiledStateView = {
   activeRunsDigest: string;
   recentResultsDigest: string;
   humanInboxDigest: string;
+  metrics: CompilationMetrics;
 };
 
 type LoadedWorkingSetPackets = {
@@ -300,6 +314,42 @@ function renderCompiledHumanInboxDigest(input: {
   return waitingOnHuman.map((item) => `- ${item}`).join("\n");
 }
 
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function computePropagationDelays(
+  allPackets: MaterializedPacket[],
+  nowMs: number,
+): {
+  maxMs: number | null;
+  avgMs: number | null;
+  oldestAge: string | null;
+  newestAge: string | null;
+} {
+  const delays: number[] = [];
+
+  for (const packet of allPackets) {
+    const producedMs = Date.parse(packet.producedAt);
+
+    if (Number.isFinite(producedMs)) {
+      delays.push(nowMs - producedMs);
+    }
+  }
+
+  if (delays.length === 0) {
+    return { maxMs: null, avgMs: null, oldestAge: null, newestAge: null };
+  }
+
+  const sorted = [...delays].sort((a, b) => b - a);
+  const maxMs = sorted[0]!;
+  const avgMs = Math.round(delays.reduce((sum, d) => sum + d, 0) / delays.length);
+  const oldestAge = `${Math.round(maxMs / 1000)}s`;
+  const newestAge = `${Math.round(sorted[sorted.length - 1]! / 1000)}s`;
+
+  return { maxMs, avgMs, oldestAge, newestAge };
+}
+
 export async function buildCompiledStateView(input: {
   projectPaths: ProjectPaths;
   workingSet?: StewardWorkingSet | null;
@@ -311,44 +361,90 @@ export async function buildCompiledStateView(input: {
     humanInboxSummary: HumanInboxSummary;
   };
 }): Promise<CompiledStateView> {
+  const nowMs = Date.now();
   const packets = await loadWorkingSetPackets({
     projectPaths: input.projectPaths,
     workingSet: input.workingSet,
   });
   const boardDetails = asRecord(packets.boardHealth?.details);
+  let compiledFields = 0;
+  let fallbackFields = 0;
+
+  const boardCompiled = asString(boardDetails?.digest) ?? packets.boardHealth?.summary ?? null;
+  const boardDigest = boardCompiled ?? input.fallback.boardSummary.digest;
+  boardCompiled ? compiledFields++ : fallbackFields++;
+
+  const openDecisionsCompiled = renderCompiledOpenDecisions(packets.openDecisions);
+  const openDecisionsDigest = openDecisionsCompiled ?? renderFallbackOpenDecisions({
+    boardSummary: input.fallback.boardSummary,
+    humanInboxSummary: input.fallback.humanInboxSummary,
+  });
+  openDecisionsCompiled ? compiledFields++ : fallbackFields++;
+
+  const openMessagesCompiled = renderCompiledOpenMessagesDigest({
+    boardHealth: packets.boardHealth,
+    openDecisions: packets.openDecisions,
+    humanRequests: packets.humanRequests,
+  });
+  const openMessagesDigest = openMessagesCompiled ?? input.fallback.openMessagesSummary.digest;
+  openMessagesCompiled ? compiledFields++ : fallbackFields++;
+
+  const activeRunsCompiled = renderCompiledActiveRunsDigest(packets.boardHealth);
+  const activeRunsDigest = activeRunsCompiled ?? input.fallback.activeRunsSummary.digest;
+  activeRunsCompiled ? compiledFields++ : fallbackFields++;
+
+  const recentResultsCompiled = renderCompiledRecentResultsDigest({
+    runResults: packets.runResults,
+    diffTriage: packets.diffTriage,
+  });
+  const recentResultsDigest = recentResultsCompiled ??
+    renderFallbackRecentResultsDigest(input.fallback.recentResultsSummary);
+  recentResultsCompiled ? compiledFields++ : fallbackFields++;
+
+  const humanInboxCompiled = renderCompiledHumanInboxDigest({
+    humanRequests: packets.humanRequests,
+    openDecisions: packets.openDecisions,
+  });
+  const humanInboxDigest = humanInboxCompiled ??
+    renderFallbackHumanInboxDigest(input.fallback.humanInboxSummary);
+  humanInboxCompiled ? compiledFields++ : fallbackFields++;
+
+  const totalFields = compiledFields + fallbackFields;
+  const allLoadedPackets = [
+    packets.boardHealth,
+    packets.openDecisions,
+    ...packets.runResults,
+    ...packets.diffTriage,
+    ...packets.humanRequests,
+  ].filter((p): p is MaterializedPacket => p != null);
+  const propagation = computePropagationDelays(allLoadedPackets, nowMs);
+  const allDigests = [
+    boardDigest,
+    openDecisionsDigest,
+    openMessagesDigest,
+    activeRunsDigest,
+    recentResultsDigest,
+    humanInboxDigest,
+  ].join("\n");
 
   return {
-    boardDigest:
-      asString(boardDetails?.digest) ??
-      packets.boardHealth?.summary ??
-      input.fallback.boardSummary.digest,
-    openDecisionsDigest:
-      renderCompiledOpenDecisions(packets.openDecisions) ??
-      renderFallbackOpenDecisions({
-        boardSummary: input.fallback.boardSummary,
-        humanInboxSummary: input.fallback.humanInboxSummary,
-      }),
-    openMessagesDigest:
-      renderCompiledOpenMessagesDigest({
-        boardHealth: packets.boardHealth,
-        openDecisions: packets.openDecisions,
-        humanRequests: packets.humanRequests,
-      }) ??
-      input.fallback.openMessagesSummary.digest,
-    activeRunsDigest:
-      renderCompiledActiveRunsDigest(packets.boardHealth) ??
-      input.fallback.activeRunsSummary.digest,
-    recentResultsDigest:
-      renderCompiledRecentResultsDigest({
-        runResults: packets.runResults,
-        diffTriage: packets.diffTriage,
-      }) ??
-      renderFallbackRecentResultsDigest(input.fallback.recentResultsSummary),
-    humanInboxDigest:
-      renderCompiledHumanInboxDigest({
-        humanRequests: packets.humanRequests,
-        openDecisions: packets.openDecisions,
-      }) ??
-      renderFallbackHumanInboxDigest(input.fallback.humanInboxSummary),
+    boardDigest,
+    openDecisionsDigest,
+    openMessagesDigest,
+    activeRunsDigest,
+    recentResultsDigest,
+    humanInboxDigest,
+    metrics: {
+      compiledFields,
+      fallbackFields,
+      totalFields,
+      hitRate: totalFields > 0 ? compiledFields / totalFields : 0,
+      packetCount: allLoadedPackets.length,
+      workingSetTokenEstimate: estimateTokens(allDigests),
+      maxPropagationDelayMs: propagation.maxMs,
+      avgPropagationDelayMs: propagation.avgMs,
+      oldestPacketAge: propagation.oldestAge,
+      newestPacketAge: propagation.newestAge,
+    },
   };
 }
