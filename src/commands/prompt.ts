@@ -1,11 +1,15 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { digestBoard, listSkills } from "../lib/digest";
+import {
+  buildCompiledStateView,
+  getWorkerBriefPacketPath,
+  materializeWorkerBriefPacket,
+  type WorkerBriefPacketDetails,
+} from "../lib/cognition";
+import { listSkills } from "../lib/digest";
 import { UsageError } from "../lib/errors";
 import { loadPromptMemoryContext } from "../lib/memory";
-import { listOpenProjectMessages } from "../lib/messages";
-
 const BOOTSTRAP_MAX_CHARS = 20_000;
 
 function capContent(content: string, label: string): string {
@@ -25,14 +29,7 @@ import {
   findPlanAgent,
   parseDefaultTeam,
 } from "../lib/project";
-
-function renderMessages(messages: Awaited<ReturnType<typeof listOpenProjectMessages>>): string {
-  if (messages.length === 0) {
-    return "(none)";
-  }
-
-  return messages.map((message) => `### ${message.filename}\n${message.raw}`).join("\n\n");
-}
+import { refreshProjectRuntimeState } from "../lib/state";
 
 async function listAvailableSkills(skillsDir: string): Promise<string[]> {
   try {
@@ -61,6 +58,65 @@ async function readProjectMemory(memoryPath: string): Promise<string> {
   }
 }
 
+function renderWorkerBrief(
+  packetPath: string,
+  details: WorkerBriefPacketDetails,
+): string {
+  const lines = [
+    "## Worker Brief",
+    `- packet: ${packetPath}`,
+    `- scope: ${details.scopeRoots?.join(", ") || "*"}`,
+    "",
+    "### Assignment",
+    details.assignment,
+  ];
+
+  if (details.assignmentMessage) {
+    lines.push("");
+    lines.push("### Assignment Message");
+    lines.push(`- ${details.assignmentMessage.filename} (${details.assignmentMessage.type})`);
+    lines.push(details.assignmentMessage.body);
+  }
+
+  if (details.openMessages.length > 0) {
+    lines.push("");
+    lines.push("### Open Messages");
+
+    for (const message of details.openMessages) {
+      lines.push(`#### ${message.filename}`);
+      lines.push(message.body);
+      lines.push("");
+    }
+
+    if (lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+  } else {
+    lines.push("");
+    lines.push("### Open Messages");
+    lines.push("(none)");
+  }
+
+  if (details.relevantRunResults.length > 0) {
+    lines.push("");
+    lines.push("### Relevant Prior Work");
+
+    for (const result of details.relevantRunResults) {
+      lines.push(
+        `- ${result.agentId} | ${result.status} | ${result.summary}${
+          result.changedFiles.length > 0 ? ` | files: ${result.changedFiles.join(", ")}` : ""
+        }`,
+      );
+    }
+  } else {
+    lines.push("");
+    lines.push("### Relevant Prior Work");
+    lines.push("(none)");
+  }
+
+  return lines.join("\n");
+}
+
 export async function promptCommand(args: string[]): Promise<string> {
   const agentId = args[0];
 
@@ -78,7 +134,6 @@ export async function promptCommand(args: string[]): Promise<string> {
   const projectPaths = getProjectPaths(paths, activeProject);
   const soul = await Bun.file(paths.soul).text();
   const projectConfig = await Bun.file(projectPaths.config).text();
-  const board = await Bun.file(projectPaths.board).text();
   const projectMemory = await readProjectMemory(projectPaths.memory);
   const memoryContext = await loadPromptMemoryContext(paths, activeProject);
   const plan = await Bun.file(projectPaths.plan).text();
@@ -105,13 +160,33 @@ export async function promptCommand(args: string[]): Promise<string> {
     throw new UsageError(`Missing persona file: ${resolvedAgent.persona}`);
   }
 
-  const messages = (await listOpenProjectMessages(paths.msgDir, activeProject)).filter(
-    (message) => message.attributes.to === agentId,
-  );
-  const assignment =
-    "body" in resolvedAgent && resolvedAgent.body
-      ? resolvedAgent.body
-      : "No active assignment in PLAN.md. Default to the project configuration and the live board.";
+  const runtimeState = await refreshProjectRuntimeState({
+    hivePaths: paths,
+    projectId: activeProject,
+    projectPaths,
+  });
+  const compiledState = await buildCompiledStateView({
+    projectPaths,
+    workingSet: runtimeState.workingSet,
+    fallback: {
+      boardSummary: runtimeState.boardSummary,
+      openMessagesSummary: runtimeState.openMessagesSummary,
+      activeRunsSummary: runtimeState.activeRunsSummary,
+      recentResultsSummary: runtimeState.recentResultsSummary,
+      humanInboxSummary: runtimeState.humanInboxSummary,
+    },
+  });
+  const workerBrief = await materializeWorkerBriefPacket({
+    projectId: activeProject,
+    projectPaths,
+    agentId,
+    resolvedAgent,
+    plan,
+    projectConfig,
+    openMessages: runtimeState.openMessages,
+    compilerCacheIndex: runtimeState.compilerCacheIndex,
+  });
+  const workerBriefDetails = workerBrief.details as WorkerBriefPacketDetails;
 
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
   const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
@@ -177,15 +252,15 @@ recent-decisions-json: ${memoryContext.recentDecisionsPath}
 project-entity-summary: ${memoryContext.projectEntitySummaryPath}
 journal: ${memoryContext.journalPath}
 messages-dir: ${paths.msgDir}
+worker-brief-json: ${getWorkerBriefPacketPath(projectPaths, agentId)}
 
 ## Available Skills
 ${listSkills(paths.skillsDir, availableSkillNames)}
 
-## Your Assignment
-${assignment}
+${renderWorkerBrief(getWorkerBriefPacketPath(projectPaths, agentId), workerBriefDetails)}
 
 ## Board Summary
-${digestBoard(board)}
+${compiledState.boardDigest}
 
 ## Project Memory
 ${projectMemory}
@@ -199,7 +274,5 @@ ${memoryContext.recentDecisionsDigest}
 
 ### Project Entity Memory
 ${memoryContext.projectEntityDigest}
-
-## Open Messages For You
-${renderMessages(messages)}`;
+`;
 }

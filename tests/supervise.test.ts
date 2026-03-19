@@ -491,4 +491,143 @@ Task: Keep the board current.
     expect(output).toContain("alpha | routine");
     expect(orchestratorRuns).toHaveLength(1);
   });
+
+  test("idle compilation materializes log, phase, and memory packets when the project is calm", async () => {
+    await installFakeCodex();
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Ship the auth flow.
+
+## Agents
+### steward (steward)
+Task: Keep the board current.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
+      `# Board: MyProject
+
+## Tasks
+- HIVE-100 | ship auth flow | done
+
+## Agents
+- steward | status: idle | role: steward
+- alpha | status: idle | role: worker
+
+## Blockers
+(none)
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "LOG.md"),
+      `# Log: 2026-03-09 MyProject
+
+## 2026-03-09T15:00:00Z — alpha
+Auth endpoint complete and tests passing.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "memory", "projects", "myproject.md"),
+      `# Project Memory: MyProject
+
+## Durable Facts
+- The auth endpoint lives in src/api/auth.ts
+
+## Conventions
+- Prefer contract-first API changes
+
+## Decisions
+- [2026-03-09T15:00:00Z] Keep auth concerns in src/api/auth.ts
+
+## Open Questions
+- Should refresh tokens rotate on every request?
+`,
+    );
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:00:00Z";
+    let alphaRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: null,
+      prompt: "# Alpha Prompt",
+      source: "hive launch",
+      scope: ["src/api"],
+    });
+    alphaRun = await finalizeRun({
+      projectPaths,
+      run: alphaRun,
+      status: "exited",
+      exitCode: 0,
+    });
+    await writeRunResult(alphaRun, {
+      changedFiles: ["src/api/auth.ts"],
+      gitSummaryLines: ["M src/api/auth.ts"],
+      finalVisibleOutput: "Published the auth contract.",
+      cognitiveDigest: {
+        provider: "ollama",
+        model: "qwen3:4b",
+        summary: "Published the auth contract.",
+        outcome: "success",
+        keyDecisions: ["Kept the auth contract in src/api/auth.ts."],
+        filesChanged: ["src/api/auth.ts"],
+        inputTokens: 80,
+        outputTokens: 20,
+        totalTokens: 100,
+        durationMs: 900,
+      },
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:01:00Z";
+    let stewardRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "steward",
+      runtime: "codex",
+      model: null,
+      prompt: "# Steward Prompt",
+      source: "hive supervise",
+      scope: null,
+    });
+    stewardRun = await finalizeRun({
+      projectPaths,
+      run: stewardRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:01:30Z";
+    const output = await runCli(["supervise", "--once"]);
+    const compilerCacheIndex = await Bun.file(projectPaths.stateCompilerCacheIndex).json() as {
+      packets: Array<{ kind: string }>;
+    };
+
+    expect(output).toContain("Idle Compilation");
+    expect(output).toContain("Decision: compiled");
+    expect(await Bun.file(join(projectPaths.statePacketLogRollupsDir, "recent.json")).exists()).toBeTrue();
+    expect(await Bun.file(join(projectPaths.statePacketPhaseSummariesDir, "current.json")).exists()).toBeTrue();
+    expect(await Bun.file(projectPaths.statePacketMemoryHotset).exists()).toBeTrue();
+    expect(await Bun.file(projectPaths.statePacketStaleMemory).exists()).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "log-rollup")).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "phase-summary")).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "memory-hotset")).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "stale-memory")).toBeTrue();
+  });
 });

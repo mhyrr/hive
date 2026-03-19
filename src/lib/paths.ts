@@ -72,6 +72,21 @@ export type ProjectPaths = {
   stateDeltaHistory: string;
   stateSessionContext: string;
   stateUsage: string;
+  statePacketsDir: string;
+  statePacketBoardHealth: string;
+  statePacketOpenDecisions: string;
+  statePacketRunResultsDir: string;
+  statePacketDiffTriageDir: string;
+  statePacketHumanRequestsDir: string;
+  statePacketWorkerBriefsDir: string;
+  statePacketLogRollupsDir: string;
+  statePacketPhaseSummariesDir: string;
+  statePacketMemoryHotset: string;
+  statePacketStaleMemory: string;
+  stateCompilerDir: string;
+  stateCompilerCacheIndex: string;
+  stateWorkingSetDir: string;
+  stateWorkingSetSteward: string;
 };
 
 export function resolveHiveHome(): string {
@@ -198,6 +213,9 @@ export async function ensureHiveScaffold(
 export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPaths {
   const root = join(paths.projectsDir, projectId);
   const stateDir = join(root, "state");
+  const statePacketsDir = join(stateDir, "packets");
+  const stateCompilerDir = join(stateDir, "compiler");
+  const stateWorkingSetDir = join(stateDir, "working-set");
 
   return {
     root,
@@ -220,6 +238,21 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     stateDeltaHistory: join(stateDir, "delta-history.jsonl"),
     stateSessionContext: join(stateDir, "session-context.json"),
     stateUsage: join(stateDir, "usage.json"),
+    statePacketsDir,
+    statePacketBoardHealth: join(statePacketsDir, "board-health.json"),
+    statePacketOpenDecisions: join(statePacketsDir, "open-decisions.json"),
+    statePacketRunResultsDir: join(statePacketsDir, "run-result"),
+    statePacketDiffTriageDir: join(statePacketsDir, "diff-triage"),
+    statePacketHumanRequestsDir: join(statePacketsDir, "human-request"),
+    statePacketWorkerBriefsDir: join(statePacketsDir, "worker-brief"),
+    statePacketLogRollupsDir: join(statePacketsDir, "log-rollup"),
+    statePacketPhaseSummariesDir: join(statePacketsDir, "phase-summary"),
+    statePacketMemoryHotset: join(statePacketsDir, "memory-hotset.json"),
+    statePacketStaleMemory: join(statePacketsDir, "stale-memory.json"),
+    stateCompilerDir,
+    stateCompilerCacheIndex: join(stateCompilerDir, "cache-index.json"),
+    stateWorkingSetDir,
+    stateWorkingSetSteward: join(stateWorkingSetDir, "steward.json"),
   };
 }
 

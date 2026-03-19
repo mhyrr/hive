@@ -1,11 +1,24 @@
 import { CognitionWorkbench } from "./workbench";
+import { defaultCognitionWorkbench } from "./default-workbench";
 import {
   cognitionTasks,
   compressCompletedRunOutputTask,
+  logRollupTask,
+  memoryHotsetTask,
+  phaseSummaryTask,
   preprocessHumanMessageTask,
+  staleMemoryTask,
   triageRunDiffForStewardTask,
   type CompressCompletedRunOutputInput,
+  type LogRollupData,
+  type LogRollupInput,
+  type MemoryHotsetData,
+  type MemoryHotsetInput,
+  type PhaseSummaryData,
+  type PhaseSummaryInput,
   type PreprocessHumanMessageInput,
+  type StaleMemoryData,
+  type StaleMemoryInput,
   type Tier1CloudTextRunner,
   type Tier1DiffTriageDecision,
   type Tier1HumanMessageClassification,
@@ -26,12 +39,40 @@ export type {
   CompileTask,
 } from "./packets";
 export {
+  buildCompiledStateView,
+  type CompiledStateView,
+} from "./working-set";
+export {
+  compileIdleProjectCognition,
+  getLogRollupPacketPath,
+  getPhaseSummaryPacketPath,
+  readLogRollupDigest,
+  type IdleCognitionResult,
+} from "./idle";
+export {
+  getWorkerBriefPacketPath,
+  materializeWorkerBriefPacket,
+  type WorkerBriefPacketDetails,
+} from "./worker-brief";
+export {
   cognitionTasks,
   compressCompletedRunOutputTask,
+  logRollupTask,
+  memoryHotsetTask,
+  phaseSummaryTask,
   preprocessHumanMessageTask,
+  staleMemoryTask,
   triageRunDiffForStewardTask,
   type CompressCompletedRunOutputInput,
+  type LogRollupData,
+  type LogRollupInput,
+  type MemoryHotsetData,
+  type MemoryHotsetInput,
+  type PhaseSummaryData,
+  type PhaseSummaryInput,
   type PreprocessHumanMessageInput,
+  type StaleMemoryData,
+  type StaleMemoryInput,
   type Tier1CloudTextRunner,
   type Tier1DiffTriageDecision,
   type Tier1HumanMessageClassification,
@@ -39,9 +80,7 @@ export {
   type TriageRunDiffForStewardInput,
 } from "./tasks";
 
-export const defaultCognitionWorkbench = new CognitionWorkbench(
-  [...cognitionTasks],
-);
+export { defaultCognitionWorkbench } from "./default-workbench";
 
 export async function compressCompletedRunOutput(
   input: CompressCompletedRunOutputInput,

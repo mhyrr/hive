@@ -43,8 +43,8 @@ import {
   selectWorkerLaunches,
 } from "../lib/supervisor";
 import { toIsoTimestamp } from "../lib/time";
-import { refreshProjectRuntimeState } from "../lib/state";
-import { triageRunDiffsForSteward } from "../lib/cognition";
+import { refreshProjectRuntimeState, type ProjectRuntimeState } from "../lib/state";
+import { compileIdleProjectCognition, triageRunDiffsForSteward } from "../lib/cognition";
 import { launchAgentPass } from "./launch";
 
 type SuperviseOptions = {
@@ -57,6 +57,7 @@ type SuperviseOptions = {
 };
 
 type ProjectState = {
+  runtimeState: ProjectRuntimeState;
   projectConfig: string;
   plan: string;
   boardText: string;
@@ -171,6 +172,7 @@ async function readProjectState(input: {
   });
 
   return {
+    runtimeState,
     projectConfig: await Bun.file(projectPaths.config).text(),
     plan: await Bun.file(projectPaths.plan).text(),
     boardText: runtimeState.boardText,
@@ -229,6 +231,26 @@ function formatRecoveredRuns(recovered: RecoveredRun[]): string {
         `- ${entry.run.agentId} | ${entry.status} | ${entry.run.runId}\n  ${entry.reason}`,
     )
     .join("\n\n");
+}
+
+function formatIdleCompileSection(input: {
+  status: "skipped" | "compiled";
+  reason?: string;
+  updatedCount?: number;
+  packetKinds?: string[];
+}): string {
+  if (input.status === "skipped") {
+    return [
+      "Decision: skipped",
+      `Reason: ${input.reason ?? "project is not idle enough"}`,
+    ].join("\n");
+  }
+
+  return [
+    "Decision: compiled",
+    `Updated packets: ${input.updatedCount ?? 0}`,
+    `Kinds: ${input.packetKinds?.join(", ") || "(none)"}`,
+  ].join("\n");
 }
 
 async function reconcileRecoveredRuns(input: {
@@ -435,6 +457,60 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     dispatch.skipped.length > 0
       ? dispatch.skipped.map((reason) => `- ${reason}`).join("\n")
       : "- none";
+  const nonConsoleActiveRuns = state.activeRuns.filter((run) => run.agentId !== "console");
+  let idleCompileSection = formatIdleCompileSection({
+    status: "skipped",
+    reason: "project is not idle enough",
+  });
+
+  if (
+    recoveredRuns.length === 0 &&
+    !initialActiveOrchestratorRun &&
+    !assessment.shouldLaunch &&
+    dispatch.launches.length === 0 &&
+    nonConsoleActiveRuns.length === 0
+  ) {
+    const idleResult = await compileIdleProjectCognition({
+      hivePaths: paths,
+      projectId: activeProject,
+      projectPaths,
+      plan: state.plan,
+      runtimeState: state.runtimeState,
+    });
+
+    idleCompileSection = formatIdleCompileSection({
+      status: "compiled",
+      updatedCount: idleResult.updatedCount,
+      packetKinds: idleResult.packets.map((packet) => packet.kind),
+    });
+  } else {
+    const reasons: string[] = [];
+
+    if (recoveredRuns.length > 0) {
+      reasons.push("recovered runs still needed reconciliation");
+    }
+
+    if (initialActiveOrchestratorRun) {
+      reasons.push("steward run already active");
+    }
+
+    if (assessment.shouldLaunch) {
+      reasons.push("steward wake was higher priority");
+    }
+
+    if (dispatch.launches.length > 0) {
+      reasons.push("worker launches took precedence");
+    }
+
+    if (nonConsoleActiveRuns.length > 0) {
+      reasons.push("runs are still active");
+    }
+
+    idleCompileSection = formatIdleCompileSection({
+      status: "skipped",
+      reason: reasons.join("; "),
+    });
+  }
 
   const isPulseTick = supervisorTickCount % DEFAULT_PULSE_INTERVAL_TICKS === 0;
   let pulseSection = "";
@@ -467,6 +543,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     section("Steward", stewardSection),
     section("Worker Launches", workerSection),
     section("Skipped Assignments", skippedSection),
+    section("Idle Compilation", idleCompileSection),
     ...(pulseSection ? [pulseSection] : []),
     section(
       "Supervisor",

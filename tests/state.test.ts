@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createMessage } from "../src/lib/messages";
+import { buildCompiledStateView } from "../src/lib/cognition";
 import {
   ensureHiveScaffold,
   ensureProjectScaffold,
@@ -80,6 +81,10 @@ describe("project runtime state", () => {
     expect(await Bun.file(projectPaths.stateStewardDelta).exists()).toBeTrue();
     expect(await Bun.file(projectPaths.stateDeltaHistory).exists()).toBeTrue();
     expect(await Bun.file(projectPaths.stateSessionContext).exists()).toBeTrue();
+    expect(await Bun.file(projectPaths.statePacketBoardHealth).exists()).toBeTrue();
+    expect(await Bun.file(projectPaths.statePacketOpenDecisions).exists()).toBeTrue();
+    expect(await Bun.file(projectPaths.stateCompilerCacheIndex).exists()).toBeTrue();
+    expect(await Bun.file(projectPaths.stateWorkingSetSteward).exists()).toBeTrue();
 
     const second = await refreshProjectRuntimeState({
       hivePaths: context.paths,
@@ -216,11 +221,86 @@ describe("project runtime state", () => {
       activeSession: { sessionId: string } | null;
       recentTurns: Array<{ role: string }>;
     };
+    const boardHealthPacket = await Bun.file(projectPaths.statePacketBoardHealth).json() as {
+      kind: string;
+      tier: number;
+      summary: string;
+      details: {
+        digest: string;
+        openMessagesDigest: string;
+        activeRunsDigest: string;
+      };
+    };
+    const openDecisionsPacket = await Bun.file(projectPaths.statePacketOpenDecisions).json() as {
+      kind: string;
+      summary: string;
+      details: { waitingOnHuman: string[] };
+    };
+    const runResultPacket = await Bun.file(join(projectPaths.statePacketRunResultsDir, `${run.runId}.json`)).json() as {
+      kind: string;
+      summary: string;
+      tier: number;
+      details: { runId: string };
+    };
+    const diffTriagePacket = await Bun.file(join(projectPaths.statePacketDiffTriageDir, `${run.runId}.json`)).json() as {
+      kind: string;
+      tier: number;
+      details: { runId: string; stewardWorthy: boolean };
+    };
+    const humanRequestPacket = await Bun.file(join(projectPaths.statePacketHumanRequestsDir, `${message.filename}.json`)).json() as {
+      kind: string;
+      tier: number;
+      details: { classification: string };
+    };
+    const compilerCacheIndex = await Bun.file(projectPaths.stateCompilerCacheIndex).json() as {
+      packets: Array<{ kind: string; packetId: string }>;
+    };
+    const workingSet = await Bun.file(projectPaths.stateWorkingSetSteward).json() as {
+      consumer: string;
+      packets: Array<{ kind: string; packetId: string }>;
+    };
+    const compiledState = await buildCompiledStateView({
+      projectPaths,
+      workingSet: completedState.workingSet,
+      fallback: {
+        boardSummary: completedState.boardSummary,
+        openMessagesSummary: completedState.openMessagesSummary,
+        activeRunsSummary: completedState.activeRunsSummary,
+        recentResultsSummary: completedState.recentResultsSummary,
+        humanInboxSummary: completedState.humanInboxSummary,
+      },
+    });
 
     expect(revision.revision).toBe(3);
     expect(delta.changes.some((change) => change.type === "worker-result")).toBeTrue();
     expect(deltaHistory.length).toBeGreaterThanOrEqual(3);
     expect(sessionContext.activeSession?.sessionId).toBe(session.sessionId);
     expect(sessionContext.recentTurns.some((turn) => turn.role === "human")).toBeTrue();
+    expect(boardHealthPacket.kind).toBe("board-health");
+    expect(boardHealthPacket.tier).toBe(0);
+    expect(boardHealthPacket.details.digest).toBe(completedState.boardSummary.digest);
+    expect(boardHealthPacket.details.openMessagesDigest).toContain("[nudge]");
+    expect(typeof boardHealthPacket.details.activeRunsDigest).toBe("string");
+    expect(openDecisionsPacket.kind).toBe("open-decisions");
+    expect(Array.isArray(openDecisionsPacket.details.waitingOnHuman)).toBeTrue();
+    expect(runResultPacket.kind).toBe("run-result");
+    expect(runResultPacket.tier).toBe(1);
+    expect(runResultPacket.details.runId).toBe(run.runId);
+    expect(diffTriagePacket.kind).toBe("diff-triage");
+    expect(diffTriagePacket.details.runId).toBe(run.runId);
+    expect(diffTriagePacket.details.stewardWorthy).toBeTrue();
+    expect(humanRequestPacket.kind).toBe("human-request");
+    expect(humanRequestPacket.details.classification).toBe("complex");
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "board-health")).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.packetId === run.runId)).toBeTrue();
+    expect(workingSet.consumer).toBe("steward-refresh");
+    expect(workingSet.packets.some((packet) => packet.kind === "board-health")).toBeTrue();
+    expect(workingSet.packets.some((packet) => packet.kind === "run-result" && packet.packetId === run.runId)).toBeTrue();
+    expect(workingSet.packets.some((packet) => packet.kind === "human-request" && packet.packetId === message.filename)).toBeTrue();
+    expect(compiledState.boardDigest).toBe(completedState.boardSummary.digest);
+    expect(compiledState.openDecisionsDigest).toContain("No open decisions");
+    expect(compiledState.activeRunsDigest).toBe("(none)");
+    expect(compiledState.recentResultsDigest).toContain("State monitor landed and derived state revisions now update correctly.");
+    expect(compiledState.humanInboxDigest).toContain("human -> steward [nudge]");
   });
 });

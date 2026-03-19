@@ -7,6 +7,7 @@ import { runCli } from "../src/cli";
 import { handleApi } from "../src/gateway/routes";
 import { startGateway, stopGateway } from "../src/gateway/server";
 import { createApprovalRequest } from "../src/lib/approvals";
+import { compileIdleProjectCognition } from "../src/lib/cognition";
 import { writeDetachedSupervisorState } from "../src/lib/detached-supervisor";
 import { appendEvent } from "../src/lib/events";
 import { createMessage, listProjectMessages } from "../src/lib/messages";
@@ -34,6 +35,7 @@ import {
   getSessionState,
   updateSessionMeta,
 } from "../src/lib/sessions";
+import { refreshProjectRuntimeState } from "../src/lib/state";
 
 type TestContext = {
   root: string;
@@ -644,6 +646,177 @@ describe("Gateway REST API", () => {
     expect(data.activeExecution?.mode).toBe("persistent-pi");
     expect(data.activeExecution?.executedModel).toBe("gpt-5");
     expect(data.rendered).toContain("current execution: persistent steward via Pi | codex -> openai | model: gpt-5 | auth: env");
+  });
+
+  test("GET /api/cognition returns project-focused compiled working set and idle packets", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    await Bun.write(
+      projectPaths.board,
+      `# Board: TestProj
+
+## Tasks
+- HIVE-100 | ship auth flow | done
+- HIVE-101 | wire gateway cognition rail | active
+
+## Agents
+- steward | status: active on HIVE-101 | role: steward
+- alpha | status: idle | role: worker
+
+## Blockers
+- Need sign-off on gateway messaging copy
+`,
+    );
+    await Bun.write(
+      projectPaths.log,
+      `# Log: 2026-03-11 TestProj
+
+## 2026-03-11T14:00:00Z — steward
+Captured gateway cognition snapshot and prepared the compiled-state rail.
+`,
+    );
+    await Bun.write(
+      projectPaths.memory,
+      `# Project Memory: TestProj
+
+## Durable Facts
+- The gateway UI lives in src/gateway/static/app.js
+
+## Conventions
+- Prefer exposing compiled summaries before raw derived files in UI surfaces
+
+## Decisions
+- [2026-03-11T14:00:00Z] Keep cognition routing and compiled-state inspection in one rail
+
+## Open Questions
+- Should idle packet freshness be shown directly in the rail?
+`,
+    );
+
+    const message = await createMessage(context.paths.msgDir, {
+      from: "human",
+      to: "steward",
+      type: "question",
+      project: "testproj",
+      body: "Show me the new compiled cognition state in the gateway.",
+    });
+
+    let run = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "Wire the compiled cognition rail.",
+      source: "gateway-test",
+      sourceMessage: message.filename,
+      taskId: "HIVE-101",
+      scope: ["src/gateway"],
+    });
+    run = await finalizeRun({
+      projectPaths,
+      run,
+      status: "exited",
+      exitCode: 0,
+    });
+    await writeRunResult(run, {
+      assignmentStatusAfterExit: "open",
+      assignmentResolvedByWorker: false,
+      changedFiles: ["docs/gateway-cognition.md", "tests/gateway.test.ts"],
+      gitSummaryLines: ["Wired the gateway cognition rail to compiled working-set state."],
+      finalVisibleOutput: "Compiled cognition rail wired.",
+      cognitiveDigest: {
+        provider: "ollama",
+        model: "qwen3:4b",
+        summary: "Gateway cognition rail now shows compiled working-set and idle packet state.",
+        outcome: "success",
+        keyDecisions: ["Use /api/cognition as the single project-aware rail payload."],
+        filesChanged: ["docs/gateway-cognition.md", "tests/gateway.test.ts"],
+        inputTokens: 96,
+        outputTokens: 33,
+        totalTokens: 129,
+        durationMs: 1200,
+      },
+    });
+
+    const runtimeState = await refreshProjectRuntimeState({
+      hivePaths: context.paths,
+      projectId: "testproj",
+      projectPaths,
+    });
+    const plan = await Bun.file(projectPaths.plan).text();
+    await compileIdleProjectCognition({
+      hivePaths: context.paths,
+      projectId: "testproj",
+      projectPaths,
+      plan,
+      runtimeState,
+    });
+
+    const req = new Request("http://localhost/api/cognition?project=testproj");
+    const res = await handleApi(req, new URL(req.url), {
+      hivePaths: context.paths,
+      projectsDir: context.paths.projectsDir,
+      runsActiveDir: "",
+    }, () => {});
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      project: string | null;
+      usage: {
+        project: string;
+      } | null;
+      compiled: {
+        workingSetDigests: Array<{
+          label: string;
+          body: string;
+        }>;
+        idlePackets: Array<{
+          label: string;
+          body: string;
+          kicker: string | null;
+        }>;
+      } | null;
+    };
+
+    expect(data.project).toBe("testproj");
+    expect(data.usage?.project).toBe("testproj");
+    expect(data.compiled).not.toBeNull();
+
+    const boardDigest = data.compiled?.workingSetDigests.find((item) => item.label === "board");
+    const openDecisionsDigest = data.compiled?.workingSetDigests.find((item) => item.label === "open decisions");
+    const recentResultsDigest = data.compiled?.workingSetDigests.find((item) => item.label === "recent results");
+    const humanInboxDigest = data.compiled?.workingSetDigests.find((item) => item.label === "human inbox");
+
+    expect(boardDigest?.body).toContain("2 task");
+    expect(openDecisionsDigest?.body).toContain("gateway messaging copy");
+    expect(recentResultsDigest?.body).toContain("Gateway cognition rail now shows compiled working-set and idle packet state.");
+    expect(humanInboxDigest?.body).toContain("Show me the new compiled cognition state in the gateway.");
+
+    const idleLabels = (data.compiled?.idlePackets ?? []).map((packet) => packet.label);
+    expect(idleLabels).toEqual([
+      "log rollup",
+      "phase summary",
+      "memory hotset",
+      "stale memory",
+    ]);
+
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "log rollup")?.body).toContain(
+      "Captured gateway cognition snapshot",
+    );
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "phase summary")?.body).toContain(
+      "ship auth flow",
+    );
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "memory hotset")?.body).toContain(
+      "The gateway UI lives in src/gateway/static/app.js",
+    );
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "stale memory")?.body).toContain(
+      "Stale memory review",
+    );
   });
 
   test("GET /api/feed returns feed data", async () => {

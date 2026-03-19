@@ -414,6 +414,8 @@ ${renderPathList("Absolute Paths", [
     { label: "human-inbox-json", value: input.projectPaths.stateHumanInbox },
     { label: "latest-delta-json", value: input.projectPaths.stateStewardDelta },
     { label: "delta-history-jsonl", value: input.projectPaths.stateDeltaHistory },
+    { label: "compiler-cache-index-json", value: input.projectPaths.stateCompilerCacheIndex },
+    { label: "steward-working-set-json", value: input.projectPaths.stateWorkingSetSteward },
     { label: "memory-summary-json", value: input.memorySummaryPath },
     { label: "memory-heat-json", value: input.memoryHeatPath },
     { label: "recent-decisions-json", value: input.recentDecisionsPath },
@@ -463,7 +465,7 @@ export function buildPersistentStewardRefreshMessage(input: StewardContext & {
 - last-revision-seen-in-hive-session: ${input.sessionRevision}
 - configured-steward-runtime: ${input.sessionRuntime}${input.sessionModel ? ` (${input.sessionModel})` : ""}
 
-${renderPathList("Current Paths", [
+  ${renderPathList("Current Paths", [
     { label: "project-config", value: input.projectPaths.config },
     { label: "PLAN.md", value: input.projectPaths.plan },
     { label: "BOARD.md", value: input.projectPaths.board },
@@ -471,6 +473,7 @@ ${renderPathList("Current Paths", [
     { label: "project-memory", value: input.projectPaths.memory },
     { label: "messages-dir", value: input.hivePaths.msgDir },
     { label: "state-dir", value: input.projectPaths.stateDir },
+    { label: "steward-working-set-json", value: input.projectPaths.stateWorkingSetSteward },
   ])}
 
 ## Cognitive Routing Policy
