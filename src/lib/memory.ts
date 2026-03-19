@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { UsageError } from "./errors";
 import { appendEvent, listRecentEvents } from "./events";
 import { appendFeedEntry, parseStructuredFeedEntries } from "./feed";
+import { readJson, writeJson } from "./json";
 import {
   ensureDirectory,
   getProjectPaths,
@@ -209,25 +210,6 @@ function readLinesFromMarkdown(path: string): Promise<string[]> {
         .filter((line) => line !== "(none yet)"),
     )
     .catch(() => []);
-}
-
-async function readJson<T>(path: string): Promise<T | null> {
-  try {
-    const text = (await Bun.file(path).text()).trim();
-
-    if (!text) {
-      return null;
-    }
-
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await ensureDirectory(dirname(path));
-  await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function normalizeEntityId(input: string): string {

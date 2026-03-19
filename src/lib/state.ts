@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { parseBoard } from "./board";
 import { digestBoard, digestMessages, digestRuns } from "./digest";
+import { readJson, writeJson } from "./json";
 import { HiveMessage, listOpenProjectMessages } from "./messages";
 import {
   ensureDirectory,
@@ -493,24 +494,6 @@ function summarizeSessionContext(input: {
       stateDir: input.projectPaths.stateDir,
     },
   };
-}
-
-async function readJson<T>(path: string): Promise<T | null> {
-  const file = Bun.file(path);
-
-  if (!(await file.exists())) {
-    return null;
-  }
-
-  try {
-    return await file.json() as T;
-  } catch {
-    return null;
-  }
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 async function appendJsonLine(path: string, value: unknown): Promise<void> {
