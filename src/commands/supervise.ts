@@ -44,7 +44,7 @@ import {
 } from "../lib/supervisor";
 import { toIsoTimestamp } from "../lib/time";
 import { refreshProjectRuntimeState } from "../lib/state";
-import { triageRunDiffForSteward } from "../lib/tier1";
+import { triageRunDiffsForSteward } from "../lib/cognition";
 import { launchAgentPass } from "./launch";
 
 type SuperviseOptions = {
@@ -307,19 +307,24 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
   );
   const diffTriageEntries: StewardDiffTriageEntry[] = [];
   const triagedRunResults: typeof state.recentRunResults = [];
+  const triageInputs = resultsSinceLastSteward.map((result) => ({
+    globalConfig,
+    result,
+  }));
+  const triageDecisions = triageInputs.length > 0
+    ? await triageRunDiffsForSteward(triageInputs)
+    : [];
+  const triageDecisionByRunId = new Map(
+    triageInputs.map((input, index) => [input.result.runId, triageDecisions[index]!]),
+  );
 
   for (const result of state.recentRunResults) {
-    const needsTriage = resultsSinceLastSteward.some((candidate) => candidate.runId === result.runId);
+    const decision = triageDecisionByRunId.get(result.runId);
 
-    if (!needsTriage) {
+    if (!decision) {
       triagedRunResults.push(result);
       continue;
     }
-
-    const decision = await triageRunDiffForSteward({
-      globalConfig,
-      result,
-    });
 
     diffTriageEntries.push({
       runId: result.runId,
