@@ -16,12 +16,15 @@ import {
 import { refreshProjectCognitiveUsageSnapshot } from "../lib/cognitive-usage";
 import { reconcileDetachedSupervisorState, startDetachedSupervisor } from "../lib/detached-supervisor";
 import { UsageError } from "../lib/errors";
-import { parseStructuredFeedEntries } from "../lib/feed";
+import { appendFeedEntry, parseStructuredFeedEntries } from "../lib/feed";
+import { appendLogEntry } from "../lib/log";
 import { getActiveProject, getProjectPaths, listProjects } from "../lib/paths";
 import {
   getRunOutputPath,
   listActiveRuns,
+  markRunStopRequested,
   readRunOutputTail,
+  reconcileActiveConsoleRun,
 } from "../lib/runs";
 import {
   appendTurn,
@@ -35,6 +38,7 @@ import {
   DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
   isProcessAlive,
 } from "../lib/supervisor";
+import { abortPersistentStewardTurn, isPersistentStewardTurnActive } from "../lib/steward/turn";
 import { continueConsoleWorkflow as continueStewardConsoleWorkflow } from "../lib/steward/workflow";
 import type { GatewayBroadcast, GatewayOptions } from "./server";
 import {
@@ -672,6 +676,145 @@ const postRoutes: Record<string, RouteHandler> = {
       return jsonOk({
         message: `Supervisor restarted (pid ${state.pid ?? "unknown"})`,
         pid: state.pid,
+      });
+    } catch (err) {
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/stop": async (req, _url, options, _broadcast) => {
+    try {
+      const body = await req.json() as { target?: string };
+      const target = body.target?.trim();
+
+      if (!target) {
+        return jsonError(400, "Missing 'target' field (agent ID or run ID)");
+      }
+
+      const activeProject = await getActiveProject(options.hivePaths);
+      if (!activeProject) {
+        return jsonError(400, "No active project");
+      }
+
+      const projectPaths = getProjectPaths(options.hivePaths, activeProject);
+
+      // Handle steward/console abort
+      if (target === "steward" || target === "console") {
+        const sessionsDir = join(options.hivePaths.home, "sessions");
+        const session = await getActiveSession(sessionsDir);
+        if (session && isPersistentStewardTurnActive({ hivePaths: options.hivePaths, sessionId: session.sessionId })) {
+          const aborted = await abortPersistentStewardTurn({ hivePaths: options.hivePaths, sessionId: session.sessionId });
+          if (aborted) {
+            return jsonOk({ ok: true, message: `Aborted active steward turn for session ${session.sessionId}` });
+          }
+        }
+        // Fall through to try matching a run
+      }
+
+      await reconcileActiveConsoleRun(projectPaths);
+      const activeRuns = await listActiveRuns(projectPaths);
+
+      const matches = activeRuns.filter(
+        (run) =>
+          run.agentId === target ||
+          run.runId === target ||
+          run.runId.startsWith(target),
+      );
+
+      if (matches.length !== 1) {
+        return jsonOk({ ok: false, error: `No unique active run matched '${target}'. Found ${matches.length} matches.` });
+      }
+
+      const run = matches[0]!;
+
+      if (!run.pid) {
+        return jsonOk({ ok: false, error: `Run ${run.runId} does not have a live pid to stop.` });
+      }
+
+      if (run.source === "console") {
+        return jsonOk({ ok: false, error: `Console session is interactive — exit from within the session. (${run.runId})` });
+      }
+
+      await markRunStopRequested(run, "human");
+      process.kill(run.pid, "SIGTERM");
+
+      await appendFeedEntry(options.hivePaths, {
+        project: activeProject,
+        headline: `Stop requested for ${run.agentId}`,
+        details: [`run: ${run.runId}`, `pid: ${run.pid}`],
+      });
+      await appendLogEntry(
+        projectPaths.log,
+        "human → gateway stop",
+        `Requested stop for ${run.agentId} (${run.runId}) pid ${run.pid}`,
+      );
+
+      return jsonOk({ ok: true, message: `Signaled ${run.agentId} (${run.runId}) pid ${run.pid}` });
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        return jsonError(400, "Invalid JSON body");
+      }
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/stop-all": async (_req, _url, options, _broadcast) => {
+    try {
+      const activeProject = await getActiveProject(options.hivePaths);
+      if (!activeProject) {
+        return jsonError(400, "No active project");
+      }
+
+      const projectPaths = getProjectPaths(options.hivePaths, activeProject);
+
+      // Abort persistent steward turn if active
+      const sessionsDir = join(options.hivePaths.home, "sessions");
+      const session = await getActiveSession(sessionsDir);
+      let stewardAborted = false;
+      if (session && isPersistentStewardTurnActive({ hivePaths: options.hivePaths, sessionId: session.sessionId })) {
+        stewardAborted = await abortPersistentStewardTurn({ hivePaths: options.hivePaths, sessionId: session.sessionId });
+      }
+
+      await reconcileActiveConsoleRun(projectPaths);
+      const activeRuns = await listActiveRuns(projectPaths);
+
+      const results: Array<{ agentId: string; runId: string; ok: boolean; message: string }> = [];
+
+      for (const run of activeRuns) {
+        if (!run.pid || run.source === "console") {
+          results.push({ agentId: run.agentId, runId: run.runId, ok: false, message: "Skipped (console or no pid)" });
+          continue;
+        }
+
+        try {
+          await markRunStopRequested(run, "human");
+          process.kill(run.pid, "SIGTERM");
+          results.push({ agentId: run.agentId, runId: run.runId, ok: true, message: `Signaled pid ${run.pid}` });
+        } catch (stopErr) {
+          results.push({ agentId: run.agentId, runId: run.runId, ok: false, message: stopErr instanceof Error ? stopErr.message : "Unknown error" });
+        }
+      }
+
+      const stoppedCount = results.filter((r) => r.ok).length;
+
+      if (stoppedCount > 0 || stewardAborted) {
+        await appendFeedEntry(options.hivePaths, {
+          project: activeProject,
+          headline: `Emergency stop: ${stoppedCount} agent(s) signaled${stewardAborted ? ", steward aborted" : ""}`,
+          details: results.map((r) => `${r.agentId}: ${r.message}`),
+        });
+        await appendLogEntry(
+          projectPaths.log,
+          "human → gateway stop-all",
+          `Emergency stop: ${stoppedCount} agent(s) signaled${stewardAborted ? ", steward aborted" : ""}`,
+        );
+      }
+
+      return jsonOk({
+        ok: true,
+        message: `Stopped ${stoppedCount} agent(s)${stewardAborted ? ", aborted steward" : ""}`,
+        results,
+        stewardAborted,
       });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");

@@ -349,25 +349,29 @@ ${renderMessages(input.openMessages)}`;
 
 export function buildPersistentStewardSystemPrompt(input: {
   sessionPrompt: string;
+  soul: string;
+  identity: string;
+  self: string;
   cognitiveRoutingPolicy: string;
 }): string {
-  return `${input.sessionPrompt || "# HIVE Steward Session"}
+  return `${input.soul}
 
-You are HIVE's persistent steward session.
+${input.identity}
 
-Pi is only the live session engine. HIVE still owns the durable memory, project
-state, board, logs, messages, and worker coordination. Treat the HIVE files as
-the durable source of truth.
+${input.self}
 
-Operating rules:
-- Answer the human directly and concretely.
-- Use compact state first. Only perform deeper reads when the turn actually needs them.
+${input.sessionPrompt || "# HIVE Steward Session"}
+
+You are the steward. Never echo bootstrap context, session mechanics, revision
+numbers, or file paths back at the human unless they ask for system internals.
+
+Session rules:
+- Use compact state first. Only read raw files when the turn actually needs them.
 - Use absolute paths when working across HIVE home and project files.
-- Update PLAN.md, BOARD.md, LOG.md, and message files yourself when the state changes.
-- Delegate through HIVE files or \`hive\` commands when specialized worker work is needed.
-- Follow the cognitive routing policy below instead of defaulting to either solo replies or broad fan-out.
-- Keep replies human-facing. Do not narrate internal session mechanics unless relevant.
-- If the HIVE session tail conflicts with your in-memory assumptions, trust the HIVE session tail.
+- Update PLAN.md, BOARD.md, LOG.md, and message files when state changes.
+- Delegate through HIVE files or \`hive\` commands when worker work is needed.
+- Follow the cognitive routing policy below.
+- If the session tail conflicts with your assumptions, trust the session tail.
 
 Cognitive routing policy:
 ${input.cognitiveRoutingPolicy}
@@ -390,9 +394,6 @@ export function buildPersistentStewardBootstrapMessage(input: StewardContext & {
 - current-revision: ${input.currentRevision}
 - last-revision-seen-in-hive-session: ${input.sessionRevision}
 - configured-steward-runtime: ${input.sessionRuntime}${input.sessionModel ? ` (${input.sessionModel})` : ""}
-
-## Shared Soul
-${input.soul}
 
 ${renderPathList("Absolute Paths", [
     { label: "SOUL.md", value: input.hivePaths.soul },
@@ -432,6 +433,7 @@ ${renderCompactState({
     activeRunsDigest: input.activeRunsDigest,
     recentResultsDigest: input.recentResultsDigest,
     humanInboxDigest: input.humanInboxDigest,
+    compilationMetrics: input.compilationMetrics,
   })}
 
 ${renderDurableMemory({
@@ -557,6 +559,7 @@ ${renderCompactState({
     activeRunsDigest: input.activeRunsDigest,
     recentResultsDigest: input.recentResultsDigest,
     humanInboxDigest: input.humanInboxDigest,
+    compilationMetrics: input.compilationMetrics,
   })}
 
 ${renderDurableMemory({

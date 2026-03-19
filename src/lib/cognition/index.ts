@@ -40,6 +40,7 @@ export type {
 } from "./packets";
 export {
   buildCompiledStateView,
+  type CompilationMetrics,
   type CompiledStateView,
 } from "./working-set";
 export {

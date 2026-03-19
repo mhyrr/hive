@@ -25,6 +25,7 @@ import {
   runDirectStewardTurn,
   runPersistentStewardTurn,
 } from "./turn";
+import { sanitizeStewardOutput } from "./sanitize";
 
 type SessionTurnRoutingDetails = NonNullable<SessionTurnDetails["routing"]>;
 
@@ -346,7 +347,7 @@ async function continueQueuedWorkflow(input: ContinueConsoleWorkflowInput & {
     );
 
     if (finalResult) {
-      const finalOutput = finalResult.finalVisibleOutput.trim();
+      const finalOutput = sanitizeStewardOutput(finalResult.finalVisibleOutput).trim();
       const finalRun = await readRunRecordForResult(finalResult);
       const finalState = await refreshProjectRuntimeState({
         hivePaths: input.hivePaths,
@@ -737,16 +738,17 @@ export async function continueConsoleWorkflow(
       sessionId: input.sessionId,
       humanMessage: input.message,
       onOutput: (chunk) => {
-        if (!chunk.trim()) {
+        const sanitized = sanitizeStewardOutput(chunk);
+        if (!sanitized.trim()) {
           return;
         }
 
         clearPlaceholderTimer();
-        streamedReply += chunk;
+        streamedReply += sanitized;
         input.callbacks.broadcastSessionStream({
           sessionId: input.sessionId,
           project: input.project,
-          content: streamedReply.trimEnd(),
+          content: sanitizeStewardOutput(streamedReply).trimEnd(),
         });
       },
     });
@@ -760,7 +762,8 @@ export async function continueConsoleWorkflow(
         return;
       }
 
-      if (persistent.finalVisibleOutput.trim()) {
+      const persistentVisibleOutput = sanitizeStewardOutput(persistent.finalVisibleOutput).trim();
+      if (persistentVisibleOutput) {
         pushStatusNote(statusNotes, "Persistent steward turn completed via Pi.");
         const finalState = await refreshProjectRuntimeState({
           hivePaths: input.hivePaths,
@@ -772,7 +775,7 @@ export async function continueConsoleWorkflow(
           sessionId: input.sessionId,
           project: input.project,
           role: "assistant",
-          content: persistent.finalVisibleOutput.trim(),
+          content: persistentVisibleOutput,
           source: "model",
           details: input.callbacks.buildSessionTurnDetails({
             project: input.project,
@@ -788,6 +791,15 @@ export async function continueConsoleWorkflow(
             cacheCreationInputTokens: persistent.usage.cacheCreationInputTokens,
             cacheReadInputTokens: persistent.usage.cacheReadInputTokens,
             totalTokens: persistent.usage.totalTokens,
+            compilation: persistent.compilationMetrics ? {
+              compiledFields: persistent.compilationMetrics.compiledFields,
+              fallbackFields: persistent.compilationMetrics.fallbackFields,
+              hitRate: persistent.compilationMetrics.hitRate,
+              packetCount: persistent.compilationMetrics.packetCount,
+              workingSetTokenEstimate: persistent.compilationMetrics.workingSetTokenEstimate,
+              maxPropagationDelayMs: persistent.compilationMetrics.maxPropagationDelayMs,
+              avgPropagationDelayMs: persistent.compilationMetrics.avgPropagationDelayMs,
+            } : null,
             routing: input.callbacks.buildSessionTurnRouting({
               tier: "tier3",
               mode: "direct-answer",
@@ -841,16 +853,17 @@ export async function continueConsoleWorkflow(
       sessionId: input.sessionId,
       humanMessage: input.message,
       onOutput: (chunk) => {
-        if (!chunk.trim()) {
+        const sanitized = sanitizeStewardOutput(chunk);
+        if (!sanitized.trim()) {
           return;
         }
 
         clearPlaceholderTimer();
-        streamedReply += chunk;
+        streamedReply += sanitized;
         input.callbacks.broadcastSessionStream({
           sessionId: input.sessionId,
           project: input.project,
-          content: streamedReply.trimEnd(),
+          content: sanitizeStewardOutput(streamedReply).trimEnd(),
         });
       },
     });
@@ -940,12 +953,13 @@ export async function continueConsoleWorkflow(
       projectPaths,
     });
 
-    if (direct.finalVisibleOutput.trim()) {
+    const directVisibleOutput = sanitizeStewardOutput(direct.finalVisibleOutput).trim();
+    if (directVisibleOutput) {
       await input.callbacks.appendSessionTurnAndBroadcast({
         sessionId: input.sessionId,
         project: input.project,
         role: "assistant",
-        content: direct.finalVisibleOutput.trim(),
+        content: directVisibleOutput,
         source: "model",
         details: input.callbacks.buildSessionTurnDetails({
           project: input.project,

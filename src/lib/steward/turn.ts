@@ -28,6 +28,7 @@ import {
   validateRuntimeInstalled,
 } from "../runtime";
 
+import type { CompilationMetrics } from "../cognition";
 import { loadStewardContext, renderStewardRoutingPolicy } from "./context";
 import {
   buildDirectStewardTurnPrompt,
@@ -43,6 +44,7 @@ import {
   type PersistentStewardRuntimeConfig,
 } from "./runtime";
 import { buildPersistentStewardTools } from "./tools";
+import { sanitizeStewardOutput } from "./sanitize";
 import { buildUsageDetails, type PersistentUsageSummary, summarizePersistentUsage } from "./usage";
 
 type PiMessageContent =
@@ -127,6 +129,7 @@ export type PersistentStewardTurnResult =
       runtime: string;
       model: string | null;
       usage: PersistentUsageSummary;
+      compilationMetrics: CompilationMetrics | null;
     }
   | {
       mode: "fallback";
@@ -282,11 +285,13 @@ function queuePersistentTurnOutput(input: {
     return;
   }
 
-  const delta = input.nextText.startsWith(input.turn.lastEmittedText)
+  const rawDelta = input.nextText.startsWith(input.turn.lastEmittedText)
     ? input.nextText.slice(input.turn.lastEmittedText.length)
     : input.nextText;
 
   input.turn.lastEmittedText = input.nextText;
+
+  const delta = sanitizeStewardOutput(rawDelta);
 
   if (!delta.trim()) {
     return;
@@ -679,7 +684,7 @@ export async function runDirectStewardTurn(input: {
   });
   const afterGit = captureGitStatusSnapshot(context.repoPath);
   const gitDelta = diffGitStatusSnapshots(beforeGit, afterGit);
-  const finalVisibleOutput = launchResult?.visibleOutput?.trim() || streamedOutput.trim();
+  const finalVisibleOutput = sanitizeStewardOutput(launchResult?.visibleOutput?.trim() || streamedOutput.trim());
   const cognitiveDigest = await compressCompletedRunOutput({
     run: finalRun,
     globalConfig: context.globalConfig,
@@ -791,6 +796,9 @@ export async function runPersistentStewardTurn(input: {
     });
     const systemPrompt = buildPersistentStewardSystemPrompt({
       sessionPrompt: context.sessionPrompt,
+      soul: context.soul,
+      identity: context.identity,
+      self: context.self,
       cognitiveRoutingPolicy,
     });
     const handle = await acquirePersistentStewardHandle({
@@ -894,7 +902,7 @@ export async function runPersistentStewardTurn(input: {
         await turn.outputChain;
 
         const generatedMessages = handle.agent.state.messages.slice(messageCountBefore);
-        const finalVisibleOutput = turn.abortRequested ? "" : turn.latestAssistantText.trim();
+        const finalVisibleOutput = turn.abortRequested ? "" : sanitizeStewardOutput(turn.latestAssistantText).trim();
 
         if (!turn.abortRequested && !finalVisibleOutput) {
           throw new Error(
@@ -944,6 +952,7 @@ export async function runPersistentStewardTurn(input: {
       runtime: "pi",
       model: completion.model,
       usage: completion.usage,
+      compilationMetrics: context.compilationMetrics,
     };
   } catch (error) {
     if (activeHandle) {
@@ -972,6 +981,12 @@ export async function disposePersistentStewardHandle(
   handle.activeTurn?.abortController?.abort();
   handle.agent.abort();
   handle.activeTurn = null;
+}
+
+export function hasPersistentStewardSession(hiveHome: string): boolean {
+  return [...persistentStewardHandles.values()].some(
+    (handle) => handle.hiveHome === hiveHome && !handle.disposed,
+  );
 }
 
 export async function disposePersistentStewardsForHome(hiveHome: string): Promise<void> {

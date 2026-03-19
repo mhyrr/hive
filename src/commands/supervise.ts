@@ -45,6 +45,7 @@ import {
 import { toIsoTimestamp } from "../lib/time";
 import { refreshProjectRuntimeState, type ProjectRuntimeState } from "../lib/state";
 import { compileIdleProjectCognition, triageRunDiffsForSteward } from "../lib/cognition";
+import { hasPersistentStewardSession } from "../lib/persistent-steward";
 import { launchAgentPass } from "./launch";
 
 type SuperviseOptions = {
@@ -383,7 +384,25 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
   ].join("\n\n");
 
-  if (initialActiveOrchestratorRun) {
+  const persistentStewardActive = hasPersistentStewardSession(paths.home);
+
+  if (persistentStewardActive) {
+    stewardSection = [
+      "Decision: deferred to persistent steward",
+      section(
+        "Reasons",
+        [
+          "A persistent steward session is active in the gateway.",
+          "The persistent steward is the singleton coordinator — the supervisor does not launch a competing process.",
+          ...(assessment.shouldLaunch
+            ? ["The persistent steward will handle the wake signal on its next turn."]
+            : []),
+          ...assessment.reasons.map((reason) => `- ${reason}`),
+        ].join("\n"),
+      ),
+      section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
+    ].join("\n\n");
+  } else if (initialActiveOrchestratorRun) {
     stewardSection = [
       "Decision: skipped",
       section("Reasons", assessment.reasons.map((reason) => `- ${reason}`).join("\n") || "- none"),
@@ -463,10 +482,11 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     reason: "project is not idle enough",
   });
 
+  const stewardLaunchedThisPass = !persistentStewardActive && !initialActiveOrchestratorRun && assessment.shouldLaunch;
+
   if (
     recoveredRuns.length === 0 &&
-    !initialActiveOrchestratorRun &&
-    !assessment.shouldLaunch &&
+    !stewardLaunchedThisPass &&
     dispatch.launches.length === 0 &&
     nonConsoleActiveRuns.length === 0
   ) {
@@ -490,12 +510,8 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
       reasons.push("recovered runs still needed reconciliation");
     }
 
-    if (initialActiveOrchestratorRun) {
-      reasons.push("steward run already active");
-    }
-
-    if (assessment.shouldLaunch) {
-      reasons.push("steward wake was higher priority");
+    if (stewardLaunchedThisPass) {
+      reasons.push("steward launch took precedence");
     }
 
     if (dispatch.launches.length > 0) {

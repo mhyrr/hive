@@ -1,5 +1,5 @@
 import { renderCognitiveRoutingPromptPolicy } from "../cognitive-routing";
-import { buildCompiledStateView } from "../cognition";
+import { buildCompiledStateView, type CompilationMetrics } from "../cognition";
 import { UsageError } from "../errors";
 import { loadPromptMemoryContext } from "../memory";
 import { type HivePaths, getProjectPaths, type ProjectPaths } from "../paths";
@@ -31,6 +31,8 @@ export type StewardContext = {
   sessionRevision: number;
   currentRevision: number;
   soul: string;
+  identity: string;
+  self: string;
   recentTurns: string;
   deltaHistory: DeltaHistoryEntry[];
   boardDigest: string;
@@ -46,6 +48,7 @@ export type StewardContext = {
   recentDecisionsPath: string;
   projectEntitySummaryPath: string;
   journalPath: string;
+  compilationMetrics: CompilationMetrics;
 };
 
 export async function loadDeltaHistory(input: {
@@ -71,7 +74,7 @@ export async function loadStewardContext(input: {
   recentTurnLimit?: number;
 }): Promise<StewardContext> {
   const projectPaths = getProjectPaths(input.hivePaths, input.projectId);
-  const [globalConfig, projectConfig, sessionMeta, sessionState, sessionPrompt, runtimeState, soul, memoryContext, history] =
+  const [globalConfig, projectConfig, sessionMeta, sessionState, sessionPrompt, runtimeState, soul, identity, self, memoryContext, history] =
     await Promise.all([
       Bun.file(input.hivePaths.config).text().catch(() => ""),
       Bun.file(projectPaths.config).text(),
@@ -84,6 +87,8 @@ export async function loadStewardContext(input: {
         projectPaths,
       }),
       Bun.file(input.hivePaths.soul).text().catch(() => ""),
+      Bun.file(input.hivePaths.identity).text().catch(() => ""),
+      Bun.file(input.hivePaths.self).text().catch(() => ""),
       loadPromptMemoryContext(input.hivePaths, input.projectId),
       getSessionHistory(input.hivePaths.sessionsDir, input.sessionId),
     ]);
@@ -123,6 +128,8 @@ export async function loadStewardContext(input: {
     sessionRevision,
     currentRevision: runtimeState.revision.revision,
     soul: soul.trim(),
+    identity: identity.trim(),
+    self: self.trim(),
     recentTurns: renderRecentTurns(history, input.recentTurnLimit ?? 6),
     deltaHistory,
     boardDigest: compiledState.boardDigest,
@@ -138,6 +145,7 @@ export async function loadStewardContext(input: {
     recentDecisionsPath: memoryContext.recentDecisionsPath,
     projectEntitySummaryPath: memoryContext.projectEntitySummaryPath,
     journalPath: memoryContext.journalPath,
+    compilationMetrics: compiledState.metrics,
   };
 }
 

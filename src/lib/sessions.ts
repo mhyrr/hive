@@ -53,6 +53,15 @@ export type SessionTurnDetails = {
   runs: {
     activeCount: number;
   } | null;
+  compilation?: {
+    compiledFields: number;
+    fallbackFields: number;
+    hitRate: number;
+    packetCount: number;
+    workingSetTokenEstimate: number;
+    maxPropagationDelayMs: number | null;
+    avgPropagationDelayMs: number | null;
+  } | null;
   routing?: {
     tier: "tier0" | "tier1" | "tier2" | "tier3";
     mode: "direct-answer" | "targeted-inspection" | "plural-synthesis" | null;

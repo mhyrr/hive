@@ -2002,8 +2002,8 @@ function formatAttentionLabel(input) {
   return 'all clear';
 }
 
-function renderRailActionButton(label, attrs, quiet) {
-  var html = '<button class="rail-action-btn' + (quiet ? ' rail-action-btn--quiet' : '') + '" type="button"';
+function renderRailActionButton(label, attrs, quiet, modifier) {
+  var html = '<button class="rail-action-btn' + (quiet ? ' rail-action-btn--quiet' : '') + (modifier ? ' ' + modifier : '') + '" type="button"';
 
   for (var key in attrs) {
     if (!Object.prototype.hasOwnProperty.call(attrs, key)) continue;
@@ -2942,6 +2942,10 @@ function renderLiveAgents(agents) {
       'data-rail-action': 'log',
       'data-rail-run-id': agent.runId || '',
     }, state.processLogsFocus === (agent.runId || ''));
+    html += renderRailActionButton('Stop', {
+      'data-rail-action': 'stop-agent',
+      'data-rail-stop-target': agent.agentId || agent.runId || '',
+    }, false, 'rail-action-btn--stop');
     html += '</div>';
     html += '</div>';
   }
@@ -4193,8 +4197,79 @@ function setupLeadershipActions() {
 
     if (action === 'log') {
       focusProcessLog(railButton.getAttribute('data-rail-run-id') || '');
+      return;
+    }
+
+    if (action === 'stop-agent') {
+      stopAgent(railButton, railButton.getAttribute('data-rail-stop-target') || '');
+      return;
     }
   });
+}
+
+
+// --- Stop Agent ---
+
+async function stopAgent(btn, target) {
+  if (!target) return;
+  var originalText = btn.textContent;
+  btn.textContent = 'Stopping...';
+  btn.disabled = true;
+
+  try {
+    var data = await apiPost('/stop', { target: target });
+    if (data && data.ok) {
+      btn.textContent = 'Stopped';
+      addConsoleTurn('assistant', data.message || ('Stopped ' + target), null, 'system');
+    } else {
+      btn.textContent = 'Failed';
+      addConsoleTurn('error', (data && data.error) || ('Failed to stop ' + target));
+    }
+    refreshStatus();
+    scheduleOperationsRefresh(0);
+  } catch (e) {
+    btn.textContent = 'Error';
+    addConsoleTurn('error', 'Stop failed: ' + e.message);
+  } finally {
+    setTimeout(function () {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 2000);
+  }
+}
+
+async function stopAllAgents() {
+  var btn = document.getElementById('stop-all-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Stopping...';
+  }
+
+  try {
+    var data = await apiPost('/stop-all', {});
+    var msg = (data && data.message) || 'All agents stopped';
+    addConsoleTurn('assistant', msg, null, 'system');
+    refreshStatus();
+    scheduleOperationsRefresh(0);
+  } catch (e) {
+    addConsoleTurn('error', 'Stop all failed: ' + e.message);
+  } finally {
+    if (btn) {
+      setTimeout(function () {
+        btn.disabled = false;
+        btn.textContent = '\u23F9 Stop All';
+      }, 2000);
+    }
+  }
+}
+
+function setupStopAllButton() {
+  var btn = document.getElementById('stop-all-btn');
+  if (btn) {
+    btn.addEventListener('click', function () {
+      stopAllAgents();
+    });
+  }
 }
 
 
@@ -4270,6 +4345,9 @@ async function init() {
 
   // Set up restart button
   setupRestartButton();
+
+  // Set up stop all button
+  setupStopAllButton();
 
   // Set up process logs panel
   setupProcessLogs();
