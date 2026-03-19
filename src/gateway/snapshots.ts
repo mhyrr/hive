@@ -3,9 +3,15 @@ import { dirname, join } from "node:path";
 import type { GatewayOptions } from "./server";
 
 import { listApprovals, type ApprovalRequest } from "../lib/approvals";
+import {
+  buildCompiledStateView,
+  getLogRollupPacketPath,
+  getPhaseSummaryPacketPath,
+} from "../lib/cognition";
 import { reconcileDetachedSupervisorState } from "../lib/detached-supervisor";
 import { listRecentEvents, type EventRecord } from "../lib/events";
 import { parseStructuredFeedEntries } from "../lib/feed";
+import { readJson } from "../lib/json";
 import { getProjectPaths, type ProjectPaths } from "../lib/paths";
 import {
   findPlanAgent,
@@ -18,10 +24,20 @@ import {
   type RunRecord,
   type RunResult,
 } from "../lib/runs";
+import type {
+  CompilerCacheIndex,
+  MaterializedPacket,
+  StewardWorkingSet,
+} from "../lib/cognition/packets";
 import {
   readStewardDeltaHistory,
   refreshProjectRuntimeState,
+  type ActiveRunsSummary,
+  type BoardSummary,
+  type HumanInboxSummary,
+  type OpenMessagesSummary,
   type ProjectRuntimeState,
+  type RecentResultsSummary,
 } from "../lib/state";
 
 export type GatewayLiveAgent = {
@@ -86,6 +102,51 @@ export type GatewayTimelineItem = {
   details: string[];
   tone: "info" | "warning" | "error" | "success";
 };
+
+export type GatewayCompiledDigest = {
+  id: string;
+  label: string;
+  body: string;
+};
+
+export type GatewayIdlePacketSummary = {
+  id: string;
+  label: string;
+  kicker: string | null;
+  body: string;
+  tone: "info" | "warning" | "success";
+  producedAt: string | null;
+};
+
+export type GatewayProjectCognitionSnapshot = {
+  workingSetRevision: number | null;
+  workingSetProducedAt: string | null;
+  compilerUpdatedAt: string | null;
+  workingSetDigests: GatewayCompiledDigest[];
+  idlePackets: GatewayIdlePacketSummary[];
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
 
 function classifyTone(text: string): GatewayTimelineItem["tone"] {
   const normalized = text.toLowerCase();
@@ -241,6 +302,319 @@ function mapEventActivity(event: EventRecord): GatewayActivityItem {
     title: event.kind,
     detail: event.summary,
     tone: toneFromSeverity(event.severity),
+  };
+}
+
+function renderLogRollupBody(packet: MaterializedPacket): string {
+  const details = asRecord(packet.details);
+  const logEntries = Array.isArray(details?.logEntries)
+    ? details.logEntries
+      .map((entry) => {
+        const record = asRecord(entry);
+        const actor = asString(record?.actor) ?? "unknown";
+        const summary = asString(record?.summary);
+
+        return summary ? `- ${actor}: ${summary}` : null;
+      })
+      .filter((line): line is string => line != null)
+      .slice(0, 4)
+    : [];
+  const feedHeadlines = asStringArray(details?.feedHeadlines)
+    .slice(0, 3)
+    .map((headline) => `- ${headline}`);
+
+  return [packet.summary, ...logEntries, ...feedHeadlines].join("\n");
+}
+
+function renderPhaseSummaryBody(packet: MaterializedPacket): string {
+  const details = asRecord(packet.details);
+  const goal = asString(details?.goal);
+  const completedTasks = asStringArray(details?.completedTasks)
+    .slice(0, 5)
+    .map((task) => `- done: ${task}`);
+  const recentSuccessfulResults = Array.isArray(details?.recentSuccessfulResults)
+    ? details.recentSuccessfulResults
+      .map((item) => {
+        const record = asRecord(item);
+        const agentId = asString(record?.agentId) ?? "unknown";
+        const summary = asString(record?.summary);
+
+        return summary ? `- result: ${agentId} · ${summary}` : null;
+      })
+      .filter((line): line is string => line != null)
+      .slice(0, 4)
+    : [];
+  const lines = [packet.summary];
+
+  if (goal) {
+    lines.push(`Goal: ${goal}`);
+  }
+
+  return [...lines, ...completedTasks, ...recentSuccessfulResults].join("\n");
+}
+
+function renderMemoryHotsetBody(packet: MaterializedPacket): string {
+  const details = asRecord(packet.details);
+  const projectStatus = asString(details?.projectStatus);
+  const globalKnowledge = asStringArray(details?.globalKnowledge)
+    .slice(0, 3)
+    .map((line) => `- global: ${line}`);
+  const facts = asStringArray(details?.facts)
+    .slice(0, 3)
+    .map((line) => `- fact: ${line}`);
+  const conventions = asStringArray(details?.conventions)
+    .slice(0, 2)
+    .map((line) => `- convention: ${line}`);
+  const recentDecisions = asStringArray(details?.recentDecisions)
+    .slice(0, 3)
+    .map((line) => `- decision: ${line}`);
+  const openQuestions = asStringArray(details?.openQuestions)
+    .slice(0, 2)
+    .map((line) => `- question: ${line}`);
+  const lines = [packet.summary];
+
+  if (projectStatus) {
+    lines.push(`Project status: ${projectStatus}`);
+  }
+
+  return [
+    ...lines,
+    ...globalKnowledge,
+    ...facts,
+    ...conventions,
+    ...recentDecisions,
+    ...openQuestions,
+  ].join("\n");
+}
+
+function renderStaleMemoryBody(packet: MaterializedPacket): string {
+  const details = asRecord(packet.details);
+  const status = asString(details?.status);
+  const reasons = asStringArray(details?.reasons)
+    .slice(0, 4)
+    .map((line) => `- ${line}`);
+  const accessCount = asNumber(details?.accessCount);
+  const signalCount = asNumber(details?.signalCount);
+  const memoryItems = asNumber(details?.memoryItems);
+  const metrics = [
+    accessCount != null ? `accesses ${accessCount}` : "",
+    signalCount != null ? `signals ${signalCount}` : "",
+    memoryItems != null ? `items ${memoryItems}` : "",
+  ].filter(Boolean);
+  const lines = [packet.summary];
+
+  if (status) {
+    lines.push(`Status: ${status}`);
+  }
+
+  if (metrics.length > 0) {
+    lines.push(metrics.join(" · "));
+  }
+
+  if (reasons.length === 0) {
+    lines.push("No stale-memory review issues are currently flagged.");
+  }
+
+  return [...lines, ...reasons].join("\n");
+}
+
+function summarizeIdlePacket(
+  packet: MaterializedPacket | null,
+): GatewayIdlePacketSummary | null {
+  if (!packet) {
+    return null;
+  }
+
+  if (packet.kind === "log-rollup") {
+    return {
+      id: packet.packetId,
+      label: "log rollup",
+      kicker: "recent project/feed digest",
+      body: renderLogRollupBody(packet),
+      tone: "info",
+      producedAt: packet.producedAt,
+    };
+  }
+
+  if (packet.kind === "phase-summary") {
+    return {
+      id: packet.packetId,
+      label: "phase summary",
+      kicker: "completed work",
+      body: renderPhaseSummaryBody(packet),
+      tone: "success",
+      producedAt: packet.producedAt,
+    };
+  }
+
+  if (packet.kind === "memory-hotset") {
+    const details = asRecord(packet.details);
+
+    return {
+      id: packet.packetId,
+      label: "memory hotset",
+      kicker: asString(details?.projectStatus) ?? "memory focus",
+      body: renderMemoryHotsetBody(packet),
+      tone: "info",
+      producedAt: packet.producedAt,
+    };
+  }
+
+  if (packet.kind === "stale-memory") {
+    const details = asRecord(packet.details);
+    const status = asString(details?.status);
+
+    return {
+      id: packet.packetId,
+      label: "stale memory",
+      kicker: status ?? "memory review",
+      body: renderStaleMemoryBody(packet),
+      tone: status === "review" ? "warning" : "success",
+      producedAt: packet.producedAt,
+    };
+  }
+
+  return null;
+}
+
+type GatewayCompiledFallbackState = {
+  boardSummary: BoardSummary;
+  openMessagesSummary: OpenMessagesSummary;
+  activeRunsSummary: ActiveRunsSummary;
+  recentResultsSummary: RecentResultsSummary;
+  humanInboxSummary: HumanInboxSummary;
+  compilerCacheIndex: CompilerCacheIndex | null;
+  workingSet: StewardWorkingSet | null;
+};
+
+async function readGatewayCompiledFallbackState(
+  projectPaths: ProjectPaths,
+): Promise<GatewayCompiledFallbackState | null> {
+  const [
+    boardSummary,
+    openMessagesSummary,
+    activeRunsSummary,
+    recentResultsSummary,
+    humanInboxSummary,
+    compilerCacheIndex,
+    workingSet,
+  ] = await Promise.all([
+    readJson<BoardSummary>(projectPaths.stateBoardSummary),
+    readJson<OpenMessagesSummary>(projectPaths.stateOpenMessages),
+    readJson<ActiveRunsSummary>(projectPaths.stateActiveRuns),
+    readJson<RecentResultsSummary>(projectPaths.stateRecentResults),
+    readJson<HumanInboxSummary>(projectPaths.stateHumanInbox),
+    readJson<CompilerCacheIndex>(projectPaths.stateCompilerCacheIndex),
+    readJson<StewardWorkingSet>(projectPaths.stateWorkingSetSteward),
+  ]);
+
+  if (
+    !boardSummary ||
+    !openMessagesSummary ||
+    !activeRunsSummary ||
+    !recentResultsSummary ||
+    !humanInboxSummary
+  ) {
+    return null;
+  }
+
+  return {
+    boardSummary,
+    openMessagesSummary,
+    activeRunsSummary,
+    recentResultsSummary,
+    humanInboxSummary,
+    compilerCacheIndex,
+    workingSet,
+  };
+}
+
+export async function buildGatewayProjectCognitionSnapshot(input: {
+  options: GatewayOptions;
+  projectId: string | null;
+}): Promise<GatewayProjectCognitionSnapshot | null> {
+  if (!input.projectId || input.projectId === "default") {
+    return null;
+  }
+
+  const projectPaths = getProjectPaths(input.options.hivePaths, input.projectId);
+  const fallbackState = await readGatewayCompiledFallbackState(projectPaths);
+  const runtimeState = fallbackState
+    ? null
+    : await refreshProjectRuntimeState({
+      hivePaths: input.options.hivePaths,
+      projectId: input.projectId,
+      projectPaths,
+    });
+  const effectiveState = fallbackState ?? {
+    boardSummary: runtimeState!.boardSummary,
+    openMessagesSummary: runtimeState!.openMessagesSummary,
+    activeRunsSummary: runtimeState!.activeRunsSummary,
+    recentResultsSummary: runtimeState!.recentResultsSummary,
+    humanInboxSummary: runtimeState!.humanInboxSummary,
+    compilerCacheIndex: runtimeState!.compilerCacheIndex,
+    workingSet: runtimeState!.workingSet,
+  };
+  const compiledState = await buildCompiledStateView({
+    projectPaths,
+    workingSet: effectiveState.workingSet,
+    fallback: {
+      boardSummary: effectiveState.boardSummary,
+      openMessagesSummary: effectiveState.openMessagesSummary,
+      activeRunsSummary: effectiveState.activeRunsSummary,
+      recentResultsSummary: effectiveState.recentResultsSummary,
+      humanInboxSummary: effectiveState.humanInboxSummary,
+    },
+  });
+  const [logRollup, phaseSummary, memoryHotset, staleMemory] = await Promise.all([
+    readJson<MaterializedPacket>(getLogRollupPacketPath(projectPaths)),
+    readJson<MaterializedPacket>(getPhaseSummaryPacketPath(projectPaths)),
+    readJson<MaterializedPacket>(projectPaths.statePacketMemoryHotset),
+    readJson<MaterializedPacket>(projectPaths.statePacketStaleMemory),
+  ]);
+
+  return {
+    workingSetRevision: effectiveState.workingSet?.revision ?? null,
+    workingSetProducedAt: effectiveState.workingSet?.producedAt ?? null,
+    compilerUpdatedAt: effectiveState.compilerCacheIndex?.updatedAt ?? null,
+    workingSetDigests: [
+      {
+        id: "board",
+        label: "board",
+        body: compiledState.boardDigest,
+      },
+      {
+        id: "open-decisions",
+        label: "open decisions",
+        body: compiledState.openDecisionsDigest,
+      },
+      {
+        id: "open-messages",
+        label: "open messages",
+        body: compiledState.openMessagesDigest,
+      },
+      {
+        id: "active-runs",
+        label: "active runs",
+        body: compiledState.activeRunsDigest,
+      },
+      {
+        id: "recent-results",
+        label: "recent results",
+        body: compiledState.recentResultsDigest,
+      },
+      {
+        id: "human-inbox",
+        label: "human inbox",
+        body: compiledState.humanInboxDigest,
+      },
+    ],
+    idlePackets: [
+      summarizeIdlePacket(logRollup?.kind === "log-rollup" ? logRollup : null),
+      summarizeIdlePacket(phaseSummary?.kind === "phase-summary" ? phaseSummary : null),
+      summarizeIdlePacket(memoryHotset?.kind === "memory-hotset" ? memoryHotset : null),
+      summarizeIdlePacket(staleMemory?.kind === "stale-memory" ? staleMemory : null),
+    ].filter((packet): packet is GatewayIdlePacketSummary => packet != null),
   };
 }
 

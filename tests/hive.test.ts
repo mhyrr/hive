@@ -4,7 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli";
+import { compileIdleProjectCognition } from "../src/lib/cognition";
+import { ensureHiveScaffold, getProjectPaths } from "../src/lib/paths";
+import {
+  createRunDraft,
+  finalizeRun,
+  writeRunResult,
+} from "../src/lib/runs";
 import { createSession } from "../src/lib/sessions";
+import { refreshProjectRuntimeState } from "../src/lib/state";
 
 type TestContext = {
   root: string;
@@ -149,6 +157,32 @@ describe("HIVE CLI", () => {
     expect(output).toContain("gamma: idle");
   });
 
+  test("ask prefers compiled log rollups when idle compilation has run", async () => {
+    await initHive();
+    await addProject();
+    const hivePaths = await ensureHiveScaffold(context.hiveHome);
+    const projectPaths = getProjectPaths(hivePaths, "myproject");
+
+    await runCli(["log", "Captured", "deployment", "state"]);
+    const runtimeState = await refreshProjectRuntimeState({
+      hivePaths,
+      projectId: "myproject",
+      projectPaths,
+    });
+    const plan = await Bun.file(projectPaths.plan).text();
+    await compileIdleProjectCognition({
+      hivePaths,
+      projectId: "myproject",
+      projectPaths,
+      plan,
+      runtimeState,
+    });
+    const output = await runCli(["ask"]);
+
+    expect(output).toContain("Recent log rollup");
+    expect(output).toContain("Captured deployment state");
+  });
+
   test("console dry run prompt encodes cognitive-depth routing guidance", async () => {
     await initHive();
     await addProject();
@@ -273,6 +307,8 @@ describe("HIVE CLI", () => {
   test("prompt assembles persona, plan assignment, and agent messages", async () => {
     await initHive();
     await addProject();
+    const hivePaths = await ensureHiveScaffold(context.hiveHome);
+    const projectPaths = getProjectPaths(hivePaths, "myproject");
 
     await Bun.write(
       join(context.hiveHome, "projects", "myproject", "PLAN.md"),
@@ -293,6 +329,41 @@ Task: Build the auth endpoint and publish the contract.
 `,
     );
 
+    let run = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "beta",
+      runtime: "codex",
+      model: null,
+      prompt: "Ship the auth contract.",
+      source: "test",
+      taskId: "HIVE-201",
+      scope: ["src/api"],
+    });
+    run = await finalizeRun({
+      projectPaths,
+      run,
+      status: "exited",
+      exitCode: 0,
+    });
+    await writeRunResult(run, {
+      changedFiles: ["src/api/auth.ts"],
+      gitSummaryLines: ["M src/api/auth.ts"],
+      finalVisibleOutput: "Published the auth contract for the login flow.",
+      cognitiveDigest: {
+        provider: "ollama",
+        model: "qwen3:4b",
+        summary: "Published the auth contract for the login flow.",
+        outcome: "success",
+        keyDecisions: ["Kept the contract boundary in src/api/auth.ts."],
+        filesChanged: ["src/api/auth.ts"],
+        inputTokens: 88,
+        outputTokens: 21,
+        totalTokens: 109,
+        durationMs: 900,
+      },
+    });
+
     await runCli([
       "msg",
       "--type",
@@ -307,6 +378,21 @@ Task: Build the auth endpoint and publish the contract.
     ]);
 
     const prompt = await runCli(["prompt", "alpha"]);
+    const workerBriefPath = join(
+      context.hiveHome,
+      "projects",
+      "myproject",
+      "state",
+      "packets",
+      "worker-brief",
+      "alpha.json",
+    );
+    const workerBrief = await Bun.file(workerBriefPath).json() as {
+      kind: string;
+      details: {
+        relevantRunResults: Array<{ summary: string }>;
+      };
+    };
 
     expect(prompt).toContain("You are alpha for project myproject.");
     expect(prompt).toContain("# HIVE Soul");
@@ -317,14 +403,21 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain(`IDENTITY.md: ${join(context.hiveHome, "IDENTITY.md")}`);
     expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myproject", "BOARD.md")}`);
     expect(prompt).toContain(`LOG.md: ${join(context.hiveHome, "projects", "myproject", "LOG.md")}`);
+    expect(prompt).toContain(`worker-brief-json: ${workerBriefPath}`);
     expect(prompt).toContain("hive inbox alpha");
     expect(prompt).toContain("./hive inbox alpha");
     expect(prompt).toContain("hive msg resolve <message> alpha <answer>");
     expect(prompt).toContain("./hive msg resolve <message> alpha <answer>");
     expect(prompt).toContain("hive msg close <message> alpha [note]");
     expect(prompt).toContain("./hive msg close <message> alpha [note]");
+    expect(prompt).toContain("## Worker Brief");
     expect(prompt).toContain("Task: Build the auth endpoint and publish the contract.");
     expect(prompt).toContain("Need the login contract shape");
+    expect(prompt).toContain("Published the auth contract for the login flow.");
+    expect(workerBrief.kind).toBe("worker-brief");
+    expect(workerBrief.details.relevantRunResults[0]?.summary).toContain(
+      "Published the auth contract for the login flow.",
+    );
   });
 
   test("sync copies PLAN.md into the repo and archive snapshots the session", async () => {

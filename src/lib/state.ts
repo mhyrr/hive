@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
 import { parseBoard } from "./board";
+import { materializeProjectCognition } from "./cognition/materialize";
+import type {
+  CompilerCacheIndex,
+  StewardWorkingSet,
+} from "./cognition/packets";
 import { digestBoard, digestMessages, digestRuns } from "./digest";
 import { readJson, writeJson } from "./json";
 import { HiveMessage, listOpenProjectMessages } from "./messages";
@@ -231,6 +236,8 @@ export type ProjectRuntimeState = {
   sessionContext: SessionContextSummary;
   revision: ProjectStateRevision;
   delta: StewardDeltaPacket;
+  compilerCacheIndex: CompilerCacheIndex | null;
+  workingSet: StewardWorkingSet | null;
   changed: boolean;
 };
 
@@ -794,6 +801,7 @@ export async function refreshProjectRuntimeState(input: {
     openMessages,
     activeRuns,
     recentResults,
+    globalConfig,
     activeSession,
     activeSessionState,
     previousRevision,
@@ -808,6 +816,7 @@ export async function refreshProjectRuntimeState(input: {
     listOpenProjectMessages(input.hivePaths.msgDir, input.projectId),
     listActiveRuns(projectPaths),
     listRecentRunResults(projectPaths, 10),
+    Bun.file(input.hivePaths.config).text().catch(() => ""),
     getActiveSession(input.hivePaths.sessionsDir),
     getActiveSession(input.hivePaths.sessionsDir).then((session) =>
       session ? getSessionState(input.hivePaths.sessionsDir, session.sessionId) : null,
@@ -947,6 +956,31 @@ export async function refreshProjectRuntimeState(input: {
     }
   }
 
+  let compilerCacheIndex: CompilerCacheIndex | null = null;
+  let workingSet: StewardWorkingSet | null = null;
+
+  try {
+    const materialized = await materializeProjectCognition({
+      projectId: input.projectId,
+      projectPaths,
+      globalConfig,
+      revision,
+      boardSummary,
+      openMessages,
+      openMessagesSummary,
+      recentResults,
+      recentResultsSummary,
+      activeRunsSummary,
+      humanInboxSummary,
+    });
+
+    compilerCacheIndex = materialized.compilerCacheIndex;
+    workingSet = materialized.workingSet;
+  } catch {
+    compilerCacheIndex = await readJson<CompilerCacheIndex>(projectPaths.stateCompilerCacheIndex);
+    workingSet = await readJson<StewardWorkingSet>(projectPaths.stateWorkingSetSteward);
+  }
+
   return {
     projectId: input.projectId,
     boardText,
@@ -964,6 +998,8 @@ export async function refreshProjectRuntimeState(input: {
     sessionContext,
     revision,
     delta,
+    compilerCacheIndex,
+    workingSet,
     changed,
   };
 }

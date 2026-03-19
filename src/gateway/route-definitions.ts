@@ -46,6 +46,7 @@ import {
   scheduleProjectRuntimeRefresh,
 } from "./console";
 import {
+  buildGatewayProjectCognitionSnapshot,
   buildGatewayLiveSnapshot,
   buildGatewayQueueSnapshot,
   buildGatewayTimeline,
@@ -406,11 +407,15 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/cognition": async (_req, _url, options, _broadcast) => {
+  "/api/cognition": async (_req, url, options, _broadcast) => {
     try {
       const globalConfig = await readGatewayGlobalConfig(options);
       const sessionsDir = join(options.hivePaths.home, "sessions");
       const activeSession = await getActiveSession(sessionsDir);
+      const requestedProject = await resolveGatewayProjectFocus({
+        options,
+        requestedProject: url.searchParams.get("project"),
+      });
       const currentProject = activeSession
         ? await getSessionProjectFocus({
             sessionsDir,
@@ -430,15 +435,20 @@ const getRoutes: Record<string, RouteHandler> = {
           : null,
         persistentStewardEnabled: process.env.HIVE_ENABLE_PERSISTENT_STEWARD !== "0",
       });
-      const usage = currentProject && currentProject !== "default"
+      const usage = requestedProject && requestedProject !== "default"
         ? await refreshProjectCognitiveUsageSnapshot({
             hivePaths: options.hivePaths,
-            projectId: currentProject,
+            projectId: requestedProject,
             globalConfig,
           })
         : null;
+      const compiled = await buildGatewayProjectCognitionSnapshot({
+        options,
+        projectId: requestedProject,
+      });
 
       return jsonOk({
+        project: requestedProject,
         policy: snapshot.policy,
         activeSession: snapshot.activeSession,
         activeLane: snapshot.activeLane,
@@ -448,6 +458,7 @@ const getRoutes: Record<string, RouteHandler> = {
         tier1: snapshot.tier1,
         localModels: snapshot.localModels,
         usage,
+        compiled,
         rendered: renderCognitiveRoutingInspectionSnapshot({
           snapshot,
           usage,
@@ -456,6 +467,9 @@ const getRoutes: Record<string, RouteHandler> = {
         }),
       });
     } catch (err) {
+      if (err instanceof UsageError) {
+        return jsonError(400, err.message);
+      }
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
   },

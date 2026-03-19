@@ -274,5 +274,7 @@ export function renderStewardProjectPaths(input: {
     { label: "human-inbox-json", value: input.projectPaths.stateHumanInbox },
     { label: "latest-delta-json", value: input.projectPaths.stateStewardDelta },
     { label: "delta-history-jsonl", value: input.projectPaths.stateDeltaHistory },
+    { label: "compiler-cache-index-json", value: input.projectPaths.stateCompilerCacheIndex },
+    { label: "steward-working-set-json", value: input.projectPaths.stateWorkingSetSteward },
   ]);
 }

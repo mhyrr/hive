@@ -3080,6 +3080,60 @@ function renderCognitionUsageMeter(label, budget, totals) {
   return html;
 }
 
+function renderCognitionBodyText(text) {
+  var normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  var lines = normalized.split('\n');
+  var rendered = [];
+
+  for (var i = 0; i < lines.length; i++) {
+    rendered.push(renderInlineText(lines[i]));
+  }
+
+  return rendered.join('<br>');
+}
+
+function renderCognitionSummaryRows(items, options) {
+  var rows = Array.isArray(items) ? items : [];
+
+  if (rows.length === 0) {
+    return '<div class="rail-empty">' + escapeHtml(
+      options && options.empty ? options.empty : 'No compiled cognition data yet.'
+    ) + '</div>';
+  }
+
+  var html = '<div class="cognition-lane-list">';
+
+  for (var i = 0; i < rows.length; i++) {
+    var item = rows[i];
+    if (!item) continue;
+
+    html += '<div class="cognition-row cognition-row--lane">';
+    html += '<div class="cognition-row-header">';
+    html += '<div class="cognition-row-name">' + escapeHtml(item.label || item.id || 'item') + '</div>';
+    if (item.kicker) {
+      html += '<div class="cognition-row-kicker">' + escapeHtml(item.kicker) + '</div>';
+    }
+    html += '</div>';
+
+    if (item.body) {
+      html += '<div class="cognition-row-body">' + renderCognitionBodyText(item.body) + '</div>';
+    }
+
+    if (item.meta) {
+      html += '<div class="cognition-row-meta">' + escapeHtml(item.meta) + '</div>';
+    }
+
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
 function renderCognition(snapshot) {
   var container = document.getElementById('cognition-panel');
   if (!container) return;
@@ -3112,6 +3166,7 @@ function renderCognition(snapshot) {
       'selection ' + selectionLabel,
     ])
     : 'Default selection · ' + selectionLabel;
+  var compiled = snapshot && snapshot.compiled ? snapshot.compiled : null;
   var localModels = snapshot && snapshot.localModels ? snapshot.localModels : null;
   var usage = snapshot && snapshot.usage ? snapshot.usage : null;
   var discoveredLocalModels = localModels && Array.isArray(localModels.models)
@@ -3126,11 +3181,18 @@ function renderCognition(snapshot) {
   html += '<div class="cognition-stat"><div class="cognition-stat-label">Max Fan-out</div><div class="cognition-stat-value">' + escapeHtml(String(policy.maxFanOut || 0)) + '</div></div>';
   html += '<div class="cognition-stat"><div class="cognition-stat-label">Max Parallel</div><div class="cognition-stat-value">' + escapeHtml(String(policy.maxParallel || 0)) + '</div></div>';
   html += '</div>';
+  html += '<div class="cognition-context">' + escapeHtml(joinMeta([
+    snapshot && snapshot.project ? 'project ' + snapshot.project : '',
+    snapshot && snapshot.activeSession ? 'Live session' : '',
+    activeSessionLabel,
+  ])) + '</div>';
 
-  if (snapshot && snapshot.activeSession) {
-    html += '<div class="cognition-context">' + escapeHtml('Live session \u00b7 ' + activeSessionLabel) + '</div>';
-  } else {
-    html += '<div class="cognition-context">' + escapeHtml(activeSessionLabel) + '</div>';
+  if (compiled) {
+    html += '<div class="cognition-context">' + escapeHtml(joinMeta([
+      compiled.workingSetRevision !== null ? 'working set rev ' + compiled.workingSetRevision : '',
+      compiled.workingSetProducedAt ? 'materialized ' + formatRelativeAge(compiled.workingSetProducedAt) : '',
+      compiled.compilerUpdatedAt ? 'compiler ' + formatRelativeAge(compiled.compilerUpdatedAt) : '',
+    ])) + '</div>';
   }
 
   if (usage) {
@@ -3165,6 +3227,31 @@ function renderCognition(snapshot) {
     ) + '</div>';
     html += '</div>';
     html += '</div></div>';
+  }
+
+  if (compiled && Array.isArray(compiled.workingSetDigests) && compiled.workingSetDigests.length > 0) {
+    html += '<div class="cognition-subsection">';
+    html += '<div class="cognition-subsection-title">Working Set</div>';
+    html += renderCognitionSummaryRows(compiled.workingSetDigests);
+    html += '</div>';
+  }
+
+  if (compiled) {
+    html += '<div class="cognition-subsection">';
+    html += '<div class="cognition-subsection-title">Idle Compiler</div>';
+    html += renderCognitionSummaryRows(
+      (compiled.idlePackets || []).map(function (packet) {
+        return {
+          id: packet.id,
+          label: packet.label,
+          kicker: packet.kicker,
+          body: packet.body,
+          meta: packet.producedAt ? 'compiled ' + formatRelativeAge(packet.producedAt) : '',
+        };
+      }),
+      { empty: 'No idle compilation packets yet. Let the supervisor go calm long enough to compile them.' }
+    );
+    html += '</div>';
   }
 
   if (snapshot && snapshot.tier1) {
@@ -3722,8 +3809,10 @@ async function refreshProcessLogs() {
 }
 
 async function refreshCognition() {
+  var project = getProjectFocus();
+
   try {
-    var data = await apiGet('/cognition');
+    var data = await apiGet(buildApiPath('/cognition', project));
     state.cognitionSnapshot = data;
     renderCognition(data);
   } catch (e) {

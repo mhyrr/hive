@@ -2,12 +2,12 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { appendLogEntry } from "../lib/log";
+import { buildCompiledStateView } from "../lib/cognition";
 import {
   renderCognitiveRoutingPromptPolicy,
   STEWARD_ESSENTIAL_SKILL_NAMES,
 } from "../lib/cognitive-routing";
-import { digestBoard, digestMessages, listSkills } from "../lib/digest";
-import { listOpenProjectMessages } from "../lib/messages";
+import { listSkills } from "../lib/digest";
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -116,8 +116,12 @@ function buildConsolePrompt(input: {
   skillsDir: string;
   availableSkillNames: string[];
   soul: string;
-  board: string;
-  openMessages: Awaited<ReturnType<typeof listOpenProjectMessages>>;
+  boardDigest: string;
+  openDecisionsDigest: string;
+  openMessagesDigest: string;
+  activeRunsDigest: string;
+  recentResultsDigest: string;
+  humanInboxDigest: string;
   knowledgeDigest: string;
   recentDecisionsDigest: string;
   projectEntityDigest: string;
@@ -220,7 +224,19 @@ skills-dir: ${input.skillsDir}
 ## Current State
 
 ### Board
-${digestBoard(input.board)}
+${input.boardDigest}
+
+### Open Decisions
+${input.openDecisionsDigest}
+
+### Open Messages
+${input.openMessagesDigest}
+
+### Active Runs
+${input.activeRunsDigest}
+
+### Recent Results
+${input.recentResultsDigest}
 
 ### Project Memory
 ${input.projectMemory}
@@ -235,8 +251,8 @@ ${input.recentDecisionsDigest}
 #### Project Entity Memory
 ${input.projectEntityDigest}
 
-### Open Messages
-${digestMessages(input.openMessages)}`;
+### Human Inbox
+${input.humanInboxDigest}`;
 }
 
 export async function consoleCommand(args: string[]): Promise<string> {
@@ -270,6 +286,17 @@ export async function consoleCommand(args: string[]): Promise<string> {
     hivePaths: paths,
     projectId: activeProject,
     projectPaths,
+  });
+  const compiledState = await buildCompiledStateView({
+    projectPaths,
+    workingSet: state.workingSet,
+    fallback: {
+      boardSummary: state.boardSummary,
+      openMessagesSummary: state.openMessagesSummary,
+      activeRunsSummary: state.activeRunsSummary,
+      recentResultsSummary: state.recentResultsSummary,
+      humanInboxSummary: state.humanInboxSummary,
+    },
   });
   const hints = resolveRuntimeHints({
     globalConfig,
@@ -326,8 +353,12 @@ export async function consoleCommand(args: string[]): Promise<string> {
     skillsDir: paths.skillsDir,
     availableSkillNames,
     soul: soul.trim(),
-    board: state.boardText.trim(),
-    openMessages: state.openMessages,
+    boardDigest: compiledState.boardDigest,
+    openDecisionsDigest: compiledState.openDecisionsDigest,
+    openMessagesDigest: compiledState.openMessagesDigest,
+    activeRunsDigest: compiledState.activeRunsDigest,
+    recentResultsDigest: compiledState.recentResultsDigest,
+    humanInboxDigest: compiledState.humanInboxDigest,
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,

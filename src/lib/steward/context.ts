@@ -1,4 +1,5 @@
 import { renderCognitiveRoutingPromptPolicy } from "../cognitive-routing";
+import { buildCompiledStateView } from "../cognition";
 import { UsageError } from "../errors";
 import { loadPromptMemoryContext } from "../memory";
 import { type HivePaths, getProjectPaths, type ProjectPaths } from "../paths";
@@ -15,8 +16,6 @@ import { readStewardDeltaHistory, refreshProjectRuntimeState } from "../state";
 import {
   type DeltaHistoryEntry,
   renderDeltaHistory,
-  renderHumanInboxDigest,
-  renderRecentResultsDigest,
   renderRecentTurns,
 } from "./sections";
 
@@ -100,6 +99,17 @@ export async function loadStewardContext(input: {
     projectPaths,
     lastSeenRevision: sessionRevision,
   });
+  const compiledState = await buildCompiledStateView({
+    projectPaths,
+    workingSet: runtimeState.workingSet,
+    fallback: {
+      boardSummary: runtimeState.boardSummary,
+      openMessagesSummary: runtimeState.openMessagesSummary,
+      activeRunsSummary: runtimeState.activeRunsSummary,
+      recentResultsSummary: runtimeState.recentResultsSummary,
+      humanInboxSummary: runtimeState.humanInboxSummary,
+    },
+  });
 
   return {
     globalConfig,
@@ -115,11 +125,11 @@ export async function loadStewardContext(input: {
     soul: soul.trim(),
     recentTurns: renderRecentTurns(history, input.recentTurnLimit ?? 6),
     deltaHistory,
-    boardDigest: runtimeState.boardSummary.digest,
-    openMessagesDigest: runtimeState.openMessagesSummary.digest,
-    activeRunsDigest: runtimeState.activeRunsSummary.digest,
-    recentResultsDigest: renderRecentResultsDigest(runtimeState.recentResultsSummary.items),
-    humanInboxDigest: renderHumanInboxDigest(runtimeState.humanInboxSummary.items),
+    boardDigest: compiledState.boardDigest,
+    openMessagesDigest: compiledState.openMessagesDigest,
+    activeRunsDigest: compiledState.activeRunsDigest,
+    recentResultsDigest: compiledState.recentResultsDigest,
+    humanInboxDigest: compiledState.humanInboxDigest,
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,

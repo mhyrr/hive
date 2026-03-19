@@ -1,10 +1,9 @@
+import { buildCompiledStateView } from "../lib/cognition";
+import { readLogRollupDigest } from "../lib/cognition";
 import { UsageError } from "../lib/errors";
 import { reconcileDetachedSupervisorState } from "../lib/detached-supervisor";
-import { digestBoard, digestMessages, digestRuns } from "../lib/digest";
 import { formatFeed } from "../lib/feed";
 import { section } from "../lib/format";
-import { listOpenProjectMessages } from "../lib/messages";
-import { listActiveRuns } from "../lib/runs";
 import { isProcessAlive } from "../lib/supervisor";
 import {
   ensureHiveScaffold,
@@ -22,17 +21,23 @@ import { refreshProjectRuntimeState } from "../lib/state";
 function buildStatusDigest(input: {
   activeProject: string;
   supervisorSection: string;
-  boardText: string;
-  activeRuns: Awaited<ReturnType<typeof listActiveRuns>>;
-  nonAssignMessages: Awaited<ReturnType<typeof listOpenProjectMessages>>;
+  boardDigest: string;
+  openDecisionsDigest: string;
+  openMessagesDigest: string;
+  activeRunsDigest: string;
+  recentResultsDigest: string;
+  humanInboxDigest: string;
   feedBody: string;
 }): string {
   return [
     `Project: ${input.activeProject}`,
     section("Supervisor", input.supervisorSection),
-    section("Board", input.boardText.trim() ? digestBoard(input.boardText) : "(no board yet)"),
-    section("Active Runs", digestRuns(input.activeRuns)),
-    section("Open Messages", digestMessages(input.nonAssignMessages)),
+    section("Board", input.boardDigest),
+    section("Open Decisions", input.openDecisionsDigest),
+    section("Open Messages", input.openMessagesDigest),
+    section("Active Runs", input.activeRunsDigest),
+    section("Recent Results", input.recentResultsDigest),
+    section("Human Inbox", input.humanInboxDigest),
     section("Recent Feed", input.feedBody),
   ].join("\n\n");
 }
@@ -62,7 +67,7 @@ export async function askCommand(args: string[]): Promise<string> {
 
   const projectPaths = getProjectPaths(paths, activeProject);
 
-  const [supervisorState, state, feedText] = await Promise.all([
+  const [supervisorState, state, feedText, compiledLogRollup] = await Promise.all([
     reconcileDetachedSupervisorState(projectPaths),
     refreshProjectRuntimeState({
       hivePaths: paths,
@@ -70,6 +75,7 @@ export async function askCommand(args: string[]): Promise<string> {
       projectPaths,
     }),
     Bun.file(paths.feed).text().catch(() => ""),
+    readLogRollupDigest(projectPaths),
   ]);
 
   const supervisorRunning =
@@ -77,24 +83,35 @@ export async function askCommand(args: string[]): Promise<string> {
   const supervisorSection = supervisorRunning
     ? `running (pid ${supervisorState.pid}, interval ${supervisorState.intervalSeconds}s, last-pass: ${supervisorState.lastPassAt ?? "none yet"})`
     : "not running";
+  const compiledState = await buildCompiledStateView({
+    projectPaths,
+    workingSet: state.workingSet,
+    fallback: {
+      boardSummary: state.boardSummary,
+      openMessagesSummary: state.openMessagesSummary,
+      activeRunsSummary: state.activeRunsSummary,
+      recentResultsSummary: state.recentResultsSummary,
+      humanInboxSummary: state.humanInboxSummary,
+    },
+  });
 
-  const nonAssignMessages = state.openMessages.filter(
-    (m) => m.attributes.type !== "assign",
+  const feedBody = compiledLogRollup ?? (
+    formatFeed(feedText, 5)
+      .split("\n")
+      .filter((line) => !line.startsWith("# "))
+      .join("\n")
+      .trim() || "(none yet)"
   );
-
-  const feedSection = formatFeed(feedText, 5);
-  const feedBody = feedSection
-    .split("\n")
-    .filter((line) => !line.startsWith("# "))
-    .join("\n")
-    .trim() || "(none yet)";
 
   const digest = buildStatusDigest({
     activeProject,
     supervisorSection,
-    boardText: state.boardText,
-    activeRuns: state.activeRuns,
-    nonAssignMessages,
+    boardDigest: compiledState.boardDigest,
+    openDecisionsDigest: compiledState.openDecisionsDigest,
+    openMessagesDigest: compiledState.openMessagesDigest,
+    activeRunsDigest: compiledState.activeRunsDigest,
+    recentResultsDigest: compiledState.recentResultsDigest,
+    humanInboxDigest: compiledState.humanInboxDigest,
     feedBody,
   });
 
