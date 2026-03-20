@@ -36,10 +36,15 @@ export type StewardContext = {
   recentTurns: string;
   deltaHistory: DeltaHistoryEntry[];
   boardDigest: string;
+  openDecisionsDigest: string;
   openMessagesDigest: string;
   activeRunsDigest: string;
   recentResultsDigest: string;
   humanInboxDigest: string;
+  logRollupDigest: string | null;
+  phaseSummaryDigest: string | null;
+  memoryHotsetDigest: string | null;
+  staleMemoryDigest: string | null;
   knowledgeDigest: string;
   recentDecisionsDigest: string;
   projectEntityDigest: string;
@@ -133,10 +138,15 @@ export async function loadStewardContext(input: {
     recentTurns: renderRecentTurns(history, input.recentTurnLimit ?? 6),
     deltaHistory,
     boardDigest: compiledState.boardDigest,
+    openDecisionsDigest: compiledState.openDecisionsDigest,
     openMessagesDigest: compiledState.openMessagesDigest,
     activeRunsDigest: compiledState.activeRunsDigest,
     recentResultsDigest: compiledState.recentResultsDigest,
     humanInboxDigest: compiledState.humanInboxDigest,
+    logRollupDigest: compiledState.logRollupDigest,
+    phaseSummaryDigest: compiledState.phaseSummaryDigest,
+    memoryHotsetDigest: compiledState.memoryHotsetDigest,
+    staleMemoryDigest: compiledState.staleMemoryDigest,
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,

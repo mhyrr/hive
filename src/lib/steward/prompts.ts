@@ -435,10 +435,15 @@ ${input.cognitiveRoutingPolicy}
 
 ${renderCompactState({
     boardDigest: input.boardDigest,
+    openDecisionsDigest: input.openDecisionsDigest,
     openMessagesDigest: input.openMessagesDigest,
     activeRunsDigest: input.activeRunsDigest,
     recentResultsDigest: input.recentResultsDigest,
     humanInboxDigest: input.humanInboxDigest,
+    logRollupDigest: input.logRollupDigest,
+    phaseSummaryDigest: input.phaseSummaryDigest,
+    memoryHotsetDigest: input.memoryHotsetDigest,
+    staleMemoryDigest: input.staleMemoryDigest,
     compilationMetrics: input.compilationMetrics,
   })}
 
@@ -493,10 +498,15 @@ ${renderDeltaHistory(input.deltaHistory, input.sessionRevision)}
 ${renderCompactState({
     heading: "Compact Snapshot",
     boardDigest: input.boardDigest,
+    openDecisionsDigest: input.openDecisionsDigest,
     openMessagesDigest: input.openMessagesDigest,
     activeRunsDigest: input.activeRunsDigest,
     recentResultsDigest: input.recentResultsDigest,
     humanInboxDigest: input.humanInboxDigest,
+    logRollupDigest: input.logRollupDigest,
+    phaseSummaryDigest: input.phaseSummaryDigest,
+    memoryHotsetDigest: input.memoryHotsetDigest,
+    staleMemoryDigest: input.staleMemoryDigest,
   })}
 
 ${renderDurableMemory({
@@ -564,10 +574,15 @@ ${input.cognitiveRoutingPolicy}
 
 ${renderCompactState({
     boardDigest: input.boardDigest,
+    openDecisionsDigest: input.openDecisionsDigest,
     openMessagesDigest: input.openMessagesDigest,
     activeRunsDigest: input.activeRunsDigest,
     recentResultsDigest: input.recentResultsDigest,
     humanInboxDigest: input.humanInboxDigest,
+    logRollupDigest: input.logRollupDigest,
+    phaseSummaryDigest: input.phaseSummaryDigest,
+    memoryHotsetDigest: input.memoryHotsetDigest,
+    staleMemoryDigest: input.staleMemoryDigest,
     compilationMetrics: input.compilationMetrics,
   })}
 

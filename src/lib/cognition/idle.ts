@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { readJson } from "../json";
+import { readJson, writeJson } from "../json";
 import {
   extractMemory,
   readProjectMemorySnapshot,
@@ -39,37 +39,6 @@ export type IdleCognitionResult = {
   packets: MaterializedPacketRef[];
   updatedCount: number;
 };
-
-function packetExpiresAt(
-  producedAt: string,
-  freshnessMs: number | null,
-): string | null {
-  if (freshnessMs == null) {
-    return null;
-  }
-
-  return new Date(Date.parse(producedAt) + freshnessMs).toISOString();
-}
-
-async function upsertPacket(path: string, packet: MaterializedPacket): Promise<{
-  packet: MaterializedPacket;
-  changed: boolean;
-}> {
-  const existing = await readJson<MaterializedPacket>(path);
-
-  if (existing?.fingerprint === packet.fingerprint) {
-    return {
-      packet: existing,
-      changed: false,
-    };
-  }
-
-  await writeJson(path, packet);
-  return {
-    packet,
-    changed: true,
-  };
-}
 
 function renderLogRollupSummary(data: LogRollupData): string {
   const logEntries = data.logEntries.length;

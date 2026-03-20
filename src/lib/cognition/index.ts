@@ -39,6 +39,10 @@ export type {
   CompileTask,
 } from "./packets";
 export {
+  packetExpiresAt,
+  upsertPacket,
+} from "./packets";
+export {
   buildCompiledStateView,
   type CompilationMetrics,
   type CompiledStateView,
