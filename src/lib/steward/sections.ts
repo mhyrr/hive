@@ -88,10 +88,15 @@ function renderCompilationAnnotation(metrics: CompilationMetrics | null): string
 
 export function renderCompactState(input: {
   boardDigest: string;
+  openDecisionsDigest?: string | null;
   openMessagesDigest: string;
   activeRunsDigest: string;
   recentResultsDigest: string;
   humanInboxDigest: string;
+  logRollupDigest?: string | null;
+  phaseSummaryDigest?: string | null;
+  memoryHotsetDigest?: string | null;
+  staleMemoryDigest?: string | null;
   compilationMetrics?: CompilationMetrics | null;
   heading?: string;
 }): string {
@@ -102,6 +107,11 @@ export function renderCompactState(input: {
     "### Board",
     input.boardDigest,
     "",
+    ...(input.openDecisionsDigest ? [
+      "### Open Decisions",
+      input.openDecisionsDigest,
+      "",
+    ] : []),
     "### Open Messages",
     input.openMessagesDigest,
     "",
@@ -113,6 +123,26 @@ export function renderCompactState(input: {
     "",
     "### Human Inbox",
     input.humanInboxDigest,
+    ...(input.phaseSummaryDigest ? [
+      "",
+      "### Plan Progress",
+      input.phaseSummaryDigest,
+    ] : []),
+    ...(input.logRollupDigest ? [
+      "",
+      "### Recent Activity",
+      input.logRollupDigest,
+    ] : []),
+    ...(input.memoryHotsetDigest ? [
+      "",
+      "### Memory Snapshot",
+      input.memoryHotsetDigest,
+    ] : []),
+    ...(input.staleMemoryDigest ? [
+      "",
+      "### Stale Memory",
+      input.staleMemoryDigest,
+    ] : []),
   ].join("\n");
 }
 

@@ -33,6 +33,10 @@ export type CompiledStateView = {
   activeRunsDigest: string;
   recentResultsDigest: string;
   humanInboxDigest: string;
+  logRollupDigest: string | null;
+  phaseSummaryDigest: string | null;
+  memoryHotsetDigest: string | null;
+  staleMemoryDigest: string | null;
   metrics: CompilationMetrics;
 };
 
@@ -42,6 +46,10 @@ type LoadedWorkingSetPackets = {
   runResults: MaterializedPacket[];
   diffTriage: MaterializedPacket[];
   humanRequests: MaterializedPacket[];
+  logRollup: MaterializedPacket | null;
+  phaseSummary: MaterializedPacket | null;
+  memoryHotset: MaterializedPacket | null;
+  staleMemory: MaterializedPacket | null;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -96,6 +104,10 @@ async function loadWorkingSetPackets(input: {
       runResults: [],
       diffTriage: [],
       humanRequests: [],
+      logRollup: null,
+      phaseSummary: null,
+      memoryHotset: null,
+      staleMemory: null,
     };
   }
 
@@ -109,6 +121,10 @@ async function loadWorkingSetPackets(input: {
     runResults: packets.filter((packet) => packet.kind === "run-result"),
     diffTriage: packets.filter((packet) => packet.kind === "diff-triage"),
     humanRequests: packets.filter((packet) => packet.kind === "human-request"),
+    logRollup: packets.find((packet) => packet.kind === "log-rollup") ?? null,
+    phaseSummary: packets.find((packet) => packet.kind === "phase-summary") ?? null,
+    memoryHotset: packets.find((packet) => packet.kind === "memory-hotset") ?? null,
+    staleMemory: packets.find((packet) => packet.kind === "stale-memory") ?? null,
   };
 }
 
@@ -314,6 +330,74 @@ function renderCompiledHumanInboxDigest(input: {
   return waitingOnHuman.map((item) => `- ${item}`).join("\n");
 }
 
+function renderIdlePacketDigest(
+  packet: MaterializedPacket | null,
+): string | null {
+  if (!packet) {
+    return null;
+  }
+
+  const details = asRecord(packet.details);
+  const lines = [packet.summary];
+
+  if (packet.kind === "log-rollup") {
+    const logEntries = details?.logEntries;
+
+    if (Array.isArray(logEntries)) {
+      for (const entry of logEntries.slice(0, 4)) {
+        const entryRecord = asRecord(entry);
+        const summary = asString(entryRecord?.summary);
+
+        if (summary) {
+          lines.push(`- ${asString(entryRecord?.actor) ?? "unknown"}: ${summary}`);
+        }
+      }
+    }
+
+    const feedHeadlines = details?.feedHeadlines;
+
+    if (Array.isArray(feedHeadlines)) {
+      for (const headline of feedHeadlines.slice(0, 3)) {
+        if (typeof headline === "string" && headline.trim()) {
+          lines.push(`- ${headline}`);
+        }
+      }
+    }
+  } else if (packet.kind === "phase-summary") {
+    const completedTasks = details?.completedTasks;
+
+    if (Array.isArray(completedTasks)) {
+      for (const task of completedTasks.slice(0, 4)) {
+        if (typeof task === "string" && task.trim()) {
+          lines.push(`- ${task}`);
+        }
+      }
+    }
+  } else if (packet.kind === "memory-hotset") {
+    const facts = details?.facts;
+
+    if (Array.isArray(facts)) {
+      for (const fact of facts.slice(0, 3)) {
+        if (typeof fact === "string" && fact.trim()) {
+          lines.push(`- ${fact}`);
+        }
+      }
+    }
+  } else if (packet.kind === "stale-memory") {
+    const reasons = details?.reasons;
+
+    if (Array.isArray(reasons)) {
+      for (const reason of reasons.slice(0, 3)) {
+        if (typeof reason === "string" && reason.trim()) {
+          lines.push(`- ${reason}`);
+        }
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -409,6 +493,11 @@ export async function buildCompiledStateView(input: {
     renderFallbackHumanInboxDigest(input.fallback.humanInboxSummary);
   humanInboxCompiled ? compiledFields++ : fallbackFields++;
 
+  const logRollupDigest = renderIdlePacketDigest(packets.logRollup);
+  const phaseSummaryDigest = renderIdlePacketDigest(packets.phaseSummary);
+  const memoryHotsetDigest = renderIdlePacketDigest(packets.memoryHotset);
+  const staleMemoryDigest = renderIdlePacketDigest(packets.staleMemory);
+
   const totalFields = compiledFields + fallbackFields;
   const allLoadedPackets = [
     packets.boardHealth,
@@ -416,6 +505,10 @@ export async function buildCompiledStateView(input: {
     ...packets.runResults,
     ...packets.diffTriage,
     ...packets.humanRequests,
+    packets.logRollup,
+    packets.phaseSummary,
+    packets.memoryHotset,
+    packets.staleMemory,
   ].filter((p): p is MaterializedPacket => p != null);
   const propagation = computePropagationDelays(allLoadedPackets, nowMs);
   const allDigests = [
@@ -425,7 +518,11 @@ export async function buildCompiledStateView(input: {
     activeRunsDigest,
     recentResultsDigest,
     humanInboxDigest,
-  ].join("\n");
+    logRollupDigest,
+    phaseSummaryDigest,
+    memoryHotsetDigest,
+    staleMemoryDigest,
+  ].filter(Boolean).join("\n");
 
   return {
     boardDigest,
@@ -434,6 +531,10 @@ export async function buildCompiledStateView(input: {
     activeRunsDigest,
     recentResultsDigest,
     humanInboxDigest,
+    logRollupDigest,
+    phaseSummaryDigest,
+    memoryHotsetDigest,
+    staleMemoryDigest,
     metrics: {
       compiledFields,
       fallbackFields,

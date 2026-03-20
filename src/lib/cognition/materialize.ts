@@ -18,7 +18,9 @@ import type {
 import {
   fingerprintParts,
   mergeMaterializedPacketRefs,
+  packetExpiresAt,
   toMaterializedPacketRef,
+  upsertPacket,
 } from "./packets";
 import { normalizeText, truncateInline } from "./tasks/shared";
 import type {
@@ -41,20 +43,6 @@ async function readPacket(path: string): Promise<MaterializedPacket | null> {
   return readJson<MaterializedPacket>(path);
 }
 
-async function upsertPacket(
-  path: string,
-  packet: MaterializedPacket,
-): Promise<MaterializedPacket> {
-  const existing = await readPacket(path);
-
-  if (existing?.fingerprint === packet.fingerprint) {
-    return existing;
-  }
-
-  await writeJson(path, packet);
-  return packet;
-}
-
 async function prunePacketDirectory(
   dir: string,
   validNames: Set<string>,
@@ -68,17 +56,6 @@ async function prunePacketDirectory(
       .filter((entry) => !validNames.has(entry))
       .map((entry) => rm(join(dir, entry), { recursive: true, force: true })),
   );
-}
-
-function packetExpiresAt(
-  producedAt: string,
-  freshnessMs: number | null,
-): string | null {
-  if (freshnessMs == null) {
-    return null;
-  }
-
-  return new Date(Date.parse(producedAt) + freshnessMs).toISOString();
 }
 
 function buildBoardHealthPacket(input: {
@@ -308,7 +285,8 @@ async function materializeDiffTriagePacket(input: {
     },
   };
 
-  return upsertPacket(input.packetPath, materialized);
+  const result = await upsertPacket(input.packetPath, materialized);
+  return result.packet;
 }
 
 async function materializeHumanRequestPacket(input: {
@@ -359,7 +337,8 @@ async function materializeHumanRequestPacket(input: {
       },
     };
 
-    return upsertPacket(input.packetPath, deterministicPacket);
+    const deterministicResult = await upsertPacket(input.packetPath, deterministicPacket);
+    return deterministicResult.packet;
   }
 
   const fingerprint = preprocessHumanMessageTask.fingerprint(taskInput);
@@ -404,7 +383,8 @@ async function materializeHumanRequestPacket(input: {
       },
     };
 
-    return upsertPacket(input.packetPath, fallbackPacket);
+    const fallbackResult = await upsertPacket(input.packetPath, fallbackPacket);
+    return fallbackResult.packet;
   }
 
   const producedAt = packet.compiledAt;
@@ -442,7 +422,8 @@ async function materializeHumanRequestPacket(input: {
     },
   };
 
-  return upsertPacket(input.packetPath, materialized);
+  const materializedResult = await upsertPacket(input.packetPath, materialized);
+  return materializedResult.packet;
 }
 
 export async function materializeProjectCognition(input: {
@@ -470,7 +451,7 @@ export async function materializeProjectCognition(input: {
     ensureDirectory(input.projectPaths.stateWorkingSetDir),
   ]);
 
-  const boardPacket = await upsertPacket(
+  const boardResult = await upsertPacket(
     input.projectPaths.statePacketBoardHealth,
     buildBoardHealthPacket({
       projectId: input.projectId,
@@ -482,8 +463,9 @@ export async function materializeProjectCognition(input: {
       path: input.projectPaths.board,
     }),
   );
+  const boardPacket = boardResult.packet;
 
-  const openDecisionsPacket = await upsertPacket(
+  const openDecisionsResult = await upsertPacket(
     input.projectPaths.statePacketOpenDecisions,
     buildOpenDecisionsPacket({
       projectId: input.projectId,
@@ -494,6 +476,7 @@ export async function materializeProjectCognition(input: {
       path: input.projectPaths.board,
     }),
   );
+  const openDecisionsPacket = openDecisionsResult.packet;
 
   const runResultPackets = await Promise.all(
     input.recentResults.map(async (result) => {
@@ -501,7 +484,7 @@ export async function materializeProjectCognition(input: {
         input.projectPaths.statePacketRunResultsDir,
         `${result.runId}.json`,
       );
-      const packet = await upsertPacket(
+      const runResult = await upsertPacket(
         packetPath,
         buildRunResultPacket({
           projectId: input.projectId,
@@ -515,7 +498,7 @@ export async function materializeProjectCognition(input: {
       );
 
       return {
-        packet,
+        packet: runResult.packet,
         path: packetPath,
         result,
       };
@@ -608,6 +591,15 @@ export async function materializeProjectCognition(input: {
     }),
   };
 
+  const IDLE_PACKET_KINDS_FOR_WORKING_SET: Set<string> = new Set([
+    "log-rollup",
+    "phase-summary",
+    "memory-hotset",
+    "stale-memory",
+  ]);
+  const idlePacketsFromCache = (existingCacheIndex?.packets ?? [])
+    .filter((ref) => IDLE_PACKET_KINDS_FOR_WORKING_SET.has(ref.kind));
+
   const workingSetPackets = [
     toMaterializedPacketRef(boardPacket, input.projectPaths.statePacketBoardHealth),
     toMaterializedPacketRef(openDecisionsPacket, input.projectPaths.statePacketOpenDecisions),
@@ -625,6 +617,7 @@ export async function materializeProjectCognition(input: {
     ...diffTriagePackets
       .slice(0, MAX_WORKING_SET_RUN_RESULTS)
       .map(({ packet, path }) => toMaterializedPacketRef(packet, path)),
+    ...idlePacketsFromCache,
   ];
   const workingSet: StewardWorkingSet = {
     consumer: "steward-refresh",
