@@ -1,5 +1,5 @@
 import { renderCognitiveRoutingPromptPolicy } from "../cognitive-routing";
-import { buildCompiledStateView, type CompilationMetrics } from "../cognition";
+import { buildBootstrapContext } from "../context";
 import { UsageError } from "../errors";
 import { loadPromptMemoryContext } from "../memory";
 import { type HivePaths, getProjectPaths, type ProjectPaths } from "../paths";
@@ -53,7 +53,6 @@ export type StewardContext = {
   recentDecisionsPath: string;
   projectEntitySummaryPath: string;
   journalPath: string;
-  compilationMetrics: CompilationMetrics;
 };
 
 export async function loadDeltaHistory(input: {
@@ -109,18 +108,17 @@ export async function loadStewardContext(input: {
     projectPaths,
     lastSeenRevision: sessionRevision,
   });
-  const compiledState = await buildCompiledStateView({
-    projectPaths,
-    workingSet: runtimeState.workingSet,
-    fallback: {
-      boardSummary: runtimeState.boardSummary,
-      openMessagesSummary: runtimeState.openMessagesSummary,
-      activeRunsSummary: runtimeState.activeRunsSummary,
-      recentResultsSummary: runtimeState.recentResultsSummary,
-      humanInboxSummary: runtimeState.humanInboxSummary,
-    },
+
+  // Build the bootstrap context directly from the runtime state summaries.
+  // This replaces the old buildCompiledStateView + working set packet reads.
+  const bootstrapCtx = buildBootstrapContext({
+    projectId: input.projectId,
+    runtimeState,
   });
 
+  // The bootstrap context is a single text block. We extract the individual
+  // digest strings so the existing StewardContext shape stays compatible with
+  // the prompts that consume it.
   return {
     globalConfig,
     projectPaths,
@@ -137,16 +135,16 @@ export async function loadStewardContext(input: {
     self: self.trim(),
     recentTurns: renderRecentTurns(history, input.recentTurnLimit ?? 6),
     deltaHistory,
-    boardDigest: compiledState.boardDigest,
-    openDecisionsDigest: compiledState.openDecisionsDigest,
-    openMessagesDigest: compiledState.openMessagesDigest,
-    activeRunsDigest: compiledState.activeRunsDigest,
-    recentResultsDigest: compiledState.recentResultsDigest,
-    humanInboxDigest: compiledState.humanInboxDigest,
-    logRollupDigest: compiledState.logRollupDigest,
-    phaseSummaryDigest: compiledState.phaseSummaryDigest,
-    memoryHotsetDigest: compiledState.memoryHotsetDigest,
-    staleMemoryDigest: compiledState.staleMemoryDigest,
+    boardDigest: runtimeState.boardSummary.digest,
+    openDecisionsDigest: renderOpenDecisionsFromState(runtimeState),
+    openMessagesDigest: runtimeState.openMessagesSummary.digest,
+    activeRunsDigest: runtimeState.activeRunsSummary.digest,
+    recentResultsDigest: renderRecentResultsFromState(runtimeState),
+    humanInboxDigest: renderHumanInboxFromState(runtimeState),
+    logRollupDigest: null,
+    phaseSummaryDigest: null,
+    memoryHotsetDigest: null,
+    staleMemoryDigest: null,
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,
@@ -155,7 +153,6 @@ export async function loadStewardContext(input: {
     recentDecisionsPath: memoryContext.recentDecisionsPath,
     projectEntitySummaryPath: memoryContext.projectEntitySummaryPath,
     journalPath: memoryContext.journalPath,
-    compilationMetrics: compiledState.metrics,
   };
 }
 
@@ -174,3 +171,60 @@ export function renderStewardRoutingPolicy(input: {
 }
 
 export { renderDeltaHistory };
+
+// ---------------------------------------------------------------------------
+// Helpers — inline digest rendering from runtime state
+// ---------------------------------------------------------------------------
+
+import type { ProjectRuntimeState } from "../state";
+
+function renderOpenDecisionsFromState(state: ProjectRuntimeState): string {
+  const waitingOnHuman = state.humanInboxSummary.items
+    .filter((item) => item.needsHumanReply)
+    .map((item) => item.summary)
+    .slice(0, 6);
+
+  if (
+    state.boardSummary.blockers.length === 0 &&
+    state.boardSummary.decisions.length === 0 &&
+    waitingOnHuman.length === 0
+  ) {
+    return "No open decisions, blockers, or pending human replies.";
+  }
+
+  const lines = [
+    `Open decisions: ${state.boardSummary.blockers.length} blocker(s), ${state.boardSummary.decisions.length} recent decision(s), ${waitingOnHuman.length} pending human repl${waitingOnHuman.length === 1 ? "y" : "ies"}.`,
+  ];
+
+  for (const blocker of state.boardSummary.blockers.slice(0, 4)) {
+    lines.push(`- blocker: ${blocker}`);
+  }
+
+  for (const item of waitingOnHuman.slice(0, 4)) {
+    lines.push(`- human: ${item}`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderRecentResultsFromState(state: ProjectRuntimeState): string {
+  if (state.recentResultsSummary.items.length === 0) {
+    return "(none)";
+  }
+
+  return state.recentResultsSummary.items
+    .slice(0, 5)
+    .map((item) => `- ${item.agentId} | ${item.status} | ${item.summary || "no visible output"}`)
+    .join("\n");
+}
+
+function renderHumanInboxFromState(state: ProjectRuntimeState): string {
+  if (state.humanInboxSummary.items.length === 0) {
+    return "(none)";
+  }
+
+  return state.humanInboxSummary.items
+    .slice(0, 6)
+    .map((item) => `- ${item.from} -> ${item.to} [${item.type}] ${item.summary}`)
+    .join("\n");
+}

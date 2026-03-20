@@ -109,9 +109,8 @@ hive supervise        # Bottom: agents running
 Or use individual commands:
 
 ```bash
-hive say "how's auth going?"      # Quick message to the hive
-hive ask                          # Status digest
-hive ask "what did alpha build?"  # Ask a specific question
+hive say "how's auth going?"      # Send a message to the steward
+hive say "what did alpha build?"  # Ask a question — the steward decides depth
 hive feed                         # Last 20 feed entries
 hive feed 50                      # Last 50
 hive status                       # Board + open messages
@@ -257,7 +256,7 @@ context about past decisions.
 
 ```bash
 hive work myproject     # Switch to the project
-hive ask                # Quick status digest
+hive say "what needs attention?"  # Ask the steward
 hive gateway --open     # Open the browser interface
 # or
 hive run                # Start supervision from terminal
@@ -276,7 +275,7 @@ hive launch alpha --runtime codex                # Relaunch with different runti
 ### End of day
 
 ```bash
-hive ask "summarize what got done today"
+hive say "summarize what got done today"
 hive archive                                     # Archive the session
 ```
 
@@ -288,8 +287,7 @@ hive project add <n> <path>   Register a project
 hive work [project]           Switch/show active project
 
 hive run                      Start supervision (idempotent)
-hive say <msg>                Send message + auto-start
-hive ask [question]           Status digest or LLM-powered answer
+hive say <msg>                Send a message to the steward
 hive stop <agent|run>         Stop an agent
 
 hive gateway [--open]         Start browser UI at localhost:4200

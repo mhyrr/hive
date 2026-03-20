@@ -218,6 +218,7 @@ export async function buildAgentPrompt(input: {
     plan,
     projectConfig,
     openMessages: runtimeState.openMessages,
+    recentResults: runtimeState.recentResults,
     compilerCacheIndex: runtimeState.compilerCacheIndex,
     preferredAssignmentMessage: assignmentMessage?.filename ?? input.assignmentMessageRef ?? null,
   });

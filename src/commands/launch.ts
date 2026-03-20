@@ -3,6 +3,9 @@ import { appendFeedEntry } from "../lib/feed";
 import { captureGitStatusSnapshot, diffGitStatusSnapshots } from "../lib/git";
 import { appendLogEntry } from "../lib/log";
 import { findMessage, findOpenAssignmentMessage } from "../lib/messages";
+import { enqueueGoalForOrchestrator } from "../lib/steward/prompts";
+import { loadStewardContext, renderStewardRoutingPolicy } from "../lib/steward/context";
+import { buildDirectStewardTurnPrompt } from "../lib/steward/prompts";
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -31,13 +34,14 @@ import {
   createRunPromptArtifact,
   finalizeRun,
   getRunOutputPath,
+  listActiveRuns,
+  listRecentRunResults,
   markRunActive,
   readActiveRun,
   readRunRecord,
   writeRunResult,
 } from "../lib/runs";
 import { compressCompletedRunOutput } from "../lib/tier1";
-import { orchestrateCommand } from "./orchestrate";
 import { buildAgentPrompt } from "./prompt";
 
 type LaunchOptions = {
@@ -88,6 +92,63 @@ function buildUsageFeedDetails(
   }
 
   return details;
+}
+
+async function buildStewardLaunchPrompt(input: {
+  paths: HivePaths;
+  activeProject: string;
+  goal: string | null;
+}): Promise<string> {
+  const projectPaths = getProjectPaths(input.paths, input.activeProject);
+
+  if (input.goal) {
+    await enqueueGoalForOrchestrator(input.paths, projectPaths, input.activeProject, input.goal);
+  }
+
+  // Use the existing active session if one exists, so we don't overwrite
+  // the gateway's session pointer. Only create a throwaway session as a
+  // last resort, and even then use a non-active helper to avoid clobbering
+  // active.md.
+  const { getActiveSession, createSession } = await import("../lib/sessions");
+  let sessionId: string;
+  const existing = await getActiveSession(input.paths.sessionsDir);
+
+  if (existing) {
+    sessionId = existing.sessionId;
+  } else {
+    // Create a session but immediately note we won't rely on it being
+    // "the active" one — this is a disposable prompt-assembly context.
+    const fresh = await createSession({
+      sessionsDir: input.paths.sessionsDir,
+      project: input.activeProject,
+      runtime: "claude",
+      model: null,
+      systemPrompt: "HIVE steward launch session",
+    });
+    sessionId = fresh.sessionId;
+  }
+
+  const ctx = await loadStewardContext({
+    hivePaths: input.paths,
+    projectId: input.activeProject,
+    sessionId,
+  });
+
+  const cognitiveRoutingPolicy = renderStewardRoutingPolicy({
+    globalConfig: ctx.globalConfig,
+    skillsDir: input.paths.skillsDir,
+    sessionRuntime: ctx.sessionRuntime,
+    sessionModel: ctx.sessionModel,
+  });
+
+  return buildDirectStewardTurnPrompt({
+    ...ctx,
+    hivePaths: input.paths,
+    projectId: input.activeProject,
+    sessionId,
+    cognitiveRoutingPolicy,
+    humanMessage: input.goal ?? "Review the current board and advance the plan.",
+  });
 }
 
 function parseOptions(args: string[]): LaunchOptions {
@@ -165,7 +226,7 @@ export async function launchAgentPass(input: LaunchAgentInput): Promise<string> 
       throw new UsageError(`${assignmentMessage.filename} is not an assignment message.`);
     }
 
-    if (assignmentMessage.attributes.status !== "open") {
+    if ((assignmentMessage.attributes.status ?? "open") !== "open") {
       throw new UsageError(`${assignmentMessage.filename} is not open.`);
     }
 
@@ -195,7 +256,11 @@ export async function launchAgentPass(input: LaunchAgentInput): Promise<string> 
 
   const prompt =
     input.agentId === "steward"
-      ? await orchestrateCommand(input.goal ? [input.goal] : [])
+      ? await buildStewardLaunchPrompt({
+          paths: input.paths,
+          activeProject: input.activeProject,
+          goal: input.goal,
+        })
       : await buildAgentPrompt({
           agentId: input.agentId,
           assignmentMessageRef: assignmentMessage?.filename ?? input.sourceMessage ?? null,

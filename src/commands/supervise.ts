@@ -48,7 +48,7 @@ import {
 import { toIsoTimestamp } from "../lib/time";
 import { refreshProjectRuntimeState, type ProjectRuntimeState } from "../lib/state";
 import { compileIdleProjectCognition, triageRunDiffsForSteward } from "../lib/cognition";
-import { hasPersistentStewardSession } from "../lib/persistent-steward";
+import { hasPersistentStewardSession, notifyStewardRunCompleted } from "../lib/persistent-steward";
 import { launchAgentPass } from "./launch";
 import { dispatchWorkerLaunchPass } from "./worker-launch-dispatch";
 
@@ -520,7 +520,7 @@ async function reconcileRecoveredRuns(input: {
       ? await findMessage(input.paths.msgDir, finalizedRun.sourceMessage, input.activeProject)
       : null;
 
-    await writeRunResult(finalizedRun, {
+    const runResult = await writeRunResult(finalizedRun, {
       assignmentStatusAfterExit: assignmentAfterExit?.attributes.status ?? null,
       assignmentResolvedByWorker: assignmentAfterExit?.attributes.status === "resolved",
       changedFiles: [],
@@ -530,6 +530,7 @@ async function reconcileRecoveredRuns(input: {
           ? "Supervisor recovered a cancelled run after the process exited before the owning launcher finalized it."
           : "Supervisor recovered a stale active run whose process was no longer alive.",
     });
+    await notifyStewardRunCompleted(input.paths.home, input.activeProject, runResult);
     await appendFeedEntry(input.paths, {
       project: input.activeProject,
       headline: `Recovered ${finalizedRun.agentId} ${entry.status}`,

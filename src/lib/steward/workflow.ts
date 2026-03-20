@@ -810,15 +810,6 @@ export async function continueConsoleWorkflow(
             cacheCreationInputTokens: persistent.usage.cacheCreationInputTokens,
             cacheReadInputTokens: persistent.usage.cacheReadInputTokens,
             totalTokens: persistent.usage.totalTokens,
-            compilation: persistent.compilationMetrics ? {
-              compiledFields: persistent.compilationMetrics.compiledFields,
-              fallbackFields: persistent.compilationMetrics.fallbackFields,
-              hitRate: persistent.compilationMetrics.hitRate,
-              packetCount: persistent.compilationMetrics.packetCount,
-              workingSetTokenEstimate: persistent.compilationMetrics.workingSetTokenEstimate,
-              maxPropagationDelayMs: persistent.compilationMetrics.maxPropagationDelayMs,
-              avgPropagationDelayMs: persistent.compilationMetrics.avgPropagationDelayMs,
-            } : null,
             routing: input.callbacks.buildSessionTurnRouting({
               tier: "tier3",
               mode: "direct-answer",

@@ -15,8 +15,8 @@ import {
   listProjects,
   type HivePaths,
 } from "../lib/paths";
-import { disposePersistentStewardsForHome } from "../lib/persistent-steward";
-import { listActiveRuns, markRunStopRequested } from "../lib/runs";
+import { disposePersistentStewardsForHome, notifyStewardRunCompleted } from "../lib/persistent-steward";
+import { listActiveRuns, markRunStopRequested, type RunResult } from "../lib/runs";
 import {
   DEFAULT_MAX_PARALLEL,
   DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
@@ -26,7 +26,7 @@ import { dispatchWorkerLaunchPass } from "../commands/worker-launch-dispatch";
 import { serveStaticAsset } from "./assets";
 import { primeGatewayPersistentStewardSession } from "./console";
 import { handleApi, handleOptions } from "./routes";
-import { startWatcher } from "./watcher";
+import { startGatewayWatcher } from "./watcher";
 
 export type GatewayOptions = {
   port: number;
@@ -278,25 +278,16 @@ function scheduleManagedGatewayWorkerLaunchPass(input: {
   );
 }
 
-async function handleManagedGatewayMessageChange(input: {
+async function handleManagedGatewayAssignment(input: {
   hivePaths: HivePaths;
   messagePath: string;
 }): Promise<void> {
+  // The core watcher has already verified this is a qualifying assignment
+  // (type: assign, status: open, launch != manual, to != steward).
+  // We just need to extract the projectId and schedule a worker launch.
   const message = await readMessageFile(input.messagePath);
 
   if (!message) {
-    return;
-  }
-
-  if (message.attributes.type !== "assign" || message.attributes.to === "steward") {
-    return;
-  }
-
-  if ((message.attributes.status ?? "open") !== "open") {
-    return;
-  }
-
-  if ((message.attributes.launch ?? "").trim().toLowerCase() === "manual") {
     return;
   }
 
@@ -310,6 +301,72 @@ async function handleManagedGatewayMessageChange(input: {
     hivePaths: input.hivePaths,
     projectId,
   });
+}
+
+// Track known active runs per project so we can detect completions.
+const knownActiveRunsByProject = new Map<string, Set<string>>();
+
+/**
+ * Seed the known-runs map for a project so the first run-change event
+ * after startup can correctly detect completions. Without this, the
+ * first change event sees previousRunIds = {} and misses completions.
+ */
+async function seedKnownActiveRuns(hivePaths: HivePaths, projectId: string): Promise<void> {
+  const projectPaths = getProjectPaths(hivePaths, projectId);
+  const activeRuns = await listActiveRuns(projectPaths);
+  knownActiveRunsByProject.set(projectId, new Set(activeRuns.map((r) => r.runId)));
+}
+
+async function handleManagedGatewayRunChange(input: {
+  hivePaths: HivePaths;
+  runActiveDirPath: string;
+}): Promise<void> {
+  // Extract projectId from the active dir path.
+  // Active dir is: <hiveHome>/projects/<projectId>/runs/active
+  const projectsDir = input.hivePaths.projectsDir;
+  if (!input.runActiveDirPath.startsWith(projectsDir)) {
+    return;
+  }
+
+  const relPath = input.runActiveDirPath.slice(projectsDir.length + 1);
+  const projectId = relPath.split("/")[0];
+
+  if (!projectId) {
+    return;
+  }
+
+  const projectPaths = getProjectPaths(input.hivePaths, projectId);
+  const currentRuns = await listActiveRuns(projectPaths);
+  const currentRunIds = new Set(currentRuns.map((r) => r.runId));
+  const previousRunIds = knownActiveRunsByProject.get(projectId) ?? new Set<string>();
+
+  // Detect runs that were active but are now gone (completed/failed/cancelled).
+  const completedRunIds: string[] = [];
+  for (const runId of previousRunIds) {
+    if (!currentRunIds.has(runId)) {
+      completedRunIds.push(runId);
+    }
+  }
+
+  knownActiveRunsByProject.set(projectId, currentRunIds);
+
+  if (completedRunIds.length === 0) {
+    return;
+  }
+
+  // Look up recent results for the completed runs and notify the steward.
+  const { listRecentRunResults } = await import("../lib/runs");
+
+  const recentResults = await listRecentRunResults(projectPaths, 20);
+  const completedSet = new Set(completedRunIds);
+
+  for (const result of recentResults) {
+    if (completedSet.has(result.runId) && result.agentId !== "steward" && result.agentId !== "console") {
+      void notifyStewardRunCompleted(input.hivePaths.home, projectId, result).catch(() => {
+        // Best-effort notification; the supervisor poll remains a fallback.
+      });
+    }
+  }
 }
 
 async function startManagedSupervisorForProject(
@@ -456,22 +513,35 @@ export function startGateway(options: GatewayOptions): GatewayState {
     }
   };
 
-  const stopWatcher = startWatcher(
-    {
-      feed: options.hivePaths.feed,
-      msgDir: options.hivePaths.msgDir,
-      boardPath: "",
-      runsActiveDir: "",
-    },
+  // Seed known active runs for all projects so the first run-change event
+  // can correctly detect completions instead of seeing an empty baseline.
+  // Fire-and-forget since startGateway is sync; the seed completes before
+  // any watcher event fires (watcher debounce is 200ms).
+  if (options.manageSupervisorChildren) {
+    void listProjects(options.hivePaths).then((projects) =>
+      Promise.all(projects.map((p) => seedKnownActiveRuns(options.hivePaths, p.id)))
+    ).catch(() => {});
+  }
+
+  const stopWatcher = startGatewayWatcher(
+    options.hivePaths,
     broadcast,
     options.manageSupervisorChildren
       ? {
-          onMessageChanged: (path) => {
-            void handleManagedGatewayMessageChange({
+          onAssignment: (msgPath) => {
+            void handleManagedGatewayAssignment({
               hivePaths: options.hivePaths,
-              messagePath: path,
+              messagePath: msgPath,
             }).catch(() => {
               // The file may still be mid-write; the next watcher event will retry.
+            });
+          },
+          onRunChanged: (runActiveDirPath) => {
+            void handleManagedGatewayRunChange({
+              hivePaths: options.hivePaths,
+              runActiveDirPath,
+            }).catch(() => {
+              // Best-effort; the periodic supervisor pass remains a fallback.
             });
           },
         }

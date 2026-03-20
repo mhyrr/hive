@@ -6,7 +6,7 @@ import {
 } from "./project";
 import { RunRecord, RunResult } from "./runs";
 
-export const DEFAULT_SUPERVISOR_INTERVAL_SECONDS = 30;
+export const DEFAULT_SUPERVISOR_INTERVAL_SECONDS = 120;
 export const DEFAULT_STEWARD_REASSESS_SECONDS = 120;
 export const DEFAULT_MAX_PARALLEL = 3;
 export const DEFAULT_PULSE_INTERVAL_TICKS = 4;

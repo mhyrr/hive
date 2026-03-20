@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli";
-import { compileIdleProjectCognition } from "../src/lib/cognition";
 import { ensureHiveScaffold, getProjectPaths } from "../src/lib/paths";
 import {
   createRunDraft,
@@ -12,7 +11,6 @@ import {
   writeRunResult,
 } from "../src/lib/runs";
 import { createSession } from "../src/lib/sessions";
-import { refreshProjectRuntimeState } from "../src/lib/state";
 
 type TestContext = {
   root: string;
@@ -151,52 +149,6 @@ describe("HIVE CLI", () => {
     expect(status).toContain("Project: none");
   });
 
-  test("ask with no question returns fast status digest of the live board", async () => {
-    await initHive();
-    await addProject();
-
-    const liveBoard = await Bun.file(
-      new URL("./fixtures/hive-live-board.md", import.meta.url),
-    ).text();
-
-    await Bun.write(
-      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
-      liveBoard,
-    );
-
-    const output = await runCli(["ask"]);
-
-    expect(output).toContain("4 tasks: 1 active, 2 done, 1 waiting/queued");
-    expect(output).toContain("steward: active");
-    expect(output).toContain("gamma: idle");
-  });
-
-  test("ask prefers compiled log rollups when idle compilation has run", async () => {
-    await initHive();
-    await addProject();
-    const hivePaths = await ensureHiveScaffold(context.hiveHome);
-    const projectPaths = getProjectPaths(hivePaths, "myproject");
-
-    await runCli(["log", "Captured", "deployment", "state"]);
-    const runtimeState = await refreshProjectRuntimeState({
-      hivePaths,
-      projectId: "myproject",
-      projectPaths,
-    });
-    const plan = await Bun.file(projectPaths.plan).text();
-    await compileIdleProjectCognition({
-      hivePaths,
-      projectId: "myproject",
-      projectPaths,
-      plan,
-      runtimeState,
-    });
-    const output = await runCli(["ask"]);
-
-    expect(output).toContain("Recent log rollup");
-    expect(output).toContain("Captured deployment state");
-  });
-
   test("console dry run prompt encodes cognitive-depth routing guidance", async () => {
     await initHive();
     await addProject();
@@ -212,19 +164,6 @@ describe("HIVE CLI", () => {
     expect(prompt).toContain("cognitive-resource-routing.md");
     expect(prompt).toContain("current steward lane: claude");
     expect(prompt).toContain("plural-synthesis");
-  });
-
-  test("orchestrate prompt inlines the cognitive routing skill and policy", async () => {
-    await initHive();
-    await addProject();
-
-    const output = await runCli(["orchestrate"]);
-
-    expect(output).toContain("## Cognitive Routing Policy");
-    expect(output).toContain("cognitive-resource-routing.md");
-    expect(output).toContain("direct-answer");
-    expect(output).toContain("plural-synthesis");
-    expect(output).toContain("Skill: Cognitive Resource Routing");
   });
 
   test("inbox and message lifecycle commands keep open queues clean", async () => {
@@ -431,10 +370,7 @@ Task: Build the auth endpoint and publish the contract.
       "alpha.json",
     );
     const workerBrief = await Bun.file(workerBriefPath).json() as {
-      kind: string;
-      details: {
-        relevantRunResults: Array<{ summary: string }>;
-      };
+      relevantRunResults: Array<{ summary: string }>;
     };
 
     expect(prompt).toContain("You are alpha for project myproject.");
@@ -457,8 +393,7 @@ Task: Build the auth endpoint and publish the contract.
     expect(prompt).toContain("Task: Build the auth endpoint and publish the contract.");
     expect(prompt).toContain("Need the login contract shape");
     expect(prompt).toContain("Published the auth contract for the login flow.");
-    expect(workerBrief.kind).toBe("worker-brief");
-    expect(workerBrief.details.relevantRunResults[0]?.summary).toContain(
+    expect(workerBrief.relevantRunResults[0]?.summary).toContain(
       "Published the auth contract for the login flow.",
     );
   });
@@ -546,94 +481,7 @@ Review the current change set and produce a blunt technical assessment.
     expect(refreshedLog).not.toContain("Captured session context");
   });
 
-  test("orchestrate kickoff records a human goal and prints a steward prompt", async () => {
-    await initHive();
-    await addProject();
-
-    const prompt = await runCli(["orchestrate", "Build", "the", "auth", "flow"]);
-    const log = await Bun.file(
-      join(context.hiveHome, "projects", "myproject", "LOG.md"),
-    ).text();
-    const msgDirEntries = await readdir(join(context.hiveHome, "msg"));
-    const messageText = await Bun.file(join(context.hiveHome, "msg", msgDirEntries[0])).text();
-
-    expect(prompt).toContain("# HIVE Steward Prompt");
-    expect(prompt).toContain("Human-driven single-pass mode.");
-    expect(prompt).toContain("Build the auth flow");
-    expect(prompt).toContain("Human nudge pending: Build the auth flow");
-    expect(prompt).toContain(`Read agent identity: ${join(context.hiveHome, "IDENTITY.md")}`);
-    expect(prompt).toContain("When you fully handle a message, resolve it or close it so the open queue stays clean.");
-    expect(prompt).toContain("The authoritative hive files are not in the repo root.");
-    expect(prompt).toContain("## File Paths");
-    expect(prompt).toContain(`IDENTITY.md: ${join(context.hiveHome, "IDENTITY.md")}`);
-    expect(prompt).toContain(`BOARD.md: ${join(context.hiveHome, "projects", "myproject", "BOARD.md")}`);
-    expect(prompt).toContain("hive msg resolve <message> steward <answer>");
-    expect(prompt).toContain("./hive msg resolve <message> steward <answer>");
-    expect(prompt).toContain("hive inbox <agent>");
-    expect(prompt).toContain("./hive inbox <agent>");
-    expect(log).toContain("Goal: Build the auth flow");
-    expect(messageText).toContain("type: nudge");
-    expect(messageText).toContain("to: steward");
-  });
-
-  test("orchestrate loop mode resumes state and surfaces stale-agent signals", async () => {
-    await initHive();
-    await addProject();
-
-    await Bun.write(
-      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
-      `# Board
-
-## Tasks
-- 001: Auth endpoint [alpha] [active] [14:50]
-
-## Agents
-### alpha (craftsman -> backend)
-status: active on 001
-last-active: 14:50
-
-### beta (craftsman -> frontend)
-status: waiting
-last-active: 15:03
-
-## Blockers
-(none)
-
-## Decisions
-(none)
-`,
-    );
-
-    await Bun.write(
-      join(context.hiveHome, "msg", "20260309-144000-beta-to-alpha-manual.md"),
-      `---
-from: beta
-to: alpha
-type: question
-status: open
-ts: 2026-03-09T14:40:00Z
-project: myproject
----
-
-Need the auth contract shape.
-`,
-    );
-
-    const beforeLog = await Bun.file(
-      join(context.hiveHome, "projects", "myproject", "LOG.md"),
-    ).text();
-    const prompt = await runCli(["orchestrate", "--mode", "loop", "--interval", "30"]);
-    const afterLog = await Bun.file(
-      join(context.hiveHome, "projects", "myproject", "LOG.md"),
-    ).text();
-
-    expect(prompt).toContain("Loop mode. Run one assessment/action cycle, then pause 30 seconds");
-    expect(prompt).toContain("alpha is marked active but last-active was 18 minutes ago.");
-    expect(prompt).toContain("Open question from beta to alpha has been waiting 28 minutes.");
-    expect(afterLog).toBe(beforeLog);
-  });
-
-  test("chat and launch dry runs resolve runtime settings and write prompt artifacts", async () => {
+  test("launch dry run resolves runtime settings and writes prompt artifacts", async () => {
     await initHive();
     await addProject();
 
@@ -673,25 +521,13 @@ path: ${context.repo}
 `,
     );
 
-    const chatDryRun = await runCli(["chat", "--dry-run", "How's", "auth", "going?"]);
     const launchDryRun = await runCli(["launch", "--dry-run", "alpha"]);
-
-    expect(chatDryRun).toContain("Chat dry run");
-    expect(chatDryRun).toContain("Runtime: codex");
-    expect(chatDryRun).toContain("Model: gpt-5.4-medium");
-    expect(chatDryRun).toContain("Command: codex exec");
-    expect(chatDryRun).toContain("gpt-5.4-medium");
 
     expect(launchDryRun).toContain("Launch dry run");
     expect(launchDryRun).toContain("Agent: alpha");
     expect(launchDryRun).toContain("Runtime: codex");
     expect(launchDryRun).toContain("Command: codex exec");
 
-    expect(
-      await Bun.file(
-        join(context.hiveHome, "projects", "myproject", "runs", "20260309-150800Z-chat.prompt.md"),
-      ).exists(),
-    ).toBeTrue();
     expect(
       await Bun.file(
         join(

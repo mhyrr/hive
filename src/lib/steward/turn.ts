@@ -17,8 +17,10 @@ import {
   readActiveRun,
   readRunRecord,
   type RunRecord,
+  type RunResult,
   writeRunResult,
 } from "../runs";
+import { ensureDirectory } from "../paths";
 import { switchSessionProject, updateSessionProjectState } from "../sessions";
 import { refreshProjectRuntimeState } from "../state";
 import { compressCompletedRunOutput } from "../tier1";
@@ -31,7 +33,6 @@ import {
   validateRuntimeInstalled,
 } from "../runtime";
 
-import type { CompilationMetrics } from "../cognition";
 import { loadStewardContext, renderStewardRoutingPolicy } from "./context";
 import {
   buildDirectStewardTurnPrompt,
@@ -134,7 +135,6 @@ export type PersistentStewardTurnResult =
       runtime: string;
       model: string | null;
       usage: PersistentUsageSummary;
-      compilationMetrics: CompilationMetrics | null;
     }
   | {
       mode: "fallback";
@@ -943,12 +943,19 @@ export async function runPersistentStewardTurn(input: {
     handle.agent.setSystemPrompt(systemPrompt);
     clearIdleTimer(handle);
 
+    // Drain any queued worker-completion notifications and prepend them
+    // to the human message so the steward sees them as part of this turn.
+    const pendingNotificationBlock = await drainPendingNotifications(input.hivePaths.home);
+    const fullHumanMessage = pendingNotificationBlock
+      ? `${pendingNotificationBlock}\n\n---\n\n${input.humanMessage}`
+      : input.humanMessage;
+
     const promptMessage = handle.bootstrapped
       ? buildPersistentStewardRefreshMessage({
           ...context,
           hivePaths: input.hivePaths,
           projectId: input.projectId,
-          humanMessage: input.humanMessage,
+          humanMessage: fullHumanMessage,
           cognitiveRoutingPolicy,
         })
       : buildPersistentStewardBootstrapMessage({
@@ -956,7 +963,7 @@ export async function runPersistentStewardTurn(input: {
           hivePaths: input.hivePaths,
           projectId: input.projectId,
           sessionId: input.sessionId,
-          humanMessage: input.humanMessage,
+          humanMessage: fullHumanMessage,
           cognitiveRoutingPolicy,
         });
     await input.onStatus?.(buildPersistentTurnStatus("waiting-for-response"));
@@ -1061,7 +1068,6 @@ export async function runPersistentStewardTurn(input: {
       runtime: "pi",
       model: completion.model,
       usage: completion.usage,
-      compilationMetrics: context.compilationMetrics,
     };
   } catch (error) {
     if (activeHandle) {
@@ -1205,4 +1211,149 @@ export async function disposePersistentStewardsForHome(hiveHome: string): Promis
   const matches = [...persistentStewardHandles.values()].filter((handle) => handle.hiveHome === hiveHome);
 
   await Promise.all(matches.map((handle) => disposePersistentStewardHandle(handle, "gateway-stop")));
+}
+
+// ---------------------------------------------------------------------------
+// Steward run-completion notifications
+// ---------------------------------------------------------------------------
+
+type PendingRunNotification = {
+  projectId: string;
+  agentId: string;
+  runId: string;
+  status: string;
+  summary: string;
+  ts: string;
+};
+
+function pendingNotificationsDir(hiveHome: string): string {
+  return join(hiveHome, "steward-notifications");
+}
+
+function pendingNotificationPath(hiveHome: string, runId: string): string {
+  return join(pendingNotificationsDir(hiveHome), `${runId}.json`);
+}
+
+function buildRunCompletionDelta(result: RunResult): string {
+  const digest = result.cognitiveDigest;
+  const summaryText = digest?.summary
+    ? digest.summary
+    : result.finalVisibleOutput
+      ? result.finalVisibleOutput.split("\n").slice(0, 5).join("\n")
+      : "(no output)";
+  const outcomeLabel = digest?.outcome ?? result.status;
+  const costLabel = result.costUsd != null ? ` | cost: $${result.costUsd.toFixed(4)}` : "";
+  const filesLabel =
+    (digest?.filesChanged.length ?? 0) > 0
+      ? ` | files: ${digest!.filesChanged.join(", ")}`
+      : result.changedFiles.length > 0
+        ? ` | files: ${result.changedFiles.slice(0, 8).join(", ")}`
+        : "";
+
+  return [
+    `[run-completed] Worker ${result.agentId} finished (${outcomeLabel})${costLabel}${filesLabel}`,
+    `Run: ${result.runId} | exited: ${result.ended}`,
+    summaryText,
+  ].join("\n");
+}
+
+export async function readPendingRunNotifications(
+  hiveHome: string,
+): Promise<PendingRunNotification[]> {
+  const dir = pendingNotificationsDir(hiveHome);
+  const { readdir } = await import("node:fs/promises");
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  const notifications: PendingRunNotification[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    try {
+      const raw = await Bun.file(join(dir, entry.name)).text();
+      const parsed = JSON.parse(raw) as Partial<PendingRunNotification>;
+
+      if (
+        typeof parsed.projectId === "string" &&
+        typeof parsed.agentId === "string" &&
+        typeof parsed.runId === "string" &&
+        typeof parsed.status === "string" &&
+        typeof parsed.summary === "string" &&
+        typeof parsed.ts === "string"
+      ) {
+        notifications.push(parsed as PendingRunNotification);
+      }
+    } catch {
+      // Skip malformed notification files.
+    }
+  }
+
+  return notifications.sort((a, b) => a.ts.localeCompare(b.ts));
+}
+
+export async function clearPendingRunNotifications(
+  hiveHome: string,
+): Promise<void> {
+  const { rm } = await import("node:fs/promises");
+  await rm(pendingNotificationsDir(hiveHome), { recursive: true, force: true });
+}
+
+async function writePendingRunNotification(
+  hiveHome: string,
+  notification: PendingRunNotification,
+): Promise<void> {
+  const dir = pendingNotificationsDir(hiveHome);
+  await ensureDirectory(dir);
+  await Bun.write(
+    pendingNotificationPath(hiveHome, notification.runId),
+    `${JSON.stringify(notification, null, 2)}\n`,
+  );
+}
+
+/**
+ * Notify the persistent steward that a worker run completed.
+ *
+ * Always queues to the file-based pending store. The next steward turn
+ * drains the queue and includes the notifications in its prompt context.
+ * This avoids bypassing session history, gateway streaming, and turn
+ * lifecycle that a direct agent.prompt() would skip.
+ */
+export async function notifyStewardRunCompleted(
+  hiveHome: string,
+  _projectId: string,
+  result: RunResult,
+): Promise<"queued"> {
+  const delta = buildRunCompletionDelta(result);
+  const notification: PendingRunNotification = {
+    projectId: _projectId,
+    agentId: result.agentId,
+    runId: result.runId,
+    status: result.status,
+    summary: delta,
+    ts: result.ended,
+  };
+
+  await writePendingRunNotification(hiveHome, notification);
+  return "queued";
+}
+
+/**
+ * Drain pending run-completion notifications and return them as a block
+ * of text to prepend to the steward's next turn. Clears the queue after
+ * reading so notifications are only delivered once.
+ */
+export async function drainPendingNotifications(
+  hiveHome: string,
+): Promise<string | null> {
+  const notifications = await readPendingRunNotifications(hiveHome);
+
+  if (notifications.length === 0) {
+    return null;
+  }
+
+  await clearPendingRunNotifications(hiveHome);
+
+  const lines = notifications.map((n) => n.summary);
+  return `## Worker Completions Since Last Turn\n\n${lines.join("\n\n")}`;
 }

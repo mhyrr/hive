@@ -588,7 +588,11 @@ const postRoutes: Record<string, RouteHandler> = {
       if (!body.message) {
         return jsonError(400, "Missing 'message' field in request body");
       }
-      const result = await sayCommand([body.message]);
+      // Collect output via callback instead of writing to the gateway
+      // process's stdout so HTTP callers get the full response.
+      const result = await sayCommand([body.message], {
+        onOutput: () => {},
+      });
       return jsonOk(result);
     } catch (err) {
       if (err instanceof SyntaxError) {
