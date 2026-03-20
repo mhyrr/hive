@@ -399,6 +399,215 @@ See `HIVE-LEADERSHIP-UI.md` for the full design of this leadership surface.
 
 ---
 
+## How OpenClaw Was Actually Built: The Steipete Component Constellation
+
+Peter Steinberger's GitHub tells a story the OpenClaw documentation doesn't:
+**OpenClaw wasn't designed top-down. It was composed bottom-up from dozens of
+focused CLI tools.** Each tool is independently useful, CLI-first, local-first,
+and agent-accessible. OpenClaw is the orchestration layer that wired them
+together.
+
+### The Component Map
+
+**Channel Adapters (Gateway inputs):**
+
+| Tool | What It Does | Stars | Language |
+|------|--------------|-------|----------|
+| `imsg` | CLI for Apple Messages (iMessage/SMS send, receive, stream) | 903 | Swift |
+| `wacli` | WhatsApp CLI via WhatsApp Web protocol, SQLite sync | 669 | Go |
+| `discrawl` | Discord archive CLI, SQLite + FTS5 search | 532 | Go |
+
+The Gateway doesn't implement WhatsApp. It shells out to `wacli`. The
+iMessage adapter shells out to `imsg`. This is the Unix philosophy applied
+to agent communication: each channel is a standalone binary that the
+orchestrator invokes. The tools predate OpenClaw and work without it.
+
+**Knowledge & Content Skills:**
+
+| Tool | What It Does | Stars | Language |
+|------|--------------|-------|----------|
+| `gogcli` | Google Suite CLI (Gmail, GCal, GDrive, GContacts) | 6,420 | Go |
+| `summarize` | Extract summaries from URLs, YouTube, podcasts, files | 5,133 | TypeScript |
+| `birdclaw` | Store tweets in agent-accessible SQLite + JSON export | 143 | TypeScript |
+| `remindctl` | CLI for Apple Reminders | 164 | Swift |
+
+These became OpenClaw skills. `summarize` is the web-content skill.
+`gogcli` is the Google integration skill. `birdclaw` is the social media
+skill. Each is a standalone CLI that returns structured output. The skill
+is a SKILL.md that tells the agent "run this CLI with these arguments."
+
+**Desktop Automation Stack:**
+
+| Tool | What It Does | Stars | Language |
+|------|--------------|-------|----------|
+| `Peekaboo` | Screenshot capture + visual Q&A, MCP server | 2,892 | Swift |
+| `AXorcist` | macOS Accessibility API wrapper, chainable queries | 203 | Swift |
+| `macos-automator-mcp` | Run AppleScript/JXA via MCP | 724 | TypeScript |
+| `sweetlink` | Connect agents to web apps via DevTools WebSocket | 116 | TypeScript |
+| `sweet-cookie` | Extract browser cookies for agent auth | 141 | TypeScript |
+
+This is a complete desktop automation stack. `Peekaboo` sees the screen.
+`AXorcist` manipulates UI elements. `sweetlink` controls browsers.
+`macos-automator-mcp` runs AppleScript. Together, they give an OpenClaw
+agent the ability to interact with any macOS application — not just
+codebases.
+
+**Agent Infrastructure:**
+
+| Tool | What It Does | Stars | Language |
+|------|--------------|-------|----------|
+| `agent-rules` | Rules/knowledge for AI agents (archived Dec 2025) | 5,639 | Shell |
+| `agent-scripts` | Shared guardrail scripts across repos | 2,238 | Python |
+| `oracle` | Context bundler: files + prompt → LLM call with sessions | 1,671 | TypeScript |
+| `mcporter` | MCP runtime: discover, call, package MCP servers | 3,066 | TypeScript |
+| `claude-code-mcp` | Claude Code as one-shot MCP server | 1,182 | JavaScript |
+
+The evolution is visible: `agent-rules` (static rules in files, archived)
+→ `agent-scripts` (executable guardrails shared across repos) → OpenClaw
+skills (the full system). `oracle` is the proto-Brain: bundle context +
+files → send to LLM → track sessions. `mcporter` is the tool integration
+layer that lets OpenClaw call any MCP server.
+
+The `agent-scripts` architecture is particularly interesting: downstream
+repos contain minimal AGENTS.MD files that just say `"READ
+~/Projects/agent-scripts/AGENTS.MD BEFORE ANYTHING (skip if missing)"`.
+One source of truth, propagated by reference. This is essentially HIVE's
+path-first prompt assembly pattern, invented independently.
+
+**Developer & Cost Tools:**
+
+| Tool | What It Does | Stars | Language |
+|------|--------------|-------|----------|
+| `CodexBar` | Usage/cost tracker for OpenAI Codex and Claude Code | 8,882 | Swift |
+| `VibeMeter` | Cost measurement for Cursor and AI providers | 378 | Swift |
+| `poltergeist` | Universal hot reload and build automation | 360 | TypeScript |
+| `CodeLooper` | Keep AI dev loops running in Cursor (archived) | 132 | Swift |
+| `tmuxwatch` | Terminal UI to watch tmux sessions | 185 | Go |
+
+`CodexBar` is the most-starred repo (8,882 stars) — more popular than
+anything in the OpenClaw core. People want to know what they're spending.
+`poltergeist` provides the build automation layer that coding agents need.
+`CodeLooper` was the prototype for autonomous agent loops (archived after
+it was absorbed into OpenClaw's heartbeat system).
+
+**Voice Interface:**
+
+| Tool | What It Does | Stars | Language |
+|------|--------------|-------|----------|
+| `brabble` | Voice-controlled agent with local execution | 126 | Go |
+| `ElevenLabsKit` | Swift SDK for streaming ElevenLabs voices | 88 | Swift |
+| `sag` | Modern `say` command with better voices | 230 | Go |
+
+`brabble` is the voice input: "Hey Clawd, check the build status" →
+wake word detection → whisper.cpp transcription → fires a configurable
+hook. All local, no cloud. `ElevenLabsKit` + `sag` are the voice output.
+Together: a fully voice-controlled agent that runs on your machine.
+
+### What This Architecture Teaches Us
+
+**1. The Unix philosophy works for agent ecosystems.**
+
+Every component is: single-purpose, CLI-first, local-first (SQLite or
+files), agent-accessible (JSON output or MCP), independently useful
+(works without OpenClaw). The agent framework is the *compositor*, not
+the *monolith*. This is why the 13,700+ skills exist — adding a new
+capability is "write a CLI tool + write a SKILL.md that tells the agent
+how to use it." The barrier is low because the architecture is composition,
+not integration.
+
+**2. MCP is the tool composition standard.**
+
+`mcporter`, `Peekaboo`, `macos-automator-mcp`, `claude-code-mcp` — the
+pattern is: wrap your tool as an MCP server, and any agent framework can
+use it. This is the emerging standard. HIVE's runtime adapters are the
+*agent-invocation* layer; MCP is the *tool-invocation* layer. HIVE
+should be MCP-aware even if it doesn't implement MCP servers itself.
+Agents launched by HIVE already use MCP through their runtimes (Claude
+Code has MCP support). The question is whether HIVE should expose its
+*own* capabilities (board state, memory, messages) via MCP so that
+agents can access hive state through their native tool protocol rather
+than file reads.
+
+**3. The channel-adapter-as-CLI pattern validates HIVE's adapter design.**
+
+HIVE's runtime adapters (`claude`, `codex`, `gemini`) are thin CLI
+wrappers. OpenClaw's channel adapters (`imsg`, `wacli`, `discrawl`) are
+thin CLI wrappers. Same pattern, different layer. HIVE wraps agent
+*runtimes*. OpenClaw wraps communication *channels*. Both treat the
+underlying tool as a black box invoked via CLI.
+
+The difference: OpenClaw's adapters are *input* channels (how humans talk
+to the agent). HIVE's adapters are *execution* channels (how the
+orchestrator launches agents). HIVE doesn't have input channel adapters
+because the input is always `hive say` or `hive console`. If HIVE ever
+wanted messaging-platform input (Slack, Discord), the OpenClaw adapter
+pattern shows exactly how: standalone CLI → adapter wrapper → gateway
+routing.
+
+**4. The pointer-based configuration pattern is independently validated.**
+
+`agent-scripts` uses: "downstream repos contain one-line AGENTS.MD that
+says 'read the central file.'" HIVE uses: "prompts reference paths;
+agents read on demand." Same insight: don't inline everything, reference
+it. Keep one source of truth. Let the consumer pull what it needs. Both
+arrived at this independently, which suggests it's a genuine best practice
+for agent configuration.
+
+**5. Cost tracking is a first-class user need.**
+
+`CodexBar` has 8,882 stars. `VibeMeter` has 378. People *really* want to
+know what their AI agents are costing them. HIVE captures `RuntimeMetadata`
+(tokens, duration, cost) per run, but doesn't surface it meaningfully.
+This is a gap. A `hive cost` command that shows daily/weekly/per-project
+spend would be valuable and straightforward given the metadata we already
+collect.
+
+**6. Desktop automation is a capability class we haven't considered.**
+
+`Peekaboo` + `AXorcist` + `sweetlink` + `macos-automator-mcp` form a
+complete "agent can use your Mac" stack. HIVE agents work on codebases.
+OpenClaw agents can work on *anything on your screen*. This is a different
+product category but worth noting: if HIVE ever wanted agents that could
+interact with IDEs, browsers, or desktop apps, the component tools already
+exist. They're MCP servers. Any HIVE agent running on Claude Code can use
+them today by adding MCP config.
+
+### How This Informs HIVE's Architecture Going Forward
+
+The steipete pattern suggests a principle: **the framework is thin
+orchestration; the capabilities are independent tools.** This aligns
+perfectly with HIVE's design philosophy. But it sharpens the question of
+what HIVE's boundaries should be:
+
+**HIVE core (orchestration):**
+- Steward/persona prompt assembly
+- Board management + message routing
+- Multi-project memory
+- Runtime adapter dispatch
+- Supervisor loop
+
+**HIVE periphery (composable tools, not core):**
+- Cost dashboard → could be a separate `hive cost` view or external tool
+- Skill import → thin compatibility layer for OpenClaw skills
+- MCP bridge → expose hive state as MCP resources (optional)
+- Desktop automation → external MCP servers, not part of hive
+
+**Things HIVE should NOT build:**
+- Channel adapters for Slack/Discord/WhatsApp (OpenClaw's territory,
+  and standalone CLIs already exist)
+- Its own MCP server runtime (use `mcporter` or native runtime MCP)
+- A tool execution framework (delegate to runtimes)
+- A build/watch system (use `poltergeist` or existing tools)
+
+The lesson from steipete's constellation is: **don't build what you can
+compose.** Every CLI tool on that list works independently. OpenClaw
+composed them. HIVE should compose what it needs too — not from OpenClaw's
+components specifically, but following the same architectural principle.
+The thin orchestration layer delegates to the best available tool for
+each capability, rather than reimplementing it.
+
+---
+
 ## Mitigations: OpenClaw's Ecosystem Advantage Is Porous
 
 OpenClaw's 13,700+ skills sound like a moat, but the format is just a directory
