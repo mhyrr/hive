@@ -82,6 +82,8 @@ export type StewardWorkflowCallbacks = {
     sessionId: string;
     project: string;
     content: string;
+    statusText?: string | null;
+    stage?: string | null;
   }) => void;
   buildCurrentActivitySummary: (input: {
     project: string;
@@ -111,7 +113,7 @@ export type ContinueConsoleWorkflowInput = {
   sessionId: string;
   project: string;
   message: string;
-  origin?: "human" | "queued-follow-up";
+  origin?: "human" | "queued-follow-up" | "system-wake";
 };
 
 function normalizeStatusNote(note: string): string {
@@ -558,7 +560,7 @@ export async function continueConsoleWorkflow(
 
   if (existingConsoleRun) {
     clearPlaceholderTimer();
-    if (input.origin === "queued-follow-up") {
+    if (input.origin === "queued-follow-up" || input.origin === "system-wake") {
       await enqueuePendingSessionTurn({
         sessionsDir: input.hivePaths.sessionsDir,
         sessionId: input.sessionId,
@@ -658,7 +660,7 @@ export async function continueConsoleWorkflow(
       sessionId: input.sessionId,
     })) {
       clearPlaceholderTimer();
-      if (input.origin === "queued-follow-up") {
+      if (input.origin === "queued-follow-up" || input.origin === "system-wake") {
         await enqueuePendingSessionTurn({
           sessionsDir: input.hivePaths.sessionsDir,
           sessionId: input.sessionId,
@@ -732,11 +734,28 @@ export async function continueConsoleWorkflow(
       return;
     }
 
+    input.callbacks.broadcastSessionStream({
+      sessionId: input.sessionId,
+      project: input.project,
+      content: "",
+      statusText: "Starting steward session...",
+      stage: "starting-session",
+    });
     const persistent = await runPersistentStewardTurn({
       hivePaths: input.hivePaths,
       projectId: input.project,
       sessionId: input.sessionId,
       humanMessage: input.message,
+      onStatus: (status) => {
+        clearPlaceholderTimer();
+        input.callbacks.broadcastSessionStream({
+          sessionId: input.sessionId,
+          project: input.project,
+          content: "",
+          statusText: status.label,
+          stage: status.stage,
+        });
+      },
       onOutput: (chunk) => {
         const sanitized = sanitizeStewardOutput(chunk);
         if (!sanitized.trim()) {
@@ -873,7 +892,7 @@ export async function continueConsoleWorkflow(
       pushStatusNote(statusNotes, `Direct steward unavailable: ${direct.reason}`);
 
       if (/console run already active/i.test(direct.reason)) {
-        if (input.origin === "queued-follow-up") {
+        if (input.origin === "queued-follow-up" || input.origin === "system-wake") {
           await enqueuePendingSessionTurn({
             sessionsDir: input.hivePaths.sessionsDir,
             sessionId: input.sessionId,

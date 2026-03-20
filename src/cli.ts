@@ -6,7 +6,7 @@ import { cognitionCommand } from "./commands/cognition";
 import { consoleCommand } from "./commands/console";
 import { eventsCommand } from "./commands/events";
 import { feedCommand, watchCommand } from "./commands/feed";
-import { gatewayCommand } from "./commands/gateway";
+import { gatewayCommand, startCommand } from "./commands/gateway";
 import { helpCommand } from "./commands/help";
 import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
@@ -43,6 +43,8 @@ export async function runCli(args: string[]): Promise<string> {
       return sayCommand(rest);
     case "ask":
       return askCommand(rest);
+    case "start":
+      return startCommand(rest);
     case "init":
       return initCommand(rest);
     case "project":

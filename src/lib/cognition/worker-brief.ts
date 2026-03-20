@@ -100,6 +100,35 @@ function messageSummary(message: HiveMessage): WorkerBriefMessage {
   };
 }
 
+function matchesMessageReference(message: HiveMessage, reference: string): boolean {
+  const normalizedReference = reference.trim();
+  const filenameWithoutExtension = message.filename.replace(/\.md$/, "");
+
+  return (
+    message.filename === normalizedReference ||
+    filenameWithoutExtension === normalizedReference ||
+    message.filename.startsWith(normalizedReference) ||
+    filenameWithoutExtension.startsWith(normalizedReference)
+  );
+}
+
+function selectAssignmentMessage(input: {
+  openMessages: HiveMessage[];
+  preferredAssignmentMessage?: string | null;
+}): HiveMessage | null {
+  const assignments = input.openMessages.filter(
+    (message) => message.attributes.type === "assign",
+  );
+
+  if (input.preferredAssignmentMessage?.trim()) {
+    return assignments.find((message) =>
+      matchesMessageReference(message, input.preferredAssignmentMessage!),
+    ) ?? null;
+  }
+
+  return assignments[0] ?? null;
+}
+
 function scopeMatchesChangedFiles(
   scopeRoots: string[] | null,
   changedFiles: string[],
@@ -178,6 +207,7 @@ export async function materializeWorkerBriefPacket(input: {
   projectConfig: string;
   openMessages: HiveMessage[];
   compilerCacheIndex: CompilerCacheIndex | null;
+  preferredAssignmentMessage?: string | null;
 }): Promise<MaterializedPacket> {
   const openMessages = input.openMessages
     .filter((message) => message.attributes.to === input.agentId)
@@ -186,9 +216,10 @@ export async function materializeWorkerBriefPacket(input: {
         left.attributes.ts ?? left.filename,
       ),
     );
-  const assignmentMessage = openMessages.find(
-    (message) => message.attributes.type === "assign",
-  );
+  const assignmentMessage = selectAssignmentMessage({
+    openMessages,
+    preferredAssignmentMessage: input.preferredAssignmentMessage ?? null,
+  });
   const scopeRoots = resolveAgentScopeRoots({
     plan: input.plan,
     projectConfig: input.projectConfig,

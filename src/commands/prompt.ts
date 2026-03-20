@@ -26,8 +26,8 @@ import {
 } from "../lib/paths";
 import {
   extractRepoPath,
-  findPlanAgent,
   parseDefaultTeam,
+  resolveProjectAgent,
 } from "../lib/project";
 import { refreshProjectRuntimeState } from "../lib/state";
 
@@ -117,8 +117,23 @@ function renderWorkerBrief(
   return lines.join("\n");
 }
 
-export async function promptCommand(args: string[]): Promise<string> {
-  const agentId = args[0];
+function matchesMessageReference(filename: string, reference: string): boolean {
+  const normalizedReference = reference.trim();
+  const filenameWithoutExtension = filename.replace(/\.md$/, "");
+
+  return (
+    filename === normalizedReference ||
+    filenameWithoutExtension === normalizedReference ||
+    filename.startsWith(normalizedReference) ||
+    filenameWithoutExtension.startsWith(normalizedReference)
+  );
+}
+
+export async function buildAgentPrompt(input: {
+  agentId: string;
+  assignmentMessageRef?: string | null;
+}): Promise<string> {
+  const agentId = input.agentId;
 
   if (!agentId) {
     throw new UsageError("Usage: hive prompt <agent-id>");
@@ -138,9 +153,33 @@ export async function promptCommand(args: string[]): Promise<string> {
   const memoryContext = await loadPromptMemoryContext(paths, activeProject);
   const plan = await Bun.file(projectPaths.plan).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
-  const planAgent = findPlanAgent(plan, agentId);
-  const teamAgent = parseDefaultTeam(projectConfig).find((agent) => agent.id === agentId);
-  const resolvedAgent = planAgent ?? teamAgent;
+  const runtimeState = await refreshProjectRuntimeState({
+    hivePaths: paths,
+    projectId: activeProject,
+    projectPaths,
+  });
+  const assignmentMessage = runtimeState.openMessages
+    .filter((message) => message.attributes.to === agentId && message.attributes.type === "assign")
+    .sort((left, right) =>
+      (right.attributes.ts ?? right.filename).localeCompare(
+        left.attributes.ts ?? left.filename,
+      ),
+    )
+    .find((message) =>
+      input.assignmentMessageRef?.trim()
+        ? matchesMessageReference(message.filename, input.assignmentMessageRef)
+        : true,
+    ) ?? null;
+  const resolvedAgent = resolveProjectAgent({
+    plan,
+    projectConfig,
+    agentId,
+    allowAdHoc: Boolean(assignmentMessage),
+    assignmentBody: assignmentMessage?.body ?? null,
+    assignmentPersona: assignmentMessage?.attributes.persona ?? null,
+    runtimeHint: assignmentMessage?.attributes.runtime ?? null,
+    modelHint: assignmentMessage?.attributes.model ?? null,
+  });
 
   if (!resolvedAgent) {
     const knownAgents = [
@@ -160,11 +199,6 @@ export async function promptCommand(args: string[]): Promise<string> {
     throw new UsageError(`Missing persona file: ${resolvedAgent.persona}`);
   }
 
-  const runtimeState = await refreshProjectRuntimeState({
-    hivePaths: paths,
-    projectId: activeProject,
-    projectPaths,
-  });
   const compiledState = await buildCompiledStateView({
     projectPaths,
     workingSet: runtimeState.workingSet,
@@ -185,6 +219,7 @@ export async function promptCommand(args: string[]): Promise<string> {
     projectConfig,
     openMessages: runtimeState.openMessages,
     compilerCacheIndex: runtimeState.compilerCacheIndex,
+    preferredAssignmentMessage: assignmentMessage?.filename ?? input.assignmentMessageRef ?? null,
   });
   const workerBriefDetails = workerBrief.details as WorkerBriefPacketDetails;
 
@@ -275,4 +310,14 @@ ${memoryContext.recentDecisionsDigest}
 ### Project Entity Memory
 ${memoryContext.projectEntityDigest}
 `;
+}
+
+export async function promptCommand(args: string[]): Promise<string> {
+  const agentId = args[0];
+
+  if (!agentId) {
+    throw new UsageError("Usage: hive prompt <agent-id>");
+  }
+
+  return buildAgentPrompt({ agentId });
 }

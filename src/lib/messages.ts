@@ -1,5 +1,5 @@
 import { mkdir, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter";
 import { now, toCompactTimestamp, toIsoTimestamp } from "./time";
@@ -18,6 +18,7 @@ export type CreateMessageInput = {
   type: string;
   project: string;
   body: string;
+  attributes?: Record<string, string | null | undefined>;
 };
 
 type UpdateMessageInput = {
@@ -29,7 +30,10 @@ type UpdateMessageInput = {
 };
 
 /** Normalize legacy "orchestrator" agent IDs to "steward" when reading messages. */
-function normalizeMessageAttributes(attributes: Record<string, string>): Record<string, string> {
+function normalizeMessageAttributes(
+  attributes: Record<string, string>,
+  body = "",
+): Record<string, string> {
   const result = { ...attributes };
 
   if (result.from === "orchestrator") {
@@ -38,6 +42,23 @@ function normalizeMessageAttributes(attributes: Record<string, string>): Record<
 
   if (result.to === "orchestrator") {
     result.to = "steward";
+  }
+
+  if (result.type === "assignment") {
+    result.type = "assign";
+  }
+
+  for (const key of ["task", "launch", "scope"] as const) {
+    if (result[key]) {
+      continue;
+    }
+
+    const match = body.match(new RegExp(`^${key}:\\s*(.+)$`, "mi"));
+    const value = match?.[1]?.trim();
+
+    if (value) {
+      result[key] = value;
+    }
   }
 
   return result;
@@ -62,25 +83,32 @@ export async function createMessage(
     crypto.randomUUID().slice(0, 8),
   ].join("-");
   const path = join(msgDir, `${filename}.md`);
-  const raw = stringifyFrontmatter(
-    {
-      from: input.from,
-      to: input.to,
-      type: input.type,
-      status: "open",
-      ts: timestamp,
-      project: input.project,
-    },
-    input.body,
-  );
+  const attributes = {
+    from: input.from,
+    to: input.to,
+    type: input.type,
+    status: "open",
+    ts: timestamp,
+    project: input.project,
+  } as Record<string, string>;
+
+  for (const [key, value] of Object.entries(input.attributes ?? {})) {
+    if (value?.trim()) {
+      attributes[key] = value.trim();
+    }
+  }
+
+  const raw = stringifyFrontmatter(attributes, input.body);
+  const parsed = parseFrontmatter(raw);
+  const normalizedAttributes = normalizeMessageAttributes(parsed.attributes, parsed.body);
 
   await Bun.write(path, raw);
 
   return {
     path,
     filename: `${filename}.md`,
-    attributes: parseFrontmatter(raw).attributes,
-    body: input.body.trim(),
+    attributes: normalizedAttributes,
+    body: parsed.body,
     raw,
   };
 }
@@ -101,13 +129,30 @@ export async function listMessages(msgDir: string): Promise<HiveMessage[]> {
     messages.push({
       path,
       filename,
-      attributes: normalizeMessageAttributes(parsed.attributes),
+      attributes: normalizeMessageAttributes(parsed.attributes, parsed.body),
       body: parsed.body,
       raw: raw.trim(),
     });
   }
 
   return messages;
+}
+
+export async function readMessageFile(path: string): Promise<HiveMessage | null> {
+  try {
+    const raw = await Bun.file(path).text();
+    const parsed = parseFrontmatter(raw);
+
+    return {
+      path,
+      filename: basename(path),
+      attributes: normalizeMessageAttributes(parsed.attributes, parsed.body),
+      body: parsed.body,
+      raw: raw.trim(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function isOpenMessage(message: HiveMessage): boolean {
@@ -214,14 +259,16 @@ async function updateMessage(
   }
 
   const raw = stringifyFrontmatter(attributes, bodyParts.filter(Boolean).join("\n\n"));
+  const parsed = parseFrontmatter(raw);
+  const normalizedAttributes = normalizeMessageAttributes(parsed.attributes, parsed.body);
 
   await Bun.write(message.path, raw);
 
   return {
     path: message.path,
     filename: message.filename,
-    attributes,
-    body: parseFrontmatter(raw).body,
+    attributes: normalizedAttributes,
+    body: parsed.body,
     raw: raw.trim(),
   };
 }

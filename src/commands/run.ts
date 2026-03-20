@@ -1,16 +1,13 @@
 import { UsageError } from "../lib/errors";
-import {
-  reconcileDetachedSupervisorState,
-  startDetachedSupervisor,
-} from "../lib/detached-supervisor";
 import { appendFeedEntry } from "../lib/feed";
 import { appendLogEntry } from "../lib/log";
-import { isProcessAlive, DEFAULT_MAX_PARALLEL, DEFAULT_SUPERVISOR_INTERVAL_SECONDS } from "../lib/supervisor";
 import {
   ensureHiveScaffold,
   getActiveProject,
   getProjectPaths,
 } from "../lib/paths";
+import { DEFAULT_MAX_PARALLEL, DEFAULT_SUPERVISOR_INTERVAL_SECONDS } from "../lib/supervisor";
+import { ensureGatewayRunning } from "./gateway";
 
 type RunOptions = {
   intervalSeconds: number;
@@ -60,21 +57,9 @@ export async function runCommand(args: string[]): Promise<string> {
   }
 
   const projectPaths = getProjectPaths(paths, activeProject);
-  const existing = await reconcileDetachedSupervisorState(projectPaths);
-
-  if (existing?.status === "active" && isProcessAlive(existing.pid)) {
-    return [
-      `HIVE is already running for ${activeProject}`,
-      `pid: ${existing.pid}`,
-      `interval: ${existing.intervalSeconds}s`,
-      `last-pass: ${existing.lastPassAt ?? "none yet"}`,
-    ].join("\n");
-  }
 
   try {
-    const state = await startDetachedSupervisor({
-      projectPaths,
-      projectId: activeProject,
+    const state = await ensureGatewayRunning({
       intervalSeconds: options.intervalSeconds,
       maxParallel: options.maxParallel,
     });
@@ -82,19 +67,24 @@ export async function runCommand(args: string[]): Promise<string> {
     await appendFeedEntry(paths, {
       project: activeProject,
       headline: "HIVE started",
-      details: [`pid: ${state.pid ?? "unknown"}`, `interval: ${state.intervalSeconds}s`],
+      details: [
+        `gateway pid: ${state.pid ?? "unknown"}`,
+        `supervisor pid: ${state.supervisorPid ?? "unknown"}`,
+        `interval: ${options.intervalSeconds}s`,
+      ],
     });
     await appendLogEntry(
       projectPaths.log,
       "human -> hive run",
-      `Started supervision pid ${state.pid ?? "unknown"} interval ${state.intervalSeconds}s max-parallel ${state.maxParallel}`,
+      `Started managed gateway pid ${state.pid ?? "unknown"} supervisor ${state.supervisorPid ?? "unknown"} interval ${options.intervalSeconds}s max-parallel ${options.maxParallel}`,
     );
 
     return [
       `HIVE is running for ${activeProject}`,
-      `pid: ${state.pid ?? "unknown"}`,
-      `interval: ${state.intervalSeconds}s`,
-      `max-parallel: ${state.maxParallel}`,
+      `gateway pid: ${state.pid ?? "unknown"}`,
+      `supervisor pid: ${state.supervisorPid ?? "unknown"}`,
+      `interval: ${options.intervalSeconds}s`,
+      `max-parallel: ${options.maxParallel}`,
     ].join("\n");
   } catch (error) {
     if (error instanceof UsageError) {
@@ -103,7 +93,7 @@ export async function runCommand(args: string[]): Promise<string> {
 
     return [
       `HIVE supervision could not start for ${activeProject}`,
-      `Use \`hive supervise --detach\` for more details.`,
+      `Use \`hive start\` for the managed daemon path.`,
     ].join("\n");
   }
 }

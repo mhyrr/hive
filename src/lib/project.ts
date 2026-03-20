@@ -13,10 +13,14 @@ export type TeamAgent = {
   persona: string;
 };
 
+const SUPPORTED_PERSONAS = ["architect", "craftsman", "critic", "scout", "steward"] as const;
+
+type SupportedPersona = (typeof SUPPORTED_PERSONAS)[number];
+
 function splitScopeRoots(value: string): string[] {
   return [...new Set(
     value
-      .split(",")
+      .split(/[\s,]+/)
       .map((entry) => normalizeScopeRoot(entry))
       .filter((entry): entry is string => Boolean(entry)),
   )];
@@ -116,6 +120,106 @@ export function extractPersonaName(descriptor: string): string {
   const match = descriptor.match(/[a-z0-9_-]+/i);
 
   return match ? match[0].toLowerCase() : descriptor.trim().toLowerCase();
+}
+
+function normalizeSupportedPersona(value: string | null | undefined): SupportedPersona | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
+
+  return (SUPPORTED_PERSONAS as readonly string[]).includes(normalized)
+    ? normalized as SupportedPersona
+    : null;
+}
+
+function inferAdHocPersonaFromBody(body: string): SupportedPersona | null {
+  const roleMatch =
+    body.match(/\byou are (?:an?\s+|the\s+)?([a-z0-9_-]+)\b/i) ??
+    body.match(/\bact as (?:an?\s+|the\s+)?([a-z0-9_-]+)\b/i);
+
+  return normalizeSupportedPersona(roleMatch?.[1] ?? null);
+}
+
+function inferAdHocPersonaFromAgentId(agentId: string): SupportedPersona | null {
+  const normalized = agentId.trim().toLowerCase();
+
+  if (/(critic|eval|review|audit|redteam|qa)/.test(normalized)) {
+    return "critic";
+  }
+
+  if (/(scout|research|explore|discover)/.test(normalized)) {
+    return "scout";
+  }
+
+  if (/(architect|design|planner|plan)/.test(normalized)) {
+    return "architect";
+  }
+
+  if (/(steward|orchestrator)/.test(normalized)) {
+    return "steward";
+  }
+
+  return null;
+}
+
+function buildAdHocDescriptor(input: {
+  persona: string;
+  runtimeHint?: string | null;
+  modelHint?: string | null;
+}): string {
+  const runtime = input.runtimeHint?.trim() ?? "";
+  const model = input.modelHint?.trim() ?? "";
+
+  if (runtime && model) {
+    return `${input.persona}, ${model} via ${runtime}`;
+  }
+
+  if (runtime) {
+    return `${input.persona} via ${runtime}`;
+  }
+
+  return `ad hoc ${input.persona}`;
+}
+
+export function resolveProjectAgent(input: {
+  plan: string;
+  projectConfig: string;
+  agentId: string;
+  allowAdHoc?: boolean;
+  assignmentBody?: string | null;
+  assignmentPersona?: string | null;
+  runtimeHint?: string | null;
+  modelHint?: string | null;
+}): PlanAgent | TeamAgent | null {
+  const planAgent = findPlanAgent(input.plan, input.agentId);
+
+  if (planAgent) {
+    return planAgent;
+  }
+
+  const teamAgent = parseDefaultTeam(input.projectConfig).find((agent) => agent.id === input.agentId);
+
+  if (teamAgent) {
+    return teamAgent;
+  }
+
+  if (!input.allowAdHoc) {
+    return null;
+  }
+
+  const persona =
+    normalizeSupportedPersona(input.assignmentPersona) ??
+    inferAdHocPersonaFromBody(input.assignmentBody ?? "") ??
+    inferAdHocPersonaFromAgentId(input.agentId) ??
+    "craftsman";
+
+  return {
+    id: input.agentId,
+    persona,
+    descriptor: buildAdHocDescriptor({
+      persona,
+      runtimeHint: input.runtimeHint,
+      modelHint: input.modelHint,
+    }),
+  };
 }
 
 export function stripRuntimeHintsFromDescriptor(descriptor: string): string {

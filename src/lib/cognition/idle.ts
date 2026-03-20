@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { readJson, writeJson } from "../json";
+import { readJson } from "../json";
 import {
   extractMemory,
   readProjectMemorySnapshot,
@@ -29,7 +29,9 @@ import type {
 } from "./packets";
 import {
   mergeMaterializedPacketRefs,
+  packetExpiresAt,
   toMaterializedPacketRef,
+  upsertPacket,
 } from "./packets";
 
 export type IdleCognitionResult = {

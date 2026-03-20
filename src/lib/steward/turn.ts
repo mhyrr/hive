@@ -1,7 +1,10 @@
+import { existsSync, readFileSync } from "node:fs";
 import { Agent, ProviderTransport } from "@mariozechner/pi-agent";
+import { join } from "node:path";
 
 import { UsageError } from "../errors";
 import { appendFeedEntry } from "../feed";
+import { parseFrontmatter } from "../frontmatter";
 import { captureGitStatusSnapshot, diffGitStatusSnapshots } from "../git";
 import { appendLogEntry } from "../log";
 import { type HivePaths, getProjectPaths } from "../paths";
@@ -80,7 +83,9 @@ type ActivePersistentTurn = {
   sessionId: string;
   projectId: string;
   latestAssistantText: string;
+  visibleAssistantText: string;
   lastEmittedText: string;
+  pendingSegmentBreak: boolean;
   abortRequested: boolean;
   lastEventAt: number;
   completedAt: number | null;
@@ -136,6 +141,17 @@ export type PersistentStewardTurnResult =
       reason: string;
     };
 
+export type PersistentStewardTurnStage =
+  | "starting-session"
+  | "loading-context"
+  | "waiting-for-response";
+
+export type PersistentStewardTurnStatus = {
+  stage: PersistentStewardTurnStage;
+  label: string;
+  at: string;
+};
+
 const persistentStewardHandles = new Map<string, PersistentStewardHandle>();
 
 const PI_TURN_TIMEOUT_MS = 300_000;
@@ -147,6 +163,32 @@ function getHandleKey(hiveHome: string, sessionId: string): string {
 
 function normalizeInlineText(value: string): string {
   return value.replace(/\r\n/g, "\n").trim();
+}
+
+function mergeVisibleTranscript(primary: string, secondary: string): string {
+  const normalizedPrimary = sanitizeStewardOutput(primary).trim();
+  const normalizedSecondary = sanitizeStewardOutput(secondary).trim();
+
+  if (!normalizedPrimary) {
+    return normalizedSecondary;
+  }
+
+  if (!normalizedSecondary) {
+    return normalizedPrimary;
+  }
+
+  if (
+    normalizedPrimary === normalizedSecondary ||
+    normalizedPrimary.endsWith(normalizedSecondary)
+  ) {
+    return normalizedPrimary;
+  }
+
+  if (normalizedSecondary.startsWith(normalizedPrimary)) {
+    return normalizedSecondary;
+  }
+
+  return `${normalizedPrimary}\n\n---\n\n${normalizedSecondary}`;
 }
 
 function extractPiMessageText(message: unknown): string {
@@ -276,6 +318,22 @@ function scheduleIdleShutdown(handle: PersistentStewardHandle): void {
   }, idleMs);
 }
 
+function buildPersistentTurnStatus(
+  stage: PersistentStewardTurnStage,
+): PersistentStewardTurnStatus {
+  const labels: Record<PersistentStewardTurnStage, string> = {
+    "starting-session": "Starting steward session...",
+    "loading-context": "Loading project context...",
+    "waiting-for-response": "Waiting for response...",
+  };
+
+  return {
+    stage,
+    label: labels[stage],
+    at: new Date().toISOString(),
+  };
+}
+
 function queuePersistentTurnOutput(input: {
   turn: ActivePersistentTurn;
   nextText: string;
@@ -285,17 +343,30 @@ function queuePersistentTurnOutput(input: {
     return;
   }
 
+  const startedNewSegment =
+    input.turn.lastEmittedText.length > 0 &&
+    !input.nextText.startsWith(input.turn.lastEmittedText);
   const rawDelta = input.nextText.startsWith(input.turn.lastEmittedText)
     ? input.nextText.slice(input.turn.lastEmittedText.length)
     : input.nextText;
 
   input.turn.lastEmittedText = input.nextText;
+  if (startedNewSegment && input.turn.visibleAssistantText.trim()) {
+    input.turn.pendingSegmentBreak = true;
+  }
 
-  const delta = sanitizeStewardOutput(rawDelta);
+  let delta = sanitizeStewardOutput(rawDelta);
 
   if (!delta.trim()) {
     return;
   }
+
+  if (input.turn.pendingSegmentBreak) {
+    delta = `\n\n---\n\n${delta}`;
+    input.turn.pendingSegmentBreak = false;
+  }
+
+  input.turn.visibleAssistantText += delta;
 
   input.turn.outputChain = input.turn.outputChain.then(async () => {
     await input.onOutput?.(delta);
@@ -346,6 +417,10 @@ async function runMockPersistentStewardTurn(input: {
         })} | `
       : "Mock persistent steward reply: ";
   const reply = `${replyPrefix}${humanTurn}`;
+  const secondReply =
+    behavior === "segments"
+      ? "Final synthesis: delegated worker findings are now merged."
+      : "";
   const initialDelayMs = behavior === "slow" ? 650 : 25;
   const finalDelayMs = behavior === "slow" ? 250 : 35;
 
@@ -388,16 +463,40 @@ async function runMockPersistentStewardTurn(input: {
       nextText: input.turn.latestAssistantText,
       onOutput: input.onOutput,
     });
+    noteActiveTurnEvent(input.turn);
+
+    if (secondReply) {
+      await wait(finalDelayMs);
+      const secondHalfway = Math.max(1, Math.floor(secondReply.length / 2));
+      input.turn.latestAssistantText = secondReply.slice(0, secondHalfway);
+      queuePersistentTurnOutput({
+        turn: input.turn,
+        nextText: input.turn.latestAssistantText,
+        onOutput: input.onOutput,
+      });
+      noteActiveTurnEvent(input.turn);
+
+      await wait(finalDelayMs);
+      input.turn.latestAssistantText = secondReply;
+      queuePersistentTurnOutput({
+        turn: input.turn,
+        nextText: input.turn.latestAssistantText,
+        onOutput: input.onOutput,
+      });
+    }
+
     input.turn.completedAt = Date.now();
     noteActiveTurnEvent(input.turn);
     await input.turn.outputChain;
 
     return {
       status: input.turn.abortRequested ? "cancelled" : "completed",
-      finalVisibleOutput: input.turn.abortRequested ? "" : reply,
+      finalVisibleOutput: input.turn.abortRequested
+        ? ""
+        : (input.turn.visibleAssistantText.trim() || secondReply || reply),
       usage: {
-        durationMs: initialDelayMs + finalDelayMs,
-        numTurns: 1,
+        durationMs: initialDelayMs + finalDelayMs + (secondReply ? finalDelayMs * 2 : 0),
+        numTurns: secondReply ? 2 : 1,
         costUsd: 0.02,
         inputTokens: 21,
         outputTokens: 13,
@@ -684,7 +783,10 @@ export async function runDirectStewardTurn(input: {
   });
   const afterGit = captureGitStatusSnapshot(context.repoPath);
   const gitDelta = diffGitStatusSnapshots(beforeGit, afterGit);
-  const finalVisibleOutput = sanitizeStewardOutput(launchResult?.visibleOutput?.trim() || streamedOutput.trim());
+  const finalVisibleOutput = mergeVisibleTranscript(
+    streamedOutput,
+    launchResult?.visibleOutput?.trim() ?? "",
+  );
   const cognitiveDigest = await compressCompletedRunOutput({
     run: finalRun,
     globalConfig: context.globalConfig,
@@ -779,10 +881,12 @@ export async function runPersistentStewardTurn(input: {
   sessionId: string;
   humanMessage: string;
   onOutput?: (content: string) => Promise<void> | void;
+  onStatus?: (status: PersistentStewardTurnStatus) => Promise<void> | void;
 }): Promise<PersistentStewardTurnResult> {
   let activeHandle: PersistentStewardHandle | null = null;
 
   try {
+    await input.onStatus?.(buildPersistentTurnStatus("loading-context"));
     const context = await loadStewardContext({
       hivePaths: input.hivePaths,
       projectId: input.projectId,
@@ -823,7 +927,9 @@ export async function runPersistentStewardTurn(input: {
       sessionId: input.sessionId,
       projectId: input.projectId,
       latestAssistantText: "",
+      visibleAssistantText: "",
       lastEmittedText: "",
+      pendingSegmentBreak: false,
       abortRequested: false,
       lastEventAt: Date.now(),
       completedAt: null,
@@ -853,6 +959,7 @@ export async function runPersistentStewardTurn(input: {
           humanMessage: input.humanMessage,
           cognitiveRoutingPolicy,
         });
+    await input.onStatus?.(buildPersistentTurnStatus("waiting-for-response"));
     const unsubscribe = handle.agent.subscribe((event) => {
       if (handle.activeTurn !== turn) {
         return;
@@ -902,7 +1009,9 @@ export async function runPersistentStewardTurn(input: {
         await turn.outputChain;
 
         const generatedMessages = handle.agent.state.messages.slice(messageCountBefore);
-        const finalVisibleOutput = turn.abortRequested ? "" : sanitizeStewardOutput(turn.latestAssistantText).trim();
+        const finalVisibleOutput = turn.abortRequested
+          ? ""
+          : turn.visibleAssistantText.trim();
 
         if (!turn.abortRequested && !finalVisibleOutput) {
           throw new Error(
@@ -984,9 +1093,112 @@ export async function disposePersistentStewardHandle(
 }
 
 export function hasPersistentStewardSession(hiveHome: string): boolean {
-  return [...persistentStewardHandles.values()].some(
+  if ([...persistentStewardHandles.values()].some(
     (handle) => handle.hiveHome === hiveHome && !handle.disposed,
-  );
+  )) {
+    return true;
+  }
+
+  if (process.env.HIVE_ENABLE_PERSISTENT_STEWARD === "0") {
+    return false;
+  }
+
+  try {
+    const gatewayPath = join(hiveHome, "gateway.md");
+    const activeSessionPath = join(hiveHome, "sessions", "active.md");
+
+    if (!existsSync(gatewayPath) || !existsSync(activeSessionPath)) {
+      return false;
+    }
+
+    const gateway = parseFrontmatter(readFileSync(gatewayPath, "utf8"));
+
+    if ((gateway.attributes.status ?? "").toLowerCase() !== "active") {
+      return false;
+    }
+
+    const gatewayPid = Number(gateway.attributes.pid ?? "");
+
+    if (Number.isFinite(gatewayPid) && gatewayPid > 0) {
+      try {
+        process.kill(gatewayPid, 0);
+      } catch {
+        return false;
+      }
+    }
+
+    const activeSession = parseFrontmatter(readFileSync(activeSessionPath, "utf8"));
+    const sessionId = activeSession.attributes.session;
+
+    if (!sessionId) {
+      return false;
+    }
+
+    const sessionMetaPath = join(hiveHome, "sessions", sessionId, "meta.md");
+
+    if (!existsSync(sessionMetaPath)) {
+      return false;
+    }
+
+    const meta = parseFrontmatter(readFileSync(sessionMetaPath, "utf8"));
+    const sessionStatePath = join(hiveHome, "sessions", sessionId, "state.json");
+    const sessionState = existsSync(sessionStatePath)
+      ? JSON.parse(readFileSync(sessionStatePath, "utf8")) as { currentProject?: string | null }
+      : null;
+    const activeProjectPath = join(hiveHome, "active-project.txt");
+    const activeProject = existsSync(activeProjectPath)
+      ? readFileSync(activeProjectPath, "utf8").trim()
+      : "";
+    const sessionProject = (sessionState?.currentProject ?? meta.attributes.project ?? "").trim();
+
+    if (!sessionProject || sessionProject === "default") {
+      return false;
+    }
+
+    if (activeProject && sessionProject !== activeProject) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function ensurePersistentStewardSessionReady(input: {
+  hivePaths: HivePaths;
+  projectId: string;
+  sessionId: string;
+}): Promise<void> {
+  const context = await loadStewardContext({
+    hivePaths: input.hivePaths,
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+  });
+  const cognitiveRoutingPolicy = renderStewardRoutingPolicy({
+    globalConfig: context.globalConfig,
+    skillsDir: input.hivePaths.skillsDir,
+    sessionRuntime: context.sessionRuntime,
+    sessionModel: context.sessionModel,
+  });
+  const systemPrompt = buildPersistentStewardSystemPrompt({
+    sessionPrompt: context.sessionPrompt,
+    soul: context.soul,
+    identity: context.identity,
+    self: context.self,
+    cognitiveRoutingPolicy,
+  });
+  const handle = await acquirePersistentStewardHandle({
+    hivePaths: input.hivePaths,
+    sessionId: input.sessionId,
+    repoPath: context.repoPath,
+    runtime: context.sessionRuntime,
+    model: context.sessionModel,
+    globalConfig: context.globalConfig,
+    systemPrompt,
+  });
+
+  scheduleIdleShutdown(handle);
 }
 
 export async function disposePersistentStewardsForHome(hiveHome: string): Promise<void> {

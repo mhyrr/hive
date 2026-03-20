@@ -1713,8 +1713,11 @@ body.modal-open {
 }
 
 .rail-section--active-agents {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 320px;
   min-height: 260px;
+  min-width: 0;
 }
 
 .rail-section--logs {
@@ -1763,7 +1766,9 @@ body.modal-open {
 }
 
 .live-agents {
-  min-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .cognition-principle {
@@ -2065,6 +2070,13 @@ body.modal-open {
   color: var(--text-primary);
   font-size: var(--text-xs);
   line-height: 1.5;
+}
+
+.turn-draft-status {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  margin-bottom: var(--s2);
 }
 
 .agent-card-output,

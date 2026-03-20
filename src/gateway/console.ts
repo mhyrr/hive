@@ -8,6 +8,7 @@ import {
 import { reconcileDetachedSupervisorState, startDetachedSupervisor } from "../lib/detached-supervisor";
 import { UsageError } from "../lib/errors";
 import { getActiveProject, getProjectPaths, listProjects, type HivePaths } from "../lib/paths";
+import { ensurePersistentStewardSessionReady } from "../lib/persistent-steward";
 import {
   findPlanAgent,
   normalizeProjectName,
@@ -42,7 +43,11 @@ import {
 import { preprocessHumanMessage } from "../lib/tier1";
 import { now, toIsoTimestamp } from "../lib/time";
 import { continueConsoleWorkflow as continueStewardConsoleWorkflow } from "../lib/steward/workflow";
-import type { GatewayBroadcast, GatewayOptions } from "./server";
+import {
+  ensureManagedGatewaySupervisor,
+  type GatewayBroadcast,
+  type GatewayOptions,
+} from "./server";
 import {
   buildCurrentActivitySummary,
   formatActivityTime,
@@ -223,10 +228,13 @@ function broadcastSessionStream(input: {
   sessionId: string;
   project: string;
   content: string;
+  statusText?: string | null;
+  stage?: string | null;
 }): void {
   const content = input.content.trim();
+  const statusText = input.statusText?.trim() ?? "";
 
-  if (!content) {
+  if (!content && !statusText) {
     return;
   }
 
@@ -237,6 +245,8 @@ function broadcastSessionStream(input: {
     data: {
       sessionId: input.sessionId,
       content,
+      statusText: statusText || null,
+      stage: input.stage ?? null,
     },
   });
 }
@@ -702,6 +712,17 @@ async function ensureSupervisorRunning(input: {
   options: GatewayOptions;
   project: string;
 }): Promise<string> {
+  const managed = await ensureManagedGatewaySupervisor({
+    hivePaths: input.options.hivePaths,
+    projectId: input.project,
+    intervalSeconds: DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
+    maxParallel: DEFAULT_MAX_PARALLEL,
+  });
+
+  if (managed?.status === "active" && isProcessAlive(managed.pid)) {
+    return `Supervisor active (pid ${managed.pid})`;
+  }
+
   const projectPaths = getProjectPaths(input.options.hivePaths, input.project);
   const existing = await reconcileDetachedSupervisorState(projectPaths);
 
@@ -982,6 +1003,40 @@ export async function createGatewaySession(input: {
   });
 }
 
+export async function primeGatewayPersistentStewardSession(input: {
+  options: GatewayOptions;
+  sessionId?: string | null;
+}): Promise<void> {
+  if (process.env.HIVE_ENABLE_PERSISTENT_STEWARD === "0") {
+    return;
+  }
+
+  const sessionsDir = input.options.hivePaths.sessionsDir;
+  const session = input.sessionId
+    ? await getSession(sessionsDir, input.sessionId)
+    : await getActiveSession(sessionsDir);
+
+  if (!session) {
+    return;
+  }
+
+  const projectId = await getSessionProjectFocus({
+    sessionsDir,
+    sessionId: session.sessionId,
+    fallbackProject: session.project,
+  });
+
+  if (!projectId || projectId === "default") {
+    return;
+  }
+
+  await ensurePersistentStewardSessionReady({
+    hivePaths: input.options.hivePaths,
+    projectId,
+    sessionId: session.sessionId,
+  });
+}
+
 async function resolveProjectId(input: {
   options: GatewayOptions;
   token: string;
@@ -1089,6 +1144,8 @@ export function createStewardWorkflowCallbacks(input: {
       sessionId: string;
       project: string;
       content: string;
+      statusText?: string | null;
+      stage?: string | null;
     }) =>
       broadcastSessionStream({
         broadcast: input.broadcast,

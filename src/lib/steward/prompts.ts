@@ -234,7 +234,7 @@ export async function buildOrchestratorPrompt(input: {
 
   return `# HIVE Steward Prompt
 
-You are the steward for project ${input.projectId}. All context you need is below — respond immediately without reading files first. Use the hive CLI for actions (resolving messages, logging, assigning work) not for reading state.
+You are the steward for project ${input.projectId}. All context you need is below — respond immediately without reading files first. Use the hive CLI for actions (resolving messages, logging, creating assignment messages) not for reading state.
 
 ## Shared Soul
 ${capBootstrapContent(input.soul.trim(), "SOUL.md")}
@@ -261,6 +261,7 @@ Your stdout text is what the human sees. After taking any actions (resolving mes
 - Answer human nudges before anything else. Respond directly and concisely.
 - If the goal is new or changed, decompose it into clear tasks and update PLAN.md and BOARD.md.
 - Send assignments or clarifications through message files. Do not rely on unrecorded context.
+- Delegation is only real when you create machine-readable assignment messages. If the human asks for parallel work across runtimes/models, create one \`type: assign\` message per worker and let the supervisor launch them.
 - When you fully handle a message, resolve it or close it so the open queue stays clean.
 - Route depth, fan-out, and parallelism with the cognitive routing policy above. Reuse fresh worker output before relaunching work.
 - Log every orchestration action you take.
@@ -280,7 +281,10 @@ ${inlinedAgents}
 - Answer human nudges before anything else.
 - Resolve handled nudges and answered questions with \`hive msg resolve <message> steward <answer>\` or \`./hive msg resolve <message> steward <answer>\`. Close obsolete threads with \`hive msg close <message> steward [note]\` or \`./hive msg close <message> steward [note]\`.
 - Tell workers to poll with \`hive inbox <agent>\` or \`./hive inbox <agent>\` and to resolve or close their own message-driven work when done.
-- When you create an assignment message, include machine-usable frontmatter: \`task:\` for the work id, \`launch:\` (\`auto\` or \`manual\`), and conservative \`scope:\` roots whenever parallel launch is safe.
+- When you create an assignment message, the frontmatter must include \`type: assign\`, \`task:\`, \`launch:\` (\`auto\` or \`manual\`), and conservative \`scope:\` roots whenever parallel launch is safe. Do not hide these fields only in the body.
+- Preferred command for delegation: \`hive msg --type assign --task <task-id> --scope "<root1 root2>" --launch auto steward <agent-id> "<worker brief>"\`.
+- If the worker needs a specific runtime/model, put it in the message frontmatter too (for example \`runtime: codex\`, \`model: gpt-5-codex\`) by writing the file directly instead of using a plain-body message.
+- When the human asks you to compare or split work across multiple agents, do not complete all of that work yourself first. Create the assignment messages, then synthesize from the worker results.
 - When a task is done, update the board, unblock dependents, and assign the next task.
 - When an agent is stale or blocked, either unblock it or reassign the work. Do not let ambiguity linger.
 - If everything is healthy and in progress, wait. Do not micro-manage.
@@ -369,7 +373,9 @@ Session rules:
 - Use compact state first. Only read raw files when the turn actually needs them.
 - Use absolute paths when working across HIVE home and project files.
 - Update PLAN.md, BOARD.md, LOG.md, and message files when state changes.
-- Delegate through HIVE files or \`hive\` commands when worker work is needed.
+- Delegate through HIVE message files when worker work is needed. Real delegation means writing a \`type: assign\` message with machine-readable frontmatter (\`task\`, \`launch\`, \`scope\`, and any runtime/model overrides).
+- Use \`hive msg --type assign --task <task-id> --scope "<roots>" --launch auto steward <agent-id> "<worker brief>"\` when that is enough. If you need extra frontmatter fields, write the message file directly.
+- When the human asks for multiple runtimes/models or parallel evaluation, create those assignment messages first instead of narrating delegation and then doing the work yourself.
 - Follow the cognitive routing policy below.
 - If the session tail conflicts with your assumptions, trust the session tail.
 
@@ -534,7 +540,10 @@ Read trust policy: ${input.hivePaths.trust}
 - Answer the human directly and concretely.
 - If action is needed, do it yourself through files or \`hive\` commands. Do not tell the human to operate the system for you.
 - BOARD.md is steward-owned. Update it directly when plan/task state changes.
-- When you delegate, create assignment messages with \`task:\`, \`launch: auto\`, and \`scope:\`.
+- When you delegate, create real worker launch messages: \`type: assign\` with machine-readable frontmatter for \`task:\`, \`launch: auto\`, and \`scope:\`. Do not put those only in prose.
+- Preferred delegation command: \`hive msg --type assign --task <task-id> --scope "<roots>" --launch auto steward <agent-id> "<worker brief>"\`.
+- If you need runtime/model overrides in the assignment, write the message file directly so those fields live in frontmatter.
+- If the human asks for multiple runtimes/models or parallel work, create the worker assignments first. Do not say you delegated and then do all of the work in this steward turn.
 - Follow the cognitive routing policy below instead of defaulting to either solo replies or broad fan-out.
 - Keep LOG.md and feed.md high signal.
 - Use the compact runtime state first; raw markdown reads should be targeted.

@@ -32,6 +32,7 @@ import {
   getSession,
   getSessionHistory,
   listSessions,
+  switchSessionProject,
 } from "../lib/sessions";
 import {
   DEFAULT_MAX_PARALLEL,
@@ -40,11 +41,16 @@ import {
 } from "../lib/supervisor";
 import { abortPersistentStewardTurn, isPersistentStewardTurnActive } from "../lib/steward/turn";
 import { continueConsoleWorkflow as continueStewardConsoleWorkflow } from "../lib/steward/workflow";
-import type { GatewayBroadcast, GatewayOptions } from "./server";
+import {
+  restartManagedGatewaySupervisor,
+  type GatewayBroadcast,
+  type GatewayOptions,
+} from "./server";
 import {
   createGatewaySession,
   createStewardWorkflowCallbacks,
   getSessionProjectFocus,
+  primeGatewayPersistentStewardSession,
   resolveGatewayProjectFocus,
   resolveSessionTurnTarget,
   scheduleProjectRuntimeRefresh,
@@ -195,6 +201,57 @@ export function handleOptions(): Response {
 
 async function readGatewayGlobalConfig(options: GatewayOptions): Promise<string> {
   return Bun.file(options.hivePaths.config).text().catch(() => "");
+}
+
+async function ensureGatewayWakeSession(input: {
+  options: GatewayOptions;
+  requestedProject?: string | null;
+}): Promise<{
+  sessionId: string;
+  projectId: string;
+}> {
+  const sessionsDir = join(input.options.hivePaths.home, "sessions");
+  await mkdir(sessionsDir, { recursive: true });
+
+  let session = await getActiveSession(sessionsDir);
+  const fallbackProject =
+    input.requestedProject?.trim() ||
+    (await getActiveProject(input.options.hivePaths)) ||
+    "default";
+
+  if (!session) {
+    session = await createGatewaySession({
+      options: input.options,
+      project: fallbackProject,
+    });
+  }
+
+  let projectId = await getSessionProjectFocus({
+    sessionsDir,
+    sessionId: session.sessionId,
+    fallbackProject: session.project,
+  });
+
+  if (input.requestedProject?.trim() && input.requestedProject !== projectId) {
+    await switchSessionProject({
+      sessionsDir,
+      sessionId: session.sessionId,
+      projectId: input.requestedProject,
+    });
+    projectId = input.requestedProject;
+  }
+
+  void primeGatewayPersistentStewardSession({
+    options: input.options,
+    sessionId: session.sessionId,
+  }).catch(() => {
+    // Warm the persistent steward session without blocking request handling.
+  });
+
+  return {
+    sessionId: session.sessionId,
+    projectId,
+  };
 }
 
 type RouteHandler = (
@@ -485,6 +542,12 @@ const getRoutes: Record<string, RouteHandler> = {
       if (!session) {
         return jsonOk({ turns: [], sessionId: null, project: null });
       }
+      void primeGatewayPersistentStewardSession({
+        options,
+        sessionId: session.sessionId,
+      }).catch(() => {
+        // Session priming is best-effort for startup races.
+      });
       const turns = await getSessionHistory(sessionsDir, session.sessionId);
       const project = await getSessionProjectFocus({
         sessionsDir,
@@ -553,6 +616,12 @@ const postRoutes: Record<string, RouteHandler> = {
           project: activeProject || "default",
         });
       }
+      void primeGatewayPersistentStewardSession({
+        options,
+        sessionId: session.sessionId,
+      }).catch(() => {
+        // Warm the persistent steward session without blocking request handling.
+      });
 
       const target = await resolveSessionTurnTarget({
         options,
@@ -633,6 +702,12 @@ const postRoutes: Record<string, RouteHandler> = {
         options,
         project: activeProject || "default",
       });
+      void primeGatewayPersistentStewardSession({
+        options,
+        sessionId: session.sessionId,
+      }).catch(() => {
+        // Warm the persistent steward session without blocking request handling.
+      });
 
       scheduleProjectRuntimeRefresh({
         hivePaths: options.hivePaths,
@@ -645,14 +720,110 @@ const postRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/supervisor/restart": async (_req, _url, options, _broadcast) => {
+  "/api/steward/wake": async (req, _url, options, broadcast) => {
     try {
+      const body = await req.json() as { message?: string; project?: string };
+      const message = body.message?.trim();
+
+      if (!message) {
+        return jsonError(400, "Missing 'message' field");
+      }
+
+      const targetProject =
+        body.project?.trim() ||
+        (await getActiveProject(options.hivePaths)) ||
+        "default";
+      const target = await ensureGatewayWakeSession({
+        options,
+        requestedProject: targetProject,
+      });
+      const sessionsDir = join(options.hivePaths.home, "sessions");
+
+      await appendTurn({
+        sessionsDir,
+        sessionId: target.sessionId,
+        role: "human",
+        content: message,
+        source: "system",
+      });
+
+      scheduleProjectRuntimeRefresh({
+        hivePaths: options.hivePaths,
+        projectId: target.projectId,
+      });
+
+      void continueStewardConsoleWorkflow({
+        hivePaths: options.hivePaths,
+        callbacks: createStewardWorkflowCallbacks({
+          options,
+          broadcast,
+          sessionId: target.sessionId,
+        }),
+        sessionId: target.sessionId,
+        project: target.projectId,
+        message,
+        origin: "system-wake",
+      }).catch(() => {
+        // Keep the wake path non-blocking; the periodic supervisor pass can retry if needed.
+      });
+
+      return jsonOk({
+        accepted: true,
+        sessionId: target.sessionId,
+        project: target.projectId,
+      });
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        return jsonError(400, "Invalid JSON body");
+      }
+
+      if (err instanceof UsageError) {
+        return jsonError(400, err.message);
+      }
+
+      return jsonError(500, err instanceof Error ? err.message : "Unknown error");
+    }
+  },
+
+  "/api/supervisor/restart": async (req, _url, options, _broadcast) => {
+    try {
+      let intervalSeconds = DEFAULT_SUPERVISOR_INTERVAL_SECONDS;
+      let maxParallel = DEFAULT_MAX_PARALLEL;
+      const rawBody = await req.text();
+
+      if (rawBody.trim()) {
+        let body: { intervalSeconds?: unknown; maxParallel?: unknown };
+
+        try {
+          body = JSON.parse(rawBody) as { intervalSeconds?: unknown; maxParallel?: unknown };
+        } catch {
+          return jsonError(400, "Invalid JSON body");
+        }
+
+        intervalSeconds =
+          toPositiveInteger(body.intervalSeconds) ?? DEFAULT_SUPERVISOR_INTERVAL_SECONDS;
+        maxParallel = toPositiveInteger(body.maxParallel) ?? DEFAULT_MAX_PARALLEL;
+      }
+
       const activeProject = await getActiveProject(options.hivePaths);
       if (!activeProject) {
         return jsonError(400, "No active project");
       }
-      const projectPaths = getProjectPaths(options.hivePaths, activeProject);
+      const managed = await restartManagedGatewaySupervisor({
+        hivePaths: options.hivePaths,
+        projectId: activeProject,
+        intervalSeconds,
+        maxParallel,
+      });
 
+      if (managed) {
+        return jsonOk({
+          message: `Supervisor restarted (pid ${managed.pid ?? "unknown"})`,
+          pid: managed.pid,
+        });
+      }
+
+      const projectPaths = getProjectPaths(options.hivePaths, activeProject);
       const existing = await reconcileDetachedSupervisorState(projectPaths);
       if (existing?.status === "active" && existing.pid && isProcessAlive(existing.pid)) {
         try {
@@ -669,8 +840,8 @@ const postRoutes: Record<string, RouteHandler> = {
       const state = await startDetachedSupervisor({
         projectPaths,
         projectId: activeProject,
-        intervalSeconds: DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
-        maxParallel: DEFAULT_MAX_PARALLEL,
+        intervalSeconds,
+        maxParallel,
       });
 
       return jsonOk({
