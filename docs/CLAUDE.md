@@ -15,7 +15,7 @@ Agents are transient. The hive persists.
 - SOUL.md is culture. IDENTITY.md is the hive. SELF.md is the user. Personas are mindsets.
 - BOARD.md is orchestrator-owned. Agents read it, write to msg/.
 - Small models coordinate, big models create.
-- `hive chat` is the meta-interface: talk to the hive about itself.
+- `hive say` is the one-shot steward interface. `hive console` is the interactive session.
 - All state on disk, all processes stateless. Kill anything, restart, resume.
 - Memory is tiered: curated knowledge → accumulated learnings → raw journal.
 
@@ -29,8 +29,7 @@ Agents are transient. The hive persists.
 ```
 # Front door — talk to the hive like a team
 hive run [--interval] [--max-parallel]  # Start supervision (idempotent)
-hive say <message>                      # Nudge + auto-start supervision
-hive ask [question]                     # Status digest (no args) or LLM-powered answer (with question)
+hive say [--runtime] [--model] <message>  # Send a message to the steward
 hive watch [count] [--interval] [--once]  # Live operator console
 hive console [--runtime] [--model]      # Interactive session with the hive (tracked in run ledger)
 hive stop <agent|run>                   # Signal an active supervised run (advisory for console)
@@ -52,8 +51,6 @@ hive runtimes                          # List installed runtime adapters
 # Operator escape hatches
 hive supervise [--max-parallel] [--once|--detach]
 hive supervise status|stop|logs
-hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
-hive chat [--runtime ...] [--dry-run] <msg>
 hive launch [--runtime ...] [--dry-run] <agent> [goal]
 
 # Primitives
@@ -74,14 +71,11 @@ bin/hive.ts                  # Entry point (command router)
 src/
   commands/
     run.ts                   # hive run — idempotent supervision start
-    say.ts                   # hive say — nudge + auto-start supervision
-    ask.ts                   # hive ask — synthesized status (no LLM)
+    say.ts                   # hive say — send a message to the steward
     console.ts               # hive console — interactive LLM session
     init.ts                  # hive init — scaffold ~/.hive/
     project.ts               # hive project add — register project state
     work.ts                  # hive work — set/show active project
-    orchestrate.ts           # hive orchestrate — steward kickoff/resume prompt
-    chat.ts                  # hive chat — one-shot human interface runtime call
     feed.ts                  # hive feed + live watch console
     supervise.ts             # hive supervise — autonomous supervisor loop
     launch.ts                # hive launch — one-shot agent runtime call
@@ -160,10 +154,10 @@ docs/
 ## Implementation Status
 - Phase 1 core primitives: implemented
 - Phase 2 orchestrator prompt assembly: implemented
-- Phase 3: feed/watch, `hive chat`, one-shot `hive launch` — implemented
+- Phase 3: feed/watch, one-shot `hive launch` — implemented
 - Phase 4: run records, `hive ps`, `hive stop`, worker auto-launch, restart recovery, detached supervisor start/status/stop/logs — implemented
 - Prompt compaction: path-first assembly with digests, SOUL/AGENTS split, skills infrastructure — implemented
-- Front door: `hive run`, `hive say`, `hive ask` — implemented
+- Front door: `hive run`, `hive say` — implemented
 - Skills system: `~/.hive/skills/` with `state-efficient-ops` as skill #1 — implemented
 - Interactive console: `hive console` — persistent LLM session with full hive context — implemented
 - Phase 4 validation: scope conflict tests, one-run-per-assignment safety, manual launch adoption — implemented

@@ -1,4 +1,3 @@
-import type { CompilationMetrics } from "../cognition";
 import type { HiveMessage } from "../messages";
 import type { HivePaths, ProjectPaths } from "../paths";
 import type { RunRecord, RunResult } from "../runs";
@@ -74,18 +73,6 @@ export function renderHumanInboxDigest(
     .join("\n");
 }
 
-function renderCompilationAnnotation(metrics: CompilationMetrics | null): string {
-  if (!metrics) {
-    return "";
-  }
-
-  const hitPct = `${Math.round(metrics.hitRate * 100)}%`;
-  const propagation = metrics.avgPropagationDelayMs != null
-    ? `avg propagation ${Math.round(metrics.avgPropagationDelayMs / 1000)}s`
-    : "no propagation data";
-  return `Working set: ${metrics.packetCount} packets, ~${metrics.workingSetTokenEstimate} tokens, ${metrics.compiledFields}/${metrics.totalFields} compiled (${hitPct} hit rate), ${propagation}.`;
-}
-
 export function renderCompactState(input: {
   boardDigest: string;
   openDecisionsDigest?: string | null;
@@ -97,13 +84,10 @@ export function renderCompactState(input: {
   phaseSummaryDigest?: string | null;
   memoryHotsetDigest?: string | null;
   staleMemoryDigest?: string | null;
-  compilationMetrics?: CompilationMetrics | null;
   heading?: string;
 }): string {
-  const annotation = renderCompilationAnnotation(input.compilationMetrics ?? null);
   return [
     `## ${input.heading ?? "Compact State"}`,
-    ...(annotation ? [annotation, ""] : []),
     "### Board",
     input.boardDigest,
     "",
@@ -320,7 +304,5 @@ export function renderStewardProjectPaths(input: {
     { label: "human-inbox-json", value: input.projectPaths.stateHumanInbox },
     { label: "latest-delta-json", value: input.projectPaths.stateStewardDelta },
     { label: "delta-history-jsonl", value: input.projectPaths.stateDeltaHistory },
-    { label: "compiler-cache-index-json", value: input.projectPaths.stateCompilerCacheIndex },
-    { label: "steward-working-set-json", value: input.projectPaths.stateWorkingSetSteward },
   ]);
 }

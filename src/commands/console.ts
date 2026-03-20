@@ -185,7 +185,7 @@ You don't announce these actions to the human. You just do them. They'll see the
 ## Your Nervous System
 These are extensions of you — use them without explanation:
 
-State: \`hive status\` · \`hive ps\` · \`hive feed 5\` · \`hive ask\`
+State: \`hive status\` · \`hive ps\` · \`hive feed 5\` · \`hive say\`
 Memory: \`hive memory\` · \`hive memory decision|convention|fact|question "..."\`
 Messages: \`hive msg\` · \`hive inbox <agent>\` · \`hive msg resolve|close ...\`
 Agents: \`hive launch <agent>\` · \`hive stop <agent>\` · \`hive prompt <agent>\`

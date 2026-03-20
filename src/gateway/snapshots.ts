@@ -4,7 +4,6 @@ import type { GatewayOptions } from "./server";
 
 import { listApprovals, type ApprovalRequest } from "../lib/approvals";
 import {
-  buildCompiledStateView,
   getLogRollupPacketPath,
   getPhaseSummaryPacketPath,
 } from "../lib/cognition";
@@ -25,9 +24,7 @@ import {
   type RunResult,
 } from "../lib/runs";
 import type {
-  CompilerCacheIndex,
   MaterializedPacket,
-  StewardWorkingSet,
 } from "../lib/cognition/packets";
 import {
   readStewardDeltaHistory,
@@ -488,8 +485,6 @@ type GatewayCompiledFallbackState = {
   activeRunsSummary: ActiveRunsSummary;
   recentResultsSummary: RecentResultsSummary;
   humanInboxSummary: HumanInboxSummary;
-  compilerCacheIndex: CompilerCacheIndex | null;
-  workingSet: StewardWorkingSet | null;
 };
 
 async function readGatewayCompiledFallbackState(
@@ -501,16 +496,12 @@ async function readGatewayCompiledFallbackState(
     activeRunsSummary,
     recentResultsSummary,
     humanInboxSummary,
-    compilerCacheIndex,
-    workingSet,
   ] = await Promise.all([
     readJson<BoardSummary>(projectPaths.stateBoardSummary),
     readJson<OpenMessagesSummary>(projectPaths.stateOpenMessages),
     readJson<ActiveRunsSummary>(projectPaths.stateActiveRuns),
     readJson<RecentResultsSummary>(projectPaths.stateRecentResults),
     readJson<HumanInboxSummary>(projectPaths.stateHumanInbox),
-    readJson<CompilerCacheIndex>(projectPaths.stateCompilerCacheIndex),
-    readJson<StewardWorkingSet>(projectPaths.stateWorkingSetSteward),
   ]);
 
   if (
@@ -529,9 +520,45 @@ async function readGatewayCompiledFallbackState(
     activeRunsSummary,
     recentResultsSummary,
     humanInboxSummary,
-    compilerCacheIndex,
-    workingSet,
   };
+}
+
+function renderGatewayOpenDecisions(state: GatewayCompiledFallbackState): string {
+  const waitingOnHuman = state.humanInboxSummary.items
+    .filter((item) => item.needsHumanReply)
+    .map((item) => item.summary)
+    .slice(0, 6);
+
+  if (
+    state.boardSummary.blockers.length === 0 &&
+    state.boardSummary.decisions.length === 0 &&
+    waitingOnHuman.length === 0
+  ) {
+    return "No open decisions, blockers, or pending human replies.";
+  }
+
+  const lines = [
+    `Open decisions: ${state.boardSummary.blockers.length} blocker(s), ${state.boardSummary.decisions.length} recent decision(s), ${waitingOnHuman.length} pending human repl${waitingOnHuman.length === 1 ? "y" : "ies"}.`,
+  ];
+  for (const b of state.boardSummary.blockers.slice(0, 4)) lines.push(`- blocker: ${b}`);
+  for (const h of waitingOnHuman.slice(0, 4)) lines.push(`- human: ${h}`);
+  return lines.join("\n");
+}
+
+function renderGatewayRecentResults(state: GatewayCompiledFallbackState): string {
+  if (state.recentResultsSummary.items.length === 0) return "(none)";
+  return state.recentResultsSummary.items
+    .slice(0, 5)
+    .map((item) => `- ${item.agentId} | ${item.status} | ${item.summary || "no visible output"}`)
+    .join("\n");
+}
+
+function renderGatewayHumanInbox(state: GatewayCompiledFallbackState): string {
+  if (state.humanInboxSummary.items.length === 0) return "(none)";
+  return state.humanInboxSummary.items
+    .slice(0, 6)
+    .map((item) => `- ${item.from} -> ${item.to} [${item.type}] ${item.summary}`)
+    .join("\n");
 }
 
 export async function buildGatewayProjectCognitionSnapshot(input: {
@@ -557,20 +584,7 @@ export async function buildGatewayProjectCognitionSnapshot(input: {
     activeRunsSummary: runtimeState!.activeRunsSummary,
     recentResultsSummary: runtimeState!.recentResultsSummary,
     humanInboxSummary: runtimeState!.humanInboxSummary,
-    compilerCacheIndex: runtimeState!.compilerCacheIndex,
-    workingSet: runtimeState!.workingSet,
   };
-  const compiledState = await buildCompiledStateView({
-    projectPaths,
-    workingSet: effectiveState.workingSet,
-    fallback: {
-      boardSummary: effectiveState.boardSummary,
-      openMessagesSummary: effectiveState.openMessagesSummary,
-      activeRunsSummary: effectiveState.activeRunsSummary,
-      recentResultsSummary: effectiveState.recentResultsSummary,
-      humanInboxSummary: effectiveState.humanInboxSummary,
-    },
-  });
   const [logRollup, phaseSummary, memoryHotset, staleMemory] = await Promise.all([
     readJson<MaterializedPacket>(getLogRollupPacketPath(projectPaths)),
     readJson<MaterializedPacket>(getPhaseSummaryPacketPath(projectPaths)),
@@ -579,39 +593,39 @@ export async function buildGatewayProjectCognitionSnapshot(input: {
   ]);
 
   return {
-    workingSetRevision: effectiveState.workingSet?.revision ?? null,
-    workingSetProducedAt: effectiveState.workingSet?.producedAt ?? null,
-    compilerUpdatedAt: effectiveState.compilerCacheIndex?.updatedAt ?? null,
+    workingSetRevision: null,
+    workingSetProducedAt: null,
+    compilerUpdatedAt: null,
     workingSetDigests: [
       {
         id: "board",
         label: "board",
-        body: sanitizeGatewayText(compiledState.boardDigest),
+        body: sanitizeGatewayText(effectiveState.boardSummary.digest),
       },
       {
         id: "open-decisions",
         label: "open decisions",
-        body: sanitizeGatewayText(compiledState.openDecisionsDigest),
+        body: sanitizeGatewayText(renderGatewayOpenDecisions(effectiveState)),
       },
       {
         id: "open-messages",
         label: "open messages",
-        body: sanitizeGatewayText(compiledState.openMessagesDigest),
+        body: sanitizeGatewayText(effectiveState.openMessagesSummary.digest),
       },
       {
         id: "active-runs",
         label: "active runs",
-        body: sanitizeGatewayText(compiledState.activeRunsDigest),
+        body: sanitizeGatewayText(effectiveState.activeRunsSummary.digest),
       },
       {
         id: "recent-results",
         label: "recent results",
-        body: sanitizeGatewayText(compiledState.recentResultsDigest),
+        body: sanitizeGatewayText(renderGatewayRecentResults(effectiveState)),
       },
       {
         id: "human-inbox",
         label: "human inbox",
-        body: sanitizeGatewayText(compiledState.humanInboxDigest),
+        body: sanitizeGatewayText(renderGatewayHumanInbox(effectiveState)),
       },
     ],
     idlePackets: [

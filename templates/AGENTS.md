@@ -12,24 +12,32 @@ human. This file covers how we use the infrastructure.
 - One writer per file. If you don't own it, message the owner.
 
 ## Message Protocol
-- Check `hive inbox <agent>` between major steps.
-- Resolve handled messages: `hive msg resolve <message> <actor> <answer>`
-- Close obsolete threads: `hive msg close <message> <actor> [note]`
-- Assignment messages include `task:`, `launch:`, and `scope:` frontmatter.
+- Check the messages directory between major steps.
+- To delegate work, write a markdown file to the messages directory with the format below.
+- To resolve a message, update its frontmatter to `status: resolved` and append an `## Answer` section.
+- To close a message, update its frontmatter to `status: closed` and append a `## Closed` section.
+- Do NOT shell out to `hive msg` — it may not be in PATH. Write/update message files directly.
 
 ### Assignment Message Example
+
+Write to: `<messages-dir>/assign-<agent-id>-<timestamp>.md`
+
 ```
 ---
-to: alpha
 from: steward
+to: alpha
+type: assign
+project: myproject
 task: PROJ-001
+scope: src/auth/, tests/auth/
 launch: auto
-scope: src/auth/ tests/auth/
 ---
 
 Implement POST /api/auth/login and /api/auth/refresh.
 Use Joken for JWT with 1-hour expiry. Contract is on the board.
 ```
+
+The supervisor watcher detects new assignment files and launches workers automatically within ~200ms.
 
 ## Skills
 Load relevant skills from the skills directory before starting work.

@@ -4,8 +4,7 @@ export async function helpCommand(): Promise<string> {
 Usage:
   hive start [--port <port>] [--open]
   hive run [--interval <seconds>] [--max-parallel <count>]
-  hive say <message>
-  hive ask [question]
+  hive say [--runtime <runtime>] [--model <model>] <message>
   hive watch [count] [--interval <seconds>] [--once]
   hive stop
   hive stop <agent-id|run-id>
@@ -23,11 +22,9 @@ Usage:
   hive supervise status
   hive supervise stop
   hive supervise logs
-  hive orchestrate [--mode interactive|loop] [--interval <seconds>] [goal]
   hive cognition                      # Show cognitive routing policy
   hive console [--runtime <runtime>] [--model <model>]
                                 # Interactive session with the hive
-  hive chat [--runtime <runtime>] [--model <model>] [--dry-run] <message>
   hive launch [--runtime <runtime>] [--model <model>] [--dry-run] <agent-id> [goal]
   hive inbox [agent]
   hive log <message>
