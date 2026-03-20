@@ -131,10 +131,24 @@ describe("HIVE CLI", () => {
       join(context.hiveHome, "projects", "myproject", "LOG.md"),
     ).text();
 
+    expect(status).toContain("Runtime");
+    expect(status).toContain("gateway: not running");
+    expect(status).toContain("persistent steward: offline");
     expect(status).toContain("Project: myproject");
     expect(status).toContain("BOARD.md");
     expect(status).toContain("Need the auth contract");
     expect(log).toContain("Session kickoff");
+  });
+
+  test("status still reports runtime state when no active project is selected", async () => {
+    await initHive();
+
+    const status = await runCli(["status"]);
+
+    expect(status).toContain("Runtime");
+    expect(status).toContain("active project: none");
+    expect(status).toContain("gateway: not running");
+    expect(status).toContain("Project: none");
   });
 
   test("ask with no question returns fast status digest of the live board", async () => {
@@ -304,6 +318,35 @@ describe("HIVE CLI", () => {
     expect(finalInbox).toContain("No open messages. Queue is clean.");
   });
 
+  test("msg command can write machine-readable assignment frontmatter", async () => {
+    await initHive();
+    await addProject();
+
+    const createOutput = await runCli([
+      "msg",
+      "--type",
+      "assign",
+      "--task",
+      "HIVE-321",
+      "--scope",
+      "src/gateway src/lib/steward",
+      "--launch",
+      "auto",
+      "steward",
+      "alpha",
+      "Audit the live gateway delegation path.",
+    ]);
+    const filename = createOutput.match(/([^\s]+\.md)$/)?.[1];
+    const raw = await runCli(["msg", "show", filename!]);
+
+    expect(filename).toBeString();
+    expect(raw).toContain("type: assign");
+    expect(raw).toContain("task: HIVE-321");
+    expect(raw).toContain("scope: src/gateway src/lib/steward");
+    expect(raw).toContain("launch: auto");
+    expect(raw).toContain("Audit the live gateway delegation path.");
+  });
+
   test("prompt assembles persona, plan assignment, and agent messages", async () => {
     await initHive();
     await addProject();
@@ -418,6 +461,67 @@ Task: Build the auth endpoint and publish the contract.
     expect(workerBrief.details.relevantRunResults[0]?.summary).toContain(
       "Published the auth contract for the login flow.",
     );
+  });
+
+  test("ad-hoc assignment agents can render prompts and dry-run launches from assignment frontmatter", async () => {
+    await initHive();
+    await addProject();
+
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: claude
+model: claude-sonnet-4-6
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "msg", "20260309-150700Z-steward-to-eval-codex-HIVE-777.md"),
+      `---
+from: steward
+to: eval-codex
+type: assign
+status: open
+project: myproject
+task: HIVE-777
+runtime: codex
+model: gpt-5-codex
+launch: auto
+scope: src/gateway,tests
+ts: 2026-03-09T15:07:00Z
+---
+
+You are a critic evaluating the gateway implementation.
+
+Review the current change set and produce a blunt technical assessment.
+`,
+    );
+
+    const prompt = await runCli(["prompt", "eval-codex"]);
+    const launchDryRun = await runCli(["launch", "--dry-run", "eval-codex"]);
+    const promptArtifactPath = join(
+      context.hiveHome,
+      "projects",
+      "myproject",
+      "runs",
+      "2026",
+      "03",
+      "20260309-150800Z-eval-codex",
+      "prompt.md",
+    );
+    const promptArtifact = await Bun.file(promptArtifactPath).text();
+
+    expect(prompt).toContain("You are eval-codex for project myproject.");
+    expect(prompt).toContain("persona: critic");
+    expect(prompt).toContain("descriptor: critic, gpt-5-codex via codex");
+    expect(prompt).toContain("You are a critic evaluating the gateway implementation.");
+    expect(launchDryRun).toContain("Agent: eval-codex");
+    expect(launchDryRun).toContain("Runtime: codex");
+    expect(launchDryRun).toContain("Model: gpt-5-codex");
+    expect(launchDryRun).toContain("Command: codex exec");
+    expect(promptArtifact).toContain("persona: critic");
+    expect(promptArtifact).toContain("You are a critic evaluating the gateway implementation.");
   });
 
   test("sync copies PLAN.md into the repo and archive snapshots the session", async () => {

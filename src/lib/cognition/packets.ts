@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { readJson, writeJson } from "../json";
+
 export type CognitionPacketKind =
   | "run-result"
   | "human-request"
@@ -112,6 +114,31 @@ export function toMaterializedPacketRef(
     tier: packet.tier,
     summary: packet.summary,
   };
+}
+
+export function packetExpiresAt(
+  producedAt: string,
+  freshnessMs: number | null,
+): string | null {
+  if (freshnessMs == null) {
+    return null;
+  }
+
+  return new Date(Date.parse(producedAt) + freshnessMs).toISOString();
+}
+
+export async function upsertPacket(
+  path: string,
+  packet: MaterializedPacket,
+): Promise<{ packet: MaterializedPacket; changed: boolean }> {
+  const existing = await readJson<MaterializedPacket>(path);
+
+  if (existing?.fingerprint === packet.fingerprint) {
+    return { packet: existing, changed: false };
+  }
+
+  await writeJson(path, packet);
+  return { packet, changed: true };
 }
 
 export function mergeMaterializedPacketRefs(input: {

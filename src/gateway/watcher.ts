@@ -1,5 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
+import { join } from "node:path";
 
 export type WatcherEvent = {
   type: "feed" | "board-changed" | "message-changed" | "run-changed";
@@ -16,6 +17,10 @@ type WatcherPaths = {
 };
 
 type BroadcastFn = (event: WatcherEvent) => void;
+
+type WatcherHooks = {
+  onMessageChanged?: (path: string) => void;
+};
 
 const DEBOUNCE_MS = 200;
 
@@ -44,6 +49,7 @@ async function pathExists(path: string): Promise<boolean> {
 export function startWatcher(
   paths: WatcherPaths,
   broadcast: BroadcastFn,
+  hooks: WatcherHooks = {},
 ): () => void {
   const watchers: FSWatcher[] = [];
 
@@ -97,7 +103,16 @@ export function startWatcher(
           });
         }, DEBOUNCE_MS);
 
-        const watcher = watch(dirPath, { recursive: true }, () => {
+        const watcher = watch(dirPath, { recursive: true }, (_event, filename) => {
+          if (
+            eventType === "message-changed" &&
+            hooks.onMessageChanged &&
+            typeof filename === "string" &&
+            filename.endsWith(".md")
+          ) {
+            hooks.onMessageChanged(join(dirPath, filename));
+          }
+
           debouncedBroadcast();
         });
         watchers.push(watcher);

@@ -2,10 +2,12 @@ export async function helpCommand(): Promise<string> {
   return `HIVE
 
 Usage:
+  hive start [--port <port>] [--open]
   hive run [--interval <seconds>] [--max-parallel <count>]
   hive say <message>
   hive ask [question]
   hive watch [count] [--interval <seconds>] [--once]
+  hive stop
   hive stop <agent-id|run-id>
 
   hive init
@@ -46,7 +48,7 @@ Usage:
   hive nudge <message>
   hive prompt <agent-id>
   hive runtimes                        # List available runtimes
-  hive gateway [--port <port>] [--open] # Start the Gateway server
+  hive gateway [--port <port>] [--open] # Alias for \`hive start\`
   hive gateway status                   # Show Gateway state
   hive gateway stop                     # Stop the Gateway server
   hive archive

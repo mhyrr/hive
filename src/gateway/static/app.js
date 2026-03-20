@@ -170,6 +170,14 @@ function joinMeta(parts) {
   return parts.filter(Boolean).join(' \u00b7 ');
 }
 
+function sanitizeStewardLikeText(text) {
+  return String(text || '')
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+    .replace(/<!--\s*turn-meta:.*?-->/g, '')
+    .replace(/^[ \t]*\d+\| .*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
 function toneClass(base, tone) {
   return base + ' ' + base + '--' + (tone || 'info');
 }
@@ -438,7 +446,11 @@ function handleWsEvent(event) {
         if (event.project) {
           updateSessionProject(event.project);
         }
-        updateThinkingIndicator(event.data.content || '');
+        updateThinkingIndicator(
+          event.data.content || '',
+          event.data.statusText || '',
+          event.data.stage || ''
+        );
       }
       scheduleLiveRefresh(100);
       break;
@@ -807,6 +819,7 @@ function getLatestConversationReplyItemFromState() {
       source: 'system',
       ts: state.consoleStream.ts || nowISO(),
       content: state.consoleStream.content || '',
+      statusText: state.consoleStream.statusText || '',
       details: null,
     });
   }
@@ -842,6 +855,9 @@ function summarizeConversationActivity(item) {
   if (!item) return '';
 
   if (item.itemType === 'draft') {
+    if (item.statusText) {
+      return item.statusText;
+    }
     return normalizeMultilineText(item.content)
       ? 'The steward is drafting a live reply.'
       : 'The steward is thinking through your latest message.';
@@ -871,6 +887,7 @@ function buildSyntheticStewardAgent(item) {
     source: 'session',
     latestOutput: latestOutput || null,
     tail: latestOutput ? splitDisplayLines(latestOutput).slice(-4) : [],
+    statusText: item.statusText || '',
   };
 }
 
@@ -1041,7 +1058,11 @@ function renderConsoleItem(item) {
   html += '</div></div>';
 
   if (item.itemType === 'draft' && !item.content) {
-    html += '<div class="turn-content"><span class="thinking-dots">';
+    html += '<div class="turn-content">';
+    if (item.statusText) {
+      html += '<div class="turn-draft-status">' + escapeHtml(item.statusText) + '</div>';
+    }
+    html += '<span class="thinking-dots">';
     html += '<span></span><span></span><span></span>';
     html += '</span></div>';
   } else {
@@ -1125,8 +1146,11 @@ function renderConsoleHistory() {
     html += renderConsoleItem(items[i]);
   }
 
+  var wasNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
   container.innerHTML = html;
-  container.scrollTop = container.scrollHeight;
+  if (wasNearBottom) {
+    container.scrollTop = container.scrollHeight;
+  }
 }
 
 function setConsoleHistory(turns) {
@@ -1150,14 +1174,18 @@ function showThinkingIndicator() {
   state.consoleStream = {
     ts: nowISO(),
     content: '',
+    statusText: '',
+    stage: '',
   };
   renderConsoleHistory();
 }
 
-function updateThinkingIndicator(content) {
+function updateThinkingIndicator(content, statusText, stage) {
   state.consoleStream = {
     ts: (state.consoleStream && state.consoleStream.ts) || nowISO(),
     content: content || '',
+    statusText: statusText || '',
+    stage: stage || '',
   };
   renderConsoleHistory();
 }
@@ -2903,7 +2931,9 @@ function renderLiveAgents(agents) {
       agent.pid ? 'pid ' + agent.pid : '',
       agent.taskId ? 'task ' + agent.taskId : '',
     ];
-    var collapsedSummary = outputDetail ? truncateMultilineText(outputDetail, 180) : (health ? health.summary : '');
+    var collapsedSummary = outputDetail
+      ? truncateMultilineText(outputDetail, 180)
+      : (agent.statusText || (health ? health.summary : ''));
     if (!collapsedSummary) {
       collapsedSummary = agent.persona === 'steward'
         ? 'Waiting for the first streamed update from the steward.'
@@ -2928,9 +2958,9 @@ function renderLiveAgents(agents) {
     if (expanded && outputDetail) {
       html += '<div class="agent-card-output">' + escapeHtml(truncateMultilineText(outputDetail, 1200)) + '</div>';
     } else if (expanded) {
-      var emptyOutput = agent.persona === 'steward'
+      var emptyOutput = agent.statusText || (agent.persona === 'steward'
         ? 'Waiting for the first streamed update from the steward.'
-        : 'Waiting for the first visible update from this agent.';
+        : 'Waiting for the first visible update from this agent.');
       html += '<div class="agent-card-output agent-card-output--empty">' + escapeHtml(emptyOutput) + '</div>';
     }
     html += '<div class="agent-card-actions">';
@@ -3085,7 +3115,7 @@ function renderCognitionUsageMeter(label, budget, totals) {
 }
 
 function renderCognitionBodyText(text) {
-  var normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  var normalized = sanitizeStewardLikeText(text).replace(/\r\n/g, '\n').trim();
   if (!normalized) {
     return '';
   }

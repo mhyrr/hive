@@ -13,6 +13,7 @@ import {
   extractRepoPath,
   findPlanAgent,
   parseDefaultTeam,
+  resolveProjectAgent,
   resolveAgentScopeRoots,
 } from "../lib/project";
 import {
@@ -37,7 +38,7 @@ import {
 } from "../lib/runs";
 import { compressCompletedRunOutput } from "../lib/tier1";
 import { orchestrateCommand } from "./orchestrate";
-import { promptCommand } from "./prompt";
+import { buildAgentPrompt } from "./prompt";
 
 type LaunchOptions = {
   runtimeOverride: string | null;
@@ -56,6 +57,7 @@ type LaunchAgentInput = {
   modelOverride: string | null;
   dryRun: boolean;
   source: string;
+  sourceMessage?: string | null;
   logActor?: string;
 };
 
@@ -147,23 +149,65 @@ export async function launchAgentPass(input: LaunchAgentInput): Promise<string> 
     throw new UsageError("Project config is missing `path:` in the repo section.");
   }
 
+  const assignmentMessage =
+    input.agentId === "steward"
+      ? null
+      : input.sourceMessage?.trim()
+        ? await findMessage(input.paths.msgDir, input.sourceMessage, input.activeProject)
+        : await findOpenAssignmentMessage(input.paths.msgDir, input.activeProject, input.agentId);
+
+  if (input.sourceMessage?.trim()) {
+    if (!assignmentMessage) {
+      throw new UsageError(`Unknown assignment message: ${input.sourceMessage}`);
+    }
+
+    if (assignmentMessage.attributes.type !== "assign") {
+      throw new UsageError(`${assignmentMessage.filename} is not an assignment message.`);
+    }
+
+    if (assignmentMessage.attributes.status !== "open") {
+      throw new UsageError(`${assignmentMessage.filename} is not open.`);
+    }
+
+    if (assignmentMessage.attributes.to !== input.agentId) {
+      throw new UsageError(`${assignmentMessage.filename} does not target ${input.agentId}.`);
+    }
+  }
+
   const planAgent = findPlanAgent(plan, input.agentId);
   const teamAgent = parseDefaultTeam(projectConfig).find((agent) => agent.id === input.agentId);
+  const resolvedAgent = input.agentId === "steward"
+    ? null
+    : resolveProjectAgent({
+        plan,
+        projectConfig,
+        agentId: input.agentId,
+        allowAdHoc: Boolean(assignmentMessage),
+        assignmentBody: assignmentMessage?.body ?? null,
+        assignmentPersona: assignmentMessage?.attributes.persona ?? null,
+        runtimeHint: assignmentMessage?.attributes.runtime ?? null,
+        modelHint: assignmentMessage?.attributes.model ?? null,
+      });
 
-  if (input.agentId !== "steward" && !planAgent && !teamAgent) {
+  if (input.agentId !== "steward" && !resolvedAgent) {
     throw new UsageError(`Unknown agent: ${input.agentId}`);
   }
 
   const prompt =
     input.agentId === "steward"
       ? await orchestrateCommand(input.goal ? [input.goal] : [])
-      : await promptCommand([input.agentId]);
+      : await buildAgentPrompt({
+          agentId: input.agentId,
+          assignmentMessageRef: assignmentMessage?.filename ?? input.sourceMessage ?? null,
+        });
   const hints = resolveRuntimeHints({
     globalConfig,
     teamAgent,
     planAgent,
     runtimeOverride: input.runtimeOverride,
     modelOverride: input.modelOverride,
+    assignmentRuntime: assignmentMessage?.attributes.runtime ?? null,
+    assignmentModel: assignmentMessage?.attributes.model ?? null,
   });
   if (!input.dryRun) {
     await validateRuntimeInstalled(hints.runtime);
@@ -197,10 +241,6 @@ Command: ${renderLaunchPreview(spec)}`;
     );
   }
 
-  const assignmentMessage =
-    input.agentId === "steward"
-      ? null
-      : await findOpenAssignmentMessage(input.paths.msgDir, input.activeProject, input.agentId);
   const scope =
     input.agentId === "steward"
       ? null

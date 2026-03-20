@@ -39,6 +39,7 @@ import {
   type ProjectRuntimeState,
   type RecentResultsSummary,
 } from "../lib/state";
+import { sanitizeStewardOutput } from "../lib/steward/sanitize";
 
 export type GatewayLiveAgent = {
   runId: string;
@@ -146,6 +147,10 @@ function asStringArray(value: unknown): string[] {
   }
 
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function sanitizeGatewayText(text: string): string {
+  return sanitizeStewardOutput(text).trim();
 }
 
 function classifyTone(text: string): GatewayTimelineItem["tone"] {
@@ -323,7 +328,7 @@ function renderLogRollupBody(packet: MaterializedPacket): string {
     .slice(0, 3)
     .map((headline) => `- ${headline}`);
 
-  return [packet.summary, ...logEntries, ...feedHeadlines].join("\n");
+  return sanitizeGatewayText([packet.summary, ...logEntries, ...feedHeadlines].join("\n"));
 }
 
 function renderPhaseSummaryBody(packet: MaterializedPacket): string {
@@ -350,7 +355,7 @@ function renderPhaseSummaryBody(packet: MaterializedPacket): string {
     lines.push(`Goal: ${goal}`);
   }
 
-  return [...lines, ...completedTasks, ...recentSuccessfulResults].join("\n");
+  return sanitizeGatewayText([...lines, ...completedTasks, ...recentSuccessfulResults].join("\n"));
 }
 
 function renderMemoryHotsetBody(packet: MaterializedPacket): string {
@@ -377,14 +382,14 @@ function renderMemoryHotsetBody(packet: MaterializedPacket): string {
     lines.push(`Project status: ${projectStatus}`);
   }
 
-  return [
+  return sanitizeGatewayText([
     ...lines,
     ...globalKnowledge,
     ...facts,
     ...conventions,
     ...recentDecisions,
     ...openQuestions,
-  ].join("\n");
+  ].join("\n"));
 }
 
 function renderStaleMemoryBody(packet: MaterializedPacket): string {
@@ -415,7 +420,7 @@ function renderStaleMemoryBody(packet: MaterializedPacket): string {
     lines.push("No stale-memory review issues are currently flagged.");
   }
 
-  return [...lines, ...reasons].join("\n");
+  return sanitizeGatewayText([...lines, ...reasons].join("\n"));
 }
 
 function summarizeIdlePacket(
@@ -581,32 +586,32 @@ export async function buildGatewayProjectCognitionSnapshot(input: {
       {
         id: "board",
         label: "board",
-        body: compiledState.boardDigest,
+        body: sanitizeGatewayText(compiledState.boardDigest),
       },
       {
         id: "open-decisions",
         label: "open decisions",
-        body: compiledState.openDecisionsDigest,
+        body: sanitizeGatewayText(compiledState.openDecisionsDigest),
       },
       {
         id: "open-messages",
         label: "open messages",
-        body: compiledState.openMessagesDigest,
+        body: sanitizeGatewayText(compiledState.openMessagesDigest),
       },
       {
         id: "active-runs",
         label: "active runs",
-        body: compiledState.activeRunsDigest,
+        body: sanitizeGatewayText(compiledState.activeRunsDigest),
       },
       {
         id: "recent-results",
         label: "recent results",
-        body: compiledState.recentResultsDigest,
+        body: sanitizeGatewayText(compiledState.recentResultsDigest),
       },
       {
         id: "human-inbox",
         label: "human inbox",
-        body: compiledState.humanInboxDigest,
+        body: sanitizeGatewayText(compiledState.humanInboxDigest),
       },
     ],
     idlePackets: [

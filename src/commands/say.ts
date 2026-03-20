@@ -1,11 +1,6 @@
 import { UsageError } from "../lib/errors";
-import {
-  reconcileDetachedSupervisorState,
-  startDetachedSupervisor,
-} from "../lib/detached-supervisor";
 import { appendLogEntry } from "../lib/log";
 import { enqueueGoalForOrchestrator } from "../lib/orchestrator";
-import { isProcessAlive, DEFAULT_MAX_PARALLEL, DEFAULT_SUPERVISOR_INTERVAL_SECONDS } from "../lib/supervisor";
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -13,6 +8,7 @@ import {
   type HivePaths,
 } from "../lib/paths";
 import { refreshProjectRuntimeState } from "../lib/state";
+import { ensureGatewayRunning } from "./gateway";
 
 export async function sendGoalToProject(input: {
   projectId: string;
@@ -30,29 +26,19 @@ export async function sendGoalToProject(input: {
 
   await enqueueGoalForOrchestrator(paths, projectPaths, input.projectId, message);
 
-  const existing = await reconcileDetachedSupervisorState(projectPaths);
   let supervisorNote: string;
 
-  if (existing?.status === "active" && isProcessAlive(existing.pid)) {
-    supervisorNote = `Supervisor active (pid ${existing.pid})`;
-  } else {
-    try {
-      const state = await startDetachedSupervisor({
-        projectPaths,
-        projectId: input.projectId,
-        intervalSeconds: DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
-        maxParallel: DEFAULT_MAX_PARALLEL,
-      });
+  try {
+    const state = await ensureGatewayRunning();
 
-      supervisorNote = `Supervisor started (pid ${state.pid ?? "unknown"})`;
-      await appendLogEntry(
-        projectPaths.log,
-        "human -> hive say",
-        `Auto-started supervision pid ${state.pid ?? "unknown"}`,
-      );
-    } catch {
-      supervisorNote = "Supervisor not started (start manually with `hive run`)";
-    }
+    supervisorNote = `Gateway active (gateway pid ${state.pid ?? "unknown"}, supervisor pid ${state.supervisorPid ?? "unknown"})`;
+    await appendLogEntry(
+      projectPaths.log,
+      "human -> hive say",
+      `Ensured managed gateway pid ${state.pid ?? "unknown"} supervisor ${state.supervisorPid ?? "unknown"}`,
+    );
+  } catch {
+    supervisorNote = "Gateway not started (start manually with `hive start`)";
   }
 
   await refreshProjectRuntimeState({

@@ -604,6 +604,8 @@ type ResolveHintsInput = {
   planAgent?: PlanAgent | null;
   runtimeOverride?: string | null;
   modelOverride?: string | null;
+  assignmentRuntime?: string | null;
+  assignmentModel?: string | null;
 };
 
 // --- Config / Descriptor Helpers ---
@@ -793,9 +795,14 @@ function selectModel(
   teamAgent?: TeamAgent | null,
   planAgent?: PlanAgent | null,
   modelOverride?: string | null,
+  assignmentModel?: string | null,
 ): string | null {
   if (modelOverride?.trim()) {
     return modelOverride.trim();
+  }
+
+  if (assignmentModel?.trim()) {
+    return assignmentModel.trim();
   }
 
   const planBodyModel = planAgent ? extractBodyValue(planAgent.body, "model") : null;
@@ -815,9 +822,11 @@ function selectRuntime(
   teamAgent?: TeamAgent | null,
   planAgent?: PlanAgent | null,
   runtimeOverride?: string | null,
+  assignmentRuntime?: string | null,
 ): string {
   const candidates = [
     runtimeOverride,
+    assignmentRuntime,
     planAgent ? extractBodyValue(planAgent.body, "runtime") : null,
     planAgent ? extractRuntimeFromDescriptor(planAgent.descriptor) : null,
     teamAgent ? extractRuntimeFromDescriptor(teamAgent.descriptor) : null,
@@ -848,12 +857,14 @@ export function resolveRuntimeHints(input: ResolveHintsInput): RuntimeHints {
       input.teamAgent,
       input.planAgent,
       input.runtimeOverride,
+      input.assignmentRuntime,
     ),
     model: selectModel(
       input.globalConfig,
       input.teamAgent,
       input.planAgent,
       input.modelOverride,
+      input.assignmentModel,
     ),
   };
 }

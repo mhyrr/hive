@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,9 +8,13 @@ import { runCli } from "../src/cli";
 import { handleApi } from "../src/gateway/routes";
 import { startGateway, stopGateway } from "../src/gateway/server";
 import { createApprovalRequest } from "../src/lib/approvals";
-import { compileIdleProjectCognition } from "../src/lib/cognition";
-import { writeDetachedSupervisorState } from "../src/lib/detached-supervisor";
+import { compileIdleProjectCognition, getLogRollupPacketPath } from "../src/lib/cognition";
+import {
+  readDetachedSupervisorState,
+  writeDetachedSupervisorState,
+} from "../src/lib/detached-supervisor";
 import { appendEvent } from "../src/lib/events";
+import { reconcileGatewayState } from "../src/lib/gateway-state";
 import { createMessage, listProjectMessages } from "../src/lib/messages";
 import { ensureHiveScaffold, getProjectPaths, type HivePaths } from "../src/lib/paths";
 import {
@@ -85,6 +90,7 @@ afterEach(async () => {
   delete process.env.HIVE_PI_IDLE_MS;
   delete process.env.HIVE_ENABLE_PERSISTENT_STEWARD;
   delete process.env.HIVE_TEST_PI_BEHAVIOR;
+  delete process.env.HIVE_SCRIPT;
   if (originalAnthropicApiKey === undefined) {
     delete process.env.ANTHROPIC_API_KEY;
   } else {
@@ -384,6 +390,42 @@ rl.on("line", (line) => {
   await chmod(scriptPath, 0o755);
   process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
   process.env.HIVE_PI_IDLE_MS = "200";
+}
+
+async function installFakeCodex(root: string): Promise<void> {
+  const binDir = join(root, "bin");
+  const scriptPath = join(binDir, "codex");
+
+  await mkdir(binDir, { recursive: true });
+  await Bun.write(
+    scriptPath,
+    `#!/bin/sh
+printf 'mock codex run complete\\n'
+exit 0
+`,
+  );
+  await chmod(scriptPath, 0o755);
+  process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+}
+
+async function waitForValue<T>(
+  load: () => Promise<T>,
+  predicate: (value: T) => boolean,
+  attempts = 40,
+  delayMs = 100,
+): Promise<T> {
+  let value = await load();
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate(value)) {
+      return value;
+    }
+
+    await Bun.sleep(delayMs);
+    value = await load();
+  }
+
+  return value;
 }
 
 describe("Gateway HTTP Server", () => {
@@ -755,6 +797,13 @@ Captured gateway cognition snapshot and prepared the compiled-state rail.
       plan,
       runtimeState,
     });
+    const logRollupPath = getLogRollupPacketPath(projectPaths);
+    const logRollupPacket = await Bun.file(logRollupPath).json() as {
+      summary: string;
+      details: Record<string, unknown>;
+    };
+    logRollupPacket.summary = `${logRollupPacket.summary} <system-reminder>internal only</system-reminder>`;
+    await Bun.write(logRollupPath, JSON.stringify(logRollupPacket, null, 2));
 
     const req = new Request("http://localhost/api/cognition?project=testproj");
     const res = await handleApi(req, new URL(req.url), {
@@ -807,6 +856,9 @@ Captured gateway cognition snapshot and prepared the compiled-state rail.
 
     expect(data.compiled?.idlePackets.find((packet) => packet.label === "log rollup")?.body).toContain(
       "Captured gateway cognition snapshot",
+    );
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "log rollup")?.body).not.toContain(
+      "<system-reminder>",
     );
     expect(data.compiled?.idlePackets.find((packet) => packet.label === "phase summary")?.body).toContain(
       "ship auth flow",
@@ -1099,6 +1151,11 @@ describe("Gateway state file", () => {
     const result = await runCli(["gateway", "stop"]);
     expect(result).toContain("not running");
   });
+
+  test("bare stop reports not running when no state file", async () => {
+    const result = await runCli(["stop"]);
+    expect(result).toContain("not running");
+  });
 });
 
 describe("Gateway port conflict", () => {
@@ -1119,9 +1176,206 @@ describe("Gateway port conflict", () => {
 describe("Gateway CLI wiring", () => {
   test("help includes gateway commands", async () => {
     const result = await runCli(["help"]);
+    expect(result).toContain("hive start");
+    expect(result).toContain("hive stop");
     expect(result).toContain("hive gateway");
     expect(result).toContain("gateway status");
     expect(result).toContain("gateway stop");
+  });
+});
+
+describe("Managed gateway lifecycle", () => {
+  test("managed gateway launches auto assignments immediately when a new message file appears", async () => {
+    await installFakeCodex(context.root);
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Ship the auth flow.
+
+## Agents
+### steward (steward)
+Task: Keep the board current.
+
+### alpha (craftsman -> src/api/**)
+Task: Build the auth endpoint.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "config.md"),
+      `# Project: MyProject
+
+## Repo
+path: ${context.repo}
+
+## Default Team
+- steward: steward via codex
+- alpha: craftsman via codex
+`,
+    );
+
+    const port = randomPort();
+    const state = startGateway({
+      port,
+      hivePaths: context.paths,
+      manageSupervisorChildren: true,
+      supervisorIntervalSeconds: 30,
+      supervisorMaxParallel: 2,
+    });
+
+    try {
+      const projectPaths = getProjectPaths(context.paths, "myproject");
+      const startedAt = Date.now();
+      const message = await createMessage(context.paths.msgDir, {
+        from: "steward",
+        to: "alpha",
+        type: "assign",
+        project: "myproject",
+        body: "Build the auth endpoint.",
+        attributes: {
+          task: "HIVE-201",
+          launch: "auto",
+          scope: "src/api",
+        },
+      });
+      const launchedRun = await waitForValue(
+        async () =>
+          (await listAllRuns(projectPaths)).find(
+            (run) => run.sourceMessage === message.filename && run.agentId === "alpha",
+          ) ?? null,
+        (run) => Boolean(run),
+        50,
+        100,
+      );
+
+      expect(launchedRun).not.toBeNull();
+      expect(launchedRun?.source).toBe("hive gateway");
+      expect(launchedRun?.sourceMessage).toBe(message.filename);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(await readDetachedSupervisorState(projectPaths)).toBeNull();
+    } finally {
+      stopGateway(state);
+    }
+  });
+
+  test("hive start launches a managed supervisor and hive stop cascades to workers", async () => {
+    await installFakeCodex(context.root);
+    process.env.HIVE_SCRIPT = join(import.meta.dir, "..", "bin", "hive.ts");
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "config.md"),
+      `# Project: MyProject
+
+## Repo
+path: ${context.repo}
+
+## Default Team
+- steward: steward via codex
+- alpha: craftsman via codex
+`,
+    );
+
+    const port = randomPort();
+    let worker: ReturnType<typeof spawn> | null = null;
+
+    try {
+      const startOutput = await runCli(["start", "--port", String(port)]);
+
+      expect(startOutput).toContain(`http://localhost:${port}`);
+
+      const gatewayState = await waitForValue(
+        () => reconcileGatewayState(context.hiveHome),
+        (state) => Boolean(state?.status === "active" && state.pid && state.supervisorPid),
+      );
+
+      expect(gatewayState?.status).toBe("active");
+      expect(gatewayState?.pid).toBeNumber();
+      expect(gatewayState?.supervisorPid).toBeNumber();
+
+      const projectPaths = getProjectPaths(context.paths, "myproject");
+      const supervisorState = await waitForValue(
+        () => readDetachedSupervisorState(projectPaths),
+        (state) => Boolean(state?.status === "active" && state.pid),
+      );
+
+      expect(supervisorState?.mode).toBe("managed");
+      expect(supervisorState?.pid).toBe(gatewayState?.supervisorPid ?? null);
+
+      worker = spawn("sleep", ["30"], { stdio: "ignore" });
+      const workerExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve) => {
+          worker?.once("exit", (code, signal) => resolve({ code, signal }));
+        },
+      );
+      const workerRun = await createRunDraft({
+        projectId: "myproject",
+        projectPaths,
+        agentId: "alpha",
+        runtime: "codex",
+        model: null,
+        prompt: "# Alpha Prompt",
+        source: "hive launch",
+        scope: ["src/api"],
+      });
+
+      await markRunActive(projectPaths, workerRun, worker.pid ?? null);
+
+      const status = await runCli(["status"]);
+
+      expect(status).toContain("Runtime");
+      expect(status).toContain(`gateway: active | pid ${gatewayState?.pid}`);
+      expect(status).toContain(`supervisor: active | pid ${gatewayState?.supervisorPid}`);
+      expect(status).toContain("persistent steward: offline");
+
+      const stopOutput = await runCli(["stop"]);
+
+      expect(stopOutput).toContain(`Gateway stopped (pid ${gatewayState?.pid}).`);
+      expect((await workerExit).signal).toBe("SIGTERM");
+
+      const stoppedGateway = await waitForValue(
+        () => reconcileGatewayState(context.hiveHome),
+        (state) => Boolean(state?.status === "stopped"),
+      );
+      const stoppedSupervisor = await waitForValue(
+        () => readDetachedSupervisorState(projectPaths),
+        (state) => Boolean(state?.status === "stopped"),
+      );
+
+      expect(stoppedGateway?.status).toBe("stopped");
+      expect(stoppedSupervisor?.status).toBe("stopped");
+      expect(stoppedSupervisor?.pid).toBeNull();
+    } finally {
+      await runCli(["stop"]).catch(() => undefined);
+      delete process.env.HIVE_SCRIPT;
+
+      if (worker?.pid) {
+        try {
+          process.kill(worker.pid, "SIGKILL");
+        } catch {
+          // process already exited
+        }
+      }
+    }
   });
 });
 
@@ -1416,6 +1670,114 @@ path: ${context.repo}
     expect(modelTurn?.details?.routing?.trace[0]).toContain("persistent steward lane");
     expect(activeRun).toBeNull();
     expect(sessionState?.projectStates.testproj?.lastRevisionSeen).toBeGreaterThan(0);
+  });
+
+  test("steward wake injects a system turn and runs the persistent Pi steward", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/steward/wake", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project: "testproj",
+        message:
+          "Your delegated workers eval-codex and eval-opus have completed. Synthesize their results and report to the human.",
+      }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string; project: string };
+    expect(data.accepted).toBe(true);
+    expect(data.project).toBe("testproj");
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    const wakeTurn = turns.find((turn) =>
+      turn.role === "human" &&
+      turn.source === "system" &&
+      turn.content.includes("delegated workers eval-codex and eval-opus")
+    );
+    const modelTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward reply:")
+    );
+
+    expect(wakeTurn).toBeDefined();
+    expect(modelTurn).toBeDefined();
+  });
+
+  test("persistent steward streaming preserves earlier text segments and emits staged status updates", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_TEST_PI_BEHAVIOR = "segments";
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const events: Array<{
+      type?: string;
+      data?: { content?: string | null; statusText?: string | null; stage?: string | null } | null;
+    }> = [];
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Give me the merged status." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      (event) => {
+        events.push(event as {
+          type?: string;
+          data?: { content?: string | null; statusText?: string | null; stage?: string | null } | null;
+        });
+      },
+    );
+
+    expect(res.status).toBe(200);
+    await Bun.sleep(900);
+
+    const sessionId = (await res.json() as { sessionId: string }).sessionId;
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), sessionId);
+    const modelTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Final synthesis:")
+    );
+
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      event.data?.statusText === "Starting steward session..." &&
+      event.data?.stage === "starting-session"
+    )).toBe(true);
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      event.data?.statusText === "Loading project context..." &&
+      event.data?.stage === "loading-context"
+    )).toBe(true);
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      event.data?.statusText === "Waiting for response..." &&
+      event.data?.stage === "waiting-for-response"
+    )).toBe(true);
+    expect(modelTurn).toBeDefined();
+    expect(modelTurn?.content).toContain("Mock persistent steward reply:");
+    expect(modelTurn?.content).toContain("\n\n---\n\n");
+    expect(modelTurn?.content).toContain("Final synthesis: delegated worker findings are now merged.");
   });
 
   test("tier-1 preprocessing falls back to the steward when the question still needs depth", async () => {
@@ -2182,6 +2544,18 @@ path: ${context.repo}
     activeRun = await markRunActive(projectPaths, activeRun, process.pid);
     await Bun.write(getRunOutputPath(activeRun), "reading compact state\nassigning worker\n");
 
+    let secondActiveRun = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "gamma",
+      runtime: "claude",
+      model: "claude-sonnet-4-6",
+      prompt: "# Prompt",
+      source: "gateway-test",
+    });
+    secondActiveRun = await markRunActive(projectPaths, secondActiveRun, process.pid);
+    await Bun.write(getRunOutputPath(secondActiveRun), "running verification\nwaiting on diff\n");
+
     let completedRun = await createRunDraft({
       projectId: "testproj",
       projectPaths,
@@ -2244,11 +2618,17 @@ path: ${context.repo}
     expect(typeof data.summary).toBe("string");
     expect(data.supervisor?.status).toBe("active");
     expect(data.supervisor?.tail).toEqual(["tick one", "checking assignments"]);
+    expect(data.agents).toHaveLength(2);
     expect(data.agents.some((agent) =>
       agent.agentId === "alpha" &&
       agent.runtime === "codex" &&
       !agent.descriptor.includes("via codex") &&
       agent.latestOutput?.includes("assigning worker")
+    )).toBe(true);
+    expect(data.agents.some((agent) =>
+      agent.agentId === "gamma" &&
+      agent.runtime === "claude" &&
+      agent.latestOutput?.includes("waiting on diff")
     )).toBe(true);
     expect(data.recentCompletions.some((completion) =>
       completion.agentId === "beta" &&
