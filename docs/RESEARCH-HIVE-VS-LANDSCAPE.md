@@ -49,20 +49,35 @@ Five components:
    learned facts.
 
 4. **Skills** — Plugin directories with SKILL.md files. Natural language
-   instructions + tool configurations. 5,700+ community skills in the
-   marketplace.
+   instructions + tool configurations. 13,700+ community skills on ClawHub
+   (the public registry), with 5,400+ curated in the awesome-openclaw-skills
+   collection. Includes a dedicated **coding agent skill** that supports
+   background and one-shot modes with models like gpt-5.2-codex.
 
-5. **Heartbeat** — Cron-based scheduling. Agents can wake up autonomously
-   (e.g., morning briefing at 08:00, inbox monitoring, periodic tasks).
+5. **Heartbeat** — Cron-based scheduling (default: every 30 minutes). On
+   each tick, the agent reads HEARTBEAT.md — a checklist of tasks to
+   proactively monitor. If something needs attention, it acts and messages
+   the user. If not, it replies HEARTBEAT_OK (which the Gateway suppresses).
+   Every 4 hours, deeper work: researching topics, updating MEMORY.md,
+   refining procedural skills. Cost-optimized: lightweight shell scripts
+   check state first; the LLM is only invoked if something needs attention.
+   Timezone-aware scheduling prevents 3 AM pings.
 
 Key architectural properties:
 - **Lane Queue Model** — tasks serialized by default to prevent race
   conditions. Additional lanes (cron, subagent) are opt-in parallelism.
+- **Hook system** — interception points at `before_model_resolve`,
+  `before_prompt_build`, `before_agent_start`, `before_tool_call`,
+  `after_tool_call`, and `tool_result_persist`. Plugins can inject context,
+  override model selection, or intercept tool execution. This is how the
+  ecosystem extends OpenClaw without forking — hooks are the extension API.
 - **Model-agnostic** — works with Claude, GPT-4o, Gemini, DeepSeek, or
-  local models via Ollama.
+  local models via Ollama. Requires Node 24 (recommended) or Node 22.16+.
 - **Sub-agents are hands, not minds** — when OpenClaw delegates, sub-agents
   get stripped-down context for a single task. They're execution units, not
-  independent thinkers.
+  independent thinkers. Cross-session tools (`sessions_list`,
+  `sessions_history`, `sessions_send`) enable agent-to-agent communication
+  but the design is still single-brain-with-helpers, not multi-mind.
 
 ---
 
@@ -259,7 +274,7 @@ HIVE is a team with a manager.
 ## The Thesis: Why HIVE's Approach Wins Over Time
 
 ### Short-term (now — 12 months)
-OpenClaw wins on ecosystem. 5,700 skills, 50+ channel adapters, 302k stars,
+OpenClaw wins on ecosystem. 13,700+ skills, 50+ channel adapters, 183k+ stars,
 massive community. If you want a personal AI assistant that connects to Slack
 and WhatsApp and manages your calendar, OpenClaw is the obvious choice.
 
@@ -386,7 +401,7 @@ See `HIVE-LEADERSHIP-UI.md` for the full design of this leadership surface.
 
 ## Mitigations: OpenClaw's Ecosystem Advantage Is Porous
 
-OpenClaw's 5,700 skills sound like a moat, but the format is just a directory
+OpenClaw's 13,700+ skills sound like a moat, but the format is just a directory
 with a SKILL.md file — YAML frontmatter plus markdown instructions. No SDK, no
 compilation, no special runtime. Skills are playbooks, not code.
 
@@ -418,7 +433,8 @@ The 5,700 skills on ClawHub are MIT-0 licensed.
 **The actual moat isn't the skills — it's the community writing them.** But
 skill portability means HIVE can be a free-rider on OpenClaw's ecosystem
 without building its own marketplace. Write a thin compatibility layer, not a
-competing ecosystem.
+competing ecosystem. The 5,400+ curated skills in the awesome-openclaw-skills
+collection are MIT-0 licensed.
 
 The skills that *won't* port cleanly are ones that depend on OpenClaw-specific
 tool configurations (channel adapters, gateway features). But those are
@@ -552,15 +568,31 @@ hard — you'd need separate instances with separate model configs, coordinated
 externally. HIVE's per-agent model selection handles this natively.
 
 ### Prediction 4: The personal assistant and the engineering team diverge
+### *(Update: this is already happening — and may not diverge as cleanly as predicted)*
 
 OpenClaw is optimized for the personal assistant use case: one human, one
 agent, connected to messaging apps and productivity tools. HIVE is optimized
 for the engineering team use case: one human, multiple agents, working on
 code across multiple projects.
 
-These are fundamentally different products. OpenClaw will get better at being
-a personal assistant. HIVE should get better at being an engineering team.
-Trying to be both is how you end up mediocre at both.
+**Complication:** OpenClaw now has a dedicated **coding agent skill** that
+supports background and one-shot modes with models like gpt-5.2-codex. The
+ClawWork research project (HKUDS) benchmarks OpenClaw agents on 220 real
+economic tasks across 44 sectors, where agents start with $10 and must earn
+income by completing quality work. OpenClaw is moving toward engineering
+use cases, not away from them.
+
+The divergence thesis may be wrong. OpenClaw's approach might be: "personal
+assistant that can also do engineering" — which covers a bigger surface than
+"engineering team only." The risk for HIVE isn't that OpenClaw stays in its
+lane; it's that OpenClaw's lane expands to cover ours while we can't easily
+expand to cover theirs (messaging channels, personal assistant skills).
+
+The counter: OpenClaw's coding agent is still a single agent with a skill
+bolt-on. It doesn't have multi-perspective review, heterogeneous model
+composition, or cross-project memory. It's one brain doing coding, not a
+team. Whether that matters depends on whether the multi-agent thesis is
+validated (see "The Persona Value Proposition Is Unproven" above).
 
 ### Prediction 5: Files-as-API becomes the coordination standard
 
@@ -691,6 +723,20 @@ This isn't a gap we can hand-wave away with "we trust the models." As agents
 become more autonomous and work on real codebases, the attack surface grows.
 A prompt injection in a file the scout reads could instruct the craftsman to
 exfiltrate environment variables. We have zero defense against this.
+
+**But OpenClaw's security isn't as solid as it looks either.** CVE-2026-25253
+(CVSS 8.8, disclosed January 2026) was a cross-site WebSocket hijacking bug
+that could steal auth tokens and enable RCE. Cisco's AI security team found
+third-party skills performing data exfiltration and prompt injection without
+user awareness. China restricted state agencies from using it in March 2026.
+NVIDIA launched **NemoClaw** specifically to add enterprise-grade privacy
+controls and security guardrails on top of OpenClaw — implying the base
+product's security model isn't enterprise-ready.
+
+So the honest picture: OpenClaw has a *designed* security model (Docker
+containers, capability-based permissions) but it's been breached and its
+ecosystem is actively exploited. HIVE has *no* designed security model.
+Both are inadequate — we just lack the pretense of having one.
 
 **What it would take to fix:** This is hard and probably requires adopting
 someone else's sandboxing rather than building our own. Docker-based execution,
@@ -944,7 +990,7 @@ For balance, restate the wins that survive honest scrutiny:
 | Scaling bet | Better infrastructure | Better models |
 | Human role | Conversationalist | Team manager |
 | Complexity | 430k lines, 1.52GB RAM | Zero deps, files on disk |
-| Ecosystem | 5,700 skills, 50+ channels | Small, focused |
+| Ecosystem | 13,700+ skills, 50+ channels | Small, focused |
 | Current strength | Breadth, community | Depth, architecture |
 | Long-term bet | Platform dominance | Protocol elegance |
 
