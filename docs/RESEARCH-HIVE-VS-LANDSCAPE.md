@@ -6,7 +6,7 @@ A brainstorming document. March 2026.
 
 ## The Field
 
-The dominant open-source agent framework right now is **OpenClaw** (302k+ GitHub
+The dominant open-source agent framework right now is **OpenClaw** (326k+ GitHub
 stars, 300-400k users). It started as "Clawdbot" in November 2025, got renamed
 twice after Anthropic trademark complaints, and is now under an independent
 501(c)(3) foundation with OpenAI sponsorship. Its creator joined OpenAI in
@@ -274,7 +274,7 @@ HIVE is a team with a manager.
 ## The Thesis: Why HIVE's Approach Wins Over Time
 
 ### Short-term (now — 12 months)
-OpenClaw wins on ecosystem. 13,700+ skills, 50+ channel adapters, 183k+ stars,
+OpenClaw wins on ecosystem. 13,700+ skills, 50+ channel adapters, 326k+ stars,
 massive community. If you want a personal AI assistant that connects to Slack
 and WhatsApp and manages your calendar, OpenClaw is the obvious choice.
 
@@ -456,11 +456,30 @@ codebases.
 
 | Tool | What It Does | Stars | Language |
 |------|--------------|-------|----------|
+| `pi-mono` | Monorepo: pi-agent runtime, pi-ai multi-provider SDK | 4 | TypeScript |
 | `agent-rules` | Rules/knowledge for AI agents (archived Dec 2025) | 5,639 | Shell |
 | `agent-scripts` | Shared guardrail scripts across repos | 2,238 | Python |
 | `oracle` | Context bundler: files + prompt → LLM call with sessions | 1,671 | TypeScript |
 | `mcporter` | MCP runtime: discover, call, package MCP servers | 3,066 | TypeScript |
 | `claude-code-mcp` | Claude Code as one-shot MCP server | 1,182 | JavaScript |
+| `lobster` | Typed, local-first workflow/macro engine | — | TypeScript |
+
+`pi-mono` is the most important repo here despite having only 4 stars —
+it contains the actual agent runtime (`pi-agent`) that OpenClaw delegates
+its Brain to. This confirms the doc's earlier claim about the Pi agent
+framework: OpenClaw doesn't implement its own reasoning loop. Pi handles
+tool calling, state management, and the ReAct cycle. OpenClaw handles
+everything else (connect, queue, remember, extend).
+
+`lobster` is architecturally significant: it's a typed workflow engine
+for deterministic multi-step pipelines. Instead of having the agent
+re-plan every step (burning tokens), lobster pre-defines workflows with
+structured object passing between steps. This is OpenClaw's answer to
+the "agent loops waste tokens on re-planning" problem — and it's a
+challenge to HIVE's thesis. If deterministic workflows can replace
+agent-driven coordination for common tasks, then the "orchestrator-as-
+agent" advantage shrinks. The counter: lobster handles *known* workflows;
+HIVE's steward handles *novel* situations. Both are needed.
 
 The evolution is visible: `agent-rules` (static rules in files, archived)
 → `agent-scripts` (executable guardrails shared across repos) → OpenClaw
@@ -1092,7 +1111,7 @@ at following instructions.
 
 ### 6. Community, Testing, and Battle-Hardening
 
-OpenClaw: 302,000 GitHub stars. 300,000-400,000 users. Thousands of
+OpenClaw: 326,000 GitHub stars. 300,000-400,000 users. Thousands of
 contributors. Security audits. Bug reports from real-world usage across
 dozens of platforms and configurations.
 
