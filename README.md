@@ -18,18 +18,18 @@ The core bet: files are the API. Durable state lives in markdown under
 
 ## What HIVE Is
 
-HIVE is not a monolithic agent runtime. It is a shared operating surface for a
-team of minds.
+HIVE is a shared operating surface for a team of minds, not a monolithic agent
+runtime.
 
 - The **steward** owns direction, synthesis, delegation, and human communication.
   It runs as a persistent session and coordinates everything.
 - **Workers** are ephemeral specialists. The steward picks a model and persona
-  for each task from a pool — no fixed roster, no named agents.
+  for each task from a pool. No fixed roster, no named agents.
 - The **hive substrate** persists identity, memory, plans, board state,
   messages, runs, and sessions across restarts.
 - The **gateway** is a live operator console over the same substrate.
 
-That separation matters:
+Because of that separation:
 
 - prompts and files define coordination behavior
 - runtimes can change without rewriting the system
@@ -44,7 +44,7 @@ state.
 - `PLAN.md` defines the mission
 - `BOARD.md` tracks live work and blockers
 - `LOG.md` records durable session history
-- `msg/*.md` is the message bus — assignment files trigger worker launches
+- `msg/*.md` is the message bus; assignment files trigger worker launches
 - `memory/` accumulates cross-project learning
 - `projects/<project>/state/` holds disposable derived state
 
@@ -69,9 +69,9 @@ hive init
 
 This scaffolds `~/.hive/` with:
 
-- `SOUL.md` — shared culture and standards
-- `IDENTITY.md` — what the hive is
-- `SELF.md` — user preferences
+- `SOUL.md`, shared culture and standards
+- `IDENTITY.md`, what the hive is
+- `SELF.md`, user preferences
 - default personas (steward, architect, craftsman, critic, scout)
 - default skills
 - memory directories
@@ -81,9 +81,9 @@ This scaffolds `~/.hive/` with:
 
 Edit these first:
 
-- `~/.hive/SOUL.md` — shared values every agent carries
-- `~/.hive/IDENTITY.md` — who the hive is
-- `~/.hive/SELF.md` — who you are and how you work
+- `~/.hive/SOUL.md`, shared values every agent carries
+- `~/.hive/IDENTITY.md`, who the hive is
+- `~/.hive/SELF.md`, who you are and how you work
 
 ### 4. Register a project
 
@@ -104,7 +104,7 @@ Edit `~/.hive/config.md` and define available models:
 - qwen: ollama, qwen3:4b, local fast triage
 ```
 
-The model pool is hive-wide — available to all projects. The steward sees
+The model pool is hive-wide, available to all projects. The steward sees
 this pool and picks model + persona per task. No fixed team roster.
 
 ### 6. Start operating
@@ -136,12 +136,12 @@ Human speaks
 ```
 
 Coordination is event-driven through file system watchers. The supervisor
-poll (120s) is a safety net for zombie cleanup, not the primary path.
+poll (120s) is only a safety net for zombie cleanup.
 
 ## Ephemeral Workers
 
-Workers are not named team members. They are ephemeral model+persona
-combinations that the steward creates on demand.
+Workers are ephemeral model+persona combinations that the steward creates on
+demand.
 
 The steward writes an assignment file:
 
@@ -167,10 +167,10 @@ runs with the craftsman persona on opus, completes, and the steward gets
 notified.
 
 Available personas:
-- **architect** — system design, structure, trade-offs
-- **craftsman** — implementation, code quality
-- **critic** — review, edge cases, testing
-- **scout** — research, exploration, alternatives
+- **architect**: system design, structure, trade-offs
+- **craftsman**: implementation, code quality
+- **critic**: review, edge cases, testing
+- **scout**: research, exploration, alternatives
 
 ## Mental Model
 
@@ -373,8 +373,8 @@ bun build --compile ./bin/hive.ts --outfile hive
 
 Environment variables:
 
-- `HIVE_HOME` — override `~/.hive/`
-- `HIVE_FIXED_NOW` — deterministic timestamps in tests
+- `HIVE_HOME`: override `~/.hive/`
+- `HIVE_FIXED_NOW`: deterministic timestamps in tests
 
 ## Current Status
 

@@ -1,4 +1,5 @@
 import { parseBoard, minutesSince } from "./board";
+import { revertWorkerChanges, runVerifyCommand, type VerifyCommandResult } from "./git";
 import { HiveMessage } from "./messages";
 import {
   extractProjectConfigValue,
@@ -412,4 +413,71 @@ export function formatPulse(signals: PulseSignal[], activeRunCount: number): str
   });
 
   return [`◆ Pulse: ${parts.join(", ")}`, ...details].join("\n");
+}
+
+// --- Verification ---
+
+export type VerificationSpec = {
+  command: string;
+  maxAttempts: number;
+  autoRevert: boolean;
+};
+
+export type VerificationOutcome =
+  | { action: "keep"; verifyResult: VerifyCommandResult }
+  | { action: "retry"; attempt: number; maxAttempts: number; verifyResult: VerifyCommandResult; reverted: boolean; revertSummary: string }
+  | { action: "block"; attempt: number; maxAttempts: number; verifyResult: VerifyCommandResult; reverted: boolean; revertSummary: string };
+
+export function extractVerificationSpec(message: HiveMessage | null): VerificationSpec | null {
+  if (!message) {
+    return null;
+  }
+
+  const verify = message.attributes.verify?.trim();
+
+  if (!verify) {
+    return null;
+  }
+
+  const maxAttempts = Math.max(1, parseInt(message.attributes["max-attempts"] ?? "1", 10) || 1);
+  const autoRevert = (message.attributes["auto-revert"] ?? "true").trim().toLowerCase() !== "false";
+
+  return { command: verify, maxAttempts, autoRevert };
+}
+
+export function runVerification(input: {
+  spec: VerificationSpec;
+  repoPath: string;
+  attempt: number;
+  scope: string[] | null;
+}): VerificationOutcome {
+  const verifyResult = runVerifyCommand(input.repoPath, input.spec.command);
+
+  if (verifyResult.passed) {
+    return { action: "keep", verifyResult };
+  }
+
+  const revert = input.spec.autoRevert
+    ? revertWorkerChanges(input.repoPath, input.scope)
+    : { reverted: false, summary: "auto-revert disabled" };
+
+  if (input.attempt >= input.spec.maxAttempts) {
+    return {
+      action: "block",
+      attempt: input.attempt,
+      maxAttempts: input.spec.maxAttempts,
+      verifyResult,
+      reverted: revert.reverted,
+      revertSummary: revert.summary,
+    };
+  }
+
+  return {
+    action: "retry",
+    attempt: input.attempt,
+    maxAttempts: input.spec.maxAttempts,
+    verifyResult,
+    reverted: revert.reverted,
+    revertSummary: revert.summary,
+  };
 }
