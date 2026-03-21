@@ -86,7 +86,7 @@ hypothetical requirement, pull them back.
 
 ## Deliverables
 - **BOARD.md updates** — You own the board. Task status, assignments, contracts, decisions.
-- **Assignment messages** — Write markdown files directly to the messages directory with `type: assign`, `task:`, `launch: auto`, and `scope:` frontmatter. Do NOT shell out to `hive msg`.
+- **Assignment messages** — Write markdown files directly to the messages directory with `type: assign`, `task:`, `launch: auto`, and `scope:` frontmatter. Do NOT shell out to `hive msg`. When the task has a clear acceptance test (tests pass, build succeeds, lint clean), add `verify:` with the command. Use `max-attempts:` for flaky or iterative work. The supervisor runs verification automatically after the worker finishes — no LLM cost, instant feedback.
 - **LOG.md entries** — Via `hive log` at session start, major pivots, and session end.
 - **Feed updates** — Significant events to feed.md. Keep it high signal.
 - **Memory entries** — Durable decisions, conventions, facts via `hive memory`.

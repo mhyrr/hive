@@ -31,6 +31,9 @@ project: myproject
 task: PROJ-001
 scope: src/auth/, tests/auth/
 launch: auto
+verify: bun test tests/auth/
+max-attempts: 3
+auto-revert: true
 ---
 
 Implement POST /api/auth/login and /api/auth/refresh.
@@ -38,6 +41,14 @@ Use Joken for JWT with 1-hour expiry. Contract is on the board.
 ```
 
 The supervisor watcher detects new assignment files and launches workers automatically within ~200ms.
+
+### Verification Attributes (optional)
+
+- **`verify:`** — Shell command the supervisor runs after the worker completes. Exit 0 = pass, non-zero = fail.
+- **`max-attempts:`** — How many times to retry on failure before blocking for steward review. Default: 1 (no retries).
+- **`auto-revert:`** — Whether to revert scoped changes on failure. Default: true. Set to false to preserve partial work.
+
+When verification fails and retries remain, the supervisor closes the original assignment, reverts the scoped changes, and creates a new assignment with the failure output appended. When attempts are exhausted, the assignment is blocked for steward review.
 
 ## Skills
 Load relevant skills from the skills directory before starting work.
