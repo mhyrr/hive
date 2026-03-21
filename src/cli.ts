@@ -24,6 +24,7 @@ import { superviseCommand } from "./commands/supervise";
 import { syncCommand } from "./commands/sync";
 import { workCommand } from "./commands/work";
 import { UsageError } from "./lib/errors";
+import { routePluginCommand } from "./lib/plugins";
 
 export async function runCli(args: string[]): Promise<string> {
   const [command, ...rest] = args;
@@ -88,7 +89,14 @@ export async function runCli(args: string[]): Promise<string> {
       return archiveCommand();
     case "sync":
       return syncCommand();
-    default:
+    default: {
+      const pluginResult = await routePluginCommand(command ?? "", rest);
+
+      if (pluginResult !== null) {
+        return pluginResult;
+      }
+
       throw new UsageError(`Unknown command: ${command}`);
+    }
   }
 }
