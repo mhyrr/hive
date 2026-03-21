@@ -1,6 +1,7 @@
 import type { Tool } from "@mariozechner/pi-ai";
 
 import { createBashTool } from "./bash";
+import { createDelegationTools } from "./delegate";
 import { createFileTools, createStewardExecutionContext } from "./files";
 import { createSearchTools } from "./search";
 
@@ -15,6 +16,9 @@ export type PersistentStewardTool = Tool & {
 export function buildPersistentStewardTools(input: {
   hiveHome: string;
   repoPath: string;
+  msgDir: string;
+  projectId: string;
+  globalConfig: string;
 }): PersistentStewardTool[] {
   const execution = createStewardExecutionContext(input);
 
@@ -22,5 +26,10 @@ export function buildPersistentStewardTools(input: {
     ...createFileTools(execution),
     ...createSearchTools(execution),
     createBashTool(execution),
+    ...createDelegationTools({
+      msgDir: input.msgDir,
+      projectId: input.projectId,
+      globalConfig: input.globalConfig,
+    }),
   ] as PersistentStewardTool[];
 }
