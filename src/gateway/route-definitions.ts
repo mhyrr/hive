@@ -741,16 +741,9 @@ const postRoutes: Record<string, RouteHandler> = {
         options,
         requestedProject: targetProject,
       });
-      const sessionsDir = join(options.hivePaths.home, "sessions");
-
-      await appendTurn({
-        sessionsDir,
-        sessionId: target.sessionId,
-        role: "human",
-        content: message,
-        source: "system",
-      });
-
+      // Do NOT append a synthetic [system] turn here — the workflow gate
+      // may suppress this wake if there is nothing new.  The workflow
+      // appends the turn only when it decides to proceed.
       scheduleProjectRuntimeRefresh({
         hivePaths: options.hivePaths,
         projectId: target.projectId,

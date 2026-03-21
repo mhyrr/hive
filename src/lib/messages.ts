@@ -48,7 +48,7 @@ function normalizeMessageAttributes(
     result.type = "assign";
   }
 
-  for (const key of ["task", "launch", "scope"] as const) {
+  for (const key of ["task", "launch", "scope", "persona", "runtime", "model"] as const) {
     if (result[key]) {
       continue;
     }

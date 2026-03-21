@@ -485,9 +485,38 @@ const geminiAdapter: RuntimeAdapter = {
   detectInstalled: () => commandExists("gemini"),
 };
 
+const ollamaAdapter: RuntimeAdapter = {
+  name: "ollama",
+  aliases: ["local", "oss"],
+  command: "codex",
+  buildLaunchArgs: ({ model, repoPath, hiveHome, prompt }) => [
+    "exec",
+    "--full-auto",
+    "--oss",
+    "-C",
+    repoPath,
+    "--add-dir",
+    hiveHome,
+    ...(model ? ["-m", model] : []),
+    prompt,
+  ],
+  buildInteractiveArgs: ({ model, repoPath, hiveHome, systemPrompt }) => [
+    "--full-auto",
+    "--oss",
+    "-C",
+    repoPath,
+    "--add-dir",
+    hiveHome,
+    ...(model ? ["-m", model] : []),
+    systemPrompt,
+  ],
+  suppressLine: (line: string) => codexAdapter.suppressLine(line),
+  detectInstalled: () => commandExists("codex"),
+};
+
 // --- Registry ---
 
-const builtinAdapters: RuntimeAdapter[] = [claudeAdapter, codexAdapter, geminiAdapter];
+const builtinAdapters: RuntimeAdapter[] = [claudeAdapter, codexAdapter, geminiAdapter, ollamaAdapter];
 
 function buildRegistry(adapters: RuntimeAdapter[]): Map<string, RuntimeAdapter> {
   const map = new Map<string, RuntimeAdapter>();

@@ -21,6 +21,7 @@ import {
 
 export type StewardContext = {
   globalConfig: string;
+  projectConfig: string;
   projectPaths: ProjectPaths;
   repoPath: string;
   sessionPrompt: string;
@@ -41,10 +42,10 @@ export type StewardContext = {
   activeRunsDigest: string;
   recentResultsDigest: string;
   humanInboxDigest: string;
-  logRollupDigest: string | null;
-  phaseSummaryDigest: string | null;
-  memoryHotsetDigest: string | null;
-  staleMemoryDigest: string | null;
+  logRollupDigest?: string | null;
+  phaseSummaryDigest?: string | null;
+  memoryHotsetDigest?: string | null;
+  staleMemoryDigest?: string | null;
   knowledgeDigest: string;
   recentDecisionsDigest: string;
   projectEntityDigest: string;
@@ -121,6 +122,7 @@ export async function loadStewardContext(input: {
   // the prompts that consume it.
   return {
     globalConfig,
+    projectConfig,
     projectPaths,
     repoPath,
     sessionPrompt,
@@ -141,10 +143,9 @@ export async function loadStewardContext(input: {
     activeRunsDigest: runtimeState.activeRunsSummary.digest,
     recentResultsDigest: renderRecentResultsFromState(runtimeState),
     humanInboxDigest: renderHumanInboxFromState(runtimeState),
-    logRollupDigest: null,
-    phaseSummaryDigest: null,
-    memoryHotsetDigest: null,
-    staleMemoryDigest: null,
+    // logRollupDigest, phaseSummaryDigest, memoryHotsetDigest, staleMemoryDigest:
+    // omitted — these were produced by the old cognition packet compiler which
+    // was removed. When idle compilation is re-added, populate them here.
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,

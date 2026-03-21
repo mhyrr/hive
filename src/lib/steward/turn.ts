@@ -904,6 +904,7 @@ export async function runPersistentStewardTurn(input: {
       identity: context.identity,
       self: context.self,
       cognitiveRoutingPolicy,
+      projectConfig: context.projectConfig,
     });
     const handle = await acquirePersistentStewardHandle({
       hivePaths: input.hivePaths,
@@ -945,7 +946,7 @@ export async function runPersistentStewardTurn(input: {
 
     // Drain any queued worker-completion notifications and prepend them
     // to the human message so the steward sees them as part of this turn.
-    const pendingNotificationBlock = await drainPendingNotifications(input.hivePaths.home);
+    const pendingNotificationBlock = await drainPendingNotifications(input.hivePaths.home, input.projectId);
     const fullHumanMessage = pendingNotificationBlock
       ? `${pendingNotificationBlock}\n\n---\n\n${input.humanMessage}`
       : input.humanMessage;
@@ -1193,6 +1194,7 @@ export async function ensurePersistentStewardSessionReady(input: {
     identity: context.identity,
     self: context.self,
     cognitiveRoutingPolicy,
+    projectConfig: context.projectConfig,
   });
   const handle = await acquirePersistentStewardHandle({
     hivePaths: input.hivePaths,
@@ -1259,6 +1261,7 @@ function buildRunCompletionDelta(result: RunResult): string {
 
 export async function readPendingRunNotifications(
   hiveHome: string,
+  projectId?: string,
 ): Promise<PendingRunNotification[]> {
   const dir = pendingNotificationsDir(hiveHome);
   const { readdir } = await import("node:fs/promises");
@@ -1282,6 +1285,10 @@ export async function readPendingRunNotifications(
         typeof parsed.summary === "string" &&
         typeof parsed.ts === "string"
       ) {
+        // Filter by project if specified.
+        if (projectId && parsed.projectId !== projectId) {
+          continue;
+        }
         notifications.push(parsed as PendingRunNotification);
       }
     } catch {
@@ -1292,11 +1299,40 @@ export async function readPendingRunNotifications(
   return notifications.sort((a, b) => a.ts.localeCompare(b.ts));
 }
 
+/**
+ * Clear only the notifications for a specific project (or all if no project).
+ */
 export async function clearPendingRunNotifications(
   hiveHome: string,
+  projectId?: string,
 ): Promise<void> {
-  const { rm } = await import("node:fs/promises");
-  await rm(pendingNotificationsDir(hiveHome), { recursive: true, force: true });
+  if (!projectId) {
+    const { rm } = await import("node:fs/promises");
+    await rm(pendingNotificationsDir(hiveHome), { recursive: true, force: true });
+    return;
+  }
+
+  // Remove only notification files that belong to this project.
+  const dir = pendingNotificationsDir(hiveHome);
+  const { readdir, rm } = await import("node:fs/promises");
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    try {
+      const raw = await Bun.file(join(dir, entry.name)).text();
+      const parsed = JSON.parse(raw) as Partial<PendingRunNotification>;
+
+      if (parsed.projectId === projectId) {
+        await rm(join(dir, entry.name), { force: true });
+      }
+    } catch {
+      // Skip malformed files.
+    }
+  }
 }
 
 async function writePendingRunNotification(
@@ -1345,14 +1381,15 @@ export async function notifyStewardRunCompleted(
  */
 export async function drainPendingNotifications(
   hiveHome: string,
+  projectId?: string,
 ): Promise<string | null> {
-  const notifications = await readPendingRunNotifications(hiveHome);
+  const notifications = await readPendingRunNotifications(hiveHome, projectId);
 
   if (notifications.length === 0) {
     return null;
   }
 
-  await clearPendingRunNotifications(hiveHome);
+  await clearPendingRunNotifications(hiveHome, projectId);
 
   const lines = notifications.map((n) => n.summary);
   return `## Worker Completions Since Last Turn\n\n${lines.join("\n\n")}`;

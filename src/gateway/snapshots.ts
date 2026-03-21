@@ -13,8 +13,11 @@ import { parseStructuredFeedEntries } from "../lib/feed";
 import { readJson } from "../lib/json";
 import { getProjectPaths, type ProjectPaths } from "../lib/paths";
 import {
+  extractPersonaName,
   findPlanAgent,
+  inferModelPoolFromAgentId,
   parseDefaultTeam,
+  parseModelPool,
   stripRuntimeHintsFromDescriptor,
 } from "../lib/project";
 import {
@@ -249,6 +252,27 @@ function resolveAgentPresentation(input: {
       displayName: input.agentId,
       persona: teamAgent.persona,
       descriptor: stripRuntimeHintsFromDescriptor(teamAgent.descriptor),
+    };
+  }
+
+  // Try to resolve from ephemeral agent ID pattern (e.g. craftsman-opus-001).
+  const segments = input.agentId.split("-");
+  const inferredPersona = extractPersonaName(segments[0] ?? "");
+  const modelPoolEntry = inferModelPoolFromAgentId(input.agentId, input.projectConfig);
+
+  if (modelPoolEntry) {
+    return {
+      displayName: input.agentId,
+      persona: inferredPersona || "worker",
+      descriptor: `${inferredPersona || "worker"} via ${modelPoolEntry.name} (${modelPoolEntry.model})`,
+    };
+  }
+
+  if (inferredPersona && inferredPersona !== input.agentId) {
+    return {
+      displayName: input.agentId,
+      persona: inferredPersona,
+      descriptor: `ephemeral ${inferredPersona}`,
     };
   }
 
