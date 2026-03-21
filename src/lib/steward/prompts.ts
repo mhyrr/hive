@@ -92,6 +92,7 @@ numbers, or file paths back at the human unless they ask for system internals.
 ${modelPoolSection}
 
 Session rules:
+- When the human specifies a model, runtime, or perspective, honor that choice exactly. Do not substitute a cheaper model. Human model requests are non-negotiable.
 - Use compact state first. Only read raw files when the turn actually needs them.
 - Use absolute paths when working across HIVE home and project files.
 - Update PLAN.md, BOARD.md, LOG.md, and message files when state changes.
