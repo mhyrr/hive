@@ -28,14 +28,6 @@ function renderModelPoolSection(pool: ModelPoolEntry[]): string {
     lines.push(`- ${entry.name} (${entry.runtime}, ${entry.model}): ${entry.description}`);
   }
 
-  lines.push("");
-  lines.push("Assignment frontmatter fields for model selection:");
-  lines.push("- `to:` — ephemeral agent ID, e.g. `craftsman-opus-001`, `critic-sonnet-review`");
-  lines.push("- `persona:` — cognitive lens: architect, craftsman, critic, scout");
-  lines.push("- `runtime:` — which runtime to use (from model pool above)");
-  lines.push("- `model:` — which model ID to use (from model pool above)");
-  lines.push("- Available personas: architect (system design), craftsman (implementation), critic (review/analysis), scout (research/exploration)");
-
   return lines.join("\n");
 }
 
@@ -96,32 +88,10 @@ Session rules:
 - Use compact state first. Only read raw files when the turn actually needs them.
 - Use absolute paths when working across HIVE home and project files.
 - Update PLAN.md, BOARD.md, LOG.md, and message files when state changes.
-- Delegate through HIVE message files when worker work is needed. Real delegation means WRITING A FILE to the messages directory. Do NOT use \`hive msg\` as a shell command — it is not in PATH. Instead, write the message file directly.
-- To delegate work, write a markdown file to the messages directory with this exact format:
-
-\`\`\`
----
-from: steward
-to: <agent-id>
-type: assign
-project: <project-id>
-task: <task-id>
-scope: <comma-separated scope roots>
-persona: <architect|craftsman|critic|scout>
-runtime: <runtime from model pool>
-model: <model-id from model pool>
-launch: auto
----
-
-<worker brief — what the worker should do>
-\`\`\`
-
-The \`to:\` field is an ephemeral agent ID. Name it descriptively: \`craftsman-opus-001\`, \`critic-sonnet-review\`, \`scout-haiku-scan\`, etc. There is no fixed team roster — pick the right model and persona for each task.
-
-Write the file to: \`<messages-dir>/assign-<agent-id>-<timestamp>.md\`
-The supervisor watcher will detect the file and launch the worker automatically within ~200ms.
-- When the human asks for multiple runtimes/models or parallel work, write multiple assignment files. Do not narrate delegation and then do the work yourself.
-- Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet. Write assignment files.
+- Use the \`delegate\` tool to dispatch workers. Do NOT write assignment files manually with \`write\`.
+- Use \`list_models\` to check available models before delegating.
+- When the human asks for multiple runtimes/models or parallel work, call \`delegate\` multiple times. Do not narrate delegation and then do the work yourself.
+- Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet.
 - Follow the cognitive routing policy below.
 - If the session tail conflicts with your assumptions, trust the session tail.
 
@@ -310,10 +280,9 @@ ${modelPoolSection}
 - Answer the human directly and concretely.
 - If action is needed, do it yourself through files or \`hive\` commands. Do not tell the human to operate the system for you.
 - BOARD.md is steward-owned. Update it directly when plan/task state changes.
-- When you delegate, WRITE assignment message files directly to the messages directory. Do NOT shell out to \`hive msg\` — it is not in PATH. Write a markdown file with frontmatter: \`from: steward\`, \`to: <agent-id>\`, \`type: assign\`, \`project: <project-id>\`, \`task: <task-id>\`, \`scope: <roots>\`, \`persona: <persona>\`, \`runtime: <runtime>\`, \`model: <model-id>\`, \`launch: auto\`. The body is the worker brief.
-- The \`to:\` field is an ephemeral agent ID — name it descriptively: \`craftsman-opus-001\`, \`critic-sonnet-review\`, etc. There is no fixed team roster.
-- Write to: \`<messages-dir>/assign-<agent-id>-<timestamp>.md\`. The watcher auto-launches within ~200ms.
-- If the human asks for multiple runtimes/models or parallel work, write multiple assignment files. Do not say you delegated and then do the work yourself.
+- Use the \`delegate\` tool to dispatch workers. Do NOT write assignment files manually with \`write\`.
+- Use \`list_models\` to check available models before delegating.
+- If the human asks for multiple runtimes/models or parallel work, call \`delegate\` multiple times. Do not say you delegated and then do the work yourself.
 - Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet.
 - Follow the cognitive routing policy below instead of defaulting to either solo replies or broad fan-out.
 - Keep LOG.md and feed.md high signal.

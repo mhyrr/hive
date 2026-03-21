@@ -531,6 +531,8 @@ async function startPersistentStewardHandle(input: {
   hivePaths: HivePaths;
   sessionId: string;
   repoPath: string;
+  projectId: string;
+  globalConfig: string;
   runtimeConfig: PersistentStewardRuntimeConfig;
   systemPrompt: string;
 }): Promise<PersistentStewardHandle> {
@@ -549,6 +551,9 @@ async function startPersistentStewardHandle(input: {
   agent.setTools(buildPersistentStewardTools({
     hiveHome: input.hivePaths.home,
     repoPath: input.repoPath,
+    msgDir: input.hivePaths.msgDir,
+    projectId: input.projectId,
+    globalConfig: input.globalConfig,
   }) as never);
 
   if (!process.env.HIVE_TEST_PI_BEHAVIOR) {
@@ -588,6 +593,7 @@ async function acquirePersistentStewardHandle(input: {
   hivePaths: HivePaths;
   sessionId: string;
   repoPath: string;
+  projectId: string;
   runtime: string;
   model: string | null;
   globalConfig: string;
@@ -615,6 +621,8 @@ async function acquirePersistentStewardHandle(input: {
     hivePaths: input.hivePaths,
     sessionId: input.sessionId,
     repoPath: input.repoPath,
+    projectId: input.projectId,
+    globalConfig: input.globalConfig,
     runtimeConfig,
     systemPrompt: input.systemPrompt,
   });
@@ -910,6 +918,7 @@ export async function runPersistentStewardTurn(input: {
       hivePaths: input.hivePaths,
       sessionId: input.sessionId,
       repoPath: context.repoPath,
+      projectId: input.projectId,
       runtime: context.sessionRuntime,
       model: context.sessionModel,
       globalConfig: context.globalConfig,
@@ -942,6 +951,13 @@ export async function runPersistentStewardTurn(input: {
     handle.activeTurn = turn;
     handle.systemPrompt = systemPrompt;
     handle.agent.setSystemPrompt(systemPrompt);
+    handle.agent.setTools(buildPersistentStewardTools({
+      hiveHome: input.hivePaths.home,
+      repoPath: context.repoPath,
+      msgDir: input.hivePaths.msgDir,
+      projectId: input.projectId,
+      globalConfig: context.globalConfig,
+    }) as never);
     clearIdleTimer(handle);
 
     // Drain any queued worker-completion notifications and prepend them
@@ -1200,6 +1216,7 @@ export async function ensurePersistentStewardSessionReady(input: {
     hivePaths: input.hivePaths,
     sessionId: input.sessionId,
     repoPath: context.repoPath,
+    projectId: input.projectId,
     runtime: context.sessionRuntime,
     model: context.sessionModel,
     globalConfig: context.globalConfig,

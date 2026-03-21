@@ -20,7 +20,7 @@ export type ModelPoolEntry = {
   description: string;
 };
 
-const SUPPORTED_PERSONAS = ["architect", "craftsman", "critic", "scout", "steward"] as const;
+export const SUPPORTED_PERSONAS = ["architect", "craftsman", "critic", "scout", "steward"] as const;
 
 type SupportedPersona = (typeof SUPPORTED_PERSONAS)[number];
 
