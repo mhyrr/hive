@@ -1,10 +1,23 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { digestBoard, listSkills } from "../lib/digest";
+import {
+  getWorkerBriefPacketPath,
+  materializeWorkerBriefPacket,
+  type WorkerBriefPacketDetails,
+} from "../lib/cognition";
+import { listSkills } from "../lib/digest";
 import { UsageError } from "../lib/errors";
 import { loadPromptMemoryContext } from "../lib/memory";
-import { listOpenProjectMessages } from "../lib/messages";
+const BOOTSTRAP_MAX_CHARS = 20_000;
+
+function capContent(content: string, label: string): string {
+  if (content.length <= BOOTSTRAP_MAX_CHARS) {
+    return content;
+  }
+
+  return `${content.slice(0, BOOTSTRAP_MAX_CHARS)}\n\n[... ${label} truncated at ${BOOTSTRAP_MAX_CHARS} chars ...]`;
+}
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -12,17 +25,10 @@ import {
 } from "../lib/paths";
 import {
   extractRepoPath,
-  findPlanAgent,
   parseDefaultTeam,
+  resolveProjectAgent,
 } from "../lib/project";
-
-function renderMessages(messages: Awaited<ReturnType<typeof listOpenProjectMessages>>): string {
-  if (messages.length === 0) {
-    return "(none)";
-  }
-
-  return messages.map((message) => `### ${message.filename}\n${message.raw}`).join("\n\n");
-}
+import { refreshProjectRuntimeState } from "../lib/state";
 
 async function listAvailableSkills(skillsDir: string): Promise<string[]> {
   try {
@@ -51,8 +57,82 @@ async function readProjectMemory(memoryPath: string): Promise<string> {
   }
 }
 
-export async function promptCommand(args: string[]): Promise<string> {
-  const agentId = args[0];
+function renderWorkerBrief(
+  packetPath: string,
+  details: WorkerBriefPacketDetails,
+): string {
+  const lines = [
+    "## Worker Brief",
+    `- packet: ${packetPath}`,
+    `- scope: ${details.scopeRoots?.join(", ") || "*"}`,
+    "",
+    "### Assignment",
+    details.assignment,
+  ];
+
+  if (details.assignmentMessage) {
+    lines.push("");
+    lines.push("### Assignment Message");
+    lines.push(`- ${details.assignmentMessage.filename} (${details.assignmentMessage.type})`);
+    lines.push(details.assignmentMessage.body);
+  }
+
+  if (details.openMessages.length > 0) {
+    lines.push("");
+    lines.push("### Open Messages");
+
+    for (const message of details.openMessages) {
+      lines.push(`#### ${message.filename}`);
+      lines.push(message.body);
+      lines.push("");
+    }
+
+    if (lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+  } else {
+    lines.push("");
+    lines.push("### Open Messages");
+    lines.push("(none)");
+  }
+
+  if (details.relevantRunResults.length > 0) {
+    lines.push("");
+    lines.push("### Relevant Prior Work");
+
+    for (const result of details.relevantRunResults) {
+      lines.push(
+        `- ${result.agentId} | ${result.status} | ${result.summary}${
+          result.changedFiles.length > 0 ? ` | files: ${result.changedFiles.join(", ")}` : ""
+        }`,
+      );
+    }
+  } else {
+    lines.push("");
+    lines.push("### Relevant Prior Work");
+    lines.push("(none)");
+  }
+
+  return lines.join("\n");
+}
+
+function matchesMessageReference(filename: string, reference: string): boolean {
+  const normalizedReference = reference.trim();
+  const filenameWithoutExtension = filename.replace(/\.md$/, "");
+
+  return (
+    filename === normalizedReference ||
+    filenameWithoutExtension === normalizedReference ||
+    filename.startsWith(normalizedReference) ||
+    filenameWithoutExtension.startsWith(normalizedReference)
+  );
+}
+
+export async function buildAgentPrompt(input: {
+  agentId: string;
+  assignmentMessageRef?: string | null;
+}): Promise<string> {
+  const agentId = input.agentId;
 
   if (!agentId) {
     throw new UsageError("Usage: hive prompt <agent-id>");
@@ -68,14 +148,37 @@ export async function promptCommand(args: string[]): Promise<string> {
   const projectPaths = getProjectPaths(paths, activeProject);
   const soul = await Bun.file(paths.soul).text();
   const projectConfig = await Bun.file(projectPaths.config).text();
-  const board = await Bun.file(projectPaths.board).text();
   const projectMemory = await readProjectMemory(projectPaths.memory);
   const memoryContext = await loadPromptMemoryContext(paths, activeProject);
   const plan = await Bun.file(projectPaths.plan).text();
   const repoPath = extractRepoPath(projectConfig) ?? "(unknown)";
-  const planAgent = findPlanAgent(plan, agentId);
-  const teamAgent = parseDefaultTeam(projectConfig).find((agent) => agent.id === agentId);
-  const resolvedAgent = planAgent ?? teamAgent;
+  const runtimeState = await refreshProjectRuntimeState({
+    hivePaths: paths,
+    projectId: activeProject,
+    projectPaths,
+  });
+  const assignmentMessage = runtimeState.openMessages
+    .filter((message) => message.attributes.to === agentId && message.attributes.type === "assign")
+    .sort((left, right) =>
+      (right.attributes.ts ?? right.filename).localeCompare(
+        left.attributes.ts ?? left.filename,
+      ),
+    )
+    .find((message) =>
+      input.assignmentMessageRef?.trim()
+        ? matchesMessageReference(message.filename, input.assignmentMessageRef)
+        : true,
+    ) ?? null;
+  const resolvedAgent = resolveProjectAgent({
+    plan,
+    projectConfig,
+    agentId,
+    allowAdHoc: Boolean(assignmentMessage),
+    assignmentBody: assignmentMessage?.body ?? null,
+    assignmentPersona: assignmentMessage?.attributes.persona ?? null,
+    runtimeHint: assignmentMessage?.attributes.runtime ?? null,
+    modelHint: assignmentMessage?.attributes.model ?? null,
+  });
 
   if (!resolvedAgent) {
     const knownAgents = [
@@ -95,13 +198,19 @@ export async function promptCommand(args: string[]): Promise<string> {
     throw new UsageError(`Missing persona file: ${resolvedAgent.persona}`);
   }
 
-  const messages = (await listOpenProjectMessages(paths.msgDir, activeProject)).filter(
-    (message) => message.attributes.to === agentId,
-  );
-  const assignment =
-    "body" in resolvedAgent && resolvedAgent.body
-      ? resolvedAgent.body
-      : "No active assignment in PLAN.md. Default to the project configuration and the live board.";
+  const workerBrief = await materializeWorkerBriefPacket({
+    projectId: activeProject,
+    projectPaths,
+    agentId,
+    resolvedAgent,
+    plan,
+    projectConfig,
+    openMessages: runtimeState.openMessages,
+    recentResults: runtimeState.recentResults,
+    compilerCacheIndex: runtimeState.compilerCacheIndex,
+    preferredAssignmentMessage: assignmentMessage?.filename ?? input.assignmentMessageRef ?? null,
+  });
+  const workerBriefDetails = workerBrief.details as WorkerBriefPacketDetails;
 
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
   const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
@@ -114,7 +223,7 @@ export async function promptCommand(args: string[]): Promise<string> {
 You are ${agentId} for project ${activeProject}. Operate from the files below, not assumptions.
 
 ## Shared Soul
-${soul.trim()}
+${capContent(soul.trim(), "SOUL.md")}
 
 ## Before Your First Action
 Read these skills — they define how you think:
@@ -130,10 +239,16 @@ Read trust policy: ${paths.trust}
 - Check \`hive inbox ${agentId}\` between major steps. Use \`./hive inbox ${agentId}\` when the binary is built locally but not installed on PATH.
 - When you answer or finish a message-driven task, resolve it with \`hive msg resolve <message> ${agentId} <answer>\` or \`./hive msg resolve <message> ${agentId} <answer>\`.
 - Close obsolete threads with \`hive msg close <message> ${agentId} [note]\` or \`./hive msg close <message> ${agentId} [note]\`.
-- Stay inside your stated scope unless the orchestrator or human reassigns you.
+- Stay inside your stated scope unless the steward or human reassigns you.
 
 ## Initiative
-You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Before ending your session, flush everything important to memory and LOG.md. Don't batch — record as you go.
+You take action without being told. When you make a decision, record it: \`hive memory decision "..."\`. When you discover a convention, record it: \`hive memory convention "..."\`. When you learn a durable fact, record it: \`hive memory fact "..."\`. Record as you go — don't batch.
+
+## Before You Exit
+Your context window dies when you exit. Anything you learned that isn't in a file is lost forever. Before finishing:
+1. Flush decisions, conventions, and facts to memory via the commands above.
+2. Log a summary of what you built and any trade-offs to LOG.md via \`hive log\`.
+3. If you hit a dead end or chose between approaches, record WHY — the next agent will face the same choice.
 
 ## Agent
 id: ${agentId}
@@ -161,15 +276,15 @@ recent-decisions-json: ${memoryContext.recentDecisionsPath}
 project-entity-summary: ${memoryContext.projectEntitySummaryPath}
 journal: ${memoryContext.journalPath}
 messages-dir: ${paths.msgDir}
+worker-brief-json: ${getWorkerBriefPacketPath(projectPaths, agentId)}
 
 ## Available Skills
 ${listSkills(paths.skillsDir, availableSkillNames)}
 
-## Your Assignment
-${assignment}
+${renderWorkerBrief(getWorkerBriefPacketPath(projectPaths, agentId), workerBriefDetails)}
 
 ## Board Summary
-${digestBoard(board)}
+${runtimeState.boardSummary.digest}
 
 ## Project Memory
 ${projectMemory}
@@ -183,7 +298,15 @@ ${memoryContext.recentDecisionsDigest}
 
 ### Project Entity Memory
 ${memoryContext.projectEntityDigest}
+`;
+}
 
-## Open Messages For You
-${renderMessages(messages)}`;
+export async function promptCommand(args: string[]): Promise<string> {
+  const agentId = args[0];
+
+  if (!agentId) {
+    throw new UsageError("Usage: hive prompt <agent-id>");
+  }
+
+  return buildAgentPrompt({ agentId });
 }

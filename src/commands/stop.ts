@@ -7,6 +7,7 @@ import {
   getProjectPaths,
 } from "../lib/paths";
 import { listActiveRuns, markRunStopRequested, reconcileActiveConsoleRun } from "../lib/runs";
+import { stopManagedGatewayCommand } from "./gateway";
 
 function findTargetRun(
   target: string,
@@ -36,7 +37,7 @@ export async function stopCommand(args: string[]): Promise<string> {
   const target = args[0]?.trim();
 
   if (!target) {
-    throw new UsageError("Usage: hive stop <agent-id|run-id>");
+    return stopManagedGatewayCommand();
   }
 
   const paths = await ensureHiveScaffold();

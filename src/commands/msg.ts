@@ -13,17 +13,37 @@ function parseMsgArgs(args: string[]): {
   from: string;
   to: string;
   body: string;
+  attributes: Record<string, string>;
 } {
   let type = "notify";
+  const attributes: Record<string, string> = {};
   let cursor = 0;
 
-  if (args[0] === "--type") {
-    if (!args[1]) {
-      throw new UsageError("Usage: hive msg [--type <type>] <from> <to> <body>");
+  while (cursor < args.length && args[cursor]?.startsWith("--")) {
+    const flag = args[cursor];
+    const value = args[cursor + 1];
+
+    if (!value) {
+      throw new UsageError(
+        "Usage: hive msg [--type <type>] [--task <task>] [--scope <scope>] [--launch <auto|manual>] <from> <to> <body>",
+      );
     }
 
-    type = args[1];
-    cursor = 2;
+    if (flag === "--type") {
+      type = value;
+    } else if (flag === "--task") {
+      attributes.task = value;
+    } else if (flag === "--scope") {
+      attributes.scope = value;
+    } else if (flag === "--launch") {
+      attributes.launch = value;
+    } else {
+      throw new UsageError(
+        "Usage: hive msg [--type <type>] [--task <task>] [--scope <scope>] [--launch <auto|manual>] <from> <to> <body>",
+      );
+    }
+
+    cursor += 2;
   }
 
   const from = args[cursor];
@@ -31,10 +51,12 @@ function parseMsgArgs(args: string[]): {
   const body = args.slice(cursor + 2).join(" ").trim();
 
   if (!from || !to || !body) {
-    throw new UsageError("Usage: hive msg [--type <type>] <from> <to> <body>");
+    throw new UsageError(
+      "Usage: hive msg [--type <type>] [--task <task>] [--scope <scope>] [--launch <auto|manual>] <from> <to> <body>",
+    );
   }
 
-  return { type, from, to, body };
+  return { type, from, to, body, attributes };
 }
 
 export async function msgCommand(args: string[]): Promise<string> {
@@ -153,7 +175,7 @@ export async function nudgeCommand(args: string[]): Promise<string> {
 
   const message = await createMessage(paths.msgDir, {
     from: "human",
-    to: "orchestrator",
+    to: "steward",
     type: "nudge",
     project: activeProject,
     body,

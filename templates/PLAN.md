@@ -9,7 +9,7 @@ Describe the current mission.
      The parser matches: ### agentId (persona-name)
      The body can include Task: and Scope: lines. -->
 
-### orchestrator (steward)
+### steward (steward)
 Task: Decompose, assign, monitor, adjust.
 
 ### alpha (craftsman)

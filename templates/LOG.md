@@ -4,7 +4,7 @@
      Format: ## YYYY-MM-DDTHH:MM:SSZ — <actor>
      Example:
 
-## 2026-03-13T14:22:00Z — orchestrator
+## 2026-03-13T14:22:00Z — steward
 Kicked off auth implementation. Alpha on endpoints, beta on frontend.
 Chose Joken over Guardian — API-only app, no Plug integration needed.
 

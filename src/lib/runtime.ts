@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream, writeFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
+import { extractConfigValue } from "./config";
 import { UsageError } from "./errors";
 import { PlanAgent, TeamAgent } from "./project";
 
@@ -484,9 +485,38 @@ const geminiAdapter: RuntimeAdapter = {
   detectInstalled: () => commandExists("gemini"),
 };
 
+const ollamaAdapter: RuntimeAdapter = {
+  name: "ollama",
+  aliases: ["local", "oss"],
+  command: "codex",
+  buildLaunchArgs: ({ model, repoPath, hiveHome, prompt }) => [
+    "exec",
+    "--full-auto",
+    "--oss",
+    "-C",
+    repoPath,
+    "--add-dir",
+    hiveHome,
+    ...(model ? ["-m", model] : []),
+    prompt,
+  ],
+  buildInteractiveArgs: ({ model, repoPath, hiveHome, systemPrompt }) => [
+    "--full-auto",
+    "--oss",
+    "-C",
+    repoPath,
+    "--add-dir",
+    hiveHome,
+    ...(model ? ["-m", model] : []),
+    systemPrompt,
+  ],
+  suppressLine: (line: string) => codexAdapter.suppressLine(line),
+  detectInstalled: () => commandExists("codex"),
+};
+
 // --- Registry ---
 
-const builtinAdapters: RuntimeAdapter[] = [claudeAdapter, codexAdapter, geminiAdapter];
+const builtinAdapters: RuntimeAdapter[] = [claudeAdapter, codexAdapter, geminiAdapter, ollamaAdapter];
 
 function buildRegistry(adapters: RuntimeAdapter[]): Map<string, RuntimeAdapter> {
   const map = new Map<string, RuntimeAdapter>();
@@ -573,21 +603,41 @@ export type RuntimeHints = {
   model: string | null;
 };
 
+export type RuntimeAuthPolicy = "subscription" | "cli" | "api" | "unknown";
+
+type PiProviderAuthPolicy = "oauth-only" | "env";
+
+type RuntimeAccessPolicy = {
+  defaultRuntime: string | null;
+  defaultModel: string | null;
+  directAuthByRuntime: Record<string, RuntimeAuthPolicy>;
+  piProvider: string | null;
+  piModel: string | null;
+  piProviderByRuntime: Record<string, string | null>;
+  piModelByRuntime: Record<string, string | null>;
+};
+
+export type PiRuntimeRoute = {
+  runtime: string;
+  provider: string | null;
+  model: string | null;
+  providerContext: string | null;
+  authPolicy: PiProviderAuthPolicy | null;
+  providerSource: "env" | "config" | "implicit";
+  modelSource: "env" | "config" | "implicit";
+};
+
 type ResolveHintsInput = {
   globalConfig: string;
   teamAgent?: TeamAgent | null;
   planAgent?: PlanAgent | null;
   runtimeOverride?: string | null;
   modelOverride?: string | null;
+  assignmentRuntime?: string | null;
+  assignmentModel?: string | null;
 };
 
 // --- Config / Descriptor Helpers ---
-
-function extractConfigValue(input: string, key: string): string | null {
-  const match = input.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-
-  return match ? match[1].trim() : null;
-}
 
 function extractBodyValue(input: string, key: string): string | null {
   const match = input.match(new RegExp(`^${key}:\\s*(.+)$`, "mi"));
@@ -603,6 +653,158 @@ function normalizeRuntimeName(value: string | null | undefined): string | null {
   const adapter = getAdapter(value);
 
   return adapter ? adapter.name : null;
+}
+
+function defaultDirectAuthPolicy(runtime: string): RuntimeAuthPolicy {
+  const normalized = normalizeRuntimeName(runtime) ?? runtime.trim().toLowerCase();
+
+  if (normalized === "claude") {
+    return "subscription";
+  }
+
+  if (normalized === "codex" || normalized === "gemini") {
+    return "cli";
+  }
+
+  return "unknown";
+}
+
+function parseRuntimeAuthPolicy(value: string | null | undefined): RuntimeAuthPolicy | null {
+  const normalized = value?.trim().toLowerCase();
+
+  if (
+    normalized === "subscription" ||
+    normalized === "cli" ||
+    normalized === "api" ||
+    normalized === "unknown"
+  ) {
+    return normalized;
+  }
+
+  return null;
+}
+
+function normalizeProviderName(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+
+  return normalized || null;
+}
+
+function defaultPiProviderForRuntime(runtime: string): string | null {
+  const normalized = normalizeRuntimeName(runtime) ?? runtime.trim().toLowerCase();
+
+  if (normalized === "claude") {
+    return "anthropic";
+  }
+
+  return null;
+}
+
+function defaultPiAuthPolicyForProvider(provider: string | null): PiProviderAuthPolicy | null {
+  if (!provider) {
+    return null;
+  }
+
+  if (provider === "anthropic") {
+    return "oauth-only";
+  }
+
+  return "env";
+}
+
+function parsePiProviderAuthPolicy(value: string | null | undefined): PiProviderAuthPolicy | null {
+  const normalized = value?.trim().toLowerCase();
+
+  if (
+    normalized === "oauth-only" ||
+    normalized === "oauth" ||
+    normalized === "subscription"
+  ) {
+    return "oauth-only";
+  }
+
+  if (
+    normalized === "env" ||
+    normalized === "api" ||
+    normalized === "allow-api" ||
+    normalized === "api-or-oauth"
+  ) {
+    return "env";
+  }
+
+  return null;
+}
+
+export function readRuntimeAccessPolicy(globalConfig: string): RuntimeAccessPolicy {
+  const directAuthByRuntime: Record<string, RuntimeAuthPolicy> = {};
+  const piProviderByRuntime: Record<string, string | null> = {};
+  const piModelByRuntime: Record<string, string | null> = {};
+
+  for (const adapter of builtinAdapters) {
+    directAuthByRuntime[adapter.name] =
+      parseRuntimeAuthPolicy(extractConfigValue(globalConfig, `direct-auth-${adapter.name}`)) ??
+      defaultDirectAuthPolicy(adapter.name);
+    piProviderByRuntime[adapter.name] =
+      normalizeProviderName(extractConfigValue(globalConfig, `pi-provider-${adapter.name}`));
+    piModelByRuntime[adapter.name] =
+      extractConfigValue(globalConfig, `pi-model-${adapter.name}`);
+  }
+
+  return {
+    defaultRuntime: normalizeRuntimeName(extractConfigValue(globalConfig, "runtime")),
+    defaultModel: extractConfigValue(globalConfig, "model"),
+    directAuthByRuntime,
+    piProvider: normalizeProviderName(extractConfigValue(globalConfig, "pi-provider")),
+    piModel: extractConfigValue(globalConfig, "pi-model"),
+    piProviderByRuntime,
+    piModelByRuntime,
+  };
+}
+
+export function getConfiguredDirectAuthPolicy(
+  runtime: string,
+  globalConfig: string,
+): RuntimeAuthPolicy {
+  const normalized = normalizeRuntimeName(runtime) ?? runtime.trim().toLowerCase();
+  const policy = readRuntimeAccessPolicy(globalConfig);
+
+  return policy.directAuthByRuntime[normalized] ?? defaultDirectAuthPolicy(normalized);
+}
+
+export function resolvePiRuntimeRoute(input: {
+  globalConfig: string;
+  runtime: string;
+  env?: NodeJS.ProcessEnv;
+}): PiRuntimeRoute {
+  const env = input.env ?? process.env;
+  const policy = readRuntimeAccessPolicy(input.globalConfig);
+  const normalizedRuntime = normalizeRuntimeName(input.runtime) ?? input.runtime.trim().toLowerCase();
+  const envProvider = normalizeProviderName(env.HIVE_PI_PROVIDER);
+  const envModel = env.HIVE_PI_MODEL?.trim() || null;
+  const configuredProvider =
+    policy.piProviderByRuntime[normalizedRuntime] ??
+    policy.piProvider;
+  const configuredModel =
+    policy.piModelByRuntime[normalizedRuntime] ??
+    policy.piModel;
+  const implicitProvider = defaultPiProviderForRuntime(normalizedRuntime);
+  const provider = envProvider ?? configuredProvider ?? implicitProvider ?? null;
+  const model = envModel ?? configuredModel ?? null;
+  const providerContext = provider ?? implicitProvider;
+  const authPolicy = providerContext
+    ? parsePiProviderAuthPolicy(extractConfigValue(input.globalConfig, `pi-auth-${providerContext}`)) ??
+      defaultPiAuthPolicyForProvider(providerContext)
+    : null;
+
+  return {
+    runtime: normalizedRuntime,
+    provider,
+    model,
+    providerContext,
+    authPolicy,
+    providerSource: envProvider ? "env" : configuredProvider ? "config" : "implicit",
+    modelSource: envModel ? "env" : configuredModel ? "config" : "implicit",
+  };
 }
 
 function extractRuntimeFromDescriptor(descriptor: string): string | null {
@@ -622,9 +824,14 @@ function selectModel(
   teamAgent?: TeamAgent | null,
   planAgent?: PlanAgent | null,
   modelOverride?: string | null,
+  assignmentModel?: string | null,
 ): string | null {
   if (modelOverride?.trim()) {
     return modelOverride.trim();
+  }
+
+  if (assignmentModel?.trim()) {
+    return assignmentModel.trim();
   }
 
   const planBodyModel = planAgent ? extractBodyValue(planAgent.body, "model") : null;
@@ -644,9 +851,11 @@ function selectRuntime(
   teamAgent?: TeamAgent | null,
   planAgent?: PlanAgent | null,
   runtimeOverride?: string | null,
+  assignmentRuntime?: string | null,
 ): string {
   const candidates = [
     runtimeOverride,
+    assignmentRuntime,
     planAgent ? extractBodyValue(planAgent.body, "runtime") : null,
     planAgent ? extractRuntimeFromDescriptor(planAgent.descriptor) : null,
     teamAgent ? extractRuntimeFromDescriptor(teamAgent.descriptor) : null,
@@ -677,12 +886,14 @@ export function resolveRuntimeHints(input: ResolveHintsInput): RuntimeHints {
       input.teamAgent,
       input.planAgent,
       input.runtimeOverride,
+      input.assignmentRuntime,
     ),
     model: selectModel(
       input.globalConfig,
       input.teamAgent,
       input.planAgent,
       input.modelOverride,
+      input.assignmentModel,
     ),
   };
 }

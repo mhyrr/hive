@@ -13,10 +13,21 @@ export type TeamAgent = {
   persona: string;
 };
 
+export type ModelPoolEntry = {
+  name: string;
+  runtime: string;
+  model: string;
+  description: string;
+};
+
+const SUPPORTED_PERSONAS = ["architect", "craftsman", "critic", "scout", "steward"] as const;
+
+type SupportedPersona = (typeof SUPPORTED_PERSONAS)[number];
+
 function splitScopeRoots(value: string): string[] {
   return [...new Set(
     value
-      .split(",")
+      .split(/[\s,]+/)
       .map((entry) => normalizeScopeRoot(entry))
       .filter((entry): entry is string => Boolean(entry)),
   )];
@@ -74,6 +85,10 @@ export function findPlanAgent(plan: string, agentId: string): PlanAgent | null {
   return parsePlanAgents(plan).find((agent) => agent.id === agentId) ?? null;
 }
 
+/**
+ * @legacy Retained for backward compatibility with configs using `## Default Team`.
+ * New configs should use `## Models` and `parseModelPool()`.
+ */
 export function parseDefaultTeam(projectConfig: string): TeamAgent[] {
   const normalized = projectConfig.replace(/\r\n/g, "\n");
   const sectionHeading = normalized.match(/^## Default Team\s*$/m);
@@ -112,10 +127,214 @@ export function parseDefaultTeam(projectConfig: string): TeamAgent[] {
     .filter((agent): agent is TeamAgent => Boolean(agent));
 }
 
+/**
+ * Parse the `## Models` section from a project config.
+ * Format: `- <name>: <runtime>, <model-id>, <description>`
+ */
+export function parseModelPool(config: string): ModelPoolEntry[] {
+  const normalized = config.replace(/\r\n/g, "\n");
+  // Match either "## Models" (legacy project config) or "## Model Pool" (hive config)
+  const sectionHeading = normalized.match(/^## (?:Models|Model Pool)\s*$/m);
+
+  if (!sectionHeading || sectionHeading.index === undefined) {
+    return [];
+  }
+
+  const sectionStart = sectionHeading.index + sectionHeading[0].length + 1;
+  const remainder = normalized.slice(sectionStart);
+  const nextHeadingIndex = remainder.search(/^##\s+/m);
+  const section =
+    nextHeadingIndex === -1 ? remainder.trim() : remainder.slice(0, nextHeadingIndex).trim();
+
+  return section
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- ") && !line.startsWith("- #"))
+    .map((line) => line.slice(2))
+    .map((line) => {
+      const colonIndex = line.indexOf(":");
+
+      if (colonIndex === -1) {
+        return null;
+      }
+
+      const name = line.slice(0, colonIndex).trim();
+      const rest = line.slice(colonIndex + 1).trim();
+      const parts = rest.split(",").map((part) => part.trim());
+
+      if (parts.length < 2) {
+        return null;
+      }
+
+      return {
+        name,
+        runtime: parts[0],
+        model: parts[1],
+        description: parts.slice(2).join(",").trim() || name,
+      };
+    })
+    .filter((entry): entry is ModelPoolEntry => Boolean(entry));
+}
+
+/**
+ * Look up a model pool entry by name.
+ */
+export function findModelPoolEntry(projectConfig: string, modelName: string): ModelPoolEntry | null {
+  return parseModelPool(projectConfig).find((entry) => entry.name === modelName) ?? null;
+}
+
 export function extractPersonaName(descriptor: string): string {
   const match = descriptor.match(/[a-z0-9_-]+/i);
 
   return match ? match[0].toLowerCase() : descriptor.trim().toLowerCase();
+}
+
+function normalizeSupportedPersona(value: string | null | undefined): SupportedPersona | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
+
+  return (SUPPORTED_PERSONAS as readonly string[]).includes(normalized)
+    ? normalized as SupportedPersona
+    : null;
+}
+
+function inferAdHocPersonaFromBody(body: string): SupportedPersona | null {
+  const roleMatch =
+    body.match(/\byou are (?:an?\s+|the\s+)?([a-z0-9_-]+)\b/i) ??
+    body.match(/\bact as (?:an?\s+|the\s+)?([a-z0-9_-]+)\b/i);
+
+  return normalizeSupportedPersona(roleMatch?.[1] ?? null);
+}
+
+function inferAdHocPersonaFromAgentId(agentId: string): SupportedPersona | null {
+  const normalized = agentId.trim().toLowerCase();
+
+  // Try to extract persona from the leading segment of ephemeral IDs
+  // e.g. "craftsman-opus-001" -> "craftsman", "critic-sonnet-review" -> "critic"
+  const leadingSegment = normalized.split("-")[0] ?? "";
+  const leadingPersona = normalizeSupportedPersona(leadingSegment);
+
+  if (leadingPersona) {
+    return leadingPersona;
+  }
+
+  if (/(critic|eval|review|audit|redteam|qa)/.test(normalized)) {
+    return "critic";
+  }
+
+  if (/(scout|research|explore|discover)/.test(normalized)) {
+    return "scout";
+  }
+
+  if (/(architect|design|planner|plan)/.test(normalized)) {
+    return "architect";
+  }
+
+  if (/(steward|orchestrator)/.test(normalized)) {
+    return "steward";
+  }
+
+  return null;
+}
+
+function buildAdHocDescriptor(input: {
+  persona: string;
+  runtimeHint?: string | null;
+  modelHint?: string | null;
+}): string {
+  const runtime = input.runtimeHint?.trim() ?? "";
+  const model = input.modelHint?.trim() ?? "";
+
+  if (runtime && model) {
+    return `${input.persona}, ${model} via ${runtime}`;
+  }
+
+  if (runtime) {
+    return `${input.persona} via ${runtime}`;
+  }
+
+  return `ad hoc ${input.persona}`;
+}
+
+/**
+ * Try to extract a model pool entry name from an ephemeral agent ID.
+ * E.g. "craftsman-opus-001" with pool entry "opus" -> "opus"
+ */
+export function inferModelPoolFromAgentId(agentId: string, projectConfig: string): ModelPoolEntry | null {
+  const pool = parseModelPool(projectConfig);
+
+  if (pool.length === 0) {
+    return null;
+  }
+
+  const normalized = agentId.trim().toLowerCase();
+  const segments = normalized.split("-");
+
+  // Check each segment against pool names (e.g. "craftsman-opus-001" matches "opus")
+  for (const segment of segments) {
+    const entry = pool.find((e) => e.name === segment);
+
+    if (entry) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+export function resolveProjectAgent(input: {
+  plan: string;
+  projectConfig: string;
+  agentId: string;
+  allowAdHoc?: boolean;
+  assignmentBody?: string | null;
+  assignmentPersona?: string | null;
+  runtimeHint?: string | null;
+  modelHint?: string | null;
+}): PlanAgent | TeamAgent | null {
+  const planAgent = findPlanAgent(input.plan, input.agentId);
+
+  if (planAgent) {
+    return planAgent;
+  }
+
+  const teamAgent = parseDefaultTeam(input.projectConfig).find((agent) => agent.id === input.agentId);
+
+  if (teamAgent) {
+    return teamAgent;
+  }
+
+  if (!input.allowAdHoc) {
+    return null;
+  }
+
+  const persona =
+    normalizeSupportedPersona(input.assignmentPersona) ??
+    inferAdHocPersonaFromBody(input.assignmentBody ?? "") ??
+    inferAdHocPersonaFromAgentId(input.agentId) ??
+    "craftsman";
+
+  // If runtime/model hints aren't provided, try to infer from the model pool
+  let runtimeHint = input.runtimeHint;
+  let modelHint = input.modelHint;
+
+  if (!runtimeHint || !modelHint) {
+    const poolEntry = inferModelPoolFromAgentId(input.agentId, input.projectConfig);
+
+    if (poolEntry) {
+      runtimeHint = runtimeHint || poolEntry.runtime;
+      modelHint = modelHint || poolEntry.model;
+    }
+  }
+
+  return {
+    id: input.agentId,
+    persona,
+    descriptor: buildAdHocDescriptor({
+      persona,
+      runtimeHint,
+      modelHint,
+    }),
+  };
 }
 
 export function stripRuntimeHintsFromDescriptor(descriptor: string): string {

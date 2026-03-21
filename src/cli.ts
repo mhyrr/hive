@@ -1,11 +1,10 @@
 import { archiveCommand } from "./commands/archive";
 import { approvalCommand } from "./commands/approval";
-import { askCommand } from "./commands/ask";
-import { chatCommand } from "./commands/chat";
+import { cognitionCommand } from "./commands/cognition";
 import { consoleCommand } from "./commands/console";
 import { eventsCommand } from "./commands/events";
 import { feedCommand, watchCommand } from "./commands/feed";
-import { gatewayCommand } from "./commands/gateway";
+import { gatewayCommand, startCommand } from "./commands/gateway";
 import { helpCommand } from "./commands/help";
 import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
@@ -13,7 +12,6 @@ import { launchCommand } from "./commands/launch";
 import { logCommand } from "./commands/log";
 import { memoryCommand } from "./commands/memory";
 import { msgCommand, nudgeCommand } from "./commands/msg";
-import { orchestrateCommand } from "./commands/orchestrate";
 import { psCommand } from "./commands/ps";
 import { projectCommand } from "./commands/project";
 import { runtimesCommand } from "./commands/runtimes";
@@ -40,18 +38,16 @@ export async function runCli(args: string[]): Promise<string> {
       return runCommand(rest);
     case "say":
       return sayCommand(rest);
-    case "ask":
-      return askCommand(rest);
+    case "start":
+      return startCommand(rest);
     case "init":
       return initCommand(rest);
     case "project":
       return projectCommand(rest);
     case "work":
       return workCommand(rest);
-    case "orchestrate":
-      return orchestrateCommand(rest);
-    case "chat":
-      return chatCommand(rest);
+    case "cognition":
+      return cognitionCommand();
     case "console":
       return consoleCommand(rest);
     case "feed":

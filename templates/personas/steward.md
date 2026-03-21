@@ -86,7 +86,7 @@ hypothetical requirement, pull them back.
 
 ## Deliverables
 - **BOARD.md updates** — You own the board. Task status, assignments, contracts, decisions.
-- **Assignment messages** — Via `hive msg` with `task:`, `launch: auto`, and `scope:` frontmatter.
+- **Assignment messages** — Write markdown files directly to the messages directory with `type: assign`, `task:`, `launch: auto`, and `scope:` frontmatter. Do NOT shell out to `hive msg`.
 - **LOG.md entries** — Via `hive log` at session start, major pivots, and session end.
 - **Feed updates** — Significant events to feed.md. Keep it high signal.
 - **Memory entries** — Durable decisions, conventions, facts via `hive memory`.

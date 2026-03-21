@@ -1,164 +1,65 @@
-# HIVE — Hexagonal Intelligence, Very Efficient
+# HIVE
+
+HIVE is a file-native orchestration layer for AI agent swarms.
+
+It gives you:
+
+- a persistent hive substrate in `~/.hive/`
+- a steward that coordinates work and talks to the human
+- an ephemeral worker fleet with cognitive personas across any model
+- event-driven coordination with ~200ms handoffs
+- runtime-agnostic execution across Claude, Codex, Gemini, Ollama, and future CLIs
+- a gateway UI for live observation and steering
+
+The core bet: files are the API. Durable state lives in markdown under
+`~/.hive/`; agents are ephemeral and replaceable.
 
 ![HIVE Gateway](hive.png)
 
-![Console session with the steward](hive1.png)
+## What HIVE Is
 
-![Process logs and run details](hive2.png)
+HIVE is not a monolithic agent runtime. It is a shared operating surface for a
+team of minds.
 
-![Multiple agent types working together](hive_multi.png)
+- The **steward** owns direction, synthesis, delegation, and human communication.
+  It runs as a persistent session and coordinates everything.
+- **Workers** are ephemeral specialists. The steward picks a model and persona
+  for each task from a pool — no fixed roster, no named agents.
+- The **hive substrate** persists identity, memory, plans, board state,
+  messages, runs, and sessions across restarts.
+- The **gateway** is a live operator console over the same substrate.
 
-A team orchestration layer for AI coding agents. Multiple minds, different
-cognitive styles, coordinating through shared files across multiple projects.
+That separation matters:
 
-No server. No database. No daemon. No dependencies. Just markdown files
-in `~/.hive/` and the conventions that make them useful.
+- prompts and files define coordination behavior
+- runtimes can change without rewriting the system
+- process restarts do not erase the hive's memory or state
+- the steward picks the right model for each task dynamically
 
-## Why This Exists (and How It Differs from OpenClaw)
+## Why Files
 
-HIVE borrows good ideas from [OpenClaw](https://github.com/opensouls/openclaw):
-SOUL.md, markdown-as-memory, pre-compaction flush, persistent workspace in
-the home directory. These are good ideas and we use them. Acknowledging this
-upfront is important.
+HIVE keeps coordination in inspectable artifacts instead of hidden runtime
+state.
 
-But HIVE and OpenClaw answer fundamentally different questions.
+- `PLAN.md` defines the mission
+- `BOARD.md` tracks live work and blockers
+- `LOG.md` records durable session history
+- `msg/*.md` is the message bus — assignment files trigger worker launches
+- `memory/` accumulates cross-project learning
+- `projects/<project>/state/` holds disposable derived state
 
-**OpenClaw asks:** "How do I make one AI agent as capable as possible?"
-
-**HIVE asks:** "How do I make a team of AI agents work together on real
-software projects with the quality standard of a senior engineering team?"
-
-Here's where that divergence matters:
-
-### 1. One Mind vs Many Minds
-
-OpenClaw is a single agent with one personality. SOUL.md defines that agent's
-identity. When it delegates to sub-agents, they get stripped-down context and
-run a single task — they're hands, not minds.
-
-HIVE is a team of minds. Each agent carries the shared culture (`SOUL.md`), a
-shared self-concept (`IDENTITY.md`), and a different cognitive lens — a
-*persona*. The architect sees the system. The craftsman sees the code. The
-critic sees the risks. The scout sees the options. They don't agree. They're
-not supposed to.
-
-This isn't sub-agent delegation. It's multi-perspective reasoning on the same
-problem. An architect misses implementation details. A craftsman misses
-system-level coupling. A critic misses the creative solution hiding behind the
-risk. The output is better because no single viewpoint, no matter how capable,
-catches everything.
-
-### 2. Infrastructure vs Files
-
-OpenClaw is a Node.js gateway: WebSocket connections, channel adapters
-(WhatsApp, Discord, Telegram, Slack), session management in JSONL, message
-routing through code, health monitoring, cron jobs, sandbox management.
-It's a server.
-
-HIVE is markdown files in a directory. The entire coordination layer is:
-read a file, write a file. No process needs to be running for the system
-state to be valid. You could shut down every agent and every terminal, come
-back a week later, and the state is sitting there in `~/.hive/` waiting
-for you.
-
-This isn't minimalism for its own sake. It's a bet: agents are getting smarter
-faster than infrastructure gets simpler. A year from now, frontier models won't
-need structured message queues and WebSocket routing to coordinate. They'll need
-a shared folder of markdown files and the judgment to coordinate themselves.
-HIVE keeps the protocol as thin as possible so the intelligence stays in the
-agents, not the plumbing.
-
-### 3. Orchestrator-as-Agent vs Orchestrator-as-Code
-
-OpenClaw's routing logic is implemented in JavaScript — functions that match
-patterns, resolve sessions, dispatch messages. When you want to change how
-coordination works, you change code.
-
-HIVE's orchestrator is an LLM agent with a persona prompt (`steward.md`).
-When you want it to coordinate differently, you change the prompt. When models
-get smarter, the orchestrator gets smarter automatically. The steward prompt
-that works with today's models will work better with whatever replaces them
-next year — no code changes.
-
-HIVE's coordination intelligence scales with model capability.
-OpenClaw's coordination intelligence scales with engineering effort.
-
-### 4. Multi-Project Memory
-
-OpenClaw is one workspace, one agent, one memory system. It doesn't have the
-concept of "I worked on MyApp this morning and I'm switching to SideProject
-this afternoon."
-
-HIVE tracks multiple projects with per-project memory, team configurations,
-and context switching. Crucially, it accumulates cross-project learnings:
-"this Ecto pattern worked in MyApp, apply it to SideProject." "The user always
-prefers Joken over Guardian — don't ask again." The hive gets smarter across
-its entire surface area, not just within one workspace.
-
-### 5. Runtime Agnosticism
-
-OpenClaw runs its own agent loop. Sub-agents are OpenClaw-managed sessions.
-Everything lives inside the OpenClaw ecosystem.
-
-HIVE doesn't run agents at all. It writes files that agents read. Claude Code
-reads `.hive/PLAN.md`. Codex reads `.hive/PLAN.md`. Gemini CLI reads
-`.hive/PLAN.md`. A bash script reads `.hive/PLAN.md`. The agent doesn't need
-to know HIVE exists — it just needs to read and write markdown files.
-
-When a new coding agent launches next month, it works with HIVE on day one.
-Because it can read files. OpenClaw requires an integration, adapter, or
-channel plugin.
-
-### The Short Version
-
-OpenClaw is a personal AI agent platform — sophisticated infrastructure for
-a single agent that connects to your messaging apps, tools, and digital life.
-
-HIVE is a team orchestration layer — multiple AI minds with different cognitive
-styles, working in parallel across multiple projects, communicating through
-shared files. No infrastructure. Just conventions and markdown.
-
----
-
-## What It Does
-
-HIVE separates the persistent system from the transient agents:
-
-- **The hive persists:** soul, identity, user context, memory, personas,
-  project state, history.
-- **Agents are disposable:** spin them up, give them a prompt, let them work,
-  shut them down.
-- **Coordination happens through files:**
-  - `PLAN.md` for mission
-  - `BOARD.md` for live state
-  - `LOG.md` for the session record
-  - `msg/` for file-per-message communication
-
-The core idea: files are the API.
-
-## Requirements
-
-- [Bun](https://bun.sh/) 1.3+
-- macOS or Linux shell environment
-
-HIVE uses Bun built-ins and has zero npm dependencies.
+If everything stops, the hive is still there on disk.
 
 ## Quick Start
 
-### 1. Run the CLI
-
-From the repo:
-
-```bash
-bun run bin/hive.ts help
-```
-
-Optional: compile a standalone binary:
+### 1. Build the CLI
 
 ```bash
 bun build --compile ./bin/hive.ts --outfile hive
 ./hive help
 ```
+
+Or run directly: `bun run bin/hive.ts help`
 
 ### 2. Bootstrap the hive
 
@@ -166,19 +67,23 @@ bun build --compile ./bin/hive.ts --outfile hive
 hive init
 ```
 
-This creates `~/.hive/` and scaffolds core files: `SOUL.md`, `IDENTITY.md`,
-`SELF.md`, default personas, memory directories, and the base project
-structure.
+This scaffolds `~/.hive/` with:
+
+- `SOUL.md` — shared culture and standards
+- `IDENTITY.md` — what the hive is
+- `SELF.md` — user preferences
+- default personas (steward, architect, craftsman, critic, scout)
+- default skills
+- memory directories
+- the global config and feed
 
 ### 3. Make it yours
 
 Edit these first:
 
-- `~/.hive/SOUL.md` — the shared culture every agent carries
-- `~/.hive/IDENTITY.md` — what the hive is in relation to you
-- `~/.hive/SELF.md` — who you are, what you care about
-
-This is where your hive stops being a template and starts becoming yours.
+- `~/.hive/SOUL.md` — shared values every agent carries
+- `~/.hive/IDENTITY.md` — who the hive is
+- `~/.hive/SELF.md` — who you are and how you work
 
 ### 4. Register a project
 
@@ -186,184 +91,284 @@ This is where your hive stops being a template and starts becoming yours.
 hive project add myapp /absolute/path/to/myapp
 ```
 
-This creates the project workspace under `~/.hive/projects/myapp/`
-with its own config, plan, board, log, and memory files.
+### 5. Configure your model pool
 
-### 5. Write the mission
+Edit `~/.hive/config.md` and define available models:
 
-Edit the files in `~/.hive/projects/myapp/`:
-
-- `config.md` — team composition, runtime defaults
-- `PLAN.md` — what you're building and how
-- `BOARD.md` — current state of all work
-
-### 6. Launch
-
-Kick off orchestration:
-
-```bash
-hive orchestrate "Build auth"
+```md
+## Model Pool
+- opus: claude, claude-opus-4-6, frontier deep work
+- sonnet: claude, claude-sonnet-4-6, general workhorse
+- haiku: claude, claude-haiku-4-5-20251001, fast triage
+- gpt54: codex, gpt-5.4, OpenAI frontier
+- qwen: ollama, qwen3:4b, local fast triage
 ```
 
-Or launch a specific agent:
+The model pool is hive-wide — available to all projects. The steward sees
+this pool and picks model + persona per task. No fixed team roster.
+
+### 6. Start operating
 
 ```bash
-hive launch --runtime codex alpha
+hive start --open
 ```
 
-Or let the supervisor handle it:
+This starts the gateway (web UI), managed supervisor, and file watchers.
+Open the console and talk to the steward.
+
+Or from the terminal:
 
 ```bash
-hive supervise --detach --max-parallel 3
+hive say "build the auth system"
+hive console
 ```
 
-## How It Works
+## The Core Loop
 
-### The Team
+```
+Human speaks
+  → Steward responds immediately (warm persistent session)
+  → If work needed: steward writes assignment message to msg/
+  → File watcher fires (~200ms) → dispatch → worker launches
+  → Worker completes → run watcher fires (~200ms) → notification queued
+  → Next steward turn drains notifications → synthesizes → responds
+  → Loop continues
+```
 
-HIVE ships with five default personas:
+Coordination is event-driven through file system watchers. The supervisor
+poll (120s) is a safety net for zombie cleanup, not the primary path.
 
-| Persona | Role |
-|---------|------|
-| **Steward** | Orchestrator. Reads the board, assigns work, resolves conflicts, maintains the plan. |
-| **Architect** | System thinker. Sees boundaries, data flows, integration points. |
-| **Craftsman** | Builder. Writes the code, runs the tests, ships the feature. |
-| **Critic** | Reviewer. Finds risks, edge cases, quality gaps, security issues. |
-| **Scout** | Researcher. Explores options, reads docs, evaluates tradeoffs. |
+## Ephemeral Workers
 
-Each persona is a markdown file. Change them, add new ones, or remove the
-ones you don't need. They're prompts, not code.
+Workers are not named team members. They are ephemeral model+persona
+combinations that the steward creates on demand.
 
-### The Flow
+The steward writes an assignment file:
 
-1. Human writes the plan and registers the project
-2. `hive orchestrate` builds a steward prompt from plan + board + messages
-3. The steward reads state, creates assignments, updates the board
-4. `hive launch` or `hive supervise` runs workers against their assignments
-5. Workers communicate through `hive msg` — questions, handoffs, status
-6. `hive feed` and `hive watch` give the human a live view
-7. `hive chat` lets the human talk to the hive through a runtime
+```md
+---
+from: steward
+to: craftsman-opus-001
+type: assign
+project: myapp
+task: AUTH-001
+persona: craftsman
+runtime: claude
+model: claude-opus-4-6
+scope: src/auth/
+launch: auto
+---
 
-### The Files
+Implement POST /api/auth/login with JWT tokens.
+```
+
+The watcher detects the file, the supervisor launches the worker, the worker
+runs with the craftsman persona on opus, completes, and the steward gets
+notified.
+
+Available personas:
+- **architect** — system design, structure, trade-offs
+- **craftsman** — implementation, code quality
+- **critic** — review, edge cases, testing
+- **scout** — research, exploration, alternatives
+
+## Mental Model
+
+### The Hive
+
+The durable operating system:
+
+- soul, identity, user preferences
+- memory (knowledge, decisions, entities)
+- projects, sessions, feed, messages
+
+### The Steward
+
+The persistent coordinator:
+
+- talks to the human
+- maintains session continuity
+- picks models and personas for each task
+- delegates through assignment messages
+- synthesizes worker results
+- auto-wakes when workers complete (silent when nothing new)
+
+### The Workers
+
+Ephemeral runs with scoped assignments:
+
+- spawned from the model pool with a persona
+- read the substrate, do their work, report back, exit
+- any runtime: Claude, Codex, Gemini, Ollama
+
+## Gateway
+
+The gateway is the live UI over the hive substrate.
+
+```bash
+hive start --open
+```
+
+It provides:
+
+- persistent console sessions with the steward
+- live active-agent view with persona and model info
+- process log inspection
+- session history and timeline
+- cognition panel (routing policy, execution lane, budget tracking)
+
+Screens:
+
+![Console session with the steward](hive1.png)
+
+![Process logs and run details](hive2.png)
+
+![Multiple agent types working together](hive_multi.png)
+
+## File Layout
 
 ```text
 ~/.hive/
-├── SOUL.md                    # shared culture
-├── IDENTITY.md                # hive self-concept
-├── SELF.md                    # human identity
-├── config.md                  # global defaults
-├── feed.md                    # event stream
+├── SOUL.md
+├── IDENTITY.md
+├── SELF.md
+├── AGENTS.md
+├── TRUST.md
+├── config.md
+├── feed.md
 ├── personas/
-│   ├── steward.md
-│   ├── architect.md
-│   ├── craftsman.md
-│   ├── critic.md
-│   └── scout.md
+├── skills/
 ├── memory/
-│   ├── knowledge.md           # cross-project learnings
-│   ├── decisions.md           # decision log
-│   ├── projects/              # per-project memory
-│   └── journal/               # session journals
+│   ├── knowledge.md
+│   ├── decisions.md
+│   ├── projects/
+│   ├── journal/
+│   ├── entities/
+│   └── state/
 ├── projects/
 │   └── <project>/
-│       ├── config.md
+│       ├── config.md        # model pool, rules, stack
 │       ├── PLAN.md
 │       ├── BOARD.md
 │       ├── LOG.md
-│       └── runs/
-├── msg/                       # inter-agent messages
-└── archive/                   # session snapshots
+│       ├── runs/
+│       ├── supervisor/
+│       └── state/
+├── msg/                     # assignment messages trigger worker launches
+├── sessions/
+├── approvals/
+├── events/
+└── archive/
 ```
 
-### Messages
+## Core Commands
 
-Agents communicate through markdown files with simple frontmatter:
+### Setup
 
-```markdown
----
-from: beta
-to: alpha
-type: question
-status: open
-ts: 2026-03-09T15:08:00Z
-project: myapp
----
-
-Need the auth contract for the login form.
-```
-
-Message types: `question`, `notify`, `handoff`, `status`, `assign`,
-`nudge`, `escalate`.
-
-## Commands
-
-### Project Management
-
-| Command | Description |
-|---------|-------------|
-| `hive init` | Bootstrap `~/.hive/` with default files |
+| Command | Purpose |
+| --- | --- |
+| `hive init` | Scaffold `~/.hive/` |
 | `hive project add <name> <path>` | Register a project |
-| `hive work [project]` | Show or switch active project |
-| `hive status` | Print board and open messages |
-| `hive sync` | Copy plan into repo at `<repo>/.hive/PLAN.md` |
-| `hive archive` | Snapshot session and start fresh log |
-
-### Orchestration
-
-| Command | Description |
-|---------|-------------|
-| `hive orchestrate [goal]` | Build steward prompt; optionally record a new goal |
-| `hive prompt <agent>` | Assemble full agent prompt for any persona |
-| `hive launch <agent> [goal]` | Run a one-shot agent pass through a runtime |
-| `hive supervise` | Auto-launch workers and steward reassessments |
-| `hive supervise status` | Show detached supervisor state |
-| `hive supervise stop` | Stop the detached supervisor |
-| `hive ps` | Show active and recent runs |
-| `hive stop <agent\|run>` | Signal an active run to stop |
-
-### Communication
-
-| Command | Description |
-|---------|-------------|
-| `hive msg <from> <to> <body>` | Send a message between agents |
-| `hive msg show <id>` | Print a full message |
-| `hive msg resolve <id> <actor> <answer>` | Mark resolved with answer |
-| `hive msg close <id> <actor> [note]` | Close without answer |
-| `hive nudge <message>` | Human-to-orchestrator priority signal |
-| `hive inbox [agent]` | Check open messages for an agent |
-| `hive log <message>` | Append to project log |
+| `hive work [project]` | Show or switch the active project |
 
 ### Human Interface
 
-| Command | Description |
-|---------|-------------|
-| `hive gateway [--open]` | Start the web UI at localhost:4200 |
-| `hive gateway status` | Check if Gateway is running |
-| `hive gateway stop` | Stop the Gateway |
-| `hive console` | Interactive terminal session with the hive |
-| `hive chat <message>` | One-shot conversation with the hive |
-| `hive say <message>` | Send a message + auto-start supervision |
-| `hive ask [question]` | Status digest or LLM-powered answer |
-| `hive feed [count]` | Show recent high-signal events |
+| Command | Purpose |
+| --- | --- |
+| `hive start [--open]` | Start gateway + managed supervisor |
+| `hive console` | Interactive steward session |
+| `hive say <message>` | One-shot steward turn |
+
+### Workers / Supervision
+
+| Command | Purpose |
+| --- | --- |
+| `hive launch <agent>` | Run a worker manually |
+| `hive supervise` | Background auto-launch loop |
+| `hive supervise status` | Show supervisor state |
+| `hive supervise stop` | Stop the supervisor |
+| `hive ps` | Show active and recent runs |
+| `hive stop <agent\|run>` | Stop an active run |
+
+### Coordination
+
+| Command | Purpose |
+| --- | --- |
+| `hive msg <from> <to> <body>` | Create a message |
+| `hive msg show <id>` | Show a message |
+| `hive msg resolve <id> <actor> <answer>` | Resolve a thread |
+| `hive msg close <id> <actor> [note]` | Close a thread |
+| `hive inbox [agent]` | Show open messages |
+| `hive nudge <message>` | Human priority signal |
+| `hive log <message>` | Append durable project log |
+
+### Inspection
+
+| Command | Purpose |
+| --- | --- |
+| `hive status` | Current board + open-message status |
+| `hive feed [count]` | High-signal event stream |
 | `hive watch [count]` | Live operator console |
-| `hive runtimes` | List installed runtime adapters |
+| `hive prompt <agent>` | Assemble the full prompt for an agent |
+| `hive runtimes` | Show runtime adapters |
+| `hive cognition` | Show cognitive routing policy |
 
-## Design Constraints
+### Memory / Maintenance
 
-These are deliberate:
+| Command | Purpose |
+| --- | --- |
+| `hive memory` | Show project memory |
+| `hive memory fact\|convention\|decision\|question <text>` | Append memory |
+| `hive memory extract` | Rebuild derived memory state |
+| `hive sync` | Copy plan into the repo |
+| `hive archive` | Snapshot and roll the session |
 
-- Zero npm dependencies
-- Markdown and plain files as the data model
-- No daemon or background process required
-- No database
-- No runtime lock-in
-- If the machine restarts, the state is still there
+## Configuration
+
+### Global config: `~/.hive/config.md`
+
+```md
+runtime: claude
+model: claude-sonnet-4-6
+
+pi-provider-claude: anthropic
+pi-model-claude: claude-sonnet-4-6
+pi-auth-anthropic: oauth-only
+
+cognitive-bias: balanced
+cognitive-max-fanout: 4
+cognitive-max-parallel: 3
+tier1_local: qwen3:4b
+ollama-base-url: http://127.0.0.1:11434
+```
+
+### Project config: `~/.hive/projects/<project>/config.md`
+
+```md
+path: /absolute/path/to/repo
+
+## Rules
+- All database changes require a migration file.
+- Tests must pass before any task is marked done.
+```
+
+## Requirements
+
+- [Bun](https://bun.sh/) 1.3+
+- macOS or Linux shell environment
+
+Optional, depending on your model pool:
+
+- `claude` CLI for Claude models
+- `codex` CLI for OpenAI models and Ollama routing
+- `gemini` CLI for Gemini models
+- `ollama` for local models (routed through codex with `--oss`)
 
 ## Development
 
 ```bash
-bun test                                       # run tests
-bun build --compile ./bin/hive.ts --outfile hive  # build binary
+bun test
+bun build --compile ./bin/hive.ts --outfile hive
 ```
 
 Environment variables:
@@ -371,27 +376,32 @@ Environment variables:
 - `HIVE_HOME` — override `~/.hive/`
 - `HIVE_FIXED_NOW` — deterministic timestamps in tests
 
-## Documentation
-
-- [USAGE.md](./docs/USAGE.md) — practical guide to using HIVE day-to-day
-- [FINAL-PRD.md](./docs/FINAL-PRD.md) — full product requirements
-- [PHASE-5-GATEWAY.md](./docs/PHASE-5-GATEWAY.md) — Gateway and multi-runtime design
-- [CLAUDE.md](./docs/CLAUDE.md) — implementation constraints and scope
-- [SOUL.md](./templates/SOUL.md) — default hive culture template
-- [IDENTITY.md](./templates/IDENTITY.md) — default hive identity template
-- [SELF.md](./templates/SELF.md) — default user-preferences template
-
 ## Current Status
 
-Phases 1 through 5 are implemented:
+Implemented:
 
-- **Phase 1-2:** File model, CLI primitives, orchestration prompts
-- **Phase 3:** Event feed, one-shot chat, agent launch
-- **Phase 4:** Run records, supervisor with auto-launch, detached background supervision
-- **Phase 5:** Multi-runtime adapters (claude/codex/gemini), Gateway web UI at localhost:4200,
-  WebSocket feed streaming, persistent console sessions
+- file-native hive substrate
+- persistent steward session via Pi-agent SDK
+- ephemeral model pool (steward picks model+persona per task)
+- event-driven coordination with file watchers (~200ms handoffs)
+- auto-wake steward on worker completion (silent when nothing new)
+- runtime adapters for Claude, Codex, Gemini, and Ollama
+- gateway web UI with live agent view
+- disposable worker runs with persona assignment
+- cognitive routing policy surface
 
-Not yet implemented:
+Still to do:
 
-- Memory intelligence and curation automation
-- External transport adapters (Slack, Discord, notifications)
+- gateway UI updates for ephemeral worker display
+- idle log and memory compression
+- external event integration
+- IDENTITY.md / steward persona separation
+
+## Further Reading
+
+- [docs/CORE-LOOP-CONSOLIDATION.md](./docs/CORE-LOOP-CONSOLIDATION.md)
+- [docs/USAGE.md](./docs/USAGE.md)
+- [docs/PERSISTENT-STEWARD-DESIGN.md](./docs/PERSISTENT-STEWARD-DESIGN.md)
+- [docs/COGNITIVE-RESOURCE-MANAGEMENT.md](./docs/COGNITIVE-RESOURCE-MANAGEMENT.md)
+- [docs/PHASE-5-GATEWAY.md](./docs/PHASE-5-GATEWAY.md)
+- [docs/FINAL-PRD.md](./docs/FINAL-PRD.md)

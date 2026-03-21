@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { parseBoard } from "./board";
 import { digestBoard, digestMessages, digestRuns } from "./digest";
+import { readJson, writeJson } from "./json";
 import { HiveMessage, listOpenProjectMessages } from "./messages";
 import {
   ensureDirectory,
@@ -85,6 +86,8 @@ export type RecentResultSummaryItem = {
   changedFiles: string[];
   gitSummaryLines: string[];
   summary: string;
+  cognitiveOutcome: "success" | "partial" | "blocked" | "failed" | null;
+  cognitiveModel: string | null;
   path: string;
 };
 
@@ -385,7 +388,9 @@ function summarizeRecentResults(
       assignmentMessage: result.assignmentMessage,
       changedFiles: result.changedFiles,
       gitSummaryLines: result.gitSummaryLines,
-      summary: firstLine(result.finalVisibleOutput),
+      summary: truncate(result.cognitiveDigest?.summary || firstLine(result.finalVisibleOutput)),
+      cognitiveOutcome: result.cognitiveDigest?.outcome ?? null,
+      cognitiveModel: result.cognitiveDigest?.model ?? null,
       path: result.path,
     })),
   };
@@ -425,7 +430,7 @@ function summarizeHumanInbox(
     .filter((message) =>
       message.attributes.from === "human" ||
       message.attributes.to === "human" ||
-      (message.attributes.type === "nudge" && message.attributes.to === "orchestrator"),
+      (message.attributes.type === "nudge" && message.attributes.to === "steward"),
     )
     .map((message) => ({
       filename: message.filename,
@@ -489,24 +494,6 @@ function summarizeSessionContext(input: {
       stateDir: input.projectPaths.stateDir,
     },
   };
-}
-
-async function readJson<T>(path: string): Promise<T | null> {
-  const file = Bun.file(path);
-
-  if (!(await file.exists())) {
-    return null;
-  }
-
-  try {
-    return await file.json() as T;
-  } catch {
-    return null;
-  }
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 async function appendJsonLine(path: string, value: unknown): Promise<void> {
@@ -617,7 +604,7 @@ function buildMessageChanges(
       changes.push({
         type:
           item.from === "human" ||
-          (item.type === "nudge" && item.to === "orchestrator")
+          (item.type === "nudge" && item.to === "steward")
             ? "human-message"
             : "message-opened",
         summary: `${item.from} -> ${item.to}: ${item.summary}`,
@@ -665,7 +652,7 @@ function buildResultChanges(
   return currentResults.items
     .filter((item) => !previousRunIds.has(item.runId))
     .map((item) => ({
-      type: item.agentId === "orchestrator" ? "steward-result" : "worker-result",
+      type: item.agentId === "steward" ? "steward-result" : "worker-result",
       summary: `${item.agentId}: ${item.summary || item.status}`,
       agent: item.agentId,
       runId: item.runId,

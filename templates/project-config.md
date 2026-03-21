@@ -14,15 +14,6 @@ path: {{repo_path}}
 # database: postgresql
 # testing: bun test
 
-## Default Team
-- orchestrator: steward
-- alpha: craftsman
-- beta: craftsman
-- gamma: critic
-# Uncomment to activate additional roles:
-# - delta: architect
-# - epsilon: scout
-
 ## Rules
 # Project-specific rules that override or extend AGENTS.md.
 # Examples:

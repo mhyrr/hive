@@ -15,6 +15,7 @@
       <span class="status-dot" id="supervisor-dot"></span>
       <span id="supervisor-label">&mdash;</span>
       <button class="topbar-restart-btn" id="restart-btn" title="Restart supervisor">&#x21bb;</button>
+      <button class="topbar-stop-all-btn" id="stop-all-btn" title="Stop all active agents">&#x23F9; Stop All</button>
     </div>
     <div class="topbar-agents" id="agent-count">
       <span class="topbar-agents-label">&mdash;</span>
@@ -22,6 +23,15 @@
         <div class="agent-dropdown-header">Active Agents</div>
         <div class="agent-dropdown-list" id="agent-dropdown-list">
           <div class="agent-dropdown-empty">No active agents</div>
+        </div>
+      </div>
+    </div>
+    <div class="topbar-budget" id="budget-chip">
+      <span class="topbar-budget-label">T3 &mdash;</span>
+      <div class="budget-dropdown" id="budget-dropdown">
+        <div class="budget-dropdown-header">Cognition</div>
+        <div class="budget-dropdown-list" id="budget-dropdown-list">
+          <div class="budget-dropdown-empty">No cognition usage yet.</div>
         </div>
       </div>
     </div>
@@ -103,6 +113,12 @@
         <div class="rail-section-header">Active Agents</div>
         <div class="live-agents" id="live-agents">
           <div class="rail-empty">No active agents.</div>
+        </div>
+      </section>
+      <section class="rail-section rail-section--cognition" id="cognition-section">
+        <div class="rail-section-header">Cognition</div>
+        <div class="cognition-panel" id="cognition-panel">
+          <div class="rail-empty">Loading cognitive routing policy…</div>
         </div>
       </section>
       <section class="rail-section rail-section--logs" id="process-logs-section">

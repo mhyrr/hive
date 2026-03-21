@@ -2,8 +2,12 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { appendLogEntry } from "../lib/log";
-import { digestBoard, digestMessages, listSkills } from "../lib/digest";
-import { listOpenProjectMessages } from "../lib/messages";
+import { renderOpenDecisions, renderRecentResults, renderHumanInbox } from "../lib/context";
+import {
+  renderCognitiveRoutingPromptPolicy,
+  STEWARD_ESSENTIAL_SKILL_NAMES,
+} from "../lib/cognitive-routing";
+import { listSkills } from "../lib/digest";
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -85,6 +89,9 @@ function buildConsolePrompt(input: {
   projectId: string;
   repoPath: string;
   hiveHome: string;
+  globalConfig: string;
+  sessionRuntime: string;
+  sessionModel: string | null;
   pathsSoul: string;
   pathsIdentity: string;
   pathsSelf: string;
@@ -109,14 +116,17 @@ function buildConsolePrompt(input: {
   skillsDir: string;
   availableSkillNames: string[];
   soul: string;
-  board: string;
-  openMessages: Awaited<ReturnType<typeof listOpenProjectMessages>>;
+  boardDigest: string;
+  openDecisionsDigest: string;
+  openMessagesDigest: string;
+  activeRunsDigest: string;
+  recentResultsDigest: string;
+  humanInboxDigest: string;
   knowledgeDigest: string;
   recentDecisionsDigest: string;
   projectEntityDigest: string;
 }): string {
-  const essentialSkills = ["state-efficient-ops", "autonomous-ops"];
-  const essentialSkillPaths = essentialSkills
+  const essentialSkillPaths = STEWARD_ESSENTIAL_SKILL_NAMES
     .filter((name) => input.availableSkillNames.includes(name))
     .map((name) => `${input.skillsDir}/${name}.md`);
 
@@ -140,6 +150,14 @@ Read your user's preferences: ${input.pathsSelf}
 
 ## How You Operate
 
+## Cognitive Routing Policy
+${renderCognitiveRoutingPromptPolicy({
+    globalConfig: input.globalConfig,
+    skillsDir: input.skillsDir,
+    sessionRuntime: input.sessionRuntime,
+    sessionModel: input.sessionModel,
+  })}
+
 ### You Take Initiative
 When the human states a preference → record it: \`hive memory convention "..."\`
 When a technical decision is made → record it: \`hive memory decision "..."\`
@@ -153,9 +171,9 @@ You don't announce these actions to the human. You just do them. They'll see the
 
 ### You Manage the Team
 - Update BOARD.md directly — you own it
-- Send assignment messages with \`hive msg --type assign orchestrator <agent> <body>\` including \`task:\`, \`launch: auto\`, and \`scope:\` frontmatter
+- Send assignment messages with \`hive msg --type assign steward <agent> <body>\` including \`task:\`, \`launch: auto\`, and \`scope:\` frontmatter
 - Check agent progress: \`hive ps\`, \`hive inbox <agent>\`, read their LOG.md entries
-- Resolve handled messages: \`hive msg resolve <message> orchestrator <answer>\`
+- Resolve handled messages: \`hive msg resolve <message> steward <answer>\`
 - When creating or redirecting work, update PLAN.md too
 
 ### You Talk to the Human Like a Peer
@@ -167,7 +185,7 @@ You don't announce these actions to the human. You just do them. They'll see the
 ## Your Nervous System
 These are extensions of you — use them without explanation:
 
-State: \`hive status\` · \`hive ps\` · \`hive feed 5\` · \`hive ask\`
+State: \`hive status\` · \`hive ps\` · \`hive feed 5\` · \`hive say\`
 Memory: \`hive memory\` · \`hive memory decision|convention|fact|question "..."\`
 Messages: \`hive msg\` · \`hive inbox <agent>\` · \`hive msg resolve|close ...\`
 Agents: \`hive launch <agent>\` · \`hive stop <agent>\` · \`hive prompt <agent>\`
@@ -206,7 +224,19 @@ skills-dir: ${input.skillsDir}
 ## Current State
 
 ### Board
-${digestBoard(input.board)}
+${input.boardDigest}
+
+### Open Decisions
+${input.openDecisionsDigest}
+
+### Open Messages
+${input.openMessagesDigest}
+
+### Active Runs
+${input.activeRunsDigest}
+
+### Recent Results
+${input.recentResultsDigest}
 
 ### Project Memory
 ${input.projectMemory}
@@ -221,8 +251,8 @@ ${input.recentDecisionsDigest}
 #### Project Entity Memory
 ${input.projectEntityDigest}
 
-### Open Messages
-${digestMessages(input.openMessages)}`;
+### Human Inbox
+${input.humanInboxDigest}`;
 }
 
 export async function consoleCommand(args: string[]): Promise<string> {
@@ -257,6 +287,17 @@ export async function consoleCommand(args: string[]): Promise<string> {
     projectId: activeProject,
     projectPaths,
   });
+  const boardDigest = state.boardSummary.digest;
+  const openDecisionsDigest = renderOpenDecisions(state.boardSummary, state.humanInboxSummary);
+  const openMessagesDigest = state.openMessagesSummary.digest;
+  const activeRunsDigest = state.activeRunsSummary.digest;
+  const recentResultsDigest = renderRecentResults(state.recentResultsSummary);
+  const humanInboxDigest = renderHumanInbox(state.humanInboxSummary);
+  const hints = resolveRuntimeHints({
+    globalConfig,
+    runtimeOverride: options.runtimeOverride,
+    modelOverride: options.modelOverride,
+  });
   const availableSkillNames = await listAvailableSkills(paths.skillsDir);
   const memoryContext = await loadPromptMemoryContext(paths, activeProject);
 
@@ -280,6 +321,9 @@ export async function consoleCommand(args: string[]): Promise<string> {
     projectId: activeProject,
     repoPath,
     hiveHome: paths.home,
+    globalConfig,
+    sessionRuntime: hints.runtime,
+    sessionModel: hints.model,
     pathsSoul: paths.soul,
     pathsIdentity: paths.identity,
     pathsSelf: paths.self,
@@ -304,17 +348,15 @@ export async function consoleCommand(args: string[]): Promise<string> {
     skillsDir: paths.skillsDir,
     availableSkillNames,
     soul: soul.trim(),
-    board: state.boardText.trim(),
-    openMessages: state.openMessages,
+    boardDigest,
+    openDecisionsDigest,
+    openMessagesDigest,
+    activeRunsDigest,
+    recentResultsDigest,
+    humanInboxDigest,
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,
-  });
-
-  const hints = resolveRuntimeHints({
-    globalConfig,
-    runtimeOverride: options.runtimeOverride,
-    modelOverride: options.modelOverride,
   });
 
   const spec = buildInteractiveLaunchSpec({
