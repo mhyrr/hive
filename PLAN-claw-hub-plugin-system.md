@@ -170,6 +170,42 @@ Add `pluginsDir` to `HivePaths` (for future per-plugin state storage at `~/.hive
 
 ---
 
+## Core Skill: Hub Awareness (`templates/skills/hub-aware.md`)
+
+Agents need judgment about *when* and *how* to use the hub, not just the tools. This core skill teaches:
+
+- **Self-service pattern**: When you encounter a task you don't have a skill for, search the hub before improvising
+- **Evaluate before installing**: Read skill info (description, tags) to confirm relevance — don't install speculatively
+- **Install-then-apply**: search → info → install → re-read your available skills → apply
+- **Don't hoard**: Only install skills relevant to the current work. Skills aren't trophies
+- **Prefer installed skills**: Check what's already installed before searching the hub
+
+This skill gets loaded alongside `autonomous-ops.md` in agent sessions, so hub awareness is ambient, not something agents need to be told about per-task.
+
+---
+
+## Offline Resilience
+
+The hub client gracefully degrades when the hub is unreachable:
+- `search`/`list`/`info` return a clear "hub unavailable" message, not an error
+- `install` fails gracefully with "hub unreachable, try again later"
+- Agents continue working with whatever skills are already installed
+- No retries, no blocking — the hub is a nice-to-have, not a dependency
+
+---
+
+## Plugin System Expansion
+
+The plugin system is intentionally minimal today:
+
+1. **Now**: Plugins are statically compiled in `src/plugins/`. Adding one = new folder + one import line in `registry.ts`
+2. **Near-term**: More first-party plugins (metrics, GitHub deeper integration, etc.) — same pattern
+3. **Eventually**: Dynamic loading from `~/.hive/plugins/` if the community wants to distribute plugins independently — but only when there's real demand
+
+The `HivePlugin` interface is the stable contract. Everything else is implementation detail that can evolve.
+
+---
+
 ## What This Does NOT Do
 
 - **No dynamic plugin loading from disk** — plugins are compiled into the binary. This keeps things fast and auditable. Future work could add `~/.hive/plugins/` with dynamic imports if needed.
@@ -185,14 +221,19 @@ Add `pluginsDir` to `HivePaths` (for future per-plugin state storage at `~/.hive
 3. **Claw Hub commands** (`src/plugins/claw-hub/commands.ts`) — CLI subcommands
 4. **Claw Hub steward tool** (`src/plugins/claw-hub/tool.ts`) — agent-facing tools
 5. **Claw Hub plugin entry** (`src/plugins/claw-hub/index.ts`) — wires it all together
-6. **Integration** — CLI router, steward tools, help text, paths
-7. **Test** — verify CLI commands work, tool registration works
+6. **Hub-aware core skill** (`templates/skills/hub-aware.md`) — teaches agents when/how to self-serve from the hub
+7. **Integration** — CLI router, steward tools, help text, paths
+8. **Test** — verify CLI commands work, tool registration works
 
 ---
 
+## Resolved Questions
+
+1. **Skill location** — Flat in `~/.hive/skills/`, frontmatter-tagged with `source: claw-hub`. No subdirectory.
+2. **Scope** — Skills are hive-level, tied to personas. Not project-specific (though per-project could be added later).
+3. **Offline** — Graceful degradation. Hub is a nice-to-have, not a dependency.
+4. **Agent awareness** — Core skill `hub-aware.md` teaches agents when/how to use the hub.
+
 ## Open Questions
 
-1. **Claw Hub API** — What's the actual API shape? If it doesn't exist yet, we can build the client against a reasonable contract and adapt when the real API materializes. The client is isolated enough to swap easily.
-2. **Skill namespacing** — Should hub skills be installed to `~/.hive/skills/hub/` to separate them from local skills? Or flat in `~/.hive/skills/` with frontmatter marking the source?
-3. **Per-project skill sets** — Should projects be able to declare which hub skills they want (in project `config.md`)? This would let different projects auto-install different skill sets.
-4. **Offline mode** — Should the client gracefully degrade when there's no network? (Probably yes — just use what's already installed.)
+1. **Claw Hub API** — What's the actual API shape? If it doesn't exist yet, we build the client against a reasonable contract and adapt when the real API materializes. The client is isolated enough to swap easily.
