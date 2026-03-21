@@ -40,6 +40,9 @@ export function createDelegationTools(ctx: DelegateContext) {
         task: Type.String({ description: "Task ID or description" }),
         scope: Type.String({ description: "Comma-separated scope roots, e.g. 'src/auth, tests/auth'. Use '*' for whole-repo access. Disjoint scopes allow parallel workers." }),
         brief: Type.String({ description: "Worker instructions" }),
+        verify: Type.Optional(Type.String({ description: "Shell command to run after worker completes. Exit 0 = pass. e.g. 'bun test tests/auth/'" })),
+        maxAttempts: Type.Optional(Type.Number({ description: "Max verification attempts before blocking for steward review. Default: 1" })),
+        autoRevert: Type.Optional(Type.Boolean({ description: "Revert scoped changes on verification failure. Default: true" })),
       }),
       async execute(_toolCallId: string, args: Record<string, unknown>) {
         const model = String(args.model ?? "").trim();
@@ -47,6 +50,9 @@ export function createDelegationTools(ctx: DelegateContext) {
         const task = String(args.task ?? "").trim();
         const scope = String(args.scope ?? "").trim();
         const brief = String(args.brief ?? "").trim();
+        const verify = args.verify ? String(args.verify).trim() : null;
+        const maxAttempts = args.maxAttempts != null ? Number(args.maxAttempts) : null;
+        const autoRevert = args.autoRevert != null ? args.autoRevert : null;
 
         if (!model) {
           throw new Error("model is required.");
@@ -93,6 +99,9 @@ export function createDelegationTools(ctx: DelegateContext) {
             runtime: entry.runtime,
             model: entry.model,
             launch: "auto",
+            ...(verify ? { verify } : {}),
+            ...(maxAttempts != null ? { "max-attempts": String(maxAttempts) } : {}),
+            ...(autoRevert != null ? { "auto-revert": String(autoRevert) } : {}),
           },
         });
 
