@@ -904,7 +904,7 @@ export async function runPersistentStewardTurn(input: {
       identity: context.identity,
       self: context.self,
       cognitiveRoutingPolicy,
-      projectConfig: context.projectConfig,
+      globalConfig: context.globalConfig,
     });
     const handle = await acquirePersistentStewardHandle({
       hivePaths: input.hivePaths,
@@ -1194,7 +1194,7 @@ export async function ensurePersistentStewardSessionReady(input: {
     identity: context.identity,
     self: context.self,
     cognitiveRoutingPolicy,
-    projectConfig: context.projectConfig,
+    globalConfig: context.globalConfig,
   });
   const handle = await acquirePersistentStewardHandle({
     hivePaths: input.hivePaths,

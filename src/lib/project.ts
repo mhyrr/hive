@@ -131,9 +131,10 @@ export function parseDefaultTeam(projectConfig: string): TeamAgent[] {
  * Parse the `## Models` section from a project config.
  * Format: `- <name>: <runtime>, <model-id>, <description>`
  */
-export function parseModelPool(projectConfig: string): ModelPoolEntry[] {
-  const normalized = projectConfig.replace(/\r\n/g, "\n");
-  const sectionHeading = normalized.match(/^## Models\s*$/m);
+export function parseModelPool(config: string): ModelPoolEntry[] {
+  const normalized = config.replace(/\r\n/g, "\n");
+  // Match either "## Models" (legacy project config) or "## Model Pool" (hive config)
+  const sectionHeading = normalized.match(/^## (?:Models|Model Pool)\s*$/m);
 
   if (!sectionHeading || sectionHeading.index === undefined) {
     return [];

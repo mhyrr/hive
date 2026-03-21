@@ -1,5 +1,10 @@
 import { renderCognitiveRoutingPromptPolicy } from "../cognitive-routing";
-import { buildBootstrapContext } from "../context";
+import {
+  buildBootstrapContext,
+  renderOpenDecisions,
+  renderRecentResults,
+  renderHumanInbox,
+} from "../context";
 import { UsageError } from "../errors";
 import { loadPromptMemoryContext } from "../memory";
 import { type HivePaths, getProjectPaths, type ProjectPaths } from "../paths";
@@ -138,11 +143,11 @@ export async function loadStewardContext(input: {
     recentTurns: renderRecentTurns(history, input.recentTurnLimit ?? 6),
     deltaHistory,
     boardDigest: runtimeState.boardSummary.digest,
-    openDecisionsDigest: renderOpenDecisionsFromState(runtimeState),
+    openDecisionsDigest: renderOpenDecisions(runtimeState.boardSummary, runtimeState.humanInboxSummary),
     openMessagesDigest: runtimeState.openMessagesSummary.digest,
     activeRunsDigest: runtimeState.activeRunsSummary.digest,
-    recentResultsDigest: renderRecentResultsFromState(runtimeState),
-    humanInboxDigest: renderHumanInboxFromState(runtimeState),
+    recentResultsDigest: renderRecentResults(runtimeState.recentResultsSummary),
+    humanInboxDigest: renderHumanInbox(runtimeState.humanInboxSummary),
     // logRollupDigest, phaseSummaryDigest, memoryHotsetDigest, staleMemoryDigest:
     // omitted — these were produced by the old cognition packet compiler which
     // was removed. When idle compilation is re-added, populate them here.
@@ -173,59 +178,3 @@ export function renderStewardRoutingPolicy(input: {
 
 export { renderDeltaHistory };
 
-// ---------------------------------------------------------------------------
-// Helpers — inline digest rendering from runtime state
-// ---------------------------------------------------------------------------
-
-import type { ProjectRuntimeState } from "../state";
-
-function renderOpenDecisionsFromState(state: ProjectRuntimeState): string {
-  const waitingOnHuman = state.humanInboxSummary.items
-    .filter((item) => item.needsHumanReply)
-    .map((item) => item.summary)
-    .slice(0, 6);
-
-  if (
-    state.boardSummary.blockers.length === 0 &&
-    state.boardSummary.decisions.length === 0 &&
-    waitingOnHuman.length === 0
-  ) {
-    return "No open decisions, blockers, or pending human replies.";
-  }
-
-  const lines = [
-    `Open decisions: ${state.boardSummary.blockers.length} blocker(s), ${state.boardSummary.decisions.length} recent decision(s), ${waitingOnHuman.length} pending human repl${waitingOnHuman.length === 1 ? "y" : "ies"}.`,
-  ];
-
-  for (const blocker of state.boardSummary.blockers.slice(0, 4)) {
-    lines.push(`- blocker: ${blocker}`);
-  }
-
-  for (const item of waitingOnHuman.slice(0, 4)) {
-    lines.push(`- human: ${item}`);
-  }
-
-  return lines.join("\n");
-}
-
-function renderRecentResultsFromState(state: ProjectRuntimeState): string {
-  if (state.recentResultsSummary.items.length === 0) {
-    return "(none)";
-  }
-
-  return state.recentResultsSummary.items
-    .slice(0, 5)
-    .map((item) => `- ${item.agentId} | ${item.status} | ${item.summary || "no visible output"}`)
-    .join("\n");
-}
-
-function renderHumanInboxFromState(state: ProjectRuntimeState): string {
-  if (state.humanInboxSummary.items.length === 0) {
-    return "(none)";
-  }
-
-  return state.humanInboxSummary.items
-    .slice(0, 6)
-    .map((item) => `- ${item.from} -> ${item.to} [${item.type}] ${item.summary}`)
-    .join("\n");
-}

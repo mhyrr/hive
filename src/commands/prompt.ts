@@ -2,7 +2,6 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-  buildCompiledStateView,
   getWorkerBriefPacketPath,
   materializeWorkerBriefPacket,
   type WorkerBriefPacketDetails,
@@ -199,17 +198,6 @@ export async function buildAgentPrompt(input: {
     throw new UsageError(`Missing persona file: ${resolvedAgent.persona}`);
   }
 
-  const compiledState = await buildCompiledStateView({
-    projectPaths,
-    workingSet: runtimeState.workingSet,
-    fallback: {
-      boardSummary: runtimeState.boardSummary,
-      openMessagesSummary: runtimeState.openMessagesSummary,
-      activeRunsSummary: runtimeState.activeRunsSummary,
-      recentResultsSummary: runtimeState.recentResultsSummary,
-      humanInboxSummary: runtimeState.humanInboxSummary,
-    },
-  });
   const workerBrief = await materializeWorkerBriefPacket({
     projectId: activeProject,
     projectPaths,
@@ -296,7 +284,7 @@ ${listSkills(paths.skillsDir, availableSkillNames)}
 ${renderWorkerBrief(getWorkerBriefPacketPath(projectPaths, agentId), workerBriefDetails)}
 
 ## Board Summary
-${compiledState.boardDigest}
+${runtimeState.boardSummary.digest}
 
 ## Project Memory
 ${projectMemory}
