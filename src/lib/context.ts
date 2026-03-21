@@ -169,7 +169,7 @@ export function deltaChangesFromPacket(packet: StewardDeltaPacket): DeltaChange[
 // Helpers — rendering digests from runtime state summaries
 // ---------------------------------------------------------------------------
 
-function renderOpenDecisions(
+export function renderOpenDecisions(
   boardSummary: BoardSummary,
   humanInboxSummary: HumanInboxSummary,
 ): string {
@@ -201,7 +201,7 @@ function renderOpenDecisions(
   return lines.join("\n");
 }
 
-function renderRecentResults(
+export function renderRecentResults(
   recentResultsSummary: RecentResultsSummary,
 ): string {
   if (recentResultsSummary.items.length === 0) {
@@ -214,7 +214,7 @@ function renderRecentResults(
     .join("\n");
 }
 
-function renderHumanInbox(
+export function renderHumanInbox(
   humanInboxSummary: HumanInboxSummary,
 ): string {
   if (humanInboxSummary.items.length === 0) {

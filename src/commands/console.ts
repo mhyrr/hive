@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { appendLogEntry } from "../lib/log";
-import { buildCompiledStateView } from "../lib/cognition";
+import { renderOpenDecisions, renderRecentResults, renderHumanInbox } from "../lib/context";
 import {
   renderCognitiveRoutingPromptPolicy,
   STEWARD_ESSENTIAL_SKILL_NAMES,
@@ -287,17 +287,12 @@ export async function consoleCommand(args: string[]): Promise<string> {
     projectId: activeProject,
     projectPaths,
   });
-  const compiledState = await buildCompiledStateView({
-    projectPaths,
-    workingSet: state.workingSet,
-    fallback: {
-      boardSummary: state.boardSummary,
-      openMessagesSummary: state.openMessagesSummary,
-      activeRunsSummary: state.activeRunsSummary,
-      recentResultsSummary: state.recentResultsSummary,
-      humanInboxSummary: state.humanInboxSummary,
-    },
-  });
+  const boardDigest = state.boardSummary.digest;
+  const openDecisionsDigest = renderOpenDecisions(state.boardSummary, state.humanInboxSummary);
+  const openMessagesDigest = state.openMessagesSummary.digest;
+  const activeRunsDigest = state.activeRunsSummary.digest;
+  const recentResultsDigest = renderRecentResults(state.recentResultsSummary);
+  const humanInboxDigest = renderHumanInbox(state.humanInboxSummary);
   const hints = resolveRuntimeHints({
     globalConfig,
     runtimeOverride: options.runtimeOverride,
@@ -353,12 +348,12 @@ export async function consoleCommand(args: string[]): Promise<string> {
     skillsDir: paths.skillsDir,
     availableSkillNames,
     soul: soul.trim(),
-    boardDigest: compiledState.boardDigest,
-    openDecisionsDigest: compiledState.openDecisionsDigest,
-    openMessagesDigest: compiledState.openMessagesDigest,
-    activeRunsDigest: compiledState.activeRunsDigest,
-    recentResultsDigest: compiledState.recentResultsDigest,
-    humanInboxDigest: compiledState.humanInboxDigest,
+    boardDigest,
+    openDecisionsDigest,
+    openMessagesDigest,
+    activeRunsDigest,
+    recentResultsDigest,
+    humanInboxDigest,
     knowledgeDigest: memoryContext.globalKnowledgeDigest,
     recentDecisionsDigest: memoryContext.recentDecisionsDigest,
     projectEntityDigest: memoryContext.projectEntityDigest,

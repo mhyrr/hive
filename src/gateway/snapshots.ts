@@ -200,21 +200,27 @@ function toneFromSeverity(
   return "info";
 }
 
-export async function readProjectAgentContext(projectPaths: ProjectPaths): Promise<{
+export async function readProjectAgentContext(
+  projectPaths: ProjectPaths,
+  globalConfigPath?: string,
+): Promise<{
   plan: string;
   projectConfig: string;
+  globalConfig: string;
 }> {
-  const [plan, projectConfig] = await Promise.all([
+  const [plan, projectConfig, globalConfig] = await Promise.all([
     Bun.file(projectPaths.plan).text().catch(() => ""),
     Bun.file(projectPaths.config).text().catch(() => ""),
+    globalConfigPath ? Bun.file(globalConfigPath).text().catch(() => "") : Promise.resolve(""),
   ]);
 
-  return { plan, projectConfig };
+  return { plan, projectConfig, globalConfig };
 }
 
 function resolveAgentPresentation(input: {
   plan: string;
   projectConfig: string;
+  globalConfig: string;
   agentId: string;
 }): { displayName: string; persona: string; descriptor: string } {
   if (input.agentId === "console") {
@@ -258,7 +264,7 @@ function resolveAgentPresentation(input: {
   // Try to resolve from ephemeral agent ID pattern (e.g. craftsman-opus-001).
   const segments = input.agentId.split("-");
   const inferredPersona = extractPersonaName(segments[0] ?? "");
-  const modelPoolEntry = inferModelPoolFromAgentId(input.agentId, input.projectConfig);
+  const modelPoolEntry = inferModelPoolFromAgentId(input.agentId, input.globalConfig || input.projectConfig);
 
   if (modelPoolEntry) {
     return {
@@ -695,7 +701,7 @@ export async function buildGatewayLiveSnapshot(input: {
     projectId: input.projectId,
     projectPaths,
   });
-  const agentContext = await readProjectAgentContext(projectPaths);
+  const agentContext = await readProjectAgentContext(projectPaths, input.options.hivePaths.config);
   const [supervisorState, deltaHistory, recentEvents] = await Promise.all([
     reconcileDetachedSupervisorState(projectPaths),
     readStewardDeltaHistory({

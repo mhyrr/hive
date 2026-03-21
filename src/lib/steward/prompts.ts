@@ -73,9 +73,9 @@ export function buildPersistentStewardSystemPrompt(input: {
   identity: string;
   self: string;
   cognitiveRoutingPolicy: string;
-  projectConfig?: string;
+  globalConfig?: string;
 }): string {
-  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
   const modelPoolSection = renderModelPoolSection(modelPool);
 
   return `${input.soul}
@@ -135,9 +135,9 @@ export function buildPersistentStewardBootstrapMessage(input: StewardContext & {
   sessionId: string;
   humanMessage: string;
   cognitiveRoutingPolicy: string;
-  projectConfig?: string;
+  globalConfig?: string;
 }): string {
-  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
   const modelPoolSection = renderModelPoolSection(modelPool);
 
   return `Bootstrap the live HIVE steward session before answering the human turn. Use this compact context to load the project into working memory. Do not simply restate the bootstrap back to the human.
@@ -216,9 +216,9 @@ export function buildPersistentStewardRefreshMessage(input: StewardContext & {
   projectId: string;
   humanMessage: string;
   cognitiveRoutingPolicy: string;
-  projectConfig?: string;
+  globalConfig?: string;
 }): string {
-  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
   const modelPoolSection = renderModelPoolSection(modelPool);
 
   return `Refresh the existing live HIVE steward session with the latest compact state and then answer the human turn.
@@ -281,9 +281,9 @@ export function buildDirectStewardTurnPrompt(input: StewardContext & {
   sessionId: string;
   cognitiveRoutingPolicy: string;
   humanMessage: string;
-  projectConfig?: string;
+  globalConfig?: string;
 }): string {
-  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
   const modelPoolSection = renderModelPoolSection(modelPool);
 
   return `${input.sessionPrompt || "# HIVE Steward Session"}
