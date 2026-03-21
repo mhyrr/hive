@@ -15,7 +15,7 @@ import { UsageError } from "../lib/errors";
 import { section } from "../lib/format";
 import { appendLogEntry } from "../lib/log";
 import { readGatewayState } from "../lib/gateway-state";
-import { findMessage, listOpenProjectMessages } from "../lib/messages";
+import { closeMessage, createMessage, findMessage, listOpenProjectMessages } from "../lib/messages";
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -41,10 +41,14 @@ import {
   DEFAULT_PULSE_INTERVAL_TICKS,
   DEFAULT_STEWARD_REASSESS_SECONDS,
   DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
+  extractVerificationSpec,
   formatPulse,
   isProcessAlive,
   RecoveredRun,
+  runVerification,
+  type VerificationOutcome,
 } from "../lib/supervisor";
+import { extractRepoPath } from "../lib/project";
 import { toIsoTimestamp } from "../lib/time";
 import { refreshProjectRuntimeState, type ProjectRuntimeState } from "../lib/state";
 import { compileIdleProjectCognition, triageRunDiffsForSteward } from "../lib/cognition";
@@ -563,6 +567,159 @@ async function terminateSupervisorOwnedRuns(projectPaths: ReturnType<typeof getP
   }
 }
 
+async function verifyCompletedWorker(input: {
+  paths: import("../lib/paths").HivePaths;
+  projectPaths: import("../lib/paths").ProjectPaths;
+  activeProject: string;
+  agentId: string;
+  sourceMessage: import("../lib/messages").HiveMessage;
+  scope: string[] | null;
+}): Promise<{ outcome: VerificationOutcome; summary: string } | null> {
+  const spec = extractVerificationSpec(input.sourceMessage);
+
+  if (!spec) {
+    return null;
+  }
+
+  const projectConfig = await Bun.file(input.projectPaths.config).text();
+  const repoPath = extractRepoPath(projectConfig);
+
+  if (!repoPath) {
+    return null;
+  }
+
+  const attempt = parseInt(input.sourceMessage.attributes.attempt ?? "1", 10) || 1;
+  const outcome = runVerification({ spec, repoPath, attempt, scope: input.scope });
+
+  if (outcome.action === "keep") {
+    const summary = `verify PASS: ${spec.command} (attempt ${attempt}/${spec.maxAttempts})`;
+
+    await appendLogEntry(
+      input.projectPaths.log,
+      "hive supervise verify",
+      `${input.agentId}: ${summary}`,
+    );
+    await appendFeedEntry(input.paths, {
+      project: input.activeProject,
+      headline: `${input.agentId} verified`,
+      details: [
+        `command: ${spec.command}`,
+        `result: PASS`,
+        `attempt: ${attempt}/${spec.maxAttempts}`,
+      ],
+    });
+
+    return { outcome, summary };
+  }
+
+  if (outcome.action === "retry") {
+    const summary = `verify FAIL: ${spec.command} (attempt ${outcome.attempt}/${outcome.maxAttempts}, will retry)`;
+
+    await closeMessage(
+      input.paths.msgDir,
+      input.sourceMessage.filename,
+      "supervisor",
+      `Verification failed (attempt ${outcome.attempt}/${outcome.maxAttempts}). Retrying.`,
+      input.activeProject,
+    );
+
+    const revertNote = outcome.reverted
+      ? `The previous changes within scope (${input.scope?.join(", ") ?? "unknown"}) have been reverted.`
+      : `WARNING: Revert was not performed (${outcome.revertSummary}). The working tree may contain changes from the previous attempt.`;
+
+    const retryBody = [
+      input.sourceMessage.body,
+      "",
+      `## Verification Failure (attempt ${outcome.attempt}/${outcome.maxAttempts})`,
+      `Command: ${spec.command}`,
+      `Exit code: ${outcome.verifyResult.exitCode}`,
+      "Output:",
+      "```",
+      outcome.verifyResult.output.slice(0, 1000),
+      "```",
+      "",
+      `${revertNote}`,
+      "",
+      "Fix the issue and try again.",
+    ].join("\n");
+
+    const preserveKeys = ["task", "launch", "scope", "persona", "runtime", "model", "verify", "max-attempts", "auto-revert"];
+    const retryAttrs: Record<string, string> = {};
+
+    for (const key of preserveKeys) {
+      const value = input.sourceMessage.attributes[key];
+
+      if (value) {
+        retryAttrs[key] = value;
+      }
+    }
+
+    retryAttrs.attempt = String(attempt + 1);
+
+    await createMessage(input.paths.msgDir, {
+      from: input.sourceMessage.attributes.from ?? "supervisor",
+      to: input.sourceMessage.attributes.to ?? input.agentId,
+      type: "assign",
+      project: input.activeProject,
+      body: retryBody,
+      attributes: retryAttrs,
+    });
+
+    await appendLogEntry(
+      input.projectPaths.log,
+      "hive supervise verify",
+      `${input.agentId}: ${summary}\nReverted: ${outcome.revertSummary}`,
+    );
+    await appendFeedEntry(input.paths, {
+      project: input.activeProject,
+      headline: `${input.agentId} verify failed, retrying`,
+      details: [
+        `command: ${spec.command}`,
+        `attempt: ${outcome.attempt}/${outcome.maxAttempts}`,
+        `revert: ${outcome.revertSummary}`,
+      ],
+    });
+
+    return { outcome, summary };
+  }
+
+  // action === "block"
+  const summary = `verify FAIL: ${spec.command} (attempt ${outcome.attempt}/${outcome.maxAttempts}, exhausted)`;
+
+  await closeMessage(
+    input.paths.msgDir,
+    input.sourceMessage.filename,
+    "supervisor",
+    `Verification failed after ${outcome.maxAttempts} attempt(s). Blocked for steward review.\nCommand: ${spec.command}\nExit: ${outcome.verifyResult.exitCode}`,
+    input.activeProject,
+  );
+
+  await appendLogEntry(
+    input.projectPaths.log,
+    "hive supervise verify",
+    `${input.agentId}: ${summary}\nReverted: ${outcome.revertSummary}`,
+  );
+  await appendFeedEntry(input.paths, {
+    project: input.activeProject,
+    headline: `${input.agentId} verify exhausted, blocked`,
+    details: [
+      `command: ${spec.command}`,
+      `attempts: ${outcome.maxAttempts}`,
+      `revert: ${outcome.revertSummary}`,
+    ],
+  });
+
+  return { outcome, summary };
+}
+
+function formatVerificationResults(results: { agentId: string; summary: string }[]): string {
+  if (results.length === 0) {
+    return "No verifications this pass.";
+  }
+
+  return results.map((r) => `- ${r.agentId}: ${r.summary}`).join("\n");
+}
+
 async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
   supervisorTickCount++;
   const paths = await ensureHiveScaffold();
@@ -766,6 +923,37 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     workerSection = "Worker launch dispatch already in progress.";
   }
 
+  // Post-launch verification: check completed workers for verify: specs
+  const verificationResults: { agentId: string; summary: string }[] = [];
+
+  for (const outcome of workerDispatch.outcomes) {
+    if (outcome.result.status !== "fulfilled") {
+      continue;
+    }
+
+    const msg = await findMessage(paths.msgDir, outcome.messageFilename, activeProject);
+
+    if (!msg?.attributes.verify) {
+      continue;
+    }
+
+    const scopeAttr = msg.attributes.scope?.trim();
+    const scope = scopeAttr ? scopeAttr.split(",").map((s) => s.trim()).filter(Boolean) : null;
+
+    const result = await verifyCompletedWorker({
+      paths,
+      projectPaths,
+      activeProject,
+      agentId: outcome.agentId,
+      sourceMessage: msg,
+      scope,
+    });
+
+    if (result) {
+      verificationResults.push({ agentId: outcome.agentId, summary: result.summary });
+    }
+  }
+
   const skippedSection =
     workerDispatch.skipped.length > 0
       ? workerDispatch.skipped.map((reason) => `- ${reason}`).join("\n")
@@ -856,6 +1044,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     section("Recovered Runs", formatRecoveredRuns(recoveredRuns)),
     section("Steward", stewardSection),
     section("Worker Launches", workerSection),
+    ...(verificationResults.length > 0 ? [section("Verification", formatVerificationResults(verificationResults))] : []),
     section("Skipped Assignments", skippedSection),
     section("Idle Compilation", idleCompileSection),
     ...(pulseSection ? [pulseSection] : []),

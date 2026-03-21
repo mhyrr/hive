@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 // @bun
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -1084,13 +1083,6 @@ path: {{repo_path}}
 # framework: bun
 # database: postgresql
 # testing: bun test
-
-## Models
-- opus: claude, claude-opus-4-6, frontier deep work
-- sonnet: claude, claude-sonnet-4-6, general workhorse
-- haiku: claude, claude-haiku-4-5-20251001, fast triage
-# Uncomment to activate additional models:
-# - codex: codex, codex-5.4, code-focused
 
 ## Rules
 # Project-specific rules that override or extend AGENTS.md.
@@ -2687,10 +2679,10 @@ function parseDefaultTeam(projectConfig) {
     };
   }).filter((agent) => Boolean(agent));
 }
-function parseModelPool(projectConfig) {
-  const normalized = projectConfig.replace(/\r\n/g, `
+function parseModelPool(config) {
+  const normalized = config.replace(/\r\n/g, `
 `);
-  const sectionHeading = normalized.match(/^## Models\s*$/m);
+  const sectionHeading = normalized.match(/^## (?:Models|Model Pool)\s*$/m);
   if (!sectionHeading || sectionHeading.index === undefined) {
     return [];
   }
@@ -62842,6 +62834,119 @@ import { spawn as spawn2 } from "child_process";
 import { closeSync, openSync } from "fs";
 import { basename as basename2, join as join10 } from "path";
 
+// src/lib/git.ts
+function decode(output) {
+  return new TextDecoder().decode(output ?? new Uint8Array).trim();
+}
+function normalizeStatus(status) {
+  return status.trim() || "??";
+}
+function extractPathFromPorcelain(line) {
+  const payload = line.slice(3).trim();
+  if (!payload) {
+    return null;
+  }
+  if (payload.includes(" -> ")) {
+    return payload.split(" -> ").at(-1)?.trim() ?? null;
+  }
+  return payload;
+}
+function parseStatusSnapshot(output) {
+  const snapshot = {};
+  for (const line of output.split(`
+`)) {
+    const trimmed = line.trimEnd();
+    if (!trimmed) {
+      continue;
+    }
+    const path = extractPathFromPorcelain(trimmed);
+    if (!path) {
+      continue;
+    }
+    snapshot[path] = normalizeStatus(trimmed.slice(0, 2));
+  }
+  return snapshot;
+}
+function listChangedFiles(before, after) {
+  const paths = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...paths].filter((path) => before[path] !== after[path]).sort((left, right) => left.localeCompare(right));
+}
+function captureGitStatusSnapshot(repoPath) {
+  const result = Bun.spawnSync({
+    cmd: ["git", "-C", repoPath, "status", "--porcelain=v1", "--untracked-files=all"],
+    stderr: "pipe",
+    stdout: "pipe"
+  });
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  return parseStatusSnapshot(decode(result.stdout));
+}
+var DEFAULT_VERIFY_TIMEOUT_MS = 60000;
+function runVerifyCommand(repoPath, command, timeoutMs = DEFAULT_VERIFY_TIMEOUT_MS) {
+  const result = Bun.spawnSync({
+    cmd: ["sh", "-c", command],
+    cwd: repoPath,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env },
+    timeout: timeoutMs
+  });
+  const stdout = decode(result.stdout);
+  const stderr = decode(result.stderr);
+  const output = [stdout, stderr].filter(Boolean).join(`
+`);
+  return {
+    passed: result.exitCode === 0,
+    exitCode: result.exitCode,
+    output: output.length > 2000 ? output.slice(-2000) : output
+  };
+}
+function revertWorkerChanges(repoPath) {
+  const resetResult = Bun.spawnSync({
+    cmd: ["git", "-C", repoPath, "reset", "--hard", "HEAD"],
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  if (resetResult.exitCode !== 0) {
+    return {
+      reverted: false,
+      summary: `git reset --hard failed: ${decode(resetResult.stderr)}`
+    };
+  }
+  const cleanResult = Bun.spawnSync({
+    cmd: ["git", "-C", repoPath, "clean", "-fd"],
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  return {
+    reverted: true,
+    summary: cleanResult.exitCode === 0 ? "reverted to HEAD (reset --hard + clean -fd)" : `reset succeeded but clean failed: ${decode(cleanResult.stderr)}`
+  };
+}
+function diffGitStatusSnapshots(before, after) {
+  if (!before || !after) {
+    return {
+      available: false,
+      changedFiles: [],
+      summaryLines: ["git status unavailable"]
+    };
+  }
+  const changedFiles = listChangedFiles(before, after);
+  if (changedFiles.length === 0) {
+    return {
+      available: true,
+      changedFiles,
+      summaryLines: ["no git status delta detected"]
+    };
+  }
+  return {
+    available: true,
+    changedFiles,
+    summaryLines: changedFiles.map((path) => `${after[path] ?? "--"} ${path}`)
+  };
+}
+
 // src/lib/supervisor.ts
 init_project();
 var DEFAULT_SUPERVISOR_INTERVAL_SECONDS = 120;
@@ -63089,6 +63194,41 @@ function formatPulse(signals, activeRunCount) {
   });
   return [`\u25C6 Pulse: ${parts.join(", ")}`, ...details].join(`
 `);
+}
+function extractVerificationSpec(message) {
+  if (!message) {
+    return null;
+  }
+  const verify = message.attributes.verify?.trim();
+  if (!verify) {
+    return null;
+  }
+  const maxAttempts = Math.max(1, parseInt(message.attributes["max-attempts"] ?? "1", 10) || 1);
+  const autoRevert = (message.attributes["auto-revert"] ?? "true").trim().toLowerCase() !== "false";
+  return { command: verify, maxAttempts, autoRevert };
+}
+function runVerification(input) {
+  const verifyResult = runVerifyCommand(input.repoPath, input.spec.command);
+  if (verifyResult.passed) {
+    return { action: "keep", verifyResult };
+  }
+  const revert = input.spec.autoRevert ? revertWorkerChanges(input.repoPath) : { reverted: false, summary: "auto-revert disabled" };
+  if (input.attempt >= input.spec.maxAttempts) {
+    return {
+      action: "block",
+      attempt: input.attempt,
+      maxAttempts: input.spec.maxAttempts,
+      verifyResult,
+      revertSummary: revert.summary
+    };
+  }
+  return {
+    action: "retry",
+    attempt: input.attempt,
+    maxAttempts: input.spec.maxAttempts,
+    verifyResult,
+    revertSummary: revert.summary
+  };
 }
 
 // src/lib/detached-supervisor.ts
@@ -98829,15 +98969,15 @@ class TransformDecodeBuilder {
   constructor(schema) {
     this.schema = schema;
   }
-  Decode(decode) {
-    return new TransformEncodeBuilder(this.schema, decode);
+  Decode(decode2) {
+    return new TransformEncodeBuilder(this.schema, decode2);
   }
 }
 
 class TransformEncodeBuilder {
-  constructor(schema, decode) {
+  constructor(schema, decode2) {
     this.schema = schema;
-    this.decode = decode;
+    this.decode = decode2;
   }
   EncodeTransform(encode2, schema) {
     const Encode = (value) => schema[TransformKind].Encode(encode2(value));
@@ -99256,78 +99396,6 @@ class ProviderTransport {
 // src/lib/steward/turn.ts
 init_errors();
 import { join as join15 } from "path";
-// src/lib/git.ts
-function decode(output) {
-  return new TextDecoder().decode(output ?? new Uint8Array).trim();
-}
-function normalizeStatus(status) {
-  return status.trim() || "??";
-}
-function extractPathFromPorcelain(line) {
-  const payload = line.slice(3).trim();
-  if (!payload) {
-    return null;
-  }
-  if (payload.includes(" -> ")) {
-    return payload.split(" -> ").at(-1)?.trim() ?? null;
-  }
-  return payload;
-}
-function parseStatusSnapshot(output) {
-  const snapshot = {};
-  for (const line of output.split(`
-`)) {
-    const trimmed = line.trimEnd();
-    if (!trimmed) {
-      continue;
-    }
-    const path4 = extractPathFromPorcelain(trimmed);
-    if (!path4) {
-      continue;
-    }
-    snapshot[path4] = normalizeStatus(trimmed.slice(0, 2));
-  }
-  return snapshot;
-}
-function listChangedFiles(before, after) {
-  const paths = new Set([...Object.keys(before), ...Object.keys(after)]);
-  return [...paths].filter((path4) => before[path4] !== after[path4]).sort((left, right) => left.localeCompare(right));
-}
-function captureGitStatusSnapshot(repoPath) {
-  const result = Bun.spawnSync({
-    cmd: ["git", "-C", repoPath, "status", "--porcelain=v1", "--untracked-files=all"],
-    stderr: "pipe",
-    stdout: "pipe"
-  });
-  if (result.exitCode !== 0) {
-    return null;
-  }
-  return parseStatusSnapshot(decode(result.stdout));
-}
-function diffGitStatusSnapshots(before, after) {
-  if (!before || !after) {
-    return {
-      available: false,
-      changedFiles: [],
-      summaryLines: ["git status unavailable"]
-    };
-  }
-  const changedFiles = listChangedFiles(before, after);
-  if (changedFiles.length === 0) {
-    return {
-      available: true,
-      changedFiles,
-      summaryLines: ["no git status delta detected"]
-    };
-  }
-  return {
-    available: true,
-    changedFiles,
-    summaryLines: changedFiles.map((path4) => `${after[path4] ?? "--"} ${path4}`)
-  };
-}
-
-// src/lib/steward/turn.ts
 init_runs();
 init_paths();
 init_sessions();
@@ -129705,13 +129773,6 @@ function renderModelPoolSection(pool) {
   for (const entry of pool) {
     lines.push(`- ${entry.name} (${entry.runtime}, ${entry.model}): ${entry.description}`);
   }
-  lines.push("");
-  lines.push("Assignment frontmatter fields for model selection:");
-  lines.push("- `to:` \u2014 ephemeral agent ID, e.g. `craftsman-opus-001`, `critic-sonnet-review`");
-  lines.push("- `persona:` \u2014 cognitive lens: architect, craftsman, critic, scout");
-  lines.push("- `runtime:` \u2014 which runtime to use (from model pool above)");
-  lines.push("- `model:` \u2014 which model ID to use (from model pool above)");
-  lines.push("- Available personas: architect (system design), craftsman (implementation), critic (review/analysis), scout (research/exploration)");
   return lines.join(`
 `);
 }
@@ -129733,7 +129794,7 @@ Message: ${message.filename}`);
   return message.filename;
 }
 function buildPersistentStewardSystemPrompt(input) {
-  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
   const modelPoolSection = renderModelPoolSection(modelPool);
   return `${input.soul}
 
@@ -129749,35 +129810,14 @@ numbers, or file paths back at the human unless they ask for system internals.
 ${modelPoolSection}
 
 Session rules:
+- When the human specifies a model, runtime, or perspective, honor that choice exactly. Do not substitute a cheaper model. Human model requests are non-negotiable.
 - Use compact state first. Only read raw files when the turn actually needs them.
 - Use absolute paths when working across HIVE home and project files.
 - Update PLAN.md, BOARD.md, LOG.md, and message files when state changes.
-- Delegate through HIVE message files when worker work is needed. Real delegation means WRITING A FILE to the messages directory. Do NOT use \`hive msg\` as a shell command \u2014 it is not in PATH. Instead, write the message file directly.
-- To delegate work, write a markdown file to the messages directory with this exact format:
-
-\`\`\`
----
-from: steward
-to: <agent-id>
-type: assign
-project: <project-id>
-task: <task-id>
-scope: <comma-separated scope roots>
-persona: <architect|craftsman|critic|scout>
-runtime: <runtime from model pool>
-model: <model-id from model pool>
-launch: auto
----
-
-<worker brief \u2014 what the worker should do>
-\`\`\`
-
-The \`to:\` field is an ephemeral agent ID. Name it descriptively: \`craftsman-opus-001\`, \`critic-sonnet-review\`, \`scout-haiku-scan\`, etc. There is no fixed team roster \u2014 pick the right model and persona for each task.
-
-Write the file to: \`<messages-dir>/assign-<agent-id>-<timestamp>.md\`
-The supervisor watcher will detect the file and launch the worker automatically within ~200ms.
-- When the human asks for multiple runtimes/models or parallel work, write multiple assignment files. Do not narrate delegation and then do the work yourself.
-- Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet. Write assignment files.
+- Use the \`delegate\` tool to dispatch workers. Do NOT write assignment files manually with \`write\`.
+- Use \`list_models\` to check available models before delegating.
+- When the human asks for multiple runtimes/models or parallel work, call \`delegate\` multiple times. Do not narrate delegation and then do the work yourself.
+- Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet.
 - Follow the cognitive routing policy below.
 - If the session tail conflicts with your assumptions, trust the session tail.
 
@@ -129786,7 +129826,7 @@ ${input.cognitiveRoutingPolicy}
 `;
 }
 function buildPersistentStewardBootstrapMessage(input) {
-  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
   const modelPoolSection = renderModelPoolSection(modelPool);
   return `Bootstrap the live HIVE steward session before answering the human turn. Use this compact context to load the project into working memory. Do not simply restate the bootstrap back to the human.
 
@@ -129859,7 +129899,7 @@ ${input.recentTurns}
 ${input.humanMessage}`;
 }
 function buildPersistentStewardRefreshMessage(input) {
-  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
   const modelPoolSection = renderModelPoolSection(modelPool);
   return `Refresh the existing live HIVE steward session with the latest compact state and then answer the human turn.
 
@@ -129915,7 +129955,7 @@ ${input.recentTurns}
 ${input.humanMessage}`;
 }
 function buildDirectStewardTurnPrompt(input) {
-  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
   const modelPoolSection = renderModelPoolSection(modelPool);
   return `${input.sessionPrompt || "# HIVE Steward Session"}
 
@@ -129940,10 +129980,9 @@ ${modelPoolSection}
 - Answer the human directly and concretely.
 - If action is needed, do it yourself through files or \`hive\` commands. Do not tell the human to operate the system for you.
 - BOARD.md is steward-owned. Update it directly when plan/task state changes.
-- When you delegate, WRITE assignment message files directly to the messages directory. Do NOT shell out to \`hive msg\` \u2014 it is not in PATH. Write a markdown file with frontmatter: \`from: steward\`, \`to: <agent-id>\`, \`type: assign\`, \`project: <project-id>\`, \`task: <task-id>\`, \`scope: <roots>\`, \`persona: <persona>\`, \`runtime: <runtime>\`, \`model: <model-id>\`, \`launch: auto\`. The body is the worker brief.
-- The \`to:\` field is an ephemeral agent ID \u2014 name it descriptively: \`craftsman-opus-001\`, \`critic-sonnet-review\`, etc. There is no fixed team roster.
-- Write to: \`<messages-dir>/assign-<agent-id>-<timestamp>.md\`. The watcher auto-launches within ~200ms.
-- If the human asks for multiple runtimes/models or parallel work, write multiple assignment files. Do not say you delegated and then do the work yourself.
+- Use the \`delegate\` tool to dispatch workers. Do NOT write assignment files manually with \`write\`.
+- Use \`list_models\` to check available models before delegating.
+- If the human asks for multiple runtimes/models or parallel work, call \`delegate\` multiple times. Do not say you delegated and then do the work yourself.
 - Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet.
 - Follow the cognitive routing policy below instead of defaulting to either solo replies or broad fan-out.
 - Keep LOG.md and feed.md high signal.
@@ -130318,6 +130357,101 @@ ${result.stderr.trimEnd()}` : ""
   };
 }
 
+// src/lib/steward/tools/delegate.ts
+init_project();
+var DELEGATE_PERSONAS = ["architect", "craftsman", "critic", "scout"];
+function generateAgentId(persona, model) {
+  const suffix = crypto.randomUUID().slice(0, 4);
+  return `${persona}-${model}-${suffix}`;
+}
+function getModelPool(ctx) {
+  return parseModelPool(ctx.globalConfig);
+}
+function formatPoolNames(pool) {
+  return pool.map((e) => e.name).join(", ");
+}
+function createDelegationTools(ctx) {
+  return [
+    {
+      name: "delegate",
+      description: "Dispatch a worker with validated model and persona. Use this instead of writing assignment files manually.",
+      parameters: Type2.Object({
+        model: Type2.String({ description: "Pool name like 'opus', 'sonnet', 'gpt54'" }),
+        persona: Type2.Union(DELEGATE_PERSONAS.map((p) => Type2.Literal(p)), { description: "Cognitive lens for the worker" }),
+        task: Type2.String({ description: "Task ID or description" }),
+        scope: Type2.String({ description: "Comma-separated scope roots, e.g. 'src/auth, tests/auth'. Use '*' for whole-repo access. Disjoint scopes allow parallel workers." }),
+        brief: Type2.String({ description: "Worker instructions" })
+      }),
+      async execute(_toolCallId, args) {
+        const model = String(args.model ?? "").trim();
+        const persona = String(args.persona ?? "").trim();
+        const task = String(args.task ?? "").trim();
+        const scope = String(args.scope ?? "").trim();
+        const brief = String(args.brief ?? "").trim();
+        if (!model) {
+          throw new Error("model is required.");
+        }
+        if (!persona || !DELEGATE_PERSONAS.includes(persona)) {
+          throw new Error(`Invalid persona '${persona}'. Available: ${DELEGATE_PERSONAS.join(", ")}`);
+        }
+        if (!task) {
+          throw new Error("task is required.");
+        }
+        if (!scope) {
+          throw new Error("scope is required. Use '*' for whole-repo access, or specify paths like 'src/auth, tests/auth'.");
+        }
+        if (!brief) {
+          throw new Error("brief is required.");
+        }
+        const pool = getModelPool(ctx);
+        const entry = pool.find((e) => e.name === model);
+        if (!entry) {
+          const available = formatPoolNames(pool);
+          throw new Error(`Unknown model '${model}'. Available: ${available || "(none configured)"}`);
+        }
+        const agentId = generateAgentId(persona, model);
+        const message = await createMessage(ctx.msgDir, {
+          from: "steward",
+          to: agentId,
+          type: "assign",
+          project: ctx.projectId,
+          body: brief,
+          attributes: {
+            task,
+            scope,
+            persona,
+            runtime: entry.runtime,
+            model: entry.model,
+            launch: "auto"
+          }
+        });
+        return [
+          `Delegated to ${agentId}`,
+          `  model: ${entry.name} (${entry.runtime}, ${entry.model})`,
+          `  persona: ${persona}`,
+          `  task: ${task}`,
+          `  file: ${message.filename}`
+        ].join(`
+`);
+      }
+    },
+    {
+      name: "list_models",
+      description: "List available models from the pool.",
+      parameters: Type2.Object({}),
+      async execute() {
+        const pool = getModelPool(ctx);
+        if (pool.length === 0) {
+          return "No models configured in the model pool.";
+        }
+        const lines = pool.map((e) => `- ${e.name}: ${e.runtime}, ${e.model} \u2014 ${e.description}`);
+        return lines.join(`
+`);
+      }
+    }
+  ];
+}
+
 // src/lib/steward/tools/search.ts
 import { readdir as readdir9 } from "fs/promises";
 import { join as join14, relative as relative2 } from "path";
@@ -130498,7 +130632,12 @@ function buildPersistentStewardTools(input) {
   return [
     ...createFileTools(execution),
     ...createSearchTools(execution),
-    createBashTool(execution)
+    createBashTool(execution),
+    ...createDelegationTools({
+      msgDir: input.msgDir,
+      projectId: input.projectId,
+      globalConfig: input.globalConfig
+    })
   ];
 }
 
@@ -130881,7 +131020,10 @@ async function startPersistentStewardHandle(input) {
   agent2.setModel(buildPiModel(input.runtimeConfig));
   agent2.setTools(buildPersistentStewardTools({
     hiveHome: input.hivePaths.home,
-    repoPath: input.repoPath
+    repoPath: input.repoPath,
+    msgDir: input.hivePaths.msgDir,
+    projectId: input.projectId,
+    globalConfig: input.globalConfig
   }));
   if (!process.env.HIVE_TEST_PI_BEHAVIOR) {
     const apiKey = resolvePiApiKey(input.runtimeConfig.provider, {
@@ -130930,6 +131072,8 @@ async function acquirePersistentStewardHandle(input) {
     hivePaths: input.hivePaths,
     sessionId: input.sessionId,
     repoPath: input.repoPath,
+    projectId: input.projectId,
+    globalConfig: input.globalConfig,
     runtimeConfig,
     systemPrompt: input.systemPrompt
   });
@@ -131157,12 +131301,13 @@ async function runPersistentStewardTurn(input) {
       identity: context.identity,
       self: context.self,
       cognitiveRoutingPolicy,
-      projectConfig: context.projectConfig
+      globalConfig: context.globalConfig
     });
     const handle = await acquirePersistentStewardHandle({
       hivePaths: input.hivePaths,
       sessionId: input.sessionId,
       repoPath: context.repoPath,
+      projectId: input.projectId,
       runtime: context.sessionRuntime,
       model: context.sessionModel,
       globalConfig: context.globalConfig,
@@ -131193,6 +131338,13 @@ async function runPersistentStewardTurn(input) {
     handle.activeTurn = turn;
     handle.systemPrompt = systemPrompt;
     handle.agent.setSystemPrompt(systemPrompt);
+    handle.agent.setTools(buildPersistentStewardTools({
+      hiveHome: input.hivePaths.home,
+      repoPath: context.repoPath,
+      msgDir: input.hivePaths.msgDir,
+      projectId: input.projectId,
+      globalConfig: context.globalConfig
+    }));
     clearIdleTimer(handle);
     const pendingNotificationBlock = await drainPendingNotifications(input.hivePaths.home, input.projectId);
     const fullHumanMessage = pendingNotificationBlock ? `${pendingNotificationBlock}
@@ -131389,12 +131541,13 @@ async function ensurePersistentStewardSessionReady(input) {
     identity: context.identity,
     self: context.self,
     cognitiveRoutingPolicy,
-    projectConfig: context.projectConfig
+    globalConfig: context.globalConfig
   });
   const handle = await acquirePersistentStewardHandle({
     hivePaths: input.hivePaths,
     sessionId: input.sessionId,
     repoPath: context.repoPath,
+    projectId: input.projectId,
     runtime: context.sessionRuntime,
     model: context.sessionModel,
     globalConfig: context.globalConfig,
@@ -133308,12 +133461,13 @@ function toneFromSeverity(severity) {
   }
   return "info";
 }
-async function readProjectAgentContext(projectPaths) {
-  const [plan, projectConfig] = await Promise.all([
+async function readProjectAgentContext(projectPaths, globalConfigPath) {
+  const [plan, projectConfig, globalConfig] = await Promise.all([
     Bun.file(projectPaths.plan).text().catch(() => ""),
-    Bun.file(projectPaths.config).text().catch(() => "")
+    Bun.file(projectPaths.config).text().catch(() => ""),
+    globalConfigPath ? Bun.file(globalConfigPath).text().catch(() => "") : Promise.resolve("")
   ]);
-  return { plan, projectConfig };
+  return { plan, projectConfig, globalConfig };
 }
 function resolveAgentPresentation(input) {
   if (input.agentId === "console") {
@@ -133348,7 +133502,7 @@ function resolveAgentPresentation(input) {
   }
   const segments = input.agentId.split("-");
   const inferredPersona = extractPersonaName(segments[0] ?? "");
-  const modelPoolEntry = inferModelPoolFromAgentId(input.agentId, input.projectConfig);
+  const modelPoolEntry = inferModelPoolFromAgentId(input.agentId, input.globalConfig || input.projectConfig);
   if (modelPoolEntry) {
     return {
       displayName: input.agentId,
@@ -133668,7 +133822,7 @@ async function buildGatewayLiveSnapshot(input) {
     projectId: input.projectId,
     projectPaths
   });
-  const agentContext = await readProjectAgentContext(projectPaths);
+  const agentContext = await readProjectAgentContext(projectPaths, input.options.hivePaths.config);
   const [supervisorState, deltaHistory, recentEvents] = await Promise.all([
     reconcileDetachedSupervisorState(projectPaths),
     readStewardDeltaHistory({
@@ -137323,6 +137477,7 @@ import { join as join25 } from "path";
 init_errors();
 init_paths();
 init_runs();
+init_project();
 function persistentStewardWakeStatePath(projectPaths) {
   return join25(projectPaths.supervisorDir, "persistent-steward-wake.json");
 }
@@ -137647,6 +137802,103 @@ async function terminateSupervisorOwnedRuns(projectPaths) {
     } catch {}
   }
 }
+async function verifyCompletedWorker(input) {
+  const spec = extractVerificationSpec(input.sourceMessage);
+  if (!spec) {
+    return null;
+  }
+  const projectConfig = await Bun.file(input.projectPaths.config).text();
+  const repoPath = extractRepoPath(projectConfig);
+  if (!repoPath) {
+    return null;
+  }
+  const attempt = parseInt(input.sourceMessage.attributes.attempt ?? "1", 10) || 1;
+  const outcome = runVerification({ spec, repoPath, attempt });
+  if (outcome.action === "keep") {
+    const summary2 = `verify PASS: ${spec.command} (attempt ${attempt}/${spec.maxAttempts})`;
+    await appendLogEntry(input.projectPaths.log, "hive supervise verify", `${input.agentId}: ${summary2}`);
+    await appendFeedEntry(input.paths, {
+      project: input.activeProject,
+      headline: `${input.agentId} verified`,
+      details: [
+        `command: ${spec.command}`,
+        `result: PASS`,
+        `attempt: ${attempt}/${spec.maxAttempts}`
+      ]
+    });
+    return { outcome, summary: summary2 };
+  }
+  if (outcome.action === "retry") {
+    const summary2 = `verify FAIL: ${spec.command} (attempt ${outcome.attempt}/${outcome.maxAttempts}, will retry)`;
+    await closeMessage(input.paths.msgDir, input.sourceMessage.filename, "supervisor", `Verification failed (attempt ${outcome.attempt}/${outcome.maxAttempts}). Retrying.`, input.activeProject);
+    const retryBody = [
+      input.sourceMessage.body,
+      "",
+      `## Verification Failure (attempt ${outcome.attempt}/${outcome.maxAttempts})`,
+      `Command: ${spec.command}`,
+      `Exit code: ${outcome.verifyResult.exitCode}`,
+      "Output:",
+      "```",
+      outcome.verifyResult.output.slice(0, 1000),
+      "```",
+      "",
+      "Fix the issue and try again. The previous changes have been reverted."
+    ].join(`
+`);
+    const preserveKeys = ["task", "launch", "scope", "persona", "runtime", "model", "verify", "max-attempts", "auto-revert"];
+    const retryAttrs = {};
+    for (const key of preserveKeys) {
+      const value = input.sourceMessage.attributes[key];
+      if (value) {
+        retryAttrs[key] = value;
+      }
+    }
+    retryAttrs.attempt = String(attempt + 1);
+    await createMessage(input.paths.msgDir, {
+      from: input.sourceMessage.attributes.from ?? "supervisor",
+      to: input.sourceMessage.attributes.to ?? input.agentId,
+      type: "assign",
+      project: input.activeProject,
+      body: retryBody,
+      attributes: retryAttrs
+    });
+    await appendLogEntry(input.projectPaths.log, "hive supervise verify", `${input.agentId}: ${summary2}
+Reverted: ${outcome.revertSummary}`);
+    await appendFeedEntry(input.paths, {
+      project: input.activeProject,
+      headline: `${input.agentId} verify failed, retrying`,
+      details: [
+        `command: ${spec.command}`,
+        `attempt: ${outcome.attempt}/${outcome.maxAttempts}`,
+        `revert: ${outcome.revertSummary}`
+      ]
+    });
+    return { outcome, summary: summary2 };
+  }
+  const summary = `verify FAIL: ${spec.command} (attempt ${outcome.attempt}/${outcome.maxAttempts}, exhausted)`;
+  await closeMessage(input.paths.msgDir, input.sourceMessage.filename, "supervisor", `Verification failed after ${outcome.maxAttempts} attempt(s). Blocked for steward review.
+Command: ${spec.command}
+Exit: ${outcome.verifyResult.exitCode}`, input.activeProject);
+  await appendLogEntry(input.projectPaths.log, "hive supervise verify", `${input.agentId}: ${summary}
+Reverted: ${outcome.revertSummary}`);
+  await appendFeedEntry(input.paths, {
+    project: input.activeProject,
+    headline: `${input.agentId} verify exhausted, blocked`,
+    details: [
+      `command: ${spec.command}`,
+      `attempts: ${outcome.maxAttempts}`,
+      `revert: ${outcome.revertSummary}`
+    ]
+  });
+  return { outcome, summary };
+}
+function formatVerificationResults(results) {
+  if (results.length === 0) {
+    return "No verifications this pass.";
+  }
+  return results.map((r) => `- ${r.agentId}: ${r.summary}`).join(`
+`);
+}
 async function runSupervisorPass(options) {
   supervisorTickCount++;
   const paths = await ensureHiveScaffold();
@@ -137813,6 +138065,26 @@ async function runSupervisorPass(options) {
   } else if (workerDispatch.status === "busy") {
     workerSection = "Worker launch dispatch already in progress.";
   }
+  const verificationResults = [];
+  for (const outcome of workerDispatch.outcomes) {
+    if (outcome.result.status !== "fulfilled") {
+      continue;
+    }
+    const msg = await findMessage(paths.msgDir, outcome.messageFilename, activeProject);
+    if (!msg?.attributes.verify) {
+      continue;
+    }
+    const result = await verifyCompletedWorker({
+      paths,
+      projectPaths,
+      activeProject,
+      agentId: outcome.agentId,
+      sourceMessage: msg
+    });
+    if (result) {
+      verificationResults.push({ agentId: outcome.agentId, summary: result.summary });
+    }
+  }
   const skippedSection = workerDispatch.skipped.length > 0 ? workerDispatch.skipped.map((reason) => `- ${reason}`).join(`
 `) : "- none";
   const nonConsoleActiveRuns = state.activeRuns.filter((run) => run.agentId !== "console");
@@ -137881,6 +138153,7 @@ async function runSupervisorPass(options) {
     section("Recovered Runs", formatRecoveredRuns(recoveredRuns)),
     section("Steward", stewardSection),
     section("Worker Launches", workerSection),
+    ...verificationResults.length > 0 ? [section("Verification", formatVerificationResults(verificationResults))] : [],
     section("Skipped Assignments", skippedSection),
     section("Idle Compilation", idleCompileSection),
     ...pulseSection ? [pulseSection] : [],
@@ -138156,22 +138429,6 @@ async function runCli(args) {
       throw new UsageError(`Unknown command: ${command}`);
   }
 }
-
-// bin/hive.ts
-init_errors();
-async function main() {
-  try {
-    const output = await runCli(Bun.argv.slice(2));
-    if (output) {
-      console.log(output);
-    }
-  } catch (error5) {
-    if (error5 instanceof UsageError) {
-      console.error(error5.message);
-      process.exitCode = 1;
-      return;
-    }
-    throw error5;
-  }
-}
-await main();
+export {
+  runCli
+};
