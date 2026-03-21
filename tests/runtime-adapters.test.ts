@@ -14,8 +14,8 @@ describe("runtime adapter registry", () => {
   test("lists all built-in adapters", () => {
     const adapters = listRuntimeAdapters();
 
-    expect(adapters.length).toBe(3);
-    expect(adapters.map((a) => a.name)).toEqual(["claude", "codex", "gemini"]);
+    expect(adapters.length).toBe(4);
+    expect(adapters.map((a) => a.name)).toEqual(["claude", "codex", "gemini", "ollama"]);
   });
 
   test("looks up adapter by canonical name", () => {

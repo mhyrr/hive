@@ -14,6 +14,7 @@ import { appendFeedEntry } from "../lib/feed";
 import { UsageError } from "../lib/errors";
 import { section } from "../lib/format";
 import { appendLogEntry } from "../lib/log";
+import { readGatewayState } from "../lib/gateway-state";
 import { findMessage, listOpenProjectMessages } from "../lib/messages";
 import {
   ensureHiveScaffold,
@@ -26,22 +27,30 @@ import {
   listAllRuns,
   listRecentRunResults,
   listRecentRuns,
+  markRunStopRequested,
   readRunRecord,
   RunRecord,
+  RunResult,
   writeRunResult,
 } from "../lib/runs";
 import {
+  assessPulse,
   assessRecoveredRuns,
   assessStewardLaunch,
   DEFAULT_MAX_PARALLEL,
+  DEFAULT_PULSE_INTERVAL_TICKS,
   DEFAULT_STEWARD_REASSESS_SECONDS,
   DEFAULT_SUPERVISOR_INTERVAL_SECONDS,
+  formatPulse,
+  isProcessAlive,
   RecoveredRun,
-  selectWorkerLaunches,
 } from "../lib/supervisor";
 import { toIsoTimestamp } from "../lib/time";
-import { refreshProjectRuntimeState } from "../lib/state";
+import { refreshProjectRuntimeState, type ProjectRuntimeState } from "../lib/state";
+import { compileIdleProjectCognition, triageRunDiffsForSteward } from "../lib/cognition";
+import { hasPersistentStewardSession, notifyStewardRunCompleted } from "../lib/persistent-steward";
 import { launchAgentPass } from "./launch";
+import { dispatchWorkerLaunchPass } from "./worker-launch-dispatch";
 
 type SuperviseOptions = {
   intervalSeconds: number;
@@ -49,10 +58,13 @@ type SuperviseOptions = {
   once: boolean;
   detach: boolean;
   child: boolean;
+  managed: boolean;
+  parentPid: number | null;
   action: "run" | "status" | "stop" | "logs";
 };
 
 type ProjectState = {
+  runtimeState: ProjectRuntimeState;
   projectConfig: string;
   plan: string;
   boardText: string;
@@ -62,6 +74,225 @@ type ProjectState = {
   allRuns: Awaited<ReturnType<typeof listAllRuns>>;
   recentRunResults: Awaited<ReturnType<typeof listRecentRunResults>>;
 };
+
+type StewardDiffTriageEntry = {
+  runId: string;
+  agentId: string;
+  stewardWorthy: boolean;
+  reason: string;
+  handledBy: "deterministic" | "tier1";
+  provider: string;
+  model: string;
+};
+
+type PersistentStewardWakeState = {
+  fingerprint: string;
+  requestedAt: string;
+  runIds: string[];
+  sessionId: string | null;
+};
+
+type PersistentStewardWakeDispatch =
+  | {
+      status: "triggered";
+      detail: string;
+      sessionId: string | null;
+    }
+  | {
+      status: "failed";
+      detail: string;
+    };
+
+function persistentStewardWakeStatePath(
+  projectPaths: ReturnType<typeof getProjectPaths>,
+): string {
+  return join(projectPaths.supervisorDir, "persistent-steward-wake.json");
+}
+
+async function readPersistentStewardWakeState(
+  projectPaths: ReturnType<typeof getProjectPaths>,
+): Promise<PersistentStewardWakeState | null> {
+  const file = Bun.file(persistentStewardWakeStatePath(projectPaths));
+
+  if (!(await file.exists())) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(await file.text()) as Partial<PersistentStewardWakeState>;
+
+    if (
+      typeof parsed.fingerprint !== "string" ||
+      typeof parsed.requestedAt !== "string" ||
+      !Array.isArray(parsed.runIds)
+    ) {
+      return null;
+    }
+
+    return {
+      fingerprint: parsed.fingerprint,
+      requestedAt: parsed.requestedAt,
+      runIds: parsed.runIds.filter((value): value is string => typeof value === "string"),
+      sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writePersistentStewardWakeState(
+  projectPaths: ReturnType<typeof getProjectPaths>,
+  state: PersistentStewardWakeState,
+): Promise<void> {
+  await Bun.write(
+    persistentStewardWakeStatePath(projectPaths),
+    `${JSON.stringify(state, null, 2)}\n`,
+  );
+}
+
+function formatNaturalList(items: string[]): string {
+  if (items.length === 0) {
+    return "(none)";
+  }
+
+  if (items.length === 1) {
+    return items[0]!;
+  }
+
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`;
+  }
+
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+function buildPersistentStewardWakeFingerprint(results: RunResult[]): string {
+  return [...new Set(results.map((result) => result.runId))].sort().join("|");
+}
+
+function buildPersistentStewardWakeMessage(input: {
+  results: RunResult[];
+  triageEntriesByRunId: Map<string, StewardDiffTriageEntry>;
+}): string {
+  const agentIds = [...new Set(input.results.map((result) => result.agentId))].sort();
+  const lines = [
+    agentIds.length === 1
+      ? `Your delegated worker ${agentIds[0]} has completed.`
+      : `Your delegated workers ${formatNaturalList(agentIds)} have completed.`,
+    "",
+    "Review the new worker run results that landed since your last steward pass, synthesize their findings, and report the answer to the human.",
+    "",
+    "Completed worker results:",
+  ];
+
+  const sortedResults = [...input.results].sort((left, right) => left.ended.localeCompare(right.ended));
+
+  for (const result of sortedResults) {
+    const triage = input.triageEntriesByRunId.get(result.runId);
+    const details = [
+      `${result.agentId} | run ${result.runId}`,
+      `ended ${result.ended}`,
+      triage ? `triage: ${triage.reason}` : null,
+      result.assignmentMessage ? `assignment: ${result.assignmentMessage}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+    lines.push(`- ${details}`);
+  }
+
+  return lines.join("\n");
+}
+
+function resolveGatewayBaseUrl(input: {
+  url: string;
+  port: number | null;
+}): string | null {
+  const trimmedUrl = input.url.trim();
+
+  if (trimmedUrl) {
+    return trimmedUrl.replace(/\/+$/, "");
+  }
+
+  if (input.port !== null) {
+    return `http://localhost:${input.port}`;
+  }
+
+  return null;
+}
+
+async function requestPersistentStewardWake(input: {
+  paths: Awaited<ReturnType<typeof ensureHiveScaffold>>;
+  projectId: string;
+  message: string;
+}): Promise<PersistentStewardWakeDispatch> {
+  const gatewayState = await readGatewayState(input.paths.home);
+
+  if (!gatewayState || gatewayState.status !== "active") {
+    return {
+      status: "failed",
+      detail: "gateway is not active",
+    };
+  }
+
+  const baseUrl = resolveGatewayBaseUrl({
+    url: gatewayState.url,
+    port: gatewayState.port,
+  });
+
+  if (!baseUrl) {
+    return {
+      status: "failed",
+      detail: "gateway URL is unavailable",
+    };
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(`${baseUrl}/api/steward/wake`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project: input.projectId,
+        message: input.message,
+      }),
+    });
+  } catch (error) {
+    return {
+      status: "failed",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  let payload: Record<string, unknown> | null = null;
+
+  try {
+    payload = await response.json() as Record<string, unknown>;
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    return {
+      status: "failed",
+      detail:
+        typeof payload?.error === "string"
+          ? payload.error
+          : `gateway wake failed (${response.status})`,
+    };
+  }
+
+  const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : null;
+
+  return {
+    status: "triggered",
+    detail: sessionId
+      ? `wake requested via gateway session ${sessionId}`
+      : "wake requested via gateway",
+    sessionId,
+  };
+}
 
 function parseOptions(args: string[]): SuperviseOptions {
   const usage =
@@ -79,6 +310,8 @@ function parseOptions(args: string[]): SuperviseOptions {
       once: false,
       detach: false,
       child: false,
+      managed: false,
+      parentPid: null,
       action: first,
     };
   }
@@ -88,6 +321,8 @@ function parseOptions(args: string[]): SuperviseOptions {
   let once = false;
   let detach = false;
   let child = false;
+  let managed = false;
+  let parentPid: number | null = null;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -131,6 +366,23 @@ function parseOptions(args: string[]): SuperviseOptions {
       continue;
     }
 
+    if (arg === "--managed") {
+      managed = true;
+      continue;
+    }
+
+    if (arg === "--parent-pid") {
+      const value = Number(args[index + 1]);
+
+      if (!Number.isInteger(value) || value <= 0) {
+        throw new UsageError(usage);
+      }
+
+      parentPid = value;
+      index += 1;
+      continue;
+    }
+
     throw new UsageError(usage);
   }
 
@@ -142,7 +394,11 @@ function parseOptions(args: string[]): SuperviseOptions {
     throw new UsageError("Internal supervisor child mode cannot be combined with `--once` or `--detach`.");
   }
 
-  return { intervalSeconds, maxParallel, once, detach, child, action: "run" };
+  if (!child && (managed || parentPid !== null)) {
+    throw new UsageError("Supervisor parent flags are only valid in child mode.");
+  }
+
+  return { intervalSeconds, maxParallel, once, detach, child, managed, parentPid, action: "run" };
 }
 
 async function readProjectState(input: {
@@ -157,6 +413,7 @@ async function readProjectState(input: {
   });
 
   return {
+    runtimeState,
     projectConfig: await Bun.file(projectPaths.config).text(),
     plan: await Bun.file(projectPaths.plan).text(),
     boardText: runtimeState.boardText,
@@ -168,17 +425,48 @@ async function readProjectState(input: {
   };
 }
 
-function formatLaunchSettledResult(
-  agentId: string,
-  result: PromiseSettledResult<string>,
-): string {
-  if (result.status === "fulfilled") {
-    return `- ${agentId}: ${result.value}`;
+function endedAfter(value: string, reference: string | null): boolean {
+  if (!reference) {
+    return true;
   }
 
-  const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+  return new Date(value).getTime() > new Date(reference).getTime();
+}
 
-  return `- ${agentId}: failed to launch (${message})`;
+function formatStewardDiffTriage(entries: StewardDiffTriageEntry[]): string {
+  if (entries.length === 0) {
+    return "- none";
+  }
+
+  return entries
+    .map((entry) =>
+      [
+        `- ${entry.agentId} | ${entry.stewardWorthy ? "wake" : "routine"} | ${entry.reason}`,
+        `  via: ${entry.handledBy}${entry.handledBy === "tier1" ? ` (${entry.provider} ${entry.model})` : ""}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
+function formatLaunchSettledResult(input: {
+  agentId: string;
+  messageFilename?: string | null;
+  result: PromiseSettledResult<string>;
+}): string {
+  if (input.result.status === "fulfilled") {
+    return `- ${input.agentId}: ${input.result.value}`;
+  }
+
+  const message =
+    input.result.reason instanceof Error
+      ? input.result.reason.message
+      : String(input.result.reason);
+
+  if (input.messageFilename) {
+    return `- ${input.agentId}: failed to launch (${message}) [${input.messageFilename}]`;
+  }
+
+  return `- ${input.agentId}: failed to launch (${message})`;
 }
 
 function formatRecoveredRuns(recovered: RecoveredRun[]): string {
@@ -192,6 +480,26 @@ function formatRecoveredRuns(recovered: RecoveredRun[]): string {
         `- ${entry.run.agentId} | ${entry.status} | ${entry.run.runId}\n  ${entry.reason}`,
     )
     .join("\n\n");
+}
+
+function formatIdleCompileSection(input: {
+  status: "skipped" | "compiled";
+  reason?: string;
+  updatedCount?: number;
+  packetKinds?: string[];
+}): string {
+  if (input.status === "skipped") {
+    return [
+      "Decision: skipped",
+      `Reason: ${input.reason ?? "project is not idle enough"}`,
+    ].join("\n");
+  }
+
+  return [
+    "Decision: compiled",
+    `Updated packets: ${input.updatedCount ?? 0}`,
+    `Kinds: ${input.packetKinds?.join(", ") || "(none)"}`,
+  ].join("\n");
 }
 
 async function reconcileRecoveredRuns(input: {
@@ -212,7 +520,7 @@ async function reconcileRecoveredRuns(input: {
       ? await findMessage(input.paths.msgDir, finalizedRun.sourceMessage, input.activeProject)
       : null;
 
-    await writeRunResult(finalizedRun, {
+    const runResult = await writeRunResult(finalizedRun, {
       assignmentStatusAfterExit: assignmentAfterExit?.attributes.status ?? null,
       assignmentResolvedByWorker: assignmentAfterExit?.attributes.status === "resolved",
       changedFiles: [],
@@ -222,6 +530,7 @@ async function reconcileRecoveredRuns(input: {
           ? "Supervisor recovered a cancelled run after the process exited before the owning launcher finalized it."
           : "Supervisor recovered a stale active run whose process was no longer alive.",
     });
+    await notifyStewardRunCompleted(input.paths.home, input.activeProject, runResult);
     await appendFeedEntry(input.paths, {
       project: input.activeProject,
       headline: `Recovered ${finalizedRun.agentId} ${entry.status}`,
@@ -235,7 +544,27 @@ async function reconcileRecoveredRuns(input: {
   }
 }
 
+let supervisorTickCount = 0;
+
+async function terminateSupervisorOwnedRuns(projectPaths: ReturnType<typeof getProjectPaths>): Promise<void> {
+  const activeRuns = await listActiveRuns(projectPaths);
+
+  for (const run of activeRuns) {
+    if (!run.pid || run.source === "console" || run.pid === process.pid) {
+      continue;
+    }
+
+    try {
+      await markRunStopRequested(run, "supervisor");
+      process.kill(run.pid, "SIGTERM");
+    } catch {
+      // process already gone
+    }
+  }
+}
+
 async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
+  supervisorTickCount++;
   const paths = await ensureHiveScaffold();
   const activeProject = await getActiveProject(paths);
 
@@ -245,6 +574,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
 
   const projectPaths = getProjectPaths(paths, activeProject);
   let state = await readProjectState({ activeProject, paths });
+  const globalConfig = await Bun.file(paths.config).text().catch(() => "");
   const recoveredRuns = assessRecoveredRuns(state.activeRuns);
 
   if (recoveredRuns.length > 0) {
@@ -258,13 +588,64 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
   }
 
   const initialActiveOrchestratorRun =
-    state.activeRuns.find((run) => run.agentId === "orchestrator") ?? null;
+    state.activeRuns.find((run) => run.agentId === "steward") ?? null;
+  const lastStewardRun =
+    state.recentRuns.find((run) => run.agentId === "steward" && Boolean(run.ended)) ?? null;
+  const resultsSinceLastSteward = state.recentRunResults.filter(
+    (result) =>
+      result.agentId !== "steward" &&
+      result.agentId !== "console" &&
+      endedAfter(result.ended, lastStewardRun?.ended ?? null),
+  );
+  const diffTriageEntries: StewardDiffTriageEntry[] = [];
+  const triagedRunResults: typeof state.recentRunResults = [];
+  const triageInputs = resultsSinceLastSteward.map((result) => ({
+    globalConfig,
+    result,
+  }));
+  const triageDecisions = triageInputs.length > 0
+    ? await triageRunDiffsForSteward(triageInputs)
+    : [];
+  const triageDecisionByRunId = new Map(
+    triageInputs.map((input, index) => [input.result.runId, triageDecisions[index]!]),
+  );
+
+  for (const result of state.recentRunResults) {
+    const decision = triageDecisionByRunId.get(result.runId);
+
+    if (!decision) {
+      triagedRunResults.push(result);
+      continue;
+    }
+
+    diffTriageEntries.push({
+      runId: result.runId,
+      agentId: result.agentId,
+      stewardWorthy: decision.stewardWorthy,
+      reason: decision.reason,
+      handledBy: decision.handledBy,
+      provider: decision.provider,
+      model: decision.model,
+    });
+
+    if (decision.stewardWorthy) {
+      triagedRunResults.push(result);
+    }
+  }
+
+  const diffTriageEntryByRunId = new Map(
+    diffTriageEntries.map((entry) => [entry.runId, entry]),
+  );
+  const persistentWakeCandidates = resultsSinceLastSteward.filter((result) =>
+    diffTriageEntryByRunId.get(result.runId)?.stewardWorthy,
+  );
+
   const assessment = assessStewardLaunch({
     boardText: state.boardText,
     openMessages: state.openMessages,
     activeRuns: state.activeRuns,
     recentRuns: state.recentRuns,
-    recentRunResults: state.recentRunResults,
+    recentRunResults: triagedRunResults,
     reassessSeconds: DEFAULT_STEWARD_REASSESS_SECONDS,
   });
 
@@ -276,12 +657,65 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
         ? assessment.reasons.map((reason) => `- ${reason}`).join("\n")
         : "- none",
     ),
+    section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
   ].join("\n\n");
 
-  if (initialActiveOrchestratorRun) {
+  const persistentStewardActive = hasPersistentStewardSession(paths.home);
+  let persistentWakeReason: string | null = null;
+
+  if (persistentStewardActive) {
+    if (persistentWakeCandidates.length > 0) {
+      const fingerprint = buildPersistentStewardWakeFingerprint(persistentWakeCandidates);
+      const previousWake = await readPersistentStewardWakeState(projectPaths);
+
+      if (previousWake?.fingerprint === fingerprint) {
+        persistentWakeReason = `Wake already requested for ${persistentWakeCandidates.length} steward-worthy worker result(s).`;
+      } else {
+        const wakeDispatch = await requestPersistentStewardWake({
+          paths,
+          projectId: activeProject,
+          message: buildPersistentStewardWakeMessage({
+            results: persistentWakeCandidates,
+            triageEntriesByRunId: diffTriageEntryByRunId,
+          }),
+        });
+
+        if (wakeDispatch.status === "triggered") {
+          await writePersistentStewardWakeState(projectPaths, {
+            fingerprint,
+            requestedAt: toIsoTimestamp(),
+            runIds: persistentWakeCandidates.map((result) => result.runId),
+            sessionId: wakeDispatch.sessionId,
+          });
+          persistentWakeReason = wakeDispatch.sessionId
+            ? `Wake requested immediately for ${persistentWakeCandidates.length} steward-worthy worker result(s) via gateway session ${wakeDispatch.sessionId}.`
+            : `Wake requested immediately for ${persistentWakeCandidates.length} steward-worthy worker result(s) via the gateway.`;
+        } else {
+          persistentWakeReason = `Wake request failed: ${wakeDispatch.detail}`;
+        }
+      }
+    } else {
+      persistentWakeReason = "No steward-worthy worker completions required an automatic persistent wake this pass.";
+    }
+
+    stewardSection = [
+      "Decision: deferred to persistent steward",
+      section(
+        "Reasons",
+        [
+          "A persistent steward session is active in the gateway.",
+          "The persistent steward is the singleton coordinator — the supervisor does not launch a competing process.",
+          ...(persistentWakeReason ? [persistentWakeReason] : []),
+          ...assessment.reasons.map((reason) => `- ${reason}`),
+        ].join("\n"),
+      ),
+      section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
+    ].join("\n\n");
+  } else if (initialActiveOrchestratorRun) {
     stewardSection = [
       "Decision: skipped",
       section("Reasons", assessment.reasons.map((reason) => `- ${reason}`).join("\n") || "- none"),
+      section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
       section(
         "Active Orchestrator Run",
         [
@@ -295,7 +729,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     const launchSummary = await launchAgentPass({
       activeProject,
       paths,
-      agentId: "orchestrator",
+      agentId: "steward",
       goal: null,
       runtimeOverride: null,
       modelOverride: null,
@@ -305,51 +739,117 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     });
 
     stewardSection = [
-      "Decision: launched orchestrator",
+      "Decision: launched steward",
       section("Reasons", assessment.reasons.map((reason) => `- ${reason}`).join("\n")),
+      section("Diff Triage", formatStewardDiffTriage(diffTriageEntries)),
       section("Launch", launchSummary),
     ].join("\n\n");
 
     state = await readProjectState({ activeProject, paths });
   }
 
-  const dispatch = selectWorkerLaunches({
-    projectConfig: state.projectConfig,
-    plan: state.plan,
-    openMessages: state.openMessages,
-    activeRuns: state.activeRuns,
-    historicalRuns: state.allRuns,
+  let workerSection = "No worker launches this pass.";
+  const workerDispatch = await dispatchWorkerLaunchPass({
+    hivePaths: paths,
+    projectId: activeProject,
     maxParallel: options.maxParallel,
+    source: "hive supervise",
+    actor: "hive supervise",
+    logActor: "hive supervise",
   });
 
-  let workerSection = "No worker launches this pass.";
-
-  if (dispatch.launches.length > 0) {
-    const settled = await Promise.allSettled(
-      dispatch.launches.map((launch) =>
-        launchAgentPass({
-          activeProject,
-          paths,
-          agentId: launch.agentId,
-          goal: null,
-          runtimeOverride: null,
-          modelOverride: null,
-          dryRun: false,
-          source: "hive supervise",
-          logActor: "hive supervise",
-        }),
-      ),
-    );
-
-    workerSection = settled
-      .map((result, index) => formatLaunchSettledResult(dispatch.launches[index]!.agentId, result))
+  if (workerDispatch.outcomes.length > 0) {
+    workerSection = workerDispatch.outcomes
+      .map((outcome) => formatLaunchSettledResult(outcome))
       .join("\n");
+  } else if (workerDispatch.status === "busy") {
+    workerSection = "Worker launch dispatch already in progress.";
   }
 
   const skippedSection =
-    dispatch.skipped.length > 0
-      ? dispatch.skipped.map((reason) => `- ${reason}`).join("\n")
+    workerDispatch.skipped.length > 0
+      ? workerDispatch.skipped.map((reason) => `- ${reason}`).join("\n")
       : "- none";
+  const nonConsoleActiveRuns = state.activeRuns.filter((run) => run.agentId !== "console");
+  let idleCompileSection = formatIdleCompileSection({
+    status: "skipped",
+    reason: "project is not idle enough",
+  });
+
+  const stewardLaunchedThisPass = !persistentStewardActive && !initialActiveOrchestratorRun && assessment.shouldLaunch;
+
+  if (
+    recoveredRuns.length === 0 &&
+    !stewardLaunchedThisPass &&
+    workerDispatch.outcomes.length === 0 &&
+    nonConsoleActiveRuns.length === 0
+  ) {
+    const idleResult = await compileIdleProjectCognition({
+      hivePaths: paths,
+      projectId: activeProject,
+      projectPaths,
+      plan: state.plan,
+      runtimeState: state.runtimeState,
+    });
+
+    idleCompileSection = formatIdleCompileSection({
+      status: "compiled",
+      updatedCount: idleResult.updatedCount,
+      packetKinds: idleResult.packets.map((packet) => packet.kind),
+    });
+  } else {
+    const reasons: string[] = [];
+
+    if (recoveredRuns.length > 0) {
+      reasons.push("recovered runs still needed reconciliation");
+    }
+
+    if (stewardLaunchedThisPass) {
+      reasons.push("steward launch took precedence");
+    }
+
+    if (workerDispatch.outcomes.length > 0) {
+      reasons.push("worker launches took precedence");
+    }
+
+    if (workerDispatch.status === "busy") {
+      reasons.push("worker launch dispatch was already in progress");
+    }
+
+    if (nonConsoleActiveRuns.length > 0) {
+      reasons.push("runs are still active");
+    }
+
+    idleCompileSection = formatIdleCompileSection({
+      status: "skipped",
+      reason: reasons.join("; "),
+    });
+  }
+
+  const isPulseTick = supervisorTickCount % DEFAULT_PULSE_INTERVAL_TICKS === 0;
+  let pulseSection = "";
+
+  if (isPulseTick) {
+    const pulseSignals = assessPulse({
+      activeRuns: state.activeRuns,
+      openMessages: state.openMessages,
+      boardText: state.boardText,
+    });
+    const workerRuns = state.activeRuns.filter(
+      (r) => r.agentId !== "steward" && r.source !== "console",
+    );
+    const pulseText = formatPulse(pulseSignals, workerRuns.length);
+
+    pulseSection = section("Health Pulse", pulseText);
+
+    if (pulseSignals.length > 0) {
+      await appendFeedEntry(paths, {
+        project: activeProject,
+        headline: pulseText.split("\n")[0]!,
+        details: pulseSignals.map((s) => s.message),
+      });
+    }
+  }
 
   return [
     `Project: ${activeProject}`,
@@ -357,12 +857,15 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     section("Steward", stewardSection),
     section("Worker Launches", workerSection),
     section("Skipped Assignments", skippedSection),
+    section("Idle Compilation", idleCompileSection),
+    ...(pulseSection ? [pulseSection] : []),
     section(
       "Supervisor",
       [
         `tick-interval: ${options.intervalSeconds}s`,
         `steward-reassess: ${DEFAULT_STEWARD_REASSESS_SECONDS}s`,
         `max-parallel: ${options.maxParallel}`,
+        `tick: ${supervisorTickCount}${isPulseTick ? " (pulse)" : ""}`,
       ].join("\n"),
     ),
   ].join("\n\n");
@@ -463,7 +966,7 @@ export async function superviseCommand(args: string[]): Promise<string> {
       projectId: activeProject,
       pid: process.pid,
       status: "active",
-      mode: "detached",
+      mode: options.managed ? "managed" : "detached",
       intervalSeconds: options.intervalSeconds,
       maxParallel: options.maxParallel,
       startedAt,
@@ -476,6 +979,7 @@ export async function superviseCommand(args: string[]): Promise<string> {
     });
 
     const stopChild = async (status: "stopped" | "exited") => {
+      await terminateSupervisorOwnedRuns(projectPaths);
       await markDetachedSupervisorStopped(projectPaths, status);
       process.exit(status === "stopped" ? 0 : 1);
     };
@@ -492,13 +996,25 @@ export async function superviseCommand(args: string[]): Promise<string> {
     });
 
     for (;;) {
+      if (options.parentPid && !isProcessAlive(options.parentPid)) {
+        await stopChild("stopped");
+      }
+
       try {
         const output = await runSupervisorPass(options);
 
         console.log(output);
         console.log("");
         await noteDetachedSupervisorPass(projectPaths);
-        await Bun.sleep(options.intervalSeconds * 1000);
+
+        const sleepUntil = Date.now() + options.intervalSeconds * 1000;
+        while (Date.now() < sleepUntil) {
+          if (options.parentPid && !isProcessAlive(options.parentPid)) {
+            await stopChild("stopped");
+          }
+
+          await Bun.sleep(250);
+        }
       } catch (error) {
         console.error(error);
         await stopChild("exited");

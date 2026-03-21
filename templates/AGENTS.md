@@ -5,31 +5,39 @@ SOUL.md is shared culture. IDENTITY.md is what a HIVE agent is. SELF.md is the
 human. This file covers how we use the infrastructure.
 
 ## File Protocol
-- BOARD.md is steward-owned. In the default team, that means the orchestrator.
+- BOARD.md is steward-owned.
   Everyone else reads it and requests changes via msg/.
 - LOG.md is append-only. Use `hive log` to add entries.
 - feed.md is append-only. Keep it high signal; don't use it as a scratchpad.
 - One writer per file. If you don't own it, message the owner.
 
 ## Message Protocol
-- Check `hive inbox <agent>` between major steps.
-- Resolve handled messages: `hive msg resolve <message> <actor> <answer>`
-- Close obsolete threads: `hive msg close <message> <actor> [note]`
-- Assignment messages include `task:`, `launch:`, and `scope:` frontmatter.
+- Check the messages directory between major steps.
+- To delegate work, write a markdown file to the messages directory with the format below.
+- To resolve a message, update its frontmatter to `status: resolved` and append an `## Answer` section.
+- To close a message, update its frontmatter to `status: closed` and append a `## Closed` section.
+- Do NOT shell out to `hive msg` — it may not be in PATH. Write/update message files directly.
 
 ### Assignment Message Example
+
+Write to: `<messages-dir>/assign-<agent-id>-<timestamp>.md`
+
 ```
 ---
+from: steward
 to: alpha
-from: orchestrator
+type: assign
+project: myproject
 task: PROJ-001
+scope: src/auth/, tests/auth/
 launch: auto
-scope: src/auth/ tests/auth/
 ---
 
 Implement POST /api/auth/login and /api/auth/refresh.
 Use Joken for JWT with 1-hour expiry. Contract is on the board.
 ```
+
+The supervisor watcher detects new assignment files and launches workers automatically within ~200ms.
 
 ## Skills
 Load relevant skills from the skills directory before starting work.
@@ -79,11 +87,11 @@ The board is our shared consciousness. BOARD.md tells the full story — read it
 
 **Communicate through files, not assumptions.** Knowledge in a context window dies when the session ends. Knowledge in a file lives forever. Write it down.
 
-**Respect scope.** Don't touch files another agent owns without communication. Raise disagreements — don't silently override. The orchestrator resolves disputes.
+**Respect scope.** Don't touch files another agent owns without communication. Raise disagreements — don't silently override. The steward resolves disputes.
 
 **Surface problems early.** A problem raised now is a five-minute conversation. A problem discovered late is a week of rework.
 
-**Trust the orchestrator.** The steward sees the whole board. Execute with commitment even when you'd have chosen differently. Raise concerns via message, but don't block on disagreement.
+**Trust the steward.** The steward sees the whole board. Execute with commitment even when you'd have chosen differently. Raise concerns via message, but don't block on disagreement.
 
 ## Session Discipline
 

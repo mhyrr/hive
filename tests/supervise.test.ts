@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { runCli } from "../src/cli";
 import { buildDetachedInvocation, readDetachedSupervisorState } from "../src/lib/detached-supervisor";
+import { stringifyFrontmatter } from "../src/lib/frontmatter";
 import { ensureHiveScaffold, getProjectPaths } from "../src/lib/paths";
 import {
   createRunDraft,
@@ -13,7 +14,9 @@ import {
   listRecentRunResults,
   markRunActive,
   markRunStopRequested,
+  writeRunResult,
 } from "../src/lib/runs";
+import { createSession } from "../src/lib/sessions";
 
 type TestContext = {
   root: string;
@@ -25,6 +28,7 @@ type TestContext = {
 };
 
 let context: TestContext;
+let originalFetch = globalThis.fetch;
 
 async function setupContext(): Promise<TestContext> {
   const root = await mkdtemp(join(tmpdir(), "hive-supervise-"));
@@ -37,6 +41,7 @@ async function setupContext(): Promise<TestContext> {
 
   process.env.HIVE_HOME = hiveHome;
   process.env.HIVE_FIXED_NOW = "2026-03-09T15:08:00Z";
+  process.env.HIVE_SCRIPT = join(import.meta.dir, "..", "bin", "hive.ts");
 
   return {
     root,
@@ -50,13 +55,16 @@ async function setupContext(): Promise<TestContext> {
 
 beforeEach(async () => {
   context = await setupContext();
+  originalFetch = globalThis.fetch;
 });
 
 afterEach(async () => {
   process.env.PATH = context.originalPath;
   process.chdir(context.originalCwd);
+  globalThis.fetch = originalFetch;
   delete process.env.HIVE_HOME;
   delete process.env.HIVE_FIXED_NOW;
+  delete process.env.HIVE_SCRIPT;
   await rm(context.root, { recursive: true, force: true });
 });
 
@@ -131,7 +139,7 @@ runtime: codex
     let state = await readDetachedSupervisorState(projectPaths);
     let attempts = 0;
 
-    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 20) {
+    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 40) {
       await Bun.sleep(150);
       state = await readDetachedSupervisorState(projectPaths);
       attempts += 1;
@@ -199,7 +207,7 @@ runtime: codex
     let state = await readDetachedSupervisorState(projectPaths);
     let attempts = 0;
 
-    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 20) {
+    while ((!state || state.status !== "active" || !state.lastPassAt) && attempts < 40) {
       await Bun.sleep(150);
       state = await readDetachedSupervisorState(projectPaths);
       attempts += 1;
@@ -231,7 +239,7 @@ runtime: codex
 Ship the auth flow.
 
 ## Agents
-### orchestrator (steward)
+### steward (steward)
 Task: Keep the board current.
 
 ### alpha (craftsman -> src/api/**, tests/**)
@@ -239,9 +247,9 @@ Task: Build the auth endpoint.
 `,
     );
     await Bun.write(
-      join(context.hiveHome, "msg", "20260309-150000Z-orchestrator-to-alpha-HIVE-006.md"),
+      join(context.hiveHome, "msg", "20260309-150000Z-steward-to-alpha-HIVE-006.md"),
       `---
-from: orchestrator
+from: steward
 to: alpha
 type: assign
 status: open
@@ -261,7 +269,7 @@ Build the auth endpoint.
     let stewardRun = await createRunDraft({
       projectId: "myproject",
       projectPaths,
-      agentId: "orchestrator",
+      agentId: "steward",
       runtime: "codex",
       model: null,
       prompt: "# Steward Prompt",
@@ -286,7 +294,7 @@ Build the auth endpoint.
     expect(output).toContain("max-parallel: 2");
     expect(alphaRuns).toHaveLength(1);
     expect(alphaRuns[0]?.sourceMessage).toBe(
-      "20260309-150000Z-orchestrator-to-alpha-HIVE-006.md",
+      "20260309-150000Z-steward-to-alpha-HIVE-006.md",
     );
     expect(alphaRuns[0]?.scope).toEqual(["src/api", "tests"]);
 
@@ -297,6 +305,380 @@ Build the auth endpoint.
     expect(secondOutput).toContain(
       "assignment already consumed its current launch attempt",
     );
+  });
+
+  test("auto-launches ad-hoc assignment agents using assignment runtime and model hints", async () => {
+    await installFakeCodex();
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: claude
+model: claude-sonnet-4-6
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Evaluate the gateway.
+
+## Agents
+### steward (steward)
+Task: Keep the board current.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "config.md"),
+      `# Project: MyProject
+
+## Repo
+path: ${context.repo}
+
+## Default Team
+- steward: steward via codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "msg", "20260309-150000Z-steward-to-eval-codex-HIVE-777.md"),
+      `---
+from: steward
+to: eval-codex
+type: assign
+status: open
+project: myproject
+task: HIVE-777
+runtime: codex
+model: gpt-5-codex
+launch: auto
+scope: src/gateway,tests
+ts: 2026-03-09T15:00:00Z
+---
+
+You are a critic evaluating the gateway implementation.
+
+Review the current change set and produce a blunt technical assessment.
+`,
+    );
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+    let stewardRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "steward",
+      runtime: "codex",
+      model: null,
+      prompt: "# Steward Prompt",
+      source: "hive supervise",
+      scope: null,
+    });
+
+    stewardRun = await finalizeRun({
+      projectPaths,
+      run: stewardRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    const output = await runCli(["supervise", "--once", "--max-parallel", "2"]);
+    const evalRuns = (await listAllRuns(projectPaths)).filter((run) => run.agentId === "eval-codex");
+
+    expect(output).toContain("Completed eval-codex via codex (gpt-5-codex)");
+    expect(evalRuns).toHaveLength(1);
+    expect(evalRuns[0]?.runtime).toBe("codex");
+    expect(evalRuns[0]?.model).toBe("gpt-5-codex");
+    expect(evalRuns[0]?.sourceMessage).toBe(
+      "20260309-150000Z-steward-to-eval-codex-HIVE-777.md",
+    );
+    expect(evalRuns[0]?.scope).toEqual(["src/gateway", "tests"]);
+  });
+
+  test("legacy assignment messages with body metadata still auto-launch workers", async () => {
+    await installFakeCodex();
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Ship the auth flow.
+
+## Agents
+### steward (steward)
+Task: Keep the board current.
+
+### alpha (craftsman -> src/api/**, tests/**)
+Task: Build the auth endpoint.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "msg", "20260309-150000Z-steward-to-alpha-HIVE-006.md"),
+      `---
+from: steward
+to: alpha
+type: assignment
+status: open
+project: myproject
+ts: 2026-03-09T15:00:00Z
+---
+
+Build the auth endpoint.
+
+task: HIVE-006
+launch: auto
+scope: src/api tests
+`,
+    );
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+    let stewardRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "steward",
+      runtime: "codex",
+      model: null,
+      prompt: "# Steward Prompt",
+      source: "hive supervise",
+      scope: null,
+    });
+
+    stewardRun = await finalizeRun({
+      projectPaths,
+      run: stewardRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    const output = await runCli(["supervise", "--once", "--max-parallel", "2"]);
+    const alphaRuns = (await listAllRuns(projectPaths)).filter((run) => run.agentId === "alpha");
+
+    expect(output).toContain("Completed alpha via codex");
+    expect(alphaRuns).toHaveLength(1);
+    expect(alphaRuns[0]?.sourceMessage).toBe(
+      "20260309-150000Z-steward-to-alpha-HIVE-006.md",
+    );
+    expect(alphaRuns[0]?.taskId).toBe("HIVE-006");
+    expect(alphaRuns[0]?.scope).toEqual(["src/api", "tests"]);
+  });
+
+  test("defers steward launch when an active gateway session owns the current project", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await runCli(["work", "myproject"]);
+    await createSession({
+      sessionsDir: join(context.hiveHome, "sessions"),
+      project: "myproject",
+      runtime: "claude",
+      model: null,
+      systemPrompt: "HIVE steward session",
+    });
+    await Bun.write(
+      join(context.hiveHome, "gateway.md"),
+      stringifyFrontmatter(
+        {
+          status: "active",
+          pid: String(process.pid),
+          port: "4200",
+          started: "2026-03-09T15:08:00Z",
+          url: "http://localhost:4200",
+        },
+        "",
+      ),
+    );
+
+    const output = await runCli(["supervise", "--once"]);
+
+    expect(output).toContain("Decision: deferred to persistent steward");
+    expect(output).toContain("persistent steward session is active");
+  });
+
+  test("wakes the persistent steward once per new steward-worthy worker completion set", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await runCli(["work", "myproject"]);
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Auto-wake the persistent steward when delegated workers finish.
+
+## Agents
+### steward (steward)
+Task: Synthesize worker results.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
+      `# Board: MyProject
+
+## Agents
+- steward | status: idle | role: steward
+- alpha | status: idle | role: worker
+- beta | status: idle | role: worker
+`,
+    );
+    await createSession({
+      sessionsDir: join(context.hiveHome, "sessions"),
+      project: "myproject",
+      runtime: "claude",
+      model: null,
+      systemPrompt: "HIVE steward session",
+    });
+    await Bun.write(
+      join(context.hiveHome, "gateway.md"),
+      stringifyFrontmatter(
+        {
+          status: "active",
+          pid: String(process.pid),
+          port: "4200",
+          started: "2026-03-09T15:08:00Z",
+          url: "http://localhost:4200",
+        },
+        "",
+      ),
+    );
+
+    const wakeCalls: Array<{ url: string; body: { message?: string; project?: string } }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const body =
+        typeof init?.body === "string"
+          ? JSON.parse(init.body) as { message?: string; project?: string }
+          : {};
+
+      wakeCalls.push({ url, body });
+
+      return new Response(
+        JSON.stringify({
+          accepted: true,
+          sessionId: "20260309-150800Z",
+          project: "myproject",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }) as typeof fetch;
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:04:00Z";
+    let stewardRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "steward",
+      runtime: "claude",
+      model: null,
+      prompt: "# Steward Prompt",
+      source: "hive supervise",
+      scope: null,
+    });
+
+    stewardRun = await finalizeRun({
+      projectPaths,
+      run: stewardRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:05:00Z";
+    let alphaRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: null,
+      prompt: "# Alpha Prompt",
+      source: "hive launch",
+      scope: ["src"],
+    });
+
+    alphaRun = await finalizeRun({
+      projectPaths,
+      run: alphaRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    await writeRunResult(alphaRun, {
+      changedFiles: ["src/app.ts"],
+      gitSummaryLines: ["M src/app.ts"],
+      finalVisibleOutput: "Implemented the worker result.",
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:05:30Z";
+    const firstOutput = await runCli(["supervise", "--once"]);
+
+    expect(firstOutput).toContain("Decision: deferred to persistent steward");
+    expect(firstOutput).toContain("Wake requested immediately for 1 steward-worthy worker result(s)");
+    expect(wakeCalls).toHaveLength(1);
+    expect(wakeCalls[0]?.url).toBe("http://localhost:4200/api/steward/wake");
+    expect(wakeCalls[0]?.body.project).toBe("myproject");
+    expect(wakeCalls[0]?.body.message).toContain("alpha");
+    expect(wakeCalls[0]?.body.message).toContain(alphaRun.runId);
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:05:45Z";
+    const secondOutput = await runCli(["supervise", "--once"]);
+
+    expect(secondOutput).toContain("Wake already requested for 1 steward-worthy worker result(s).");
+    expect(wakeCalls).toHaveLength(1);
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:06:00Z";
+    let betaRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "beta",
+      runtime: "codex",
+      model: null,
+      prompt: "# Beta Prompt",
+      source: "hive launch",
+      scope: ["src"],
+    });
+
+    betaRun = await finalizeRun({
+      projectPaths,
+      run: betaRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    await writeRunResult(betaRun, {
+      changedFiles: ["src/api.ts"],
+      gitSummaryLines: ["M src/api.ts"],
+      finalVisibleOutput: "Added the API integration.",
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:06:30Z";
+    const thirdOutput = await runCli(["supervise", "--once"]);
+
+    expect(thirdOutput).toContain("Wake requested immediately for 2 steward-worthy worker result(s)");
+    expect(wakeCalls).toHaveLength(2);
+    expect(wakeCalls[1]?.body.message).toContain("alpha");
+    expect(wakeCalls[1]?.body.message).toContain("beta");
+    expect(wakeCalls[1]?.body.message).toContain(betaRun.runId);
   });
 
   test("recovers stale and cancelled active runs from on-disk state", async () => {
@@ -319,8 +701,17 @@ runtime: codex
 Recover stale runs.
 
 ## Agents
-### orchestrator (steward)
+### steward (steward)
 Task: Keep the board current.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
+      `# Board: MyProject
+
+## Agents
+- steward | status: idle | role: steward
+- alpha | status: idle | role: worker
 `,
     );
 
@@ -329,7 +720,7 @@ Task: Keep the board current.
     let stewardRun = await createRunDraft({
       projectId: "myproject",
       projectPaths,
-      agentId: "orchestrator",
+      agentId: "steward",
       runtime: "codex",
       model: null,
       prompt: "# Steward Prompt",
@@ -386,5 +777,236 @@ Task: Keep the board current.
     expect(recoveredBeta?.status).toBe("cancelled");
     expect(alphaResult?.gitSummaryLines[0]).toContain("no longer alive");
     expect(betaResult?.finalVisibleOutput).toContain("cancelled run");
+  });
+
+  test("diff triage suppresses routine worker results before waking the steward", async () => {
+    await installFakeCodex();
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Keep routine test churn from waking the steward.
+
+## Agents
+### steward (steward)
+Task: Keep the board current.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
+      `# Board: MyProject
+
+## Agents
+- steward | status: idle | role: steward
+- alpha | status: idle | role: worker
+`,
+    );
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:04:00Z";
+    let stewardRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "steward",
+      runtime: "codex",
+      model: null,
+      prompt: "# Steward Prompt",
+      source: "hive supervise",
+      scope: null,
+    });
+
+    stewardRun = await finalizeRun({
+      projectPaths,
+      run: stewardRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:05:00Z";
+    let alphaRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: null,
+      prompt: "# Alpha Prompt",
+      source: "hive launch",
+      scope: ["tests"],
+    });
+
+    alphaRun = await finalizeRun({
+      projectPaths,
+      run: alphaRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    await writeRunResult(alphaRun, {
+      changedFiles: ["tests/state.test.ts"],
+      gitSummaryLines: ["M tests/state.test.ts"],
+      finalVisibleOutput: "Updated the regression coverage.",
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:05:30Z";
+    const output = await runCli(["supervise", "--once"]);
+    const allRuns = await listAllRuns(projectPaths);
+    const orchestratorRuns = allRuns.filter((run) => run.agentId === "steward");
+
+    expect(output).toContain("Decision: no action");
+    expect(output).toContain("Diff Triage");
+    expect(output).toContain("alpha | routine");
+    expect(orchestratorRuns).toHaveLength(1);
+  });
+
+  test("idle compilation materializes log, phase, and memory packets when the project is calm", async () => {
+    await installFakeCodex();
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Ship the auth flow.
+
+## Agents
+### steward (steward)
+Task: Keep the board current.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "BOARD.md"),
+      `# Board: MyProject
+
+## Tasks
+- HIVE-100 | ship auth flow | done
+
+## Agents
+- steward | status: idle | role: steward
+- alpha | status: idle | role: worker
+
+## Blockers
+(none)
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "LOG.md"),
+      `# Log: 2026-03-09 MyProject
+
+## 2026-03-09T15:00:00Z — alpha
+Auth endpoint complete and tests passing.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "memory", "projects", "myproject.md"),
+      `# Project Memory: MyProject
+
+## Durable Facts
+- The auth endpoint lives in src/api/auth.ts
+
+## Conventions
+- Prefer contract-first API changes
+
+## Decisions
+- [2026-03-09T15:00:00Z] Keep auth concerns in src/api/auth.ts
+
+## Open Questions
+- Should refresh tokens rotate on every request?
+`,
+    );
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:00:00Z";
+    let alphaRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: null,
+      prompt: "# Alpha Prompt",
+      source: "hive launch",
+      scope: ["src/api"],
+    });
+    alphaRun = await finalizeRun({
+      projectPaths,
+      run: alphaRun,
+      status: "exited",
+      exitCode: 0,
+    });
+    await writeRunResult(alphaRun, {
+      changedFiles: ["src/api/auth.ts"],
+      gitSummaryLines: ["M src/api/auth.ts"],
+      finalVisibleOutput: "Published the auth contract.",
+      cognitiveDigest: {
+        provider: "ollama",
+        model: "qwen3:4b",
+        summary: "Published the auth contract.",
+        outcome: "success",
+        keyDecisions: ["Kept the auth contract in src/api/auth.ts."],
+        filesChanged: ["src/api/auth.ts"],
+        inputTokens: 80,
+        outputTokens: 20,
+        totalTokens: 100,
+        durationMs: 900,
+      },
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:01:00Z";
+    let stewardRun = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "steward",
+      runtime: "codex",
+      model: null,
+      prompt: "# Steward Prompt",
+      source: "hive supervise",
+      scope: null,
+    });
+    stewardRun = await finalizeRun({
+      projectPaths,
+      run: stewardRun,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    process.env.HIVE_FIXED_NOW = "2026-03-09T15:01:30Z";
+    const output = await runCli(["supervise", "--once"]);
+    const compilerCacheIndex = await Bun.file(projectPaths.stateCompilerCacheIndex).json() as {
+      packets: Array<{ kind: string }>;
+    };
+
+    expect(output).toContain("Idle Compilation");
+    expect(output).toContain("Decision: compiled");
+    expect(await Bun.file(join(projectPaths.statePacketLogRollupsDir, "recent.json")).exists()).toBeTrue();
+    expect(await Bun.file(join(projectPaths.statePacketPhaseSummariesDir, "current.json")).exists()).toBeTrue();
+    expect(await Bun.file(projectPaths.statePacketMemoryHotset).exists()).toBeTrue();
+    expect(await Bun.file(projectPaths.statePacketStaleMemory).exists()).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "log-rollup")).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "phase-summary")).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "memory-hotset")).toBeTrue();
+    expect(compilerCacheIndex.packets.some((packet) => packet.kind === "stale-memory")).toBeTrue();
   });
 });

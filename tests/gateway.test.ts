@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,10 +8,19 @@ import { runCli } from "../src/cli";
 import { handleApi } from "../src/gateway/routes";
 import { startGateway, stopGateway } from "../src/gateway/server";
 import { createApprovalRequest } from "../src/lib/approvals";
-import { writeDetachedSupervisorState } from "../src/lib/detached-supervisor";
+import { compileIdleProjectCognition, getLogRollupPacketPath } from "../src/lib/cognition";
+import {
+  readDetachedSupervisorState,
+  writeDetachedSupervisorState,
+} from "../src/lib/detached-supervisor";
 import { appendEvent } from "../src/lib/events";
+import { reconcileGatewayState } from "../src/lib/gateway-state";
 import { createMessage, listProjectMessages } from "../src/lib/messages";
 import { ensureHiveScaffold, getProjectPaths, type HivePaths } from "../src/lib/paths";
+import {
+  disposePersistentStewardsForHome,
+  runPersistentStewardTurn,
+} from "../src/lib/persistent-steward";
 import {
   createRunDraft,
   finalizeRun,
@@ -23,7 +33,14 @@ import {
   readRunRecord,
   writeRunResult,
 } from "../src/lib/runs";
-import { getSession, getSessionHistory, getSessionState } from "../src/lib/sessions";
+import {
+  createSession,
+  getSession,
+  getSessionHistory,
+  getSessionState,
+  updateSessionMeta,
+} from "../src/lib/sessions";
+import { refreshProjectRuntimeState } from "../src/lib/state";
 
 type TestContext = {
   root: string;
@@ -33,6 +50,10 @@ type TestContext = {
 };
 
 let context: TestContext;
+let originalPath = process.env.PATH;
+let originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+let originalAnthropicOAuthToken = process.env.ANTHROPIC_OAUTH_TOKEN;
+let originalFetch = globalThis.fetch;
 
 function randomPort(): number {
   return 12000 + Math.floor(Math.random() * 30000);
@@ -55,13 +76,357 @@ async function setupContext(): Promise<TestContext> {
 
 beforeEach(async () => {
   context = await setupContext();
+  originalPath = process.env.PATH;
+  originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  originalAnthropicOAuthToken = process.env.ANTHROPIC_OAUTH_TOKEN;
+  originalFetch = globalThis.fetch;
+  process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "0";
 });
 
 afterEach(async () => {
+  process.env.PATH = originalPath;
   delete process.env.HIVE_HOME;
   delete process.env.HIVE_FIXED_NOW;
+  delete process.env.HIVE_PI_IDLE_MS;
+  delete process.env.HIVE_ENABLE_PERSISTENT_STEWARD;
+  delete process.env.HIVE_TEST_PI_BEHAVIOR;
+  delete process.env.HIVE_SCRIPT;
+  if (originalAnthropicApiKey === undefined) {
+    delete process.env.ANTHROPIC_API_KEY;
+  } else {
+    process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+  }
+  if (originalAnthropicOAuthToken === undefined) {
+    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+  } else {
+    process.env.ANTHROPIC_OAUTH_TOKEN = originalAnthropicOAuthToken;
+  }
+  globalThis.fetch = originalFetch;
+  await disposePersistentStewardsForHome(context.paths.home);
   await rm(context.root, { recursive: true, force: true });
 });
+
+async function installMockPi(root: string): Promise<void> {
+  process.env.HIVE_TEST_PI_BEHAVIOR ||= "reply";
+
+  const binDir = join(root, "bin");
+  const scriptPath = join(binDir, "pi");
+
+  await mkdir(binDir, { recursive: true });
+  await Bun.write(
+    scriptPath,
+    `#!/usr/bin/env node
+const readline = require("node:readline");
+
+const args = process.argv.slice(2);
+const providerIndex = args.indexOf("--provider");
+const modelIndex = args.indexOf("--model");
+const provider = providerIndex >= 0 ? args[providerIndex + 1] : "anthropic";
+const model = modelIndex >= 0 ? args[modelIndex + 1] : "mock-steward";
+const behavior = process.env.HIVE_TEST_PI_BEHAVIOR || "reply";
+const anthropicAuth = process.env.ANTHROPIC_OAUTH_TOKEN
+  ? (process.env.ANTHROPIC_API_KEY ? "both" : "oauth")
+  : (process.env.ANTHROPIC_API_KEY ? "api" : "none");
+let isStreaming = false;
+let pendingMessageCount = 0;
+let assistantMessages = 0;
+let userMessages = 0;
+let totalInput = 0;
+let totalOutput = 0;
+let totalCost = 0;
+let lastAssistantText = "";
+let activeTimers = [];
+let idleTimer = null;
+
+function scheduleIdleExit() {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => process.exit(0), 800);
+}
+
+function clearActiveTimers() {
+  for (const timer of activeTimers) clearTimeout(timer);
+  activeTimers = [];
+}
+
+function out(value) {
+  process.stdout.write(JSON.stringify(value) + "\\n");
+}
+
+function success(id, command, data) {
+  out(data === undefined
+    ? { id, type: "response", command, success: true }
+    : { id, type: "response", command, success: true, data });
+}
+
+function state() {
+  return {
+    model: { provider, id: model },
+    isStreaming,
+    pendingMessageCount,
+    messageCount: assistantMessages + userMessages,
+    sessionFile: null,
+    sessionId: "mock-pi-session",
+  };
+}
+
+function stats() {
+  return {
+    sessionId: "mock-pi-session",
+    assistantMessages,
+    userMessages,
+    tokens: {
+      input: totalInput,
+      output: totalOutput,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: totalInput + totalOutput,
+    },
+    cost: totalCost,
+  };
+}
+
+function emitAssistantReply(reply) {
+  clearActiveTimers();
+  isStreaming = true;
+  pendingMessageCount = 1;
+  const halfway = Math.max(1, Math.floor(reply.length / 2));
+  const partial = reply.slice(0, halfway);
+  const baseDelay = behavior === "slow" ? 900 : 0;
+
+  activeTimers.push(setTimeout(() => {
+    out({ type: "agent_start" });
+    out({ type: "turn_start" });
+  }, baseDelay + 10));
+
+  activeTimers.push(setTimeout(() => {
+    out({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: partial }],
+      },
+    });
+  }, baseDelay + 20));
+
+  activeTimers.push(setTimeout(() => {
+    out({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+      },
+    });
+  }, baseDelay + 40));
+
+  activeTimers.push(setTimeout(() => {
+    assistantMessages += 1;
+    totalInput += 21;
+    totalOutput += 13;
+    totalCost += 0.02;
+    lastAssistantText = reply;
+    isStreaming = false;
+    pendingMessageCount = 0;
+    out({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+        usage: {
+          input: 21,
+          output: 13,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { total: 0.02 },
+        },
+      },
+    });
+    out({
+      type: "turn_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+      },
+      toolResults: [],
+    });
+    out({
+      type: "agent_end",
+      messages: [{
+        role: "assistant",
+        content: [{ type: "text", text: reply }],
+      }],
+    });
+    scheduleIdleExit();
+  }, baseDelay + 70));
+}
+
+function emitAssistantFailure(errorMessage) {
+  clearActiveTimers();
+  isStreaming = true;
+  pendingMessageCount = 1;
+
+  activeTimers.push(setTimeout(() => {
+    out({ type: "agent_start" });
+    out({ type: "turn_start" });
+    out({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        provider,
+        model,
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { total: 0 },
+        },
+        stopReason: "stop",
+      },
+    });
+  }, 10));
+
+  activeTimers.push(setTimeout(() => {
+    isStreaming = false;
+    pendingMessageCount = 0;
+    const failedMessage = {
+      role: "assistant",
+      content: [],
+      provider,
+      model,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { total: 0 },
+      },
+      stopReason: "error",
+      errorMessage,
+    };
+
+    out({ type: "message_end", message: failedMessage });
+    out({ type: "turn_end", message: failedMessage, toolResults: [] });
+    out({ type: "agent_end", messages: [failedMessage] });
+  }, 40));
+
+  activeTimers.push(setTimeout(() => {
+    out({
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 1,
+      delayMs: 10,
+      errorMessage,
+    });
+  }, 180));
+
+  activeTimers.push(setTimeout(() => {
+    out({
+      type: "auto_retry_end",
+      success: false,
+      attempt: 1,
+      finalError: errorMessage,
+    });
+    scheduleIdleExit();
+  }, 220));
+}
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  crlfDelay: Infinity,
+});
+
+scheduleIdleExit();
+
+rl.on("line", (line) => {
+  scheduleIdleExit();
+  const command = JSON.parse(line);
+
+  switch (command.type) {
+    case "get_state":
+      success(command.id, "get_state", state());
+      return;
+    case "get_session_stats":
+      success(command.id, "get_session_stats", stats());
+      return;
+    case "get_last_assistant_text":
+      success(command.id, "get_last_assistant_text", { text: lastAssistantText });
+      return;
+    case "abort":
+      clearActiveTimers();
+      isStreaming = false;
+      pendingMessageCount = 0;
+      success(command.id, "abort");
+      return;
+    case "prompt": {
+      userMessages += 1;
+      success(command.id, "prompt");
+      if (behavior === "error") {
+        emitAssistantFailure("Connection error.");
+        return;
+      }
+      const humanTurnMatch = /## Human Turn\\n([\\s\\S]*)$/m.exec(command.message || "");
+      const humanTurn = humanTurnMatch ? humanTurnMatch[1].trim() : "mock task";
+      const replyPrefix = behavior === "auth"
+        ? "Mock persistent steward auth: " + anthropicAuth + " | "
+        : "Mock persistent steward reply: ";
+      emitAssistantReply(replyPrefix + humanTurn);
+      return;
+    }
+    default:
+      out({
+        id: command.id,
+        type: "response",
+        command: command.type,
+        success: false,
+        error: "Unknown command: " + command.type,
+      });
+  }
+});
+`,
+  );
+  await chmod(scriptPath, 0o755);
+  process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+  process.env.HIVE_PI_IDLE_MS = "200";
+}
+
+async function installFakeCodex(root: string): Promise<void> {
+  const binDir = join(root, "bin");
+  const scriptPath = join(binDir, "codex");
+
+  await mkdir(binDir, { recursive: true });
+  await Bun.write(
+    scriptPath,
+    `#!/bin/sh
+printf 'mock codex run complete\\n'
+exit 0
+`,
+  );
+  await chmod(scriptPath, 0o755);
+  process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+}
+
+async function waitForValue<T>(
+  load: () => Promise<T>,
+  predicate: (value: T) => boolean,
+  attempts = 40,
+  delayMs = 100,
+): Promise<T> {
+  let value = await load();
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate(value)) {
+      return value;
+    }
+
+    await Bun.sleep(delayMs);
+    value = await load();
+  }
+
+  return value;
+}
 
 describe("Gateway HTTP Server", () => {
   test("serves static index.html at /", async () => {
@@ -153,6 +518,357 @@ describe("Gateway REST API", () => {
     } finally {
       stopGateway(state);
     }
+  });
+
+  test("GET /api/cognition returns session-aware routing policy and local model discovery", async () => {
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      [
+        "# Hive Config",
+        "",
+        "runtime: claude",
+        "model: claude-sonnet-4-6",
+        "cognitive-bias: quality",
+        "cognitive-max-fanout: 4",
+        "cognitive-max-parallel: 3",
+        "tier1_local: qwen3:4b",
+        "pi-provider-codex: openai",
+        "pi-model-codex: gpt-5",
+      ].join("\n"),
+    );
+    const session = await createSession({
+      sessionsDir: context.paths.sessionsDir,
+      project: "hive",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      systemPrompt: "You are the steward.",
+    });
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+
+      if (url === "http://127.0.0.1:11434/api/tags") {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "qwen3:4b" }, { name: "gemma3:4b" }],
+          }),
+          { status: 200 },
+        );
+      }
+
+      return originalFetch(input);
+    }) as typeof fetch;
+    const req = new Request("http://localhost/api/cognition");
+    const res = await handleApi(req, new URL(req.url), {
+      hivePaths: context.paths,
+      projectsDir: context.paths.projectsDir,
+      runsActiveDir: "",
+    }, () => {});
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      rendered: string;
+      policy: {
+        bias: string;
+        maxFanOut: number;
+        maxParallel: number;
+        runtimeLanes: Array<{
+          runtime: string;
+          piRoute: {
+            provider: string | null;
+            model: string | null;
+          };
+        }>;
+      };
+      activeSession: {
+        sessionId: string;
+        project: string;
+        runtime: string;
+        model: string | null;
+      } | null;
+      activeLane: {
+        runtime: string;
+      } | null;
+      activeExecution: {
+        mode: string;
+        runtime: string;
+        selectedModel: string | null;
+        executedModel: string | null;
+      } | null;
+      defaultExecution: {
+        mode: string;
+        runtime: string;
+        selectedModel: string | null;
+        executedModel: string | null;
+      } | null;
+      tier1: {
+        localModel: string;
+      };
+      localModels: {
+        available: boolean;
+        configuredModelStatus: string;
+        models: Array<{ name: string }>;
+      };
+      usage: {
+        project: string;
+        summary: {
+          stewardWakes: number;
+          workerRuns: number;
+          tier1Calls: number;
+        };
+      } | null;
+    };
+    expect(data.rendered).toContain("Cognitive routing policy:");
+    expect(data.policy.bias).toBe("quality");
+    expect(data.policy.maxFanOut).toBe(4);
+    expect(data.policy.maxParallel).toBe(3);
+    expect(data.rendered).toContain(`active session: ${session.sessionId}`);
+    expect(data.rendered).toContain("session selection: codex (gpt-5-codex)");
+    expect(data.rendered).toContain("current execution: direct runtime | codex (gpt-5-codex) | auth: cli");
+    expect(data.activeSession?.runtime).toBe("codex");
+    expect(data.activeLane?.runtime).toBe("codex");
+    expect(data.activeExecution?.mode).toBe("direct-runtime");
+    expect(data.activeExecution?.executedModel).toBe("gpt-5-codex");
+    expect(data.defaultExecution?.mode).toBe("direct-runtime");
+    expect(data.tier1.localModel).toBe("qwen3:4b");
+    expect(data.localModels.available).toBeTrue();
+    expect(data.localModels.configuredModelStatus).toBe("available");
+    expect(data.usage?.project).toBe("hive");
+    expect(data.usage?.summary.stewardWakes).toBe(0);
+    expect(data.usage?.summary.workerRuns).toBe(0);
+    expect(data.usage?.summary.tier1Calls).toBe(0);
+    expect(data.localModels.models.map((model) => model.name)).toEqual([
+      "gemma3:4b",
+      "qwen3:4b",
+    ]);
+    expect(data.policy.runtimeLanes.some((lane) =>
+      lane.runtime === "codex" &&
+      lane.piRoute.provider === "openai" &&
+      lane.piRoute.model === "gpt-5",
+    )).toBeTrue();
+  });
+
+  test("GET /api/cognition surfaces Pi execution for persistent steward sessions", async () => {
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      [
+        "# Hive Config",
+        "",
+        "runtime: codex",
+        "model: gpt-5-codex",
+        "pi-provider-codex: openai",
+        "pi-model-codex: gpt-5",
+      ].join("\n"),
+    );
+    await createSession({
+      sessionsDir: context.paths.sessionsDir,
+      project: "hive",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      systemPrompt: "You are the steward.",
+    });
+    const req = new Request("http://localhost/api/cognition");
+    const res = await handleApi(req, new URL(req.url), {
+      hivePaths: context.paths,
+      projectsDir: context.paths.projectsDir,
+      runsActiveDir: "",
+    }, () => {});
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      rendered: string;
+      activeExecution: {
+        mode: string;
+        executedModel: string | null;
+      } | null;
+    };
+
+    expect(data.activeExecution?.mode).toBe("persistent-pi");
+    expect(data.activeExecution?.executedModel).toBe("gpt-5");
+    expect(data.rendered).toContain("current execution: persistent steward via Pi | codex -> openai | model: gpt-5 | auth: env");
+  });
+
+  test("GET /api/cognition returns project-focused compiled working set and idle packets", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    await Bun.write(
+      projectPaths.board,
+      `# Board: TestProj
+
+## Tasks
+- HIVE-100 | ship auth flow | done
+- HIVE-101 | wire gateway cognition rail | active
+
+## Agents
+- steward | status: active on HIVE-101 | role: steward
+- alpha | status: idle | role: worker
+
+## Blockers
+- Need sign-off on gateway messaging copy
+`,
+    );
+    await Bun.write(
+      projectPaths.log,
+      `# Log: 2026-03-11 TestProj
+
+## 2026-03-11T14:00:00Z — steward
+Captured gateway cognition snapshot and prepared the compiled-state rail.
+`,
+    );
+    await Bun.write(
+      projectPaths.memory,
+      `# Project Memory: TestProj
+
+## Durable Facts
+- The gateway UI lives in src/gateway/static/app.js
+
+## Conventions
+- Prefer exposing compiled summaries before raw derived files in UI surfaces
+
+## Decisions
+- [2026-03-11T14:00:00Z] Keep cognition routing and compiled-state inspection in one rail
+
+## Open Questions
+- Should idle packet freshness be shown directly in the rail?
+`,
+    );
+
+    const message = await createMessage(context.paths.msgDir, {
+      from: "human",
+      to: "steward",
+      type: "question",
+      project: "testproj",
+      body: "Show me the new compiled cognition state in the gateway.",
+    });
+
+    let run = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "Wire the compiled cognition rail.",
+      source: "gateway-test",
+      sourceMessage: message.filename,
+      taskId: "HIVE-101",
+      scope: ["src/gateway"],
+    });
+    run = await finalizeRun({
+      projectPaths,
+      run,
+      status: "exited",
+      exitCode: 0,
+    });
+    await writeRunResult(run, {
+      assignmentStatusAfterExit: "open",
+      assignmentResolvedByWorker: false,
+      changedFiles: ["docs/gateway-cognition.md", "tests/gateway.test.ts"],
+      gitSummaryLines: ["Wired the gateway cognition rail to compiled working-set state."],
+      finalVisibleOutput: "Compiled cognition rail wired.",
+      cognitiveDigest: {
+        provider: "ollama",
+        model: "qwen3:4b",
+        summary: "Gateway cognition rail now shows compiled working-set and idle packet state.",
+        outcome: "success",
+        keyDecisions: ["Use /api/cognition as the single project-aware rail payload."],
+        filesChanged: ["docs/gateway-cognition.md", "tests/gateway.test.ts"],
+        inputTokens: 96,
+        outputTokens: 33,
+        totalTokens: 129,
+        durationMs: 1200,
+      },
+    });
+
+    const runtimeState = await refreshProjectRuntimeState({
+      hivePaths: context.paths,
+      projectId: "testproj",
+      projectPaths,
+    });
+    const plan = await Bun.file(projectPaths.plan).text();
+    await compileIdleProjectCognition({
+      hivePaths: context.paths,
+      projectId: "testproj",
+      projectPaths,
+      plan,
+      runtimeState,
+    });
+    const logRollupPath = getLogRollupPacketPath(projectPaths);
+    const logRollupPacket = await Bun.file(logRollupPath).json() as {
+      summary: string;
+      details: Record<string, unknown>;
+    };
+    logRollupPacket.summary = `${logRollupPacket.summary} <system-reminder>internal only</system-reminder>`;
+    await Bun.write(logRollupPath, JSON.stringify(logRollupPacket, null, 2));
+
+    const req = new Request("http://localhost/api/cognition?project=testproj");
+    const res = await handleApi(req, new URL(req.url), {
+      hivePaths: context.paths,
+      projectsDir: context.paths.projectsDir,
+      runsActiveDir: "",
+    }, () => {});
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as {
+      project: string | null;
+      usage: {
+        project: string;
+      } | null;
+      compiled: {
+        workingSetDigests: Array<{
+          label: string;
+          body: string;
+        }>;
+        idlePackets: Array<{
+          label: string;
+          body: string;
+          kicker: string | null;
+        }>;
+      } | null;
+    };
+
+    expect(data.project).toBe("testproj");
+    expect(data.usage?.project).toBe("testproj");
+    expect(data.compiled).not.toBeNull();
+
+    const boardDigest = data.compiled?.workingSetDigests.find((item) => item.label === "board");
+    const openDecisionsDigest = data.compiled?.workingSetDigests.find((item) => item.label === "open decisions");
+    const recentResultsDigest = data.compiled?.workingSetDigests.find((item) => item.label === "recent results");
+    const humanInboxDigest = data.compiled?.workingSetDigests.find((item) => item.label === "human inbox");
+
+    expect(boardDigest?.body).toContain("2 task");
+    expect(openDecisionsDigest?.body).toContain("gateway messaging copy");
+    expect(recentResultsDigest?.body).toContain("Gateway cognition rail now shows compiled working-set and idle packet state.");
+    expect(humanInboxDigest?.body).toContain("Show me the new compiled cognition state in the gateway.");
+
+    const idleLabels = (data.compiled?.idlePackets ?? []).map((packet) => packet.label);
+    expect(idleLabels).toEqual([
+      "log rollup",
+      "phase summary",
+      "memory hotset",
+      "stale memory",
+    ]);
+
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "log rollup")?.body).toContain(
+      "Captured gateway cognition snapshot",
+    );
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "log rollup")?.body).not.toContain(
+      "<system-reminder>",
+    );
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "phase summary")?.body).toContain(
+      "ship auth flow",
+    );
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "memory hotset")?.body).toContain(
+      "The gateway UI lives in src/gateway/static/app.js",
+    );
+    expect(data.compiled?.idlePackets.find((packet) => packet.label === "stale memory")?.body).toContain(
+      "Stale memory review",
+    );
   });
 
   test("GET /api/feed returns feed data", async () => {
@@ -435,6 +1151,11 @@ describe("Gateway state file", () => {
     const result = await runCli(["gateway", "stop"]);
     expect(result).toContain("not running");
   });
+
+  test("bare stop reports not running when no state file", async () => {
+    const result = await runCli(["stop"]);
+    expect(result).toContain("not running");
+  });
 });
 
 describe("Gateway port conflict", () => {
@@ -455,9 +1176,206 @@ describe("Gateway port conflict", () => {
 describe("Gateway CLI wiring", () => {
   test("help includes gateway commands", async () => {
     const result = await runCli(["help"]);
+    expect(result).toContain("hive start");
+    expect(result).toContain("hive stop");
     expect(result).toContain("hive gateway");
     expect(result).toContain("gateway status");
     expect(result).toContain("gateway stop");
+  });
+});
+
+describe("Managed gateway lifecycle", () => {
+  test("managed gateway launches auto assignments immediately when a new message file appears", async () => {
+    await installFakeCodex(context.root);
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "PLAN.md"),
+      `# Plan: MyProject
+
+## Goal
+Ship the auth flow.
+
+## Agents
+### steward (steward)
+Task: Keep the board current.
+
+### alpha (craftsman -> src/api/**)
+Task: Build the auth endpoint.
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "config.md"),
+      `# Project: MyProject
+
+## Repo
+path: ${context.repo}
+
+## Default Team
+- steward: steward via codex
+- alpha: craftsman via codex
+`,
+    );
+
+    const port = randomPort();
+    const state = startGateway({
+      port,
+      hivePaths: context.paths,
+      manageSupervisorChildren: true,
+      supervisorIntervalSeconds: 30,
+      supervisorMaxParallel: 2,
+    });
+
+    try {
+      const projectPaths = getProjectPaths(context.paths, "myproject");
+      const startedAt = Date.now();
+      const message = await createMessage(context.paths.msgDir, {
+        from: "steward",
+        to: "alpha",
+        type: "assign",
+        project: "myproject",
+        body: "Build the auth endpoint.",
+        attributes: {
+          task: "HIVE-201",
+          launch: "auto",
+          scope: "src/api",
+        },
+      });
+      const launchedRun = await waitForValue(
+        async () =>
+          (await listAllRuns(projectPaths)).find(
+            (run) => run.sourceMessage === message.filename && run.agentId === "alpha",
+          ) ?? null,
+        (run) => Boolean(run),
+        50,
+        100,
+      );
+
+      expect(launchedRun).not.toBeNull();
+      expect(launchedRun?.source).toBe("hive gateway");
+      expect(launchedRun?.sourceMessage).toBe(message.filename);
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(await readDetachedSupervisorState(projectPaths)).toBeNull();
+    } finally {
+      stopGateway(state);
+    }
+  });
+
+  test("hive start launches a managed supervisor and hive stop cascades to workers", async () => {
+    await installFakeCodex(context.root);
+    process.env.HIVE_SCRIPT = join(import.meta.dir, "..", "bin", "hive.ts");
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+    await Bun.write(
+      join(context.hiveHome, "config.md"),
+      `# Hive Config
+
+## Hive Mind
+runtime: codex
+`,
+    );
+    await Bun.write(
+      join(context.hiveHome, "projects", "myproject", "config.md"),
+      `# Project: MyProject
+
+## Repo
+path: ${context.repo}
+
+## Default Team
+- steward: steward via codex
+- alpha: craftsman via codex
+`,
+    );
+
+    const port = randomPort();
+    let worker: ReturnType<typeof spawn> | null = null;
+
+    try {
+      const startOutput = await runCli(["start", "--port", String(port)]);
+
+      expect(startOutput).toContain(`http://localhost:${port}`);
+
+      const gatewayState = await waitForValue(
+        () => reconcileGatewayState(context.hiveHome),
+        (state) => Boolean(state?.status === "active" && state.pid && state.supervisorPid),
+      );
+
+      expect(gatewayState?.status).toBe("active");
+      expect(gatewayState?.pid).toBeNumber();
+      expect(gatewayState?.supervisorPid).toBeNumber();
+
+      const projectPaths = getProjectPaths(context.paths, "myproject");
+      const supervisorState = await waitForValue(
+        () => readDetachedSupervisorState(projectPaths),
+        (state) => Boolean(state?.status === "active" && state.pid),
+      );
+
+      expect(supervisorState?.mode).toBe("managed");
+      expect(supervisorState?.pid).toBe(gatewayState?.supervisorPid ?? null);
+
+      worker = spawn("sleep", ["30"], { stdio: "ignore" });
+      const workerExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve) => {
+          worker?.once("exit", (code, signal) => resolve({ code, signal }));
+        },
+      );
+      const workerRun = await createRunDraft({
+        projectId: "myproject",
+        projectPaths,
+        agentId: "alpha",
+        runtime: "codex",
+        model: null,
+        prompt: "# Alpha Prompt",
+        source: "hive launch",
+        scope: ["src/api"],
+      });
+
+      await markRunActive(projectPaths, workerRun, worker.pid ?? null);
+
+      const status = await runCli(["status"]);
+
+      expect(status).toContain("Runtime");
+      expect(status).toContain(`gateway: active | pid ${gatewayState?.pid}`);
+      expect(status).toContain(`supervisor: active | pid ${gatewayState?.supervisorPid}`);
+      expect(status).toContain("persistent steward: offline");
+
+      const stopOutput = await runCli(["stop"]);
+
+      expect(stopOutput).toContain(`Gateway stopped (pid ${gatewayState?.pid}).`);
+      expect((await workerExit).signal).toBe("SIGTERM");
+
+      const stoppedGateway = await waitForValue(
+        () => reconcileGatewayState(context.hiveHome),
+        (state) => Boolean(state?.status === "stopped"),
+      );
+      const stoppedSupervisor = await waitForValue(
+        () => readDetachedSupervisorState(projectPaths),
+        (state) => Boolean(state?.status === "stopped"),
+      );
+
+      expect(stoppedGateway?.status).toBe("stopped");
+      expect(stoppedSupervisor?.status).toBe("stopped");
+      expect(stoppedSupervisor?.pid).toBeNull();
+    } finally {
+      await runCli(["stop"]).catch(() => undefined);
+      delete process.env.HIVE_SCRIPT;
+
+      if (worker?.pid) {
+        try {
+          process.kill(worker.pid, "SIGKILL");
+        } catch {
+          // process already exited
+        }
+      }
+    }
   });
 });
 
@@ -476,7 +1394,7 @@ describe("Gateway session endpoints", () => {
 path: ${context.repo}
 
 ## Default Team
-- orchestrator: steward, claude-sonnet-4-6 via claude
+- steward: steward, claude-sonnet-4-6 via claude
 - alpha: craftsman via codex
 `,
     );
@@ -567,6 +1485,595 @@ path: ${context.repo}
     expect(
       sessionContext.recentTurns.some((turn) => turn.content.includes("Heard. I'm on it.")),
     ).toBe(false);
+  });
+
+  test("console send answers explicit status checks from deterministic state without waking the steward", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    let workerRun = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "alpha",
+      runtime: "codex",
+      model: "gpt-5-codex",
+      prompt: "Inspect the failing tests.",
+      source: "gateway-test",
+    });
+    workerRun = await markRunActive(projectPaths, workerRun, 81234);
+    await Bun.write(getRunOutputPath(workerRun), "checking failing specs\n");
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "What's happening right now?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(250);
+
+    const [turns, activeConsoleRun] = await Promise.all([
+      getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId),
+      readActiveRun(projectPaths, "console"),
+    ]);
+
+    const statusTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "system" &&
+      turn.content.includes("Here's what the hive is doing right now:")
+    );
+    expect(statusTurn).toBeDefined();
+    expect(statusTurn?.details?.runtime).toBe("deterministic");
+    expect(statusTurn?.details?.routing?.tier).toBe("tier0");
+    expect(statusTurn?.details?.routing?.handledBy).toBe("deterministic-status");
+    expect(statusTurn?.details?.routing?.lane).toBe("deterministic gateway preprocessor");
+    expect(activeConsoleRun).toBeNull();
+  });
+
+  test("console send uses tier-1 preprocessing for short status-like questions", async () => {
+    await runCli(["init"]);
+    await Bun.write(context.paths.config, "tier1_local: qwen3:4b\n");
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    globalThis.fetch = (async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "http://127.0.0.1:11434/api/tags") {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "qwen3:4b" }],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url === "http://127.0.0.1:11434/api/chat") {
+        const body = JSON.parse(String(init?.body)) as {
+          messages: Array<{ role: string; content: string }>;
+        };
+        expect(body.messages[1]?.content).toContain("Should I be paying attention right now?");
+
+        return new Response(
+          JSON.stringify({
+            message: {
+              content: JSON.stringify({
+                classification: "status_check",
+                answer: "",
+                reason: "This is asking whether current activity needs attention, which can be answered from live state.",
+              }),
+            },
+            prompt_eval_count: 52,
+            eval_count: 21,
+            total_duration: 900_000_000,
+          }),
+          { status: 200 },
+        );
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Should I be paying attention right now?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(250);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    const tier1Turn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "system" &&
+      turn.content.includes("Here's what the hive is doing right now:")
+    );
+
+    expect(tier1Turn).toBeDefined();
+    expect(tier1Turn?.details?.runtime).toBe("ollama");
+    expect(tier1Turn?.details?.model).toBe("qwen3:4b");
+    expect(tier1Turn?.details?.routing?.tier).toBe("tier1");
+    expect(tier1Turn?.details?.routing?.handledBy).toBe("tier1-preprocessor");
+    expect(tier1Turn?.details?.routing?.lane).toBe("tier-1 local via Ollama | model: qwen3:4b");
+  });
+
+  test("console send uses the persistent Pi steward when Pi is available", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Summarize the current state." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const projectPaths = getProjectPaths(context.paths, "testproj");
+    const [turns, activeRun, sessionState] = await Promise.all([
+      getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId),
+      readActiveRun(projectPaths, "console"),
+      getSessionState(join(context.hiveHome, "sessions"), data.sessionId),
+    ]);
+
+    const modelTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward reply:")
+    );
+    expect(modelTurn).toBeDefined();
+    expect(modelTurn?.details?.runtime).toBe("pi");
+    expect(modelTurn?.details?.routing?.tier).toBe("tier3");
+    expect(modelTurn?.details?.routing?.handledBy).toBe("persistent-steward");
+    expect(modelTurn?.details?.routing?.trace[0]).toContain("persistent steward lane");
+    expect(activeRun).toBeNull();
+    expect(sessionState?.projectStates.testproj?.lastRevisionSeen).toBeGreaterThan(0);
+  });
+
+  test("steward wake injects a system turn and runs the persistent Pi steward", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/steward/wake", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project: "testproj",
+        message:
+          "Your delegated workers eval-codex and eval-opus have completed. Synthesize their results and report to the human.",
+      }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string; project: string };
+    expect(data.accepted).toBe(true);
+    expect(data.project).toBe("testproj");
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    const wakeTurn = turns.find((turn) =>
+      turn.role === "human" &&
+      turn.source === "system" &&
+      turn.content.includes("delegated workers eval-codex and eval-opus")
+    );
+    const modelTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward reply:")
+    );
+
+    expect(wakeTurn).toBeDefined();
+    expect(modelTurn).toBeDefined();
+  });
+
+  test("persistent steward streaming preserves earlier text segments and emits staged status updates", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_TEST_PI_BEHAVIOR = "segments";
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const events: Array<{
+      type?: string;
+      data?: { content?: string | null; statusText?: string | null; stage?: string | null } | null;
+    }> = [];
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Give me the merged status." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      (event) => {
+        events.push(event as {
+          type?: string;
+          data?: { content?: string | null; statusText?: string | null; stage?: string | null } | null;
+        });
+      },
+    );
+
+    expect(res.status).toBe(200);
+    await Bun.sleep(900);
+
+    const sessionId = (await res.json() as { sessionId: string }).sessionId;
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), sessionId);
+    const modelTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Final synthesis:")
+    );
+
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      event.data?.statusText === "Starting steward session..." &&
+      event.data?.stage === "starting-session"
+    )).toBe(true);
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      event.data?.statusText === "Loading project context..." &&
+      event.data?.stage === "loading-context"
+    )).toBe(true);
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      event.data?.statusText === "Waiting for response..." &&
+      event.data?.stage === "waiting-for-response"
+    )).toBe(true);
+    expect(modelTurn).toBeDefined();
+    expect(modelTurn?.content).toContain("Mock persistent steward reply:");
+    expect(modelTurn?.content).toContain("\n\n---\n\n");
+    expect(modelTurn?.content).toContain("Final synthesis: delegated worker findings are now merged.");
+  });
+
+  test("tier-1 preprocessing falls back to the steward when the question still needs depth", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await Bun.write(context.paths.config, "tier1_local: qwen3:4b\n");
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    let preprocessCalls = 0;
+    globalThis.fetch = (async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "http://127.0.0.1:11434/api/tags") {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "qwen3:4b" }],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url === "http://127.0.0.1:11434/api/chat") {
+        preprocessCalls += 1;
+        return new Response(
+          JSON.stringify({
+            message: {
+              content: JSON.stringify({
+                classification: "complex",
+                answer: "",
+                reason: "Choosing the next refactor needs judgment and planning.",
+              }),
+            },
+            prompt_eval_count: 48,
+            eval_count: 16,
+            total_duration: 850_000_000,
+          }),
+          { status: 200 },
+        );
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Should we tackle the gateway next?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    const modelTurn = turns.find((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward reply:")
+    );
+
+    expect(preprocessCalls).toBe(1);
+    expect(modelTurn).toBeDefined();
+    expect(modelTurn?.details?.routing?.tier).toBe("tier3");
+    expect(turns.some((turn) => turn.details?.routing?.tier === "tier1")).toBe(false);
+  });
+
+  test("persistent Pi prefers Anthropic OAuth over API key when both are present", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    process.env.HIVE_TEST_PI_BEHAVIOR = "auth";
+    process.env.ANTHROPIC_API_KEY = "test-api-key";
+    process.env.ANTHROPIC_OAUTH_TOKEN = "test-oauth-token";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Which Anthropic auth lane did you use?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward auth: oauth |")
+    )).toBe(true);
+  });
+
+  test("persistent Pi does not inherit Anthropic API keys from the shell env", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    process.env.HIVE_TEST_PI_BEHAVIOR = "auth";
+    process.env.ANTHROPIC_API_KEY = "test-api-key";
+    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Which Anthropic auth lane did you use?" }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.source === "model" &&
+      turn.content.includes("Mock persistent steward auth: none |")
+    )).toBe(true);
+  });
+
+  test("persistent steward falls back when Pi ends with an error and no visible reply", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_TEST_PI_BEHAVIOR = "error";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(createRes.status).toBe(200);
+
+    const createData = await createRes.json() as { sessionId: string };
+    const result = await runPersistentStewardTurn({
+      hivePaths: context.paths,
+      projectId: "testproj",
+      sessionId: createData.sessionId,
+      humanMessage: "Say hello.",
+    });
+
+    expect(result.mode).toBe("fallback");
+    if (result.mode === "fallback") {
+      expect(result.reason).toContain("Connection error.");
+    }
+  });
+
+  test("persistent steward falls back for codex sessions when no Pi route is configured", async () => {
+    await installMockPi(context.root);
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const createReq = new Request("http://localhost/api/console/new", {
+      method: "POST",
+    });
+    const createRes = await handleApi(
+      createReq,
+      new URL(createReq.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(createRes.status).toBe(200);
+
+    const createData = await createRes.json() as { sessionId: string };
+    await updateSessionMeta({
+      sessionsDir: join(context.hiveHome, "sessions"),
+      sessionId: createData.sessionId,
+      runtime: "codex",
+      model: null,
+    });
+
+    const result = await runPersistentStewardTurn({
+      hivePaths: context.paths,
+      projectId: "testproj",
+      sessionId: createData.sessionId,
+      humanMessage: "Say hello.",
+    });
+
+    expect(result.mode).toBe("fallback");
+    if (result.mode === "fallback") {
+      expect(result.reason).toContain("No Pi provider route is configured for runtime 'codex'");
+    }
+  });
+
+  test("console send does not persist an empty Pi completion status when the persistent steward fails", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_TEST_PI_BEHAVIOR = "error";
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Morning team." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      () => {},
+    );
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { accepted: boolean; sessionId: string };
+    expect(data.accepted).toBe(true);
+
+    await Bun.sleep(900);
+
+    const turns = await getSessionHistory(join(context.hiveHome, "sessions"), data.sessionId);
+    expect(turns.some((turn) =>
+      turn.role === "assistant" &&
+      turn.content.includes("The persistent steward turn finished without a visible reply.")
+    )).toBe(false);
+  });
+
+  test("console send does not broadcast synthetic one-second filler while waiting for a live Pi reply", async () => {
+    await installMockPi(context.root);
+    process.env.HIVE_TEST_PI_BEHAVIOR = "slow";
+    process.env.HIVE_ENABLE_PERSISTENT_STEWARD = "1";
+    await runCli(["init"]);
+    await runCli(["project", "add", "TestProj", context.repo]);
+    await runCli(["work", "testproj"]);
+
+    const events: Array<{ type?: string; data?: { content?: string } | null }> = [];
+    const req = new Request("http://localhost/api/console/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Hello there." }),
+    });
+    const res = await handleApi(
+      req,
+      new URL(req.url),
+      { port: 0, hivePaths: context.paths },
+      (event) => {
+        events.push(event as { type?: string; data?: { content?: string } | null });
+      },
+    );
+    expect(res.status).toBe(200);
+
+    await Bun.sleep(800);
+
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      (event.data?.content || "").includes("One second")
+    )).toBe(false);
+
+    await Bun.sleep(500);
+
+    expect(events.some((event) =>
+      event.type === "session-stream" &&
+      (event.data?.content || "").includes("Mock persistent steward reply:")
+    )).toBe(true);
   });
 
   test("console send routes follow-up work to the session project, not the current active project", async () => {
@@ -797,7 +2304,7 @@ path: ${context.repo}
 path: ${context.repo}
 
 ## Default Team
-- orchestrator: steward, claude-sonnet-4-6 via claude
+- steward: steward, claude-sonnet-4-6 via claude
 - alpha: craftsman via codex
 `,
     );
@@ -1037,6 +2544,18 @@ path: ${context.repo}
     activeRun = await markRunActive(projectPaths, activeRun, process.pid);
     await Bun.write(getRunOutputPath(activeRun), "reading compact state\nassigning worker\n");
 
+    let secondActiveRun = await createRunDraft({
+      projectId: "testproj",
+      projectPaths,
+      agentId: "gamma",
+      runtime: "claude",
+      model: "claude-sonnet-4-6",
+      prompt: "# Prompt",
+      source: "gateway-test",
+    });
+    secondActiveRun = await markRunActive(projectPaths, secondActiveRun, process.pid);
+    await Bun.write(getRunOutputPath(secondActiveRun), "running verification\nwaiting on diff\n");
+
     let completedRun = await createRunDraft({
       projectId: "testproj",
       projectPaths,
@@ -1099,11 +2618,17 @@ path: ${context.repo}
     expect(typeof data.summary).toBe("string");
     expect(data.supervisor?.status).toBe("active");
     expect(data.supervisor?.tail).toEqual(["tick one", "checking assignments"]);
+    expect(data.agents).toHaveLength(2);
     expect(data.agents.some((agent) =>
       agent.agentId === "alpha" &&
       agent.runtime === "codex" &&
       !agent.descriptor.includes("via codex") &&
       agent.latestOutput?.includes("assigning worker")
+    )).toBe(true);
+    expect(data.agents.some((agent) =>
+      agent.agentId === "gamma" &&
+      agent.runtime === "claude" &&
+      agent.latestOutput?.includes("waiting on diff")
     )).toBe(true);
     expect(data.recentCompletions.some((completion) =>
       completion.agentId === "beta" &&
@@ -1312,10 +2837,11 @@ path: ${context.repo}
     await Bun.write(getRunOutputPath(run), "Inspecting recent progress\nChecking latest activity\n");
 
     try {
+      const followUpMessage = "take the next step on the current goal";
       const req = new Request("http://localhost/api/console/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "what's happening right now?" }),
+        body: JSON.stringify({ message: followUpMessage }),
       });
       const res = await handleApi(
         req,
@@ -1352,7 +2878,7 @@ path: ${context.repo}
       const messages = await listProjectMessages(context.paths.msgDir, "testproj");
       expect(messages.some((message) =>
         message.attributes.type === "nudge" &&
-        message.body.includes("what's happening right now?")
+        message.body.includes(followUpMessage)
       )).toBe(false);
     } finally {
       try {
@@ -1383,10 +2909,11 @@ path: ${context.repo}
     run = await markRunActive(projectPaths, run, process.pid);
     await Bun.write(getRunOutputPath(run), "Inspecting recent progress\nChecking latest activity\n");
 
+    const followUpMessage = "take the next step on the current goal";
     const req = new Request("http://localhost/api/console/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "what's happening right now?" }),
+      body: JSON.stringify({ message: followUpMessage }),
     });
     const res = await handleApi(
       req,
@@ -1413,7 +2940,7 @@ path: ${context.repo}
       turn.role === "assistant" &&
       turn.details?.statusNotes?.some((note) => note.includes("Queued 1 follow-up message(s) for the live steward"))
     )).toBe(true);
-    expect(sessionState?.pendingTurns.map((item) => item.content)).toContain("what's happening right now?");
+    expect(sessionState?.pendingTurns.map((item) => item.content)).toContain(followUpMessage);
     expect(persistedRun?.stopRequestedAt).toBeNull();
   });
 

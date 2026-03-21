@@ -25,6 +25,7 @@ export type SessionTurn = {
 
 export type SessionTurnDetails = {
   project: string | null;
+  recordedAt?: string | null;
   runId: string | null;
   runtime: string | null;
   model: string | null;
@@ -51,6 +52,25 @@ export type SessionTurnDetails = {
   } | null;
   runs: {
     activeCount: number;
+  } | null;
+  compilation?: {
+    compiledFields: number;
+    fallbackFields: number;
+    hitRate: number;
+    packetCount: number;
+    workingSetTokenEstimate: number;
+    maxPropagationDelayMs: number | null;
+    avgPropagationDelayMs: number | null;
+  } | null;
+  routing?: {
+    tier: "tier0" | "tier1" | "tier2" | "tier3";
+    mode: "direct-answer" | "targeted-inspection" | "plural-synthesis" | null;
+    handledBy: string | null;
+    lane: string | null;
+    fanOutUsed: number | null;
+    parallelismUsed: number | null;
+    reusedFreshWorkerOutput: boolean | null;
+    trace: string[];
   } | null;
   statusNotes?: string[] | null;
 };
@@ -428,6 +448,7 @@ export async function appendTurn(input: {
 }): Promise<void> {
   const date = now();
   const timeStr = formatTimeOnly(date);
+  const recordedAt = toIsoTimestamp(date);
   const sessionDir = join(input.sessionsDir, input.sessionId);
   const historyPath = join(sessionDir, "history.md");
 
@@ -438,8 +459,14 @@ export async function appendTurn(input: {
   const sourceLabel = source && !(input.role === "human" && source === "human")
     ? ` [${source}]`
     : "";
+  const detailsPayload = input.details
+    ? {
+        ...input.details,
+        recordedAt: input.details.recordedAt ?? recordedAt,
+      }
+    : null;
   const detailsPrefix = input.details
-    ? `<!-- turn-meta: ${JSON.stringify(input.details)} -->\n`
+    ? `<!-- turn-meta: ${JSON.stringify(detailsPayload)} -->\n`
     : "";
   const appendText = `\n## ${input.role}${sourceLabel} (${timeStr})\n${detailsPrefix}${input.content}\n`;
   await Bun.write(historyPath, existing + appendText);

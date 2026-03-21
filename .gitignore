@@ -13,6 +13,7 @@
 /hive
 /hive.exe
 coverage/
+node_modules/
 
 # Local HIVE working state when this repo is used as a tracked project
 /.hive/

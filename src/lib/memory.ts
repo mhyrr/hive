@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { UsageError } from "./errors";
 import { appendEvent, listRecentEvents } from "./events";
 import { appendFeedEntry, parseStructuredFeedEntries } from "./feed";
+import { readJson, writeJson } from "./json";
 import {
   ensureDirectory,
   getProjectPaths,
@@ -30,7 +31,7 @@ export type ProjectMemorySnapshot = {
 export type EntityType = "project" | "person" | "company";
 export type EntityAction = "summary" | "fact" | "note";
 
-type MemorySummaryProject = {
+export type MemorySummaryProject = {
   id: string;
   repoPath: string | null;
   facts: string[];
@@ -40,7 +41,7 @@ type MemorySummaryProject = {
   signalCount: number;
 };
 
-type MemorySummaryState = {
+export type MemorySummaryState = {
   extractedAt: string;
   date: string;
   knowledge: string[];
@@ -48,7 +49,7 @@ type MemorySummaryState = {
   projects: MemorySummaryProject[];
 };
 
-type MemoryHeatProject = {
+export type MemoryHeatProject = {
   id: string;
   status: "hot" | "warm" | "cold";
   accessCount: number;
@@ -58,12 +59,12 @@ type MemoryHeatProject = {
   memoryItems: number;
 };
 
-type MemoryHeatState = {
+export type MemoryHeatState = {
   extractedAt: string;
   projects: MemoryHeatProject[];
 };
 
-type RecentDecisionItem = {
+export type RecentDecisionItem = {
   project: string | null;
   ts: string | null;
   text: string;
@@ -79,6 +80,11 @@ export type PromptMemoryContext = {
   globalKnowledgeDigest: string;
   recentDecisionsDigest: string;
   projectEntityDigest: string;
+};
+
+export type MemoryRecentDecisionsState = {
+  extractedAt: string;
+  items: RecentDecisionItem[];
 };
 
 type EntityPaths = {
@@ -209,25 +215,6 @@ function readLinesFromMarkdown(path: string): Promise<string[]> {
         .filter((line) => line !== "(none yet)"),
     )
     .catch(() => []);
-}
-
-async function readJson<T>(path: string): Promise<T | null> {
-  try {
-    const text = (await Bun.file(path).text()).trim();
-
-    if (!text) {
-      return null;
-    }
-
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await ensureDirectory(dirname(path));
-  await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function normalizeEntityId(input: string): string {

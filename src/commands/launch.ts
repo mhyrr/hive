@@ -3,6 +3,9 @@ import { appendFeedEntry } from "../lib/feed";
 import { captureGitStatusSnapshot, diffGitStatusSnapshots } from "../lib/git";
 import { appendLogEntry } from "../lib/log";
 import { findMessage, findOpenAssignmentMessage } from "../lib/messages";
+import { enqueueGoalForOrchestrator } from "../lib/steward/prompts";
+import { loadStewardContext, renderStewardRoutingPolicy } from "../lib/steward/context";
+import { buildDirectStewardTurnPrompt } from "../lib/steward/prompts";
 import {
   ensureHiveScaffold,
   getActiveProject,
@@ -13,6 +16,7 @@ import {
   extractRepoPath,
   findPlanAgent,
   parseDefaultTeam,
+  resolveProjectAgent,
   resolveAgentScopeRoots,
 } from "../lib/project";
 import {
@@ -30,13 +34,15 @@ import {
   createRunPromptArtifact,
   finalizeRun,
   getRunOutputPath,
+  listActiveRuns,
+  listRecentRunResults,
   markRunActive,
   readActiveRun,
   readRunRecord,
   writeRunResult,
 } from "../lib/runs";
-import { orchestrateCommand } from "./orchestrate";
-import { promptCommand } from "./prompt";
+import { compressCompletedRunOutput } from "../lib/tier1";
+import { buildAgentPrompt } from "./prompt";
 
 type LaunchOptions = {
   runtimeOverride: string | null;
@@ -55,6 +61,7 @@ type LaunchAgentInput = {
   modelOverride: string | null;
   dryRun: boolean;
   source: string;
+  sourceMessage?: string | null;
   logActor?: string;
 };
 
@@ -85,6 +92,63 @@ function buildUsageFeedDetails(
   }
 
   return details;
+}
+
+async function buildStewardLaunchPrompt(input: {
+  paths: HivePaths;
+  activeProject: string;
+  goal: string | null;
+}): Promise<string> {
+  const projectPaths = getProjectPaths(input.paths, input.activeProject);
+
+  if (input.goal) {
+    await enqueueGoalForOrchestrator(input.paths, projectPaths, input.activeProject, input.goal);
+  }
+
+  // Use the existing active session if one exists, so we don't overwrite
+  // the gateway's session pointer. Only create a throwaway session as a
+  // last resort, and even then use a non-active helper to avoid clobbering
+  // active.md.
+  const { getActiveSession, createSession } = await import("../lib/sessions");
+  let sessionId: string;
+  const existing = await getActiveSession(input.paths.sessionsDir);
+
+  if (existing) {
+    sessionId = existing.sessionId;
+  } else {
+    // Create a session but immediately note we won't rely on it being
+    // "the active" one — this is a disposable prompt-assembly context.
+    const fresh = await createSession({
+      sessionsDir: input.paths.sessionsDir,
+      project: input.activeProject,
+      runtime: "claude",
+      model: null,
+      systemPrompt: "HIVE steward launch session",
+    });
+    sessionId = fresh.sessionId;
+  }
+
+  const ctx = await loadStewardContext({
+    hivePaths: input.paths,
+    projectId: input.activeProject,
+    sessionId,
+  });
+
+  const cognitiveRoutingPolicy = renderStewardRoutingPolicy({
+    globalConfig: ctx.globalConfig,
+    skillsDir: input.paths.skillsDir,
+    sessionRuntime: ctx.sessionRuntime,
+    sessionModel: ctx.sessionModel,
+  });
+
+  return buildDirectStewardTurnPrompt({
+    ...ctx,
+    hivePaths: input.paths,
+    projectId: input.activeProject,
+    sessionId,
+    cognitiveRoutingPolicy,
+    humanMessage: input.goal ?? "Review the current board and advance the plan.",
+  });
 }
 
 function parseOptions(args: string[]): LaunchOptions {
@@ -132,36 +196,83 @@ function parseOptions(args: string[]): LaunchOptions {
 }
 
 export async function launchAgentPass(input: LaunchAgentInput): Promise<string> {
-  if (input.agentId !== "orchestrator" && input.goal) {
-    throw new UsageError("Goals can only be passed when launching `orchestrator`.");
+  if (input.agentId !== "steward" && input.goal) {
+    throw new UsageError("Goals can only be passed when launching `steward`.");
   }
 
   const projectPaths = getProjectPaths(input.paths, input.activeProject);
   const projectConfig = await Bun.file(projectPaths.config).text();
   const plan = await Bun.file(projectPaths.plan).text();
+  const globalConfig = await Bun.file(input.paths.config).text().catch(() => "");
   const repoPath = extractRepoPath(projectConfig);
 
   if (!repoPath) {
     throw new UsageError("Project config is missing `path:` in the repo section.");
   }
 
+  const assignmentMessage =
+    input.agentId === "steward"
+      ? null
+      : input.sourceMessage?.trim()
+        ? await findMessage(input.paths.msgDir, input.sourceMessage, input.activeProject)
+        : await findOpenAssignmentMessage(input.paths.msgDir, input.activeProject, input.agentId);
+
+  if (input.sourceMessage?.trim()) {
+    if (!assignmentMessage) {
+      throw new UsageError(`Unknown assignment message: ${input.sourceMessage}`);
+    }
+
+    if (assignmentMessage.attributes.type !== "assign") {
+      throw new UsageError(`${assignmentMessage.filename} is not an assignment message.`);
+    }
+
+    if ((assignmentMessage.attributes.status ?? "open") !== "open") {
+      throw new UsageError(`${assignmentMessage.filename} is not open.`);
+    }
+
+    if (assignmentMessage.attributes.to !== input.agentId) {
+      throw new UsageError(`${assignmentMessage.filename} does not target ${input.agentId}.`);
+    }
+  }
+
   const planAgent = findPlanAgent(plan, input.agentId);
   const teamAgent = parseDefaultTeam(projectConfig).find((agent) => agent.id === input.agentId);
+  const resolvedAgent = input.agentId === "steward"
+    ? null
+    : resolveProjectAgent({
+        plan,
+        projectConfig,
+        agentId: input.agentId,
+        allowAdHoc: Boolean(assignmentMessage),
+        assignmentBody: assignmentMessage?.body ?? null,
+        assignmentPersona: assignmentMessage?.attributes.persona ?? null,
+        runtimeHint: assignmentMessage?.attributes.runtime ?? null,
+        modelHint: assignmentMessage?.attributes.model ?? null,
+      });
 
-  if (input.agentId !== "orchestrator" && !planAgent && !teamAgent) {
+  if (input.agentId !== "steward" && !resolvedAgent) {
     throw new UsageError(`Unknown agent: ${input.agentId}`);
   }
 
   const prompt =
-    input.agentId === "orchestrator"
-      ? await orchestrateCommand(input.goal ? [input.goal] : [])
-      : await promptCommand([input.agentId]);
+    input.agentId === "steward"
+      ? await buildStewardLaunchPrompt({
+          paths: input.paths,
+          activeProject: input.activeProject,
+          goal: input.goal,
+        })
+      : await buildAgentPrompt({
+          agentId: input.agentId,
+          assignmentMessageRef: assignmentMessage?.filename ?? input.sourceMessage ?? null,
+        });
   const hints = resolveRuntimeHints({
-    globalConfig: await Bun.file(input.paths.config).text(),
+    globalConfig,
     teamAgent,
     planAgent,
     runtimeOverride: input.runtimeOverride,
     modelOverride: input.modelOverride,
+    assignmentRuntime: assignmentMessage?.attributes.runtime ?? null,
+    assignmentModel: assignmentMessage?.attributes.model ?? null,
   });
   if (!input.dryRun) {
     await validateRuntimeInstalled(hints.runtime);
@@ -195,12 +306,8 @@ Command: ${renderLaunchPreview(spec)}`;
     );
   }
 
-  const assignmentMessage =
-    input.agentId === "orchestrator"
-      ? null
-      : await findOpenAssignmentMessage(input.paths.msgDir, input.activeProject, input.agentId);
   const scope =
-    input.agentId === "orchestrator"
+    input.agentId === "steward"
       ? null
       : resolveAgentScopeRoots({
           plan,
@@ -284,6 +391,13 @@ Command: ${renderLaunchPreview(spec)}`;
   const assignmentAfterExit = run.sourceMessage
     ? await findMessage(input.paths.msgDir, run.sourceMessage, input.activeProject)
     : null;
+  const cognitiveDigest = await compressCompletedRunOutput({
+    run,
+    globalConfig,
+    finalVisibleOutput: result.visibleOutput,
+    changedFiles: gitDelta.changedFiles,
+    gitSummaryLines: gitDelta.summaryLines,
+  });
 
   await writeRunResult(run, {
     assignmentStatusAfterExit: assignmentAfterExit?.attributes.status ?? null,
@@ -300,6 +414,7 @@ Command: ${renderLaunchPreview(spec)}`;
     cacheCreationInputTokens: result.metadata?.cacheCreationInputTokens ?? null,
     cacheReadInputTokens: result.metadata?.cacheReadInputTokens ?? null,
     totalTokens: result.metadata?.totalTokens ?? null,
+    cognitiveDigest,
   });
 
   const feedDetails = [

@@ -95,6 +95,18 @@ describe("run state", () => {
       changedFiles: ["src/api/auth.ts"],
       gitSummaryLines: ["M src/api/auth.ts"],
       finalVisibleOutput: "Completed auth endpoint work.",
+      cognitiveDigest: {
+        provider: "ollama",
+        model: "qwen3:4b",
+        summary: "Auth endpoint shipped with the handler and tests updated.",
+        outcome: "success",
+        keyDecisions: ["Kept the existing auth boundary intact."],
+        filesChanged: ["src/api/auth.ts"],
+        inputTokens: 88,
+        outputTokens: 22,
+        totalTokens: 110,
+        durationMs: 1400,
+      },
       authMode: "subscription",
       inputTokens: 1200,
       outputTokens: 220,
@@ -111,9 +123,12 @@ describe("run state", () => {
     expect(result.outputTokens).toBe(220);
     expect(result.cacheReadInputTokens).toBe(80);
     expect(result.totalTokens).toBe(1500);
+    expect(result.cognitiveDigest?.model).toBe("qwen3:4b");
+    expect(result.cognitiveDigest?.summary).toContain("Auth endpoint shipped");
     expect(recentResults[0]?.finalVisibleOutput).toContain("Completed auth endpoint work.");
     expect(recentResults[0]?.authMode).toBe("subscription");
     expect(recentResults[0]?.totalTokens).toBe(1500);
+    expect(recentResults[0]?.cognitiveDigest?.summary).toContain("Auth endpoint shipped");
   });
 
   test("hive ps shows active and recent runs for the active project", async () => {

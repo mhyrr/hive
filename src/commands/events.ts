@@ -166,7 +166,7 @@ export async function eventsCommand(args: string[]): Promise<string> {
 
       const message = await createMessage(paths.msgDir, {
         from: parsed.source,
-        to: "orchestrator",
+        to: "steward",
         type: parsed.severity === "error" ? "escalate" : "notify",
         project,
         body: [

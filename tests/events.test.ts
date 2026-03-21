@@ -94,7 +94,7 @@ describe("hive events", () => {
     expect(output).toContain("source: approval");
   });
 
-  test("external events can be recorded and routed to the orchestrator", async () => {
+  test("external events can be recorded and routed to the steward", async () => {
     await initAndAddProject();
 
     const output = await runCli([
@@ -120,7 +120,7 @@ describe("hive events", () => {
     expect(output).toContain("Message:");
 
     const eventsOutput = await runCli(["events", "5", "--scope", "external"]);
-    const inbox = await runCli(["inbox", "orchestrator"]);
+    const inbox = await runCli(["inbox", "steward"]);
     const feed = await runCli(["feed", "10"]);
 
     expect(eventsOutput).toContain("External events: 1");

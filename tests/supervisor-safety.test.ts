@@ -107,7 +107,7 @@ function makeMessage(overrides: Partial<HiveMessage> & { filename: string }): Hi
     path: `/tmp/${overrides.filename}`,
     filename: overrides.filename,
     attributes: {
-      from: "orchestrator",
+      from: "steward",
       to: "alpha",
       type: "assign",
       status: "open",
@@ -156,7 +156,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -189,7 +189,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-alpha-1.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -201,7 +201,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-alpha-2.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -230,7 +230,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -265,7 +265,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -290,7 +290,7 @@ describe("one-run-per-assignment safety", () => {
     expect(result.skipped.length).toBeGreaterThan(0);
   });
 
-  test("no launches when the orchestrator is already active", () => {
+  test("no launches when the steward is already active", () => {
     const result = selectWorkerLaunches({
       projectConfig: DEFAULT_CONFIG,
       plan: DEFAULT_PLAN,
@@ -298,7 +298,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -310,7 +310,7 @@ describe("one-run-per-assignment safety", () => {
       activeRuns: [
         makeRun({
           runId: "20260310-orch",
-          agentId: "orchestrator",
+          agentId: "steward",
           scope: null,
         }),
       ],
@@ -319,7 +319,7 @@ describe("one-run-per-assignment safety", () => {
     });
 
     expect(result.launches).toHaveLength(0);
-    expect(result.skipped.some((s) => s.includes("orchestrator is already active"))).toBeTrue();
+    expect(result.skipped.some((s) => s.includes("steward is already active"))).toBeTrue();
   });
 
   test("parallel limit prevents excess launches", () => {
@@ -332,7 +332,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -344,7 +344,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-beta.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "beta",
             type: "assign",
             status: "open",
@@ -356,7 +356,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-gamma.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "gamma",
             type: "assign",
             status: "open",
@@ -386,7 +386,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -398,7 +398,7 @@ describe("one-run-per-assignment safety", () => {
         makeMessage({
           filename: "assign-beta.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "beta",
             type: "assign",
             status: "open",
@@ -523,7 +523,7 @@ describe("manual launch adoption", () => {
         makeMessage({
           filename: "assign-alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -558,7 +558,7 @@ describe("manual launch adoption", () => {
 Ship it.
 
 ## Agents
-### orchestrator (steward)
+### steward (steward)
 Task: Coordinate.
 
 ### alpha (craftsman -> src/api/**)
@@ -598,7 +598,7 @@ Task: Build the UI.
         makeMessage({
           filename: "assign-alpha.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",
@@ -611,7 +611,7 @@ Task: Build the UI.
         makeMessage({
           filename: "assign-beta.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "beta",
             type: "assign",
             status: "open",
@@ -648,7 +648,7 @@ Task: Build the UI.
 Ship it.
 
 ## Agents
-### orchestrator (steward)
+### steward (steward)
 Task: Coordinate.
 
 ### alpha (craftsman -> src/lib/**)
@@ -688,7 +688,7 @@ Task: Extend shared.
         makeMessage({
           filename: "assign-beta.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "beta",
             type: "assign",
             status: "open",
@@ -759,7 +759,7 @@ Task: Extend shared.
         makeMessage({
           filename: "assign-alpha-new.md",
           attributes: {
-            from: "orchestrator",
+            from: "steward",
             to: "alpha",
             type: "assign",
             status: "open",

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -9,12 +9,13 @@ import { isProcessAlive } from "./supervisor";
 import { toIsoTimestamp } from "./time";
 
 export type DetachedSupervisorStatus = "active" | "stopping" | "stopped" | "exited";
+export type SupervisorMode = "detached" | "managed";
 
 export type DetachedSupervisorState = {
   projectId: string;
   pid: number | null;
   status: DetachedSupervisorStatus;
-  mode: "detached";
+  mode: SupervisorMode;
   intervalSeconds: number;
   maxParallel: number;
   startedAt: string;
@@ -30,6 +31,11 @@ export type DetachedSupervisorState = {
 type DetachedSupervisorFiles = {
   stateFile: string;
   logFile: string;
+};
+
+export type ManagedSupervisorHandle = {
+  child: ChildProcess;
+  state: DetachedSupervisorState;
 };
 
 function getDetachedSupervisorFiles(projectPaths: ProjectPaths): DetachedSupervisorFiles {
@@ -134,7 +140,7 @@ export async function readDetachedSupervisorState(
     !projectId ||
     !status ||
     (status !== "active" && status !== "stopping" && status !== "stopped" && status !== "exited") ||
-    mode !== "detached" ||
+    (mode !== "detached" && mode !== "managed") ||
     !startedAt ||
     !updatedAt ||
     !logPath
@@ -146,7 +152,7 @@ export async function readDetachedSupervisorState(
     projectId,
     pid: toNullableNumber(attributes.pid),
     status,
-    mode: "detached",
+    mode: mode as SupervisorMode,
     intervalSeconds: Number(attributes.interval) || 30,
     maxParallel: Number(attributes["max-parallel"]) || 3,
     startedAt,
@@ -206,7 +212,9 @@ export function buildDetachedInvocation(
 ): { command: string; args: string[] } {
   const executable = current.execPath;
   const executableName = basename(executable).toLowerCase();
-  const entrypoint = current.argv[1];
+  // HIVE_SCRIPT lets tests (which run under `bun test` with a test file as argv[1])
+  // specify the real hive entrypoint for detached child spawning.
+  const entrypoint = process.env.HIVE_SCRIPT ?? current.argv[1];
 
   // Dev mode: re-run the same script Bun launched.
   if (
@@ -221,6 +229,41 @@ export function buildDetachedInvocation(
   }
 
   return { command: executable, args };
+}
+
+function buildSupervisorChildArgs(input: {
+  intervalSeconds: number;
+  maxParallel: number;
+  mode: SupervisorMode;
+  parentPid?: number | null;
+}): string[] {
+  const args = [
+    "supervise",
+    "--supervisor-child",
+    "--interval",
+    String(input.intervalSeconds),
+    "--max-parallel",
+    String(input.maxParallel),
+  ];
+
+  if (input.mode === "managed") {
+    args.push("--managed");
+  }
+
+  if (input.parentPid && input.parentPid > 0) {
+    args.push("--parent-pid", String(input.parentPid));
+  }
+
+  return args;
+}
+
+function cleanSupervisorEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+
+  delete env.CLAUDECODE;
+  delete env.ANTHROPIC_API_KEY;
+
+  return env;
 }
 
 export async function startDetachedSupervisor(input: {
@@ -240,23 +283,16 @@ export async function startDetachedSupervisor(input: {
   const files = getDetachedSupervisorFiles(input.projectPaths);
   await ensureDirectory(input.projectPaths.supervisorDir);
   const logFd = openSync(files.logFile, "a");
-  const invocation = buildDetachedInvocation([
-    "supervise",
-    "--supervisor-child",
-    "--interval",
-    String(input.intervalSeconds),
-    "--max-parallel",
-    String(input.maxParallel),
-  ]);
-  // Clean env: strip CLAUDECODE to avoid nested-session detection in Claude Code
-  const env = { ...process.env };
-  delete env.CLAUDECODE;
-  delete env.ANTHROPIC_API_KEY;
+  const invocation = buildDetachedInvocation(buildSupervisorChildArgs({
+    intervalSeconds: input.intervalSeconds,
+    maxParallel: input.maxParallel,
+    mode: "detached",
+  }));
 
   const child = spawn(invocation.command, invocation.args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env,
+    env: cleanSupervisorEnv(),
   });
 
   closeSync(logFd);
@@ -279,6 +315,61 @@ export async function startDetachedSupervisor(input: {
     stopRequestedBy: null,
     logPath: files.logFile,
   });
+}
+
+export async function startManagedSupervisor(input: {
+  projectPaths: ProjectPaths;
+  projectId: string;
+  intervalSeconds: number;
+  maxParallel: number;
+  parentPid: number;
+}): Promise<ManagedSupervisorHandle> {
+  const priorState = await reconcileDetachedSupervisorState(input.projectPaths);
+
+  if (priorState?.status === "active" && isProcessAlive(priorState.pid)) {
+    throw new UsageError(
+      `Supervisor already active for ${input.projectId} (pid ${priorState.pid ?? "unknown"}).`,
+    );
+  }
+
+  const files = getDetachedSupervisorFiles(input.projectPaths);
+  await ensureDirectory(input.projectPaths.supervisorDir);
+  const logFd = openSync(files.logFile, "a");
+  const invocation = buildDetachedInvocation(buildSupervisorChildArgs({
+    intervalSeconds: input.intervalSeconds,
+    maxParallel: input.maxParallel,
+    mode: "managed",
+    parentPid: input.parentPid,
+  }));
+  const child = spawn(invocation.command, invocation.args, {
+    detached: false,
+    stdio: ["ignore", logFd, logFd],
+    env: cleanSupervisorEnv(),
+  });
+
+  closeSync(logFd);
+
+  const timestamp = toIsoTimestamp();
+  const state = await writeDetachedSupervisorState(input.projectPaths, {
+    projectId: input.projectId,
+    pid: child.pid ?? null,
+    status: "active",
+    mode: "managed",
+    intervalSeconds: input.intervalSeconds,
+    maxParallel: input.maxParallel,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    lastPassAt: null,
+    stoppedAt: null,
+    stopRequestedAt: null,
+    stopRequestedBy: null,
+    logPath: files.logFile,
+  });
+
+  return {
+    child,
+    state,
+  };
 }
 
 export async function noteDetachedSupervisorPass(projectPaths: ProjectPaths): Promise<void> {
@@ -353,13 +444,16 @@ export function formatDetachedSupervisorState(
     return `Project: ${projectId}\n\nDetached Supervisor\n\nNo detached supervisor state recorded.`;
   }
 
+  const title = state.mode === "managed" ? "Managed Supervisor" : "Detached Supervisor";
+
   return [
     `Project: ${projectId}`,
     "",
-    "Detached Supervisor",
+    title,
     "",
     `status: ${state.status}`,
     `pid: ${state.pid ?? "not running"}`,
+    `mode: ${state.mode}`,
     `started: ${state.startedAt}`,
     `updated: ${state.updatedAt}`,
     `last-pass: ${state.lastPassAt ?? "none yet"}`,

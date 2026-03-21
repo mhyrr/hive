@@ -9,6 +9,21 @@ import { now, toCompactTimestamp, toDateParts, toIsoTimestamp } from "./time";
 
 export type RunStatus = "starting" | "active" | "exited" | "failed" | "cancelled";
 
+export type RunCognitiveDigestOutcome = "success" | "partial" | "blocked" | "failed";
+
+export type RunCognitiveDigest = {
+  provider: string;
+  model: string;
+  summary: string;
+  outcome: RunCognitiveDigestOutcome;
+  keyDecisions: string[];
+  filesChanged: string[];
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  durationMs: number | null;
+};
+
 export type RunRecord = {
   runId: string;
   projectId: string;
@@ -52,6 +67,7 @@ export type RunResult = {
   cacheCreationInputTokens: number | null;
   cacheReadInputTokens: number | null;
   totalTokens: number | null;
+  cognitiveDigest: RunCognitiveDigest | null;
 };
 
 type CreateRunInput = {
@@ -166,12 +182,17 @@ function getArchivedRunPathFromPrompt(promptPath: string): string | null {
   return promptPath.replace(/prompt\.md$/, "run.md");
 }
 
+/** Normalize legacy "orchestrator" agent IDs to "steward". */
+function normalizeAgentId(agentId: string): string {
+  return agentId === "orchestrator" ? "steward" : agentId;
+}
+
 function toRunRecord(path: string, raw: string): RunRecord | null {
   const parsed = parseFrontmatter(raw);
   const attributes = parsed.attributes;
   const runId = attributes.run;
   const projectId = attributes.project;
-  const agentId = attributes.agent;
+  const agentId = attributes.agent ? normalizeAgentId(attributes.agent) : undefined;
   const status = attributes.status as RunStatus | undefined;
   const runtime = attributes.runtime as RuntimeName | undefined;
   const started = attributes.started;
@@ -232,7 +253,7 @@ function toRunResult(path: string, raw: string): RunResult | null {
   const parsed = parseFrontmatter(raw);
   const attributes = parsed.attributes;
   const runId = attributes.run;
-  const agentId = attributes.agent;
+  const agentId = attributes.agent ? normalizeAgentId(attributes.agent) : undefined;
   const status = attributes.status as Extract<RunStatus, "exited" | "failed" | "cancelled"> | undefined;
   const ended = attributes.ended;
 
@@ -267,6 +288,27 @@ function toRunResult(path: string, raw: string): RunResult | null {
     cacheCreationInputTokens: toNullableNumber(attributes["cache-creation-input-tokens"]),
     cacheReadInputTokens: toNullableNumber(attributes["cache-read-input-tokens"]),
     totalTokens: toNullableNumber(attributes["total-tokens"]),
+    cognitiveDigest:
+      attributes["cognitive-summary"] && attributes["cognitive-model"] && attributes["cognitive-provider"]
+        ? {
+            provider: attributes["cognitive-provider"],
+            model: attributes["cognitive-model"],
+            summary: attributes["cognitive-summary"],
+            outcome:
+              attributes["cognitive-outcome"] === "success" ||
+              attributes["cognitive-outcome"] === "partial" ||
+              attributes["cognitive-outcome"] === "blocked" ||
+              attributes["cognitive-outcome"] === "failed"
+                ? attributes["cognitive-outcome"]
+                : "partial",
+            keyDecisions: toLines(attributes["cognitive-key-decisions"]),
+            filesChanged: toLines(attributes["cognitive-files-changed"]),
+            inputTokens: toNullableNumber(attributes["cognitive-input-tokens"]),
+            outputTokens: toNullableNumber(attributes["cognitive-output-tokens"]),
+            totalTokens: toNullableNumber(attributes["cognitive-total-tokens"]),
+            durationMs: toNullableNumber(attributes["cognitive-duration-ms"]),
+          }
+        : null,
   };
 }
 
@@ -480,6 +522,7 @@ export async function writeRunResult(
     cacheCreationInputTokens?: number | null;
     cacheReadInputTokens?: number | null;
     totalTokens?: number | null;
+    cognitiveDigest?: RunCognitiveDigest | null;
   },
 ): Promise<RunResult> {
   const path = join(run.path.replace(/run\.md$/, ""), "result.md");
@@ -548,6 +591,37 @@ export async function writeRunResult(
 
   if (input.totalTokens != null) {
     attributes["total-tokens"] = String(input.totalTokens);
+  }
+
+  if (input.cognitiveDigest) {
+    attributes["cognitive-provider"] = input.cognitiveDigest.provider;
+    attributes["cognitive-model"] = input.cognitiveDigest.model;
+    attributes["cognitive-summary"] = input.cognitiveDigest.summary;
+    attributes["cognitive-outcome"] = input.cognitiveDigest.outcome;
+
+    if (input.cognitiveDigest.keyDecisions.length > 0) {
+      attributes["cognitive-key-decisions"] = input.cognitiveDigest.keyDecisions.join(" | ");
+    }
+
+    if (input.cognitiveDigest.filesChanged.length > 0) {
+      attributes["cognitive-files-changed"] = input.cognitiveDigest.filesChanged.join(" | ");
+    }
+
+    if (input.cognitiveDigest.inputTokens != null) {
+      attributes["cognitive-input-tokens"] = String(input.cognitiveDigest.inputTokens);
+    }
+
+    if (input.cognitiveDigest.outputTokens != null) {
+      attributes["cognitive-output-tokens"] = String(input.cognitiveDigest.outputTokens);
+    }
+
+    if (input.cognitiveDigest.totalTokens != null) {
+      attributes["cognitive-total-tokens"] = String(input.cognitiveDigest.totalTokens);
+    }
+
+    if (input.cognitiveDigest.durationMs != null) {
+      attributes["cognitive-duration-ms"] = String(input.cognitiveDigest.durationMs);
+    }
   }
 
   await Bun.write(
@@ -701,9 +775,9 @@ export async function listRecentRuns(
   return listArchivedRuns(projectPaths, limit);
 }
 
-export async function listRecentRunResults(
+async function listArchivedRunResults(
   projectPaths: ProjectPaths,
-  limit = 5,
+  limit?: number,
 ): Promise<RunResult[]> {
   const years = await readdir(projectPaths.runsDir, { withFileTypes: true }).catch(() => []);
   const results: RunResult[] = [];
@@ -742,7 +816,7 @@ export async function listRecentRunResults(
           results.push(result);
         }
 
-        if (results.length >= limit) {
+        if (limit !== undefined && results.length >= limit) {
           return results;
         }
       }
@@ -750,6 +824,19 @@ export async function listRecentRunResults(
   }
 
   return results;
+}
+
+export async function listAllRunResults(
+  projectPaths: ProjectPaths,
+): Promise<RunResult[]> {
+  return listArchivedRunResults(projectPaths);
+}
+
+export async function listRecentRunResults(
+  projectPaths: ProjectPaths,
+  limit = 5,
+): Promise<RunResult[]> {
+  return listArchivedRunResults(projectPaths, limit);
 }
 
 export async function reconcileActiveConsoleRun(
