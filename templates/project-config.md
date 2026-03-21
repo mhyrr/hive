@@ -14,14 +14,12 @@ path: {{repo_path}}
 # database: postgresql
 # testing: bun test
 
-## Default Team
-- steward: steward
-- alpha: craftsman
-- beta: craftsman
-- gamma: critic
-# Uncomment to activate additional roles:
-# - delta: architect
-# - epsilon: scout
+## Models
+- opus: claude, claude-opus-4-6, frontier deep work
+- sonnet: claude, claude-sonnet-4-6, general workhorse
+- haiku: claude, claude-haiku-4-5-20251001, fast triage
+# Uncomment to activate additional models:
+# - codex: codex, codex-5.4, code-focused
 
 ## Rules
 # Project-specific rules that override or extend AGENTS.md.

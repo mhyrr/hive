@@ -592,7 +592,10 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
   const lastStewardRun =
     state.recentRuns.find((run) => run.agentId === "steward" && Boolean(run.ended)) ?? null;
   const resultsSinceLastSteward = state.recentRunResults.filter(
-    (result) => result.agentId !== "steward" && endedAfter(result.ended, lastStewardRun?.ended ?? null),
+    (result) =>
+      result.agentId !== "steward" &&
+      result.agentId !== "console" &&
+      endedAfter(result.ended, lastStewardRun?.ended ?? null),
   );
   const diffTriageEntries: StewardDiffTriageEntry[] = [];
   const triagedRunResults: typeof state.recentRunResults = [];

@@ -2,9 +2,12 @@ import { dirname, join } from "node:path";
 
 import { type HivePaths, getProjectPaths } from "../paths";
 import {
+  appendTurn,
   enqueuePendingSessionTurn,
   getPendingSessionTurns,
+  getProjectSessionState,
   getSession,
+  getSessionState,
   updateSessionProjectState,
   type SessionTurnDetails,
 } from "../sessions";
@@ -22,6 +25,7 @@ import { refreshProjectRuntimeState, type ProjectRuntimeState } from "../state";
 import {
   abortPersistentStewardTurn,
   isPersistentStewardTurnActive,
+  readPendingRunNotifications,
   runDirectStewardTurn,
   runPersistentStewardTurn,
 } from "./turn";
@@ -499,6 +503,43 @@ async function continueQueuedWorkflow(input: ContinueConsoleWorkflowInput & {
 export async function continueConsoleWorkflow(
   input: ContinueConsoleWorkflowInput,
 ): Promise<void> {
+  // Gate: when the steward is woken by the supervisor (not by a human),
+  // skip the turn entirely if there is nothing new to report.  This
+  // prevents the chatty "Nothing new. Same batch." output every ~120s.
+  if (input.origin === "system-wake") {
+    const pendingNotifications = await readPendingRunNotifications(input.hivePaths.home, input.project);
+    const sessionState = await getSessionState(
+      input.hivePaths.sessionsDir,
+      input.sessionId,
+    );
+    const projectSessionState = getProjectSessionState(sessionState, input.project);
+    const projectPaths = getProjectPaths(input.hivePaths, input.project);
+    const runtimeState = await refreshProjectRuntimeState({
+      hivePaths: input.hivePaths,
+      projectId: input.project,
+      projectPaths,
+    });
+    const currentRevision = runtimeState.revision.revision;
+    const lastSeenRevision = projectSessionState.lastRevisionSeen;
+    const hasNewNotifications = pendingNotifications.length > 0;
+    const hasStateChange = currentRevision > lastSeenRevision;
+
+    if (!hasNewNotifications && !hasStateChange) {
+      return;
+    }
+
+    // Gate passed — there's content to deliver.  Now persist the
+    // synthetic [system] turn that the /api/steward/wake route
+    // deferred so we don't pollute session history with empty wakes.
+    await appendTurn({
+      sessionsDir: input.hivePaths.sessionsDir,
+      sessionId: input.sessionId,
+      role: "human",
+      content: input.message,
+      source: "system",
+    });
+  }
+
   const globalConfig = await readGlobalConfig(input.hivePaths);
   const sessionMeta = await getSession(input.hivePaths.sessionsDir, input.sessionId);
   const sessionRuntime = sessionMeta?.runtime ?? "claude";

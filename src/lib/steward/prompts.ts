@@ -2,6 +2,7 @@ import { appendFeedEntry } from "../feed";
 import { appendLogEntry } from "../log";
 import { createMessage } from "../messages";
 import type { HivePaths, ProjectPaths } from "../paths";
+import { type ModelPoolEntry, parseModelPool } from "../project";
 
 import { type StewardContext, renderStewardRoutingPolicy } from "./context";
 import {
@@ -11,6 +12,32 @@ import {
   renderPathList,
   renderStewardProjectPaths,
 } from "./sections";
+
+function renderModelPoolSection(pool: ModelPoolEntry[]): string {
+  if (pool.length === 0) {
+    return "";
+  }
+
+  const lines = [
+    "## Available Models",
+    "Pick model+persona per task. Workers are ephemeral — no fixed roster.",
+    "",
+  ];
+
+  for (const entry of pool) {
+    lines.push(`- ${entry.name} (${entry.runtime}, ${entry.model}): ${entry.description}`);
+  }
+
+  lines.push("");
+  lines.push("Assignment frontmatter fields for model selection:");
+  lines.push("- `to:` — ephemeral agent ID, e.g. `craftsman-opus-001`, `critic-sonnet-review`");
+  lines.push("- `persona:` — cognitive lens: architect, craftsman, critic, scout");
+  lines.push("- `runtime:` — which runtime to use (from model pool above)");
+  lines.push("- `model:` — which model ID to use (from model pool above)");
+  lines.push("- Available personas: architect (system design), craftsman (implementation), critic (review/analysis), scout (research/exploration)");
+
+  return lines.join("\n");
+}
 
 export async function enqueueGoalForOrchestrator(
   paths: HivePaths,
@@ -46,7 +73,11 @@ export function buildPersistentStewardSystemPrompt(input: {
   identity: string;
   self: string;
   cognitiveRoutingPolicy: string;
+  projectConfig?: string;
 }): string {
+  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPoolSection = renderModelPoolSection(modelPool);
+
   return `${input.soul}
 
 ${input.identity}
@@ -57,6 +88,8 @@ ${input.sessionPrompt || "# HIVE Steward Session"}
 
 You are the steward. Never echo bootstrap context, session mechanics, revision
 numbers, or file paths back at the human unless they ask for system internals.
+
+${modelPoolSection}
 
 Session rules:
 - Use compact state first. Only read raw files when the turn actually needs them.
@@ -73,11 +106,16 @@ type: assign
 project: <project-id>
 task: <task-id>
 scope: <comma-separated scope roots>
+persona: <architect|craftsman|critic|scout>
+runtime: <runtime from model pool>
+model: <model-id from model pool>
 launch: auto
 ---
 
 <worker brief — what the worker should do>
 \`\`\`
+
+The \`to:\` field is an ephemeral agent ID. Name it descriptively: \`craftsman-opus-001\`, \`critic-sonnet-review\`, \`scout-haiku-scan\`, etc. There is no fixed team roster — pick the right model and persona for each task.
 
 Write the file to: \`<messages-dir>/assign-<agent-id>-<timestamp>.md\`
 The supervisor watcher will detect the file and launch the worker automatically within ~200ms.
@@ -97,7 +135,11 @@ export function buildPersistentStewardBootstrapMessage(input: StewardContext & {
   sessionId: string;
   humanMessage: string;
   cognitiveRoutingPolicy: string;
+  projectConfig?: string;
 }): string {
+  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPoolSection = renderModelPoolSection(modelPool);
+
   return `Bootstrap the live HIVE steward session before answering the human turn. Use this compact context to load the project into working memory. Do not simply restate the bootstrap back to the human.
 
 ## Session
@@ -107,6 +149,8 @@ export function buildPersistentStewardBootstrapMessage(input: StewardContext & {
 - current-revision: ${input.currentRevision}
 - last-revision-seen-in-hive-session: ${input.sessionRevision}
 - configured-steward-runtime: ${input.sessionRuntime}${input.sessionModel ? ` (${input.sessionModel})` : ""}
+
+${modelPoolSection}
 
 ${renderPathList("Absolute Paths", [
     { label: "SOUL.md", value: input.hivePaths.soul },
@@ -172,7 +216,11 @@ export function buildPersistentStewardRefreshMessage(input: StewardContext & {
   projectId: string;
   humanMessage: string;
   cognitiveRoutingPolicy: string;
+  projectConfig?: string;
 }): string {
+  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPoolSection = renderModelPoolSection(modelPool);
+
   return `Refresh the existing live HIVE steward session with the latest compact state and then answer the human turn.
 
 ## Session
@@ -181,6 +229,8 @@ export function buildPersistentStewardRefreshMessage(input: StewardContext & {
 - current-revision: ${input.currentRevision}
 - last-revision-seen-in-hive-session: ${input.sessionRevision}
 - configured-steward-runtime: ${input.sessionRuntime}${input.sessionModel ? ` (${input.sessionModel})` : ""}
+
+${modelPoolSection}
 
   ${renderPathList("Current Paths", [
     { label: "project-config", value: input.projectPaths.config },
@@ -231,7 +281,11 @@ export function buildDirectStewardTurnPrompt(input: StewardContext & {
   sessionId: string;
   cognitiveRoutingPolicy: string;
   humanMessage: string;
+  projectConfig?: string;
 }): string {
+  const modelPool = input.projectConfig ? parseModelPool(input.projectConfig) : [];
+  const modelPoolSection = renderModelPoolSection(modelPool);
+
   return `${input.sessionPrompt || "# HIVE Steward Session"}
 
 You are the live steward for project ${input.projectId}. This is a continuing conversation with the human, not a fresh steward bootstrap. Use the compact state and delta history first. Only read raw files when the current turn actually requires it.
@@ -249,11 +303,14 @@ Read user preferences: ${input.hivePaths.self}
 Read operational doctrine: ${input.hivePaths.agents}
 Read trust policy: ${input.hivePaths.trust}
 
+${modelPoolSection}
+
 ## Operating Rules
 - Answer the human directly and concretely.
 - If action is needed, do it yourself through files or \`hive\` commands. Do not tell the human to operate the system for you.
 - BOARD.md is steward-owned. Update it directly when plan/task state changes.
-- When you delegate, WRITE assignment message files directly to the messages directory. Do NOT shell out to \`hive msg\` — it is not in PATH. Write a markdown file with frontmatter: \`from: steward\`, \`to: <agent-id>\`, \`type: assign\`, \`project: <project-id>\`, \`task: <task-id>\`, \`scope: <roots>\`, \`launch: auto\`. The body is the worker brief.
+- When you delegate, WRITE assignment message files directly to the messages directory. Do NOT shell out to \`hive msg\` — it is not in PATH. Write a markdown file with frontmatter: \`from: steward\`, \`to: <agent-id>\`, \`type: assign\`, \`project: <project-id>\`, \`task: <task-id>\`, \`scope: <roots>\`, \`persona: <persona>\`, \`runtime: <runtime>\`, \`model: <model-id>\`, \`launch: auto\`. The body is the worker brief.
+- The \`to:\` field is an ephemeral agent ID — name it descriptively: \`craftsman-opus-001\`, \`critic-sonnet-review\`, etc. There is no fixed team roster.
 - Write to: \`<messages-dir>/assign-<agent-id>-<timestamp>.md\`. The watcher auto-launches within ~200ms.
 - If the human asks for multiple runtimes/models or parallel work, write multiple assignment files. Do not say you delegated and then do the work yourself.
 - Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet.
