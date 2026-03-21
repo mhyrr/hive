@@ -4,11 +4,11 @@ Persistent local multi-agent orchestration. Lives at `~/.hive/`. Works across pr
 Agents are transient. The hive persists.
 
 ## Read First
-`NEXT-SESSION-PROMPT.md` — the current continuity brief and next-session prompt.
-`PERSISTENT-STEWARD-RUNTIME.md` — the new runtime architecture for a live steward, state monitor, and structured derived state.
-`HIVE-WORKING-SET-COMPILER.md` — working-set compiler architecture: packets, workbench, compilation modes, and consumer rebase.
+`CORE-LOOP-CONSOLIDATION.md` — the watcher-based coordination architecture replacing the old 30s poll.
+`PERSISTENT-STEWARD-DESIGN.md` — persistent steward runtime: session lifecycle, state monitor, structured derived state.
+`COGNITIVE-RESOURCE-MANAGEMENT.md` — cognitive routing policy: how tasks are routed across model tiers.
 `FINAL-PRD.md` — the complete PRD with architecture, memory design, and all conventions.
-`PHASE-4-AUTO-LAUNCH.md` — the next-phase design for supervisor-driven auto-launch and parallel workers.
+`SIMPLIFY-COMMAND-SURFACE.md`, `SIMPLIFY-STATE-DECOMPOSITION.md`, `SIMPLIFY-STEWARD-UNIFICATION.md` — current simplification targets.
 
 ## Philosophy
 - One home (`~/.hive/`), no split brain. Projects are subdirectories.
@@ -58,7 +58,7 @@ hive inbox [agent]                      # Agent message queue
 hive log <message>                      # Append to LOG.md
 hive msg [--type] <from> <to> <body>    # Create message file
 hive msg show|resolve|close ...         # Message lifecycle
-hive nudge <message>                    # Human → orchestrator
+hive msg nudge <message>                # Human → steward (alias: hive nudge)
 hive prompt <agent-id>                  # Full prompt assembly
 hive archive                            # Archive session
 hive sync                               # PLAN.md → repo .hive/
@@ -81,7 +81,7 @@ src/
     launch.ts                # hive launch — one-shot agent runtime call
     status.ts                # hive status — read BOARD + msg, format for terminal
     log.ts                   # hive log — append timestamped entry
-    msg.ts                   # hive msg + nudge — create message files
+    msg.ts                   # hive msg (show/resolve/close/nudge) — message lifecycle
     prompt.ts                # hive prompt — path-first compact agent prompt
     archive.ts               # hive archive — session → archive/
     sync.ts                  # hive sync — copy PLAN to repo

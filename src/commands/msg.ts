@@ -70,6 +70,28 @@ export async function msgCommand(args: string[]): Promise<string> {
   const [subcommand, ...rest] = args;
 
   switch (subcommand) {
+    case "nudge": {
+      const body = rest.join(" ").trim();
+
+      if (!body) {
+        throw new UsageError("Usage: hive msg nudge <message>");
+      }
+
+      const message = await createMessage(paths.msgDir, {
+        from: "human",
+        to: "steward",
+        type: "nudge",
+        project: activeProject,
+        body,
+      });
+      await appendFeedEntry(paths, {
+        project: activeProject,
+        headline: `Human nudge`,
+        details: [body.split("\n")[0]],
+      });
+
+      return `Created nudge ${message.filename}`;
+    }
     case "show": {
       const reference = rest[0];
 
@@ -159,32 +181,3 @@ export async function msgCommand(args: string[]): Promise<string> {
   return `Created ${input.type} message ${message.filename}`;
 }
 
-export async function nudgeCommand(args: string[]): Promise<string> {
-  const body = args.join(" ").trim();
-
-  if (!body) {
-    throw new UsageError("Usage: hive nudge <message>");
-  }
-
-  const paths = await ensureHiveScaffold();
-  const activeProject = await getActiveProject(paths);
-
-  if (!activeProject) {
-    throw new UsageError("No active project. Run `hive work <project>` first.");
-  }
-
-  const message = await createMessage(paths.msgDir, {
-    from: "human",
-    to: "steward",
-    type: "nudge",
-    project: activeProject,
-    body,
-  });
-  await appendFeedEntry(paths, {
-    project: activeProject,
-    headline: `Human nudge`,
-    details: [body.split("\n")[0]],
-  });
-
-  return `Created nudge ${message.filename}`;
-}
