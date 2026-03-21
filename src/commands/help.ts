@@ -48,6 +48,12 @@ Usage:
   hive gateway [--port <port>] [--open] # Alias for \`hive start\`
   hive gateway status                   # Show Gateway state
   hive gateway stop                     # Stop the Gateway server
+  hive hub search <query>              # Search Claw Hub for skills
+  hive hub install <skill-id>          # Install a hub skill
+  hive hub list [--installed]          # List available or installed skills
+  hive hub info <skill-id>             # Show skill details
+  hive hub remove <skill-id>           # Remove an installed hub skill
+  hive hub sync                        # Update installed hub skills
   hive archive
   hive sync
   hive help

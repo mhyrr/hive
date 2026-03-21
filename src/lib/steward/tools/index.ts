@@ -4,6 +4,7 @@ import { createBashTool } from "./bash";
 import { createDelegationTools } from "./delegate";
 import { createFileTools, createStewardExecutionContext } from "./files";
 import { createSearchTools } from "./search";
+import { getPluginTools } from "../../plugins";
 
 export type PersistentStewardTool = Tool & {
   execute: (
@@ -29,6 +30,11 @@ export function buildPersistentStewardTools(input: {
     ...createDelegationTools({
       msgDir: input.msgDir,
       projectId: input.projectId,
+      globalConfig: input.globalConfig,
+    }),
+    ...getPluginTools({
+      hiveHome: input.hiveHome,
+      skillsDir: `${input.hiveHome}/skills`,
       globalConfig: input.globalConfig,
     }),
   ] as PersistentStewardTool[];
