@@ -42,7 +42,7 @@ Usage:
   hive msg show <message>
   hive msg resolve <message> <actor> <answer>
   hive msg close <message> <actor> [note]
-  hive nudge <message>
+  hive msg nudge <message>                # Human → steward (alias: hive nudge)
   hive prompt <agent-id>
   hive runtimes                        # List available runtimes
   hive gateway [--port <port>] [--open] # Alias for \`hive start\`

@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { parseBoard } from "./board";
+import { parseTaskStatus, parseTaskId, isRealBlocker } from "./board-parse";
 import { digestBoard, digestMessages, digestRuns } from "./digest";
 import { readJson, writeJson } from "./json";
+import { firstLine, truncate } from "./text";
 import { HiveMessage, listOpenProjectMessages } from "./messages";
 import {
   ensureDirectory,
@@ -234,71 +236,8 @@ export type ProjectRuntimeState = {
   changed: boolean;
 };
 
-function normalizeInlineText(value: string): string {
-  return value.replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
-}
-
-function truncate(value: string, max = 220): string {
-  const normalized = normalizeInlineText(value);
-
-  if (normalized.length <= max) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, max - 1).trimEnd()}…`;
-}
-
-function firstLine(value: string): string {
-  return truncate(value.split("\n")[0] ?? "", 180);
-}
-
 function hashJson(value: unknown): string {
   return createHash("sha1").update(JSON.stringify(value)).digest("hex");
-}
-
-function parseTaskStatus(task: string): string | null {
-  const trimmed = task.trim();
-
-  if (!trimmed.startsWith("- ")) {
-    return null;
-  }
-
-  const pipeSegments = trimmed
-    .slice(2)
-    .split("|")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-
-  if (pipeSegments.length >= 3) {
-    return pipeSegments[2]!.toLowerCase();
-  }
-
-  const bracketStatuses = trimmed.match(/\[([^\]]+)\]/g)?.map((segment) =>
-    segment.slice(1, -1).trim().toLowerCase(),
-  );
-
-  if (!bracketStatuses) {
-    return null;
-  }
-
-  return (
-    bracketStatuses.find((segment) =>
-      ["active", "done", "queued", "waiting", "pending"].some(
-        (status) => segment === status || segment.startsWith(`${status}-`),
-      ),
-    ) ?? null
-  );
-}
-
-function parseTaskId(task: string): string | null {
-  const trimmed = task.trim().replace(/^- /, "");
-  const match = trimmed.match(/^([A-Za-z0-9._-]+)\s*[:|]/);
-
-  return match?.[1] ?? null;
-}
-
-function isRealBlocker(line: string): boolean {
-  return !/^-?\s*\(?none(?: yet)?\)?$/i.test(line.trim());
 }
 
 function summarizeBoard(projectId: string, boardPath: string, boardText: string): BoardSummary {

@@ -1,42 +1,7 @@
 import { parseBoard } from "./board";
+import { isRealBlocker, parseTaskStatus } from "./board-parse";
 import { HiveMessage } from "./messages";
 import { RunRecord } from "./runs";
-
-function parseTaskStatus(task: string): string | null {
-  const trimmed = task.trim();
-
-  if (!trimmed.startsWith("- ")) {
-    return null;
-  }
-
-  const pipeSegments = trimmed
-    .slice(2)
-    .split("|")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
-
-  if (pipeSegments.length >= 3) {
-    return pipeSegments[2].toLowerCase();
-  }
-
-  const legacyMatch = trimmed.match(/\[([^\]]+)\]/g)?.map((segment) =>
-    segment.slice(1, -1).trim().toLowerCase(),
-  );
-
-  if (!legacyMatch) {
-    return null;
-  }
-
-  return legacyMatch.find((segment) =>
-    ["active", "done", "queued", "waiting", "pending"].some(
-      (status) => segment === status || segment.startsWith(`${status}-`),
-    ),
-  ) ?? null;
-}
-
-function isRealBlocker(line: string): boolean {
-  return !/^-?\s*\(?none(?: yet)?\)?$/i.test(line.trim());
-}
 
 export function digestBoard(boardText: string): string {
   const board = parseBoard(boardText);

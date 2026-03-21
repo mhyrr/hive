@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { feedCommand } from "../commands/feed";
 import { inboxCommand } from "../commands/inbox";
 import { logCommand } from "../commands/log";
-import { msgCommand, nudgeCommand } from "../commands/msg";
+import { msgCommand } from "../commands/msg";
 import { psCommand } from "../commands/ps";
 import { sayCommand } from "../commands/say";
 import { statusCommand } from "../commands/status";
@@ -995,7 +995,7 @@ const postRoutes: Record<string, RouteHandler> = {
       if (!body.message) {
         return jsonError(400, "Missing 'message' field in request body");
       }
-      const result = await nudgeCommand([body.message]);
+      const result = await msgCommand(["nudge", body.message]);
       return jsonOk(result);
     } catch (err) {
       if (err instanceof SyntaxError) {
