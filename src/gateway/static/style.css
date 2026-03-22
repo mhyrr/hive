@@ -1672,13 +1672,19 @@ body.modal-open {
 
 .live-summary,
 .live-agents,
-.cognition-panel,
 .queue-list,
 .timeline-list {
   display: flex;
   flex-direction: column;
   gap: var(--s3);
   padding: var(--s3);
+}
+
+.cognition-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
 }
 
 .live-agents {
@@ -1689,12 +1695,12 @@ body.modal-open {
 }
 
 .cognition-principle {
-  padding: var(--s3);
+  padding: var(--s2) var(--s3);
   border: 1px solid rgba(88, 136, 176, 0.12);
   background: rgba(88, 136, 176, 0.04);
   border-radius: var(--r);
-  color: var(--text-primary);
-  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
   line-height: 1.55;
 }
 

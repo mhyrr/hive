@@ -263,10 +263,13 @@ type RouteHandler = (
 ) => Promise<Response>;
 
 const getRoutes: Record<string, RouteHandler> = {
-  "/api/status": async (_req, _url, _options, _broadcast) => {
+  "/api/status": async (_req, _url, options, _broadcast) => {
     try {
       const result = await statusCommand();
-      return jsonOk(result);
+      const identityText = await Bun.file(options.hivePaths.identity).text().catch(() => "");
+      const nameMatch = identityText.match(/^-\s*Name:\s*(.+)$/m);
+      const hiveName = nameMatch ? nameMatch[1].trim() : null;
+      return jsonOk({ result, hiveName });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }

@@ -35,6 +35,7 @@ var state = {
   timelineItems: [],
   railTab: 'live',
   eventStreamFilter: 'all',
+  hiveName: null,
   usageChart: null,
   usageHistory: [],
   cognitionRefreshTimer: null,
@@ -427,15 +428,8 @@ function buildMarkdownHref(target) {
     return target;
   }
 
-  var fileTarget = parseFileTarget(target);
-  if (!fileTarget) {
-    return null;
-  }
-
-  return buildApiPath('/file', null, {
-    path: fileTarget.path,
-    line: fileTarget.line,
-  });
+  // File paths are handled via data-open-path click handler, not navigable URLs
+  return null;
 }
 
 function buildPreviewHref(path, line) {
@@ -841,6 +835,11 @@ function getTurnPresentation(role, source) {
 
   if (role === 'assistant' && source === 'system') {
     return { cssRole: 'system', label: 'buzz' };
+  }
+
+  if (role === 'assistant') {
+    var name = state.hiveName || 'hive';
+    return { cssRole: 'assistant', label: name.toLowerCase() };
   }
 
   return { cssRole: role, label: role };
@@ -3417,6 +3416,10 @@ async function refreshStatus() {
 
     if (data.supervisor) {
       parsed.supervisor = data.supervisor;
+    }
+
+    if (data.hiveName) {
+      state.hiveName = data.hiveName;
     }
 
     updateTopBar(parsed);
