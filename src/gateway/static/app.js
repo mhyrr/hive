@@ -29,21 +29,15 @@ var state = {
   sessionId: null,
   pendingSends: 0,
   liveSnapshot: null,
-  processLogsSnapshot: null,
   cognitionSnapshot: null,
   healthSnapshot: null,
   queueSnapshot: null,
   timelineItems: [],
   railTab: 'live',
-  pulsesCollapsed: true,
-  processLogsFocus: null,
-  processLogsStickToBottom: true,
-  processLogsRefreshTimer: null,
+  eventStreamFilter: 'all',
   cognitionRefreshTimer: null,
   agentSignals: {},
   notificationsPrimed: false,
-  toastSeenKeys: {},
-  toasts: [],
 };
 
 
@@ -1403,14 +1397,6 @@ function setupConsoleDetailModal() {
 
 // --- Session Management ---
 
-function resetProcessLogFocus(clearSnapshot) {
-  state.processLogsFocus = null;
-  state.processLogsStickToBottom = true;
-  if (clearSnapshot) {
-    state.processLogsSnapshot = null;
-  }
-}
-
 function renderProjectName() {
   var projectEl = document.getElementById('project-name');
   if (!projectEl) return;
@@ -1418,24 +1404,15 @@ function renderProjectName() {
 }
 
 function updateSessionProject(project) {
-  var nextProject = project || null;
-  if (state.sessionProject !== nextProject) {
-    resetProcessLogFocus(true);
-  }
-  state.sessionProject = nextProject;
+  state.sessionProject = project || null;
   renderProjectName();
-  renderProcessLogs(state.processLogsSnapshot);
   scheduleOperationsRefresh(0);
 }
 
 function updateSessionIndicator(sessionId, project) {
   if (state.sessionId !== sessionId) {
     state.consoleExpanded = {};
-    state.pulsesCollapsed = true;
-    resetProcessLogFocus(true);
     state.notificationsPrimed = false;
-    state.toastSeenKeys = {};
-    state.toasts = [];
   }
   state.sessionId = sessionId;
   if (project !== undefined) {
@@ -1752,17 +1729,6 @@ function scheduleTimelineRefresh(delay) {
   }, typeof delay === 'number' ? delay : 280);
 }
 
-function scheduleProcessLogsRefresh(delay) {
-  if (state.processLogsRefreshTimer) {
-    clearTimeout(state.processLogsRefreshTimer);
-  }
-
-  state.processLogsRefreshTimer = setTimeout(function () {
-    state.processLogsRefreshTimer = null;
-    refreshProcessLogs();
-  }, typeof delay === 'number' ? delay : 200);
-}
-
 function scheduleCognitionRefresh(delay) {
   if (state.cognitionRefreshTimer) {
     clearTimeout(state.cognitionRefreshTimer);
@@ -1777,7 +1743,6 @@ function scheduleCognitionRefresh(delay) {
 function scheduleOperationsRefresh(delay) {
   var base = typeof delay === 'number' ? delay : 180;
   scheduleLiveRefresh(base);
-  scheduleProcessLogsRefresh(base + 30);
   scheduleCognitionRefresh(base + 60);
   scheduleQueueRefresh(base + 90);
   scheduleTimelineRefresh(base + 150);
@@ -2381,369 +2346,14 @@ function humanizeActivityTitle(activity) {
   return actor + ' made a move.';
 }
 
-function buildPulseItems(leadership, liveSnapshot) {
-  var items = [];
-  var seen = {};
-  var attentionItems = leadership && Array.isArray(leadership.attentionItems) ? leadership.attentionItems : [];
-  var recentCompletions = liveSnapshot && Array.isArray(liveSnapshot.recentCompletions)
-    ? liveSnapshot.recentCompletions
-    : [];
-  var activity = liveSnapshot && Array.isArray(liveSnapshot.activity) ? liveSnapshot.activity : [];
-  var agents = liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : [];
-
-  function pushPulse(item) {
-    if (!item || !item.id || seen[item.id]) return;
-    seen[item.id] = true;
-    items.push(item);
-  }
-
-  for (var i = 0; i < attentionItems.length && i < 2; i++) {
-    var attention = attentionItems[i];
-    if (
-      attention.kind !== 'incident' &&
-      attention.kind !== 'approval' &&
-      attention.kind !== 'waiting' &&
-      attention.kind !== 'health'
-    ) {
-      continue;
-    }
-
-    pushPulse({
-      id: 'pulse-attention-' + attention.id,
-      tone: attention.tone,
-      tag: attention.kind === 'incident'
-        ? 'Needs you now'
-        : (attention.kind === 'approval'
-          ? 'Decision waiting'
-          : (attention.kind === 'waiting' ? 'Reply waiting' : 'Health watch')),
-      title: attention.title,
-      summary: attention.summary,
-      meta: attention.meta,
-      ts: attention.ts,
-      actionLabel: attention.kind === 'waiting' ? 'Draft Reply' : 'Ask Hive',
-      actionPrompt: attention.prompt,
-      secondaryLabel: 'Open Queue',
-      secondaryTab: 'queue',
-      secondaryFocusId: attention.focusId || 'queue-attention',
-    });
-  }
-
-  for (var j = 0; j < recentCompletions.length && items.length < 4; j++) {
-    var completion = recentCompletions[j];
-    var changedFiles = Array.isArray(completion.changedFiles) ? completion.changedFiles.length : 0;
-    pushPulse({
-      id: 'pulse-completion-' + (completion.runId || j),
-      tone: 'success',
-      tag: 'Just finished',
-      title: (completion.displayName || completion.agentId || 'worker') + ' wrapped a pass.',
-      summary: truncateText(
-        (completion.summary || 'Work completed cleanly.') +
-        (changedFiles > 0 ? ' ' + countLabel(changedFiles, 'file') + ' changed.' : ''),
-        170
-      ),
-      meta: joinMeta([
-        completion.runtime || '',
-        completion.model || '',
-        formatMoment(completion.ended),
-      ]),
-      ts: completion.ended,
-      secondaryLabel: 'Open Timeline',
-      secondaryTab: 'timeline',
-      secondaryFocusId: 'timeline-list',
-    });
-  }
-
-  for (var k = 0; k < activity.length && items.length < 4; k++) {
-    var activityItem = activity[k];
-    pushPulse({
-      id: 'pulse-activity-' + (activityItem.id || k),
-      tone: activityItem.tone || 'info',
-      tag: activityItem.actor ? activityItem.actor : 'Live signal',
-      title: humanizeActivityTitle(activityItem),
-      summary: truncateText(activityItem.detail || 'Fresh movement just hit the board.', 170),
-      meta: joinMeta([
-        activityItem.kind || '',
-        formatMoment(activityItem.ts),
-      ]),
-      ts: activityItem.ts,
-      actionLabel: 'Ask Context',
-      actionPrompt:
-        'Give me the context behind this update: "' + (activityItem.detail || activityItem.title || 'live signal') +
-        '". Tell me what changed, why it matters, and whether you need anything from me.',
-      secondaryLabel: 'Open Live',
-      secondaryTab: 'live',
-      secondaryFocusId: 'live-agents',
-    });
-  }
-
-  if (items.length === 0 && agents.length > 0) {
-    var activeAgent = agents[0];
-    pushPulse({
-      id: 'pulse-active-' + (activeAgent.runId || 'steward'),
-      tone: 'info',
-      tag: 'Still moving',
-      title: (activeAgent.displayName || activeAgent.agentId || 'The steward') + ' is still working.',
-      summary: truncateText(activeAgent.latestOutput || 'There is active work in flight right now.', 170),
-      meta: joinMeta([
-        activeAgent.runtime || '',
-        activeAgent.model || '',
-        formatMoment(activeAgent.started),
-      ]),
-      ts: activeAgent.started,
-      secondaryLabel: 'Logs',
-      secondaryRunId: activeAgent.runId || '',
-    });
-  }
-
-  return items.slice(0, 4);
-}
-
-function renderPulsePanel(leadership) {
-  var panel = document.getElementById('pulse-panel');
-  var list = document.getElementById('pulse-panel-list');
-  var toggle = document.getElementById('pulse-panel-toggle');
-
-  if (!panel || !list || !toggle) return;
-
-  var pulseItems = buildPulseItems(leadership, state.liveSnapshot);
-  if (!leadership || !leadership.project || pulseItems.length === 0) {
-    panel.hidden = true;
-    panel.classList.remove('pulse-panel--collapsed');
-    list.innerHTML = '';
-    toggle.textContent = 'Collapse';
-    return;
-  }
-
-  panel.hidden = false;
-  panel.classList.toggle('pulse-panel--collapsed', state.pulsesCollapsed);
-  toggle.textContent = state.pulsesCollapsed ? 'Expand' : 'Collapse';
-
-  if (state.pulsesCollapsed) {
-    list.innerHTML = '';
-    return;
-  }
-
-  var html = '';
-  for (var i = 0; i < pulseItems.length; i++) {
-    var item = pulseItems[i];
-    html += '<div class="' + toneClass('pulse-card', item.tone) + '">';
-    html += '<div class="pulse-card-header">';
-    html += '<div class="pulse-card-tag">' + escapeHtml(item.tag || 'Live pulse') + '</div>';
-    html += '<div class="pulse-card-time">' + escapeHtml(formatMoment(item.ts)) + '</div>';
-    html += '</div>';
-    html += '<div class="pulse-card-title">' + escapeHtml(item.title) + '</div>';
-    html += '<div class="pulse-card-summary">' + escapeHtml(item.summary || '') + '</div>';
-    if (item.meta) {
-      html += '<div class="pulse-card-meta">' + escapeHtml(item.meta) + '</div>';
-    }
-    html += '<div class="pulse-card-actions">';
-    if (item.actionPrompt) {
-      html += renderRailActionButton(item.actionLabel || 'Ask Hive', {
-        'data-rail-action': 'send-prompt',
-        'data-rail-prompt': item.actionPrompt,
-      });
-    }
-    if (item.secondaryRunId) {
-      html += renderRailActionButton(item.secondaryLabel || 'Logs', {
-        'data-rail-action': 'log',
-        'data-rail-run-id': item.secondaryRunId,
-      }, true);
-    } else if (item.secondaryTab) {
-      html += renderRailActionButton(item.secondaryLabel || 'Open', {
-        'data-rail-action': 'focus-tab',
-        'data-rail-tab-target': item.secondaryTab,
-        'data-rail-focus-id': item.secondaryFocusId || '',
-      }, true);
-    }
-    html += '</div>';
-    html += '</div>';
-  }
-
-  list.innerHTML = html;
-}
-
-function dismissToast(key) {
-  if (!key) return;
-  state.toasts = state.toasts.filter(function (item) {
-    return item.key !== key;
-  });
-  renderToastStack();
-}
-
-function renderToastStack() {
-  var container = document.getElementById('toast-stack');
-  if (!container) return;
-
-  if (!state.toasts || state.toasts.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  var html = '';
-  for (var i = 0; i < state.toasts.length; i++) {
-    var toast = state.toasts[i];
-    html += '<div class="' + toneClass('toast-card', toast.tone) + '">';
-    html += '<div class="toast-card-header">';
-    html += '<div class="toast-card-kicker">' + escapeHtml(toast.kicker || 'HIVE') + '</div>';
-    html += '<div class="toast-card-time">' + escapeHtml(formatMoment(toast.ts)) + '</div>';
-    html += '</div>';
-    html += '<div class="toast-card-title">' + escapeHtml(toast.title) + '</div>';
-    html += '<div class="toast-card-summary">' + escapeHtml(toast.summary || '') + '</div>';
-    html += '<div class="toast-card-actions">';
-    if (toast.actionPrompt) {
-      html += renderRailActionButton(toast.actionLabel || 'Ask Hive', {
-        'data-rail-action': 'send-prompt',
-        'data-rail-prompt': toast.actionPrompt,
-      });
-    }
-    if (toast.secondaryRunId) {
-      html += renderRailActionButton(toast.secondaryLabel || 'Logs', {
-        'data-rail-action': 'log',
-        'data-rail-run-id': toast.secondaryRunId,
-      }, true);
-    } else if (toast.secondaryTab) {
-      html += renderRailActionButton(toast.secondaryLabel || 'Open', {
-        'data-rail-action': 'focus-tab',
-        'data-rail-tab-target': toast.secondaryTab,
-        'data-rail-focus-id': toast.secondaryFocusId || '',
-      }, true);
-    }
-    html += '<button class="toast-dismiss" type="button" data-toast-dismiss="' + escapeAttr(toast.key) + '">Dismiss</button>';
-    html += '</div>';
-    html += '</div>';
-  }
-
-  container.innerHTML = html;
-}
-
-function addToast(toast) {
-  if (!toast || !toast.key || state.toastSeenKeys[toast.key]) return;
-
-  state.toastSeenKeys[toast.key] = true;
-  state.toasts = [toast].concat(state.toasts || []).slice(0, 4);
-  renderToastStack();
-
-  var ttl = toast.tone === 'error' ? 18000 : (toast.tone === 'warning' ? 14000 : 9000);
-  setTimeout(function () {
-    dismissToast(toast.key);
-  }, ttl);
-}
-
-function isHealthToastKey(key) {
-  return String(key || '').indexOf('toast-attention-health-') === 0;
-}
-
-function pruneHealthToasts(activeKeys) {
-  var allowed = activeKeys || {};
-  var nextToasts = [];
-  var removed = false;
-
-  for (var i = 0; i < (state.toasts || []).length; i++) {
-    var toast = state.toasts[i];
-    if (isHealthToastKey(toast.key) && !allowed[toast.key]) {
-      removed = true;
-      delete state.toastSeenKeys[toast.key];
-      continue;
-    }
-    nextToasts.push(toast);
-  }
-
-  if (removed) {
-    state.toasts = nextToasts;
-    renderToastStack();
-  }
-}
-
-function maybeEmitLeadershipToasts(leadership) {
-  if (!leadership || !leadership.project) return;
-
-  var candidates = [];
-  var activeHealthToastKeys = {};
-  var attentionItems = leadership.attentionItems || [];
-  var recentCompletions = state.liveSnapshot && Array.isArray(state.liveSnapshot.recentCompletions)
-    ? state.liveSnapshot.recentCompletions
-    : [];
-
-  for (var i = 0; i < attentionItems.length; i++) {
-    var item = attentionItems[i];
-    if (item.kind === 'health' && item.tone !== 'error') {
-      continue;
-    }
-
-    if (item.tone !== 'error' && item.kind !== 'approval') {
-      continue;
-    }
-
-    var candidate = {
-      key: 'toast-attention-' + item.id,
-      tone: item.tone,
-      kicker: item.tone === 'error' ? 'Needs you now' : 'Leadership heads-up',
-      title: item.title,
-      summary: item.summary,
-      ts: item.ts,
-      actionLabel: item.kind === 'waiting' ? 'Draft Reply' : 'Ask Hive',
-      actionPrompt: item.prompt,
-      secondaryLabel: item.openTab === 'queue' ? 'Open Queue' : 'Open Live',
-      secondaryTab: item.openTab || 'queue',
-      secondaryFocusId: item.focusId || '',
-    };
-
-    if (item.kind === 'health') {
-      activeHealthToastKeys[candidate.key] = true;
-    }
-
-    candidates.push(candidate);
-  }
-
-  pruneHealthToasts(activeHealthToastKeys);
-
-  if (recentCompletions.length > 0) {
-    var completion = recentCompletions[0];
-    candidates.push({
-      key: 'toast-completion-' + (completion.runId || 'latest'),
-      tone: 'success',
-      kicker: 'Completed',
-      title: (completion.displayName || completion.agentId || 'worker') + ' wrapped a pass.',
-      summary: truncateText(completion.summary || 'Recent work completed cleanly.', 150),
-      ts: completion.ended,
-      secondaryLabel: 'Open Timeline',
-      secondaryTab: 'timeline',
-      secondaryFocusId: 'timeline-list',
-    });
-  }
-
-  if (!state.notificationsPrimed) {
-    for (var p = 0; p < candidates.length; p++) {
-      if (candidates[p].tone !== 'error') {
-        state.toastSeenKeys[candidates[p].key] = true;
-      }
-    }
-    state.notificationsPrimed = true;
-    candidates = candidates.filter(function (item) {
-      return item.tone === 'error';
-    });
-  }
-
-  for (var j = 0; j < candidates.length && j < 2; j++) {
-    addToast(candidates[j]);
-  }
-}
-
 function renderLeadershipSurface() {
   var leadership = buildLeadershipSnapshot();
   renderHealthIndicator(leadership.health);
   renderAttentionBadge(leadership);
   renderAttentionQueue(leadership);
-  renderPulsePanel(leadership);
-  maybeEmitLeadershipToasts(leadership);
-  renderToastStack();
 }
 
 function focusRailSection(tab, focusId) {
-  if (tab === 'live' && focusId && focusId !== 'process-logs-section' && state.processLogsFocus) {
-    clearProcessLogFocus();
-  }
-
   setRailTab(tab || 'live');
 
   window.requestAnimationFrame(function () {
@@ -2751,33 +2361,6 @@ function focusRailSection(tab, focusId) {
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-}
-
-function focusProcessLog(runId) {
-  if (!runId) return;
-
-  state.processLogsFocus = runId;
-  state.processLogsStickToBottom = true;
-  setRailTab('live');
-  renderProcessLogs(state.processLogsSnapshot);
-  scheduleProcessLogsRefresh(0);
-
-  window.requestAnimationFrame(function () {
-    var section = document.getElementById('process-logs-section');
-    var container = document.getElementById('process-logs-content');
-    if (section) {
-      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-  });
-}
-
-function clearProcessLogFocus() {
-  if (!state.processLogsFocus) return;
-  resetProcessLogFocus(false);
-  renderProcessLogs(state.processLogsSnapshot);
 }
 
 function renderConsoleActivity(snapshot) {
@@ -2939,7 +2522,7 @@ function renderLiveAgents(agents) {
         ? 'Waiting for the first streamed update from the steward.'
         : 'Waiting for the first visible update from this agent.';
     }
-    html += '<div class="agent-card' + (expanded ? ' agent-card--expanded' : '') + '">';
+    html += '<div class="agent-card' + (expanded ? ' agent-card--expanded' : '') + '" data-persona="' + escapeAttr(agent.persona || 'worker') + '">';
     html += '<div class="agent-card-header">';
     html += '<div class="agent-card-header-copy">';
     html += '<div class="agent-card-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</div>';
@@ -2951,7 +2534,7 @@ function renderLiveAgents(agents) {
     html += '</div>';
     html += '</div>';
     html += '<div class="agent-card-meta">' + escapeHtml(joinMeta(meta)) + '</div>';
-    html += '<div class="agent-card-summary">' + escapeHtml(truncateMultilineText(collapsedSummary, expanded ? 320 : 180)) + '</div>';
+    html += '<div class="agent-card-summary">' + escapeHtml(truncateMultilineText(collapsedSummary, expanded ? 500 : 280)) + '</div>';
     if (expanded && health) {
       html += '<div class="agent-card-health-note">' + escapeHtml(health.summary) + '</div>';
     }
@@ -2968,10 +2551,6 @@ function renderLiveAgents(agents) {
       'data-rail-action': 'toggle-agent',
       'data-rail-agent-key': agentKey,
     }, true);
-    html += renderRailActionButton(state.processLogsFocus === (agent.runId || '') ? 'Watching' : 'Logs', {
-      'data-rail-action': 'log',
-      'data-rail-run-id': agent.runId || '',
-    }, state.processLogsFocus === (agent.runId || ''));
     html += renderRailActionButton('Stop', {
       'data-rail-action': 'stop-agent',
       'data-rail-stop-target': agent.agentId || agent.runId || '',
@@ -2981,25 +2560,6 @@ function renderLiveAgents(agents) {
   }
 
   container.innerHTML = html;
-}
-
-function formatCognitionLaneRoute(lane) {
-  if (!lane || !lane.piRoute || !lane.piRoute.provider) {
-    return 'direct CLI-backed by default';
-  }
-
-  var route = lane.piRoute;
-  var source = route.providerSource === 'env'
-    ? 'env'
-    : route.providerSource === 'config'
-      ? 'config'
-      : 'implicit';
-  var parts = ['Pi ' + source, route.provider];
-
-  if (route.model) parts.push(route.model);
-  if (route.authPolicy) parts.push(route.authPolicy);
-
-  return parts.join(' \u00b7 ');
 }
 
 function findCognitionLane(policy, runtime) {
@@ -3050,43 +2610,6 @@ function formatCognitionExecutionSummary(execution) {
   ]);
 }
 
-function formatTier1LocalStatus(snapshot) {
-  var localModels = snapshot && snapshot.localModels ? snapshot.localModels : null;
-
-  if (!localModels) {
-    return 'not inspected';
-  }
-
-  if (!localModels.available) {
-    return joinMeta([
-      'ollama unavailable',
-      localModels.reason || '',
-    ]);
-  }
-
-  if (localModels.configuredModelStatus === 'available') {
-    return 'available locally';
-  }
-
-  if (localModels.configuredModelStatus === 'missing') {
-    return 'configured but not pulled';
-  }
-
-  if (localModels.configuredModelStatus === 'unconfigured') {
-    return 'not configured';
-  }
-
-  return 'unverified';
-}
-
-function formatTier1CloudRoute(label, provider, modelId) {
-  return joinMeta([
-    label || '',
-    provider || '',
-    modelId || '',
-  ]) || 'route unset';
-}
-
 function formatUsageBudgetLabel(budget, totals) {
   if (!budget) {
     return formatCompactInteger(totals ? totals.totalTokens : 0) + ' tk';
@@ -3100,70 +2623,24 @@ function formatUsageBudgetLabel(budget, totals) {
 }
 
 function renderCognitionUsageMeter(label, budget, totals) {
-  var used = totals && totals.totalTokens ? totals.totalTokens : 0;
-  var ratio = budget && budget.tokenLimit ? Math.min(1, used / budget.tokenLimit) : 0;
-  var percent = Math.max(3, Math.round(ratio * 100));
+  var used = budget && budget.usedTokens != null ? budget.usedTokens : (totals && totals.totalTokens ? totals.totalTokens : 0);
+  var hasBudget = budget && budget.tokenLimit;
+  var ratio = hasBudget ? Math.min(1, used / budget.tokenLimit) : 0;
+  var percent = hasBudget ? Math.max(used > 0 ? 2 : 0, Math.round(ratio * 100)) : 0;
   var tone = budget ? budget.status : 'unconfigured';
-  var html = '<div class="cognition-meter">';
+  var tierColor = label === 'T3' ? 'tier3' : (label === 'T2' ? 'tier2' : 'tier1');
+  var html = '<div class="cognition-meter cognition-meter--' + tierColor + '">';
   html += '<div class="cognition-meter-header">';
   html += '<div class="cognition-meter-label">' + escapeHtml(label) + '</div>';
   html += '<div class="cognition-meter-value">' + escapeHtml(formatUsageBudgetLabel(budget, totals)) + '</div>';
   html += '</div>';
-  html += '<div class="cognition-meter-track"><div class="cognition-meter-fill cognition-meter-fill--' + escapeAttr(tone) + '" style="width:' + percent + '%"></div></div>';
-  html += '</div>';
-  return html;
-}
-
-function renderCognitionBodyText(text) {
-  var normalized = sanitizeStewardLikeText(text).replace(/\r\n/g, '\n').trim();
-  if (!normalized) {
-    return '';
+  if (hasBudget) {
+    html += '<div class="cognition-meter-track"><div class="cognition-meter-fill cognition-meter-fill--' + escapeAttr(tone) + ' cognition-meter-fill--' + tierColor + '" style="width:' + percent + '%"></div></div>';
+  } else if (used > 0) {
+    html += '<div class="cognition-meter-track cognition-meter-track--no-budget"><div class="cognition-meter-fill cognition-meter-fill--' + tierColor + '" style="width:100%"></div></div>';
+  } else {
+    html += '<div class="cognition-meter-track cognition-meter-track--empty"></div>';
   }
-
-  var lines = normalized.split('\n');
-  var rendered = [];
-
-  for (var i = 0; i < lines.length; i++) {
-    rendered.push(renderInlineText(lines[i]));
-  }
-
-  return rendered.join('<br>');
-}
-
-function renderCognitionSummaryRows(items, options) {
-  var rows = Array.isArray(items) ? items : [];
-
-  if (rows.length === 0) {
-    return '<div class="rail-empty">' + escapeHtml(
-      options && options.empty ? options.empty : 'No compiled cognition data yet.'
-    ) + '</div>';
-  }
-
-  var html = '<div class="cognition-lane-list">';
-
-  for (var i = 0; i < rows.length; i++) {
-    var item = rows[i];
-    if (!item) continue;
-
-    html += '<div class="cognition-row cognition-row--lane">';
-    html += '<div class="cognition-row-header">';
-    html += '<div class="cognition-row-name">' + escapeHtml(item.label || item.id || 'item') + '</div>';
-    if (item.kicker) {
-      html += '<div class="cognition-row-kicker">' + escapeHtml(item.kicker) + '</div>';
-    }
-    html += '</div>';
-
-    if (item.body) {
-      html += '<div class="cognition-row-body">' + renderCognitionBodyText(item.body) + '</div>';
-    }
-
-    if (item.meta) {
-      html += '<div class="cognition-row-meta">' + escapeHtml(item.meta) + '</div>';
-    }
-
-    html += '</div>';
-  }
-
   html += '</div>';
   return html;
 }
@@ -3221,14 +2698,6 @@ function renderCognition(snapshot) {
     activeSessionLabel,
   ])) + '</div>';
 
-  if (compiled) {
-    html += '<div class="cognition-context">' + escapeHtml(joinMeta([
-      compiled.workingSetRevision !== null ? 'working set rev ' + compiled.workingSetRevision : '',
-      compiled.workingSetProducedAt ? 'materialized ' + formatRelativeAge(compiled.workingSetProducedAt) : '',
-      compiled.compilerUpdatedAt ? 'compiler ' + formatRelativeAge(compiled.compilerUpdatedAt) : '',
-    ])) + '</div>';
-  }
-
   if (usage) {
     html += '<div class="cognition-subsection">';
     html += '<div class="cognition-subsection-title">Usage (' + escapeHtml(String(usage.windowHours || 24)) + 'h)</div>';
@@ -3263,342 +2732,6 @@ function renderCognition(snapshot) {
     html += '</div></div>';
   }
 
-  if (compiled && Array.isArray(compiled.workingSetDigests) && compiled.workingSetDigests.length > 0) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Working Set</div>';
-    html += renderCognitionSummaryRows(compiled.workingSetDigests);
-    html += '</div>';
-  }
-
-  if (compiled) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Idle Compiler</div>';
-    html += renderCognitionSummaryRows(
-      (compiled.idlePackets || []).map(function (packet) {
-        return {
-          id: packet.id,
-          label: packet.label,
-          kicker: packet.kicker,
-          body: packet.body,
-          meta: packet.producedAt ? 'compiled ' + formatRelativeAge(packet.producedAt) : '',
-        };
-      }),
-      { empty: 'No idle compilation packets yet. Let the supervisor go calm long enough to compile them.' }
-    );
-    html += '</div>';
-  }
-
-  if (snapshot && snapshot.tier1) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Tier-1</div>';
-    html += '<div class="cognition-lane-list">';
-    html += '<div class="cognition-row cognition-row--lane">';
-    html += '<div class="cognition-row-header">';
-    html += '<div class="cognition-row-name">local</div>';
-    html += '<div class="cognition-row-kicker">' + escapeHtml(formatTier1LocalStatus(snapshot)) + '</div>';
-    html += '</div>';
-    html += '<div class="cognition-row-body">' + escapeHtml(joinMeta([
-      snapshot.tier1.localModel || '',
-      localModels ? localModels.baseUrl || '' : '',
-    ])) + '</div>';
-    html += '</div>';
-    html += '<div class="cognition-row cognition-row--lane">';
-    html += '<div class="cognition-row-header">';
-    html += '<div class="cognition-row-name">cloud</div>';
-    html += '<div class="cognition-row-kicker">fallback ' + escapeHtml(snapshot.tier1.fallbackModel || '') + '</div>';
-    html += '</div>';
-    html += '<div class="cognition-row-body">' + escapeHtml(formatTier1CloudRoute(
-      snapshot.tier1.cloudModel,
-      snapshot.tier1.cloudProvider,
-      snapshot.tier1.cloudModelId
-    )) + '</div>';
-    html += '</div>';
-    html += '<div class="cognition-row cognition-row--lane">';
-    html += '<div class="cognition-row-header">';
-    html += '<div class="cognition-row-name">fallback</div>';
-    html += '<div class="cognition-row-kicker">cloud backup</div>';
-    html += '</div>';
-    html += '<div class="cognition-row-body">' + escapeHtml(formatTier1CloudRoute(
-      snapshot.tier1.fallbackModel,
-      snapshot.tier1.fallbackProvider,
-      snapshot.tier1.fallbackModelId
-    )) + '</div>';
-    html += '</div>';
-    if (localModels && localModels.reason && !localModels.available) {
-      html += '<div class="cognition-row cognition-row--lane">';
-      html += '<div class="cognition-row-header">';
-      html += '<div class="cognition-row-name">discovery</div>';
-      html += '<div class="cognition-row-kicker">offline</div>';
-      html += '</div>';
-      html += '<div class="cognition-row-body">' + escapeHtml(localModels.reason) + '</div>';
-      html += '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  if (discoveredLocalModels.length > 0) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Local Models</div>';
-    html += '<div class="cognition-lane-list">';
-    for (var m = 0; m < discoveredLocalModels.length; m++) {
-      var model = discoveredLocalModels[m];
-      if (!model) continue;
-      html += '<div class="cognition-row cognition-row--lane">';
-      html += '<div class="cognition-row-header">';
-      html += '<div class="cognition-row-name">' + escapeHtml(model.name || 'model') + '</div>';
-      html += '<div class="cognition-row-kicker">' + escapeHtml(snapshot.tier1 && snapshot.tier1.localModel === model.name ? 'preferred local' : 'discovered') + '</div>';
-      html += '</div>';
-      html += '<div class="cognition-row-body">' + escapeHtml(joinMeta([
-        model.modifiedAt || '',
-        model.digest ? model.digest.slice(0, 12) : '',
-      ])) + '</div>';
-      html += '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  if (Array.isArray(policy.modes) && policy.modes.length > 0) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Modes</div>';
-    html += '<div class="cognition-mode-list">';
-    for (var i = 0; i < policy.modes.length; i++) {
-      var mode = policy.modes[i];
-      if (!mode) continue;
-      html += '<div class="cognition-row cognition-row--mode">';
-      html += '<div class="cognition-row-header">';
-      html += '<div class="cognition-row-name">' + escapeHtml(mode.label || mode.id || 'mode') + '</div>';
-      html += '<div class="cognition-row-kicker">' + escapeHtml(mode.id || '') + '</div>';
-      html += '</div>';
-      html += '<div class="cognition-row-body">' + escapeHtml(mode.useWhen || '') + '</div>';
-      html += '<div class="cognition-row-meta">' + escapeHtml(joinMeta([
-        mode.fanOut || '',
-        mode.parallelism || '',
-      ])) + '</div>';
-      html += '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  if (Array.isArray(policy.runtimeLanes) && policy.runtimeLanes.length > 0) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Runtime Lanes</div>';
-    html += '<div class="cognition-lane-list">';
-    for (var j = 0; j < policy.runtimeLanes.length; j++) {
-      var lane = policy.runtimeLanes[j];
-      if (!lane) continue;
-      html += '<div class="cognition-row cognition-row--lane">';
-      html += '<div class="cognition-row-header">';
-      html += '<div class="cognition-row-name">' + escapeHtml(lane.runtime || 'runtime') + '</div>';
-      html += '<div class="cognition-row-kicker">direct ' + escapeHtml(lane.directAuth || 'unknown') + '</div>';
-      html += '</div>';
-      html += '<div class="cognition-row-body">' + escapeHtml(formatCognitionLaneRoute(lane)) + '</div>';
-      html += '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  container.innerHTML = html;
-}
-
-function getLiveAgentForRun(runId) {
-  var agents = state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : [];
-  for (var i = 0; i < agents.length; i++) {
-    if (agents[i].runId === runId) {
-      return agents[i];
-    }
-  }
-  return null;
-}
-
-function buildProcessLogSelection(snapshot) {
-  var focus = state.processLogsFocus;
-  if (!focus) return null;
-  if (!snapshot || !snapshot.project) return null;
-
-  if (focus === 'supervisor') {
-    if (snapshot && snapshot.supervisor) {
-      return {
-        kind: 'supervisor',
-        title: 'Supervisor live output',
-        subtitle: joinMeta([
-          snapshot.project || '',
-          'status ' + (snapshot.supervisor.status || 'unknown'),
-          snapshot.supervisor.pid ? 'pid ' + snapshot.supervisor.pid : '',
-        ]),
-        note: 'Watching the detached supervisor log for fresh coordination output.',
-        tail: snapshot.supervisor.tail || [],
-      };
-    }
-
-    return {
-      kind: 'missing',
-      title: 'Supervisor live output',
-      subtitle: 'No active supervisor log found for this project.',
-      note: 'The detached supervisor may have stopped or rotated out since you opened the inspector.',
-      tail: [],
-    };
-  }
-
-  var runs = snapshot && Array.isArray(snapshot.runs) ? snapshot.runs : [];
-  for (var i = 0; i < runs.length; i++) {
-    var run = runs[i];
-    if (run.runId !== focus) continue;
-
-    var liveAgent = getLiveAgentForRun(run.runId);
-    var displayName = liveAgent
-      ? (liveAgent.displayName || liveAgent.agentId || run.agentId || 'agent')
-      : (run.agentId || 'agent');
-
-    return {
-      kind: 'run',
-      title: displayName + ' live output',
-      subtitle: joinMeta([
-        liveAgent ? liveAgent.persona || '' : '',
-        run.status || 'active',
-        run.runtime || '',
-        run.model || '',
-        formatMoment(run.started),
-        run.pid ? 'pid ' + run.pid : '',
-      ]),
-      note: 'Watching the latest visible agent output as it streams in.',
-      tail: run.tail || [],
-    };
-  }
-
-  return {
-    kind: 'missing',
-    title: 'Live output unavailable',
-    subtitle: 'Run ' + focus + ' is no longer active.',
-    note: 'This agent may have finished or been replaced since you opened the inspector.',
-    tail: [],
-  };
-}
-
-function renderProcessLogsChrome(selection) {
-  var livePanel = document.getElementById('rail-panel-live');
-  var title = document.getElementById('process-logs-title');
-  var subtitle = document.getElementById('process-logs-subtitle');
-  var backBtn = document.getElementById('process-logs-back');
-  var inspecting = Boolean(selection);
-
-  if (livePanel) {
-    livePanel.classList.toggle('rail-panel--log-focus', inspecting);
-  }
-  if (title) {
-    title.textContent = inspecting ? 'Live Output' : 'Raw Logs';
-  }
-  if (subtitle) {
-    subtitle.hidden = !inspecting;
-    subtitle.textContent = inspecting ? (selection.subtitle || '') : '';
-  }
-  if (backBtn) {
-    backBtn.hidden = !inspecting;
-  }
-}
-
-function renderProcessLogBlock(title, meta, tailLines, runId) {
-  var tail = tailLines && tailLines.length > 0
-    ? escapeHtml(tailLines.join('\n'))
-    : '<span class="process-log-empty-line">(no output yet)</span>';
-  var actions = runId
-    ? '<div class="process-log-block-actions">' + renderRailActionButton(
-      state.processLogsFocus === runId ? 'Watching' : 'Inspect',
-      {
-        'data-rail-action': 'log',
-        'data-rail-run-id': runId,
-      },
-      state.processLogsFocus === runId
-    ) + '</div>'
-    : '';
-
-  return '<div class="process-log-block" data-process-log-run-id="' + escapeAttr(runId || '') + '">' +
-    '<div class="process-log-block-header">' +
-    '<div class="process-log-block-copy">' +
-    '<div class="process-log-title">' + escapeHtml(title) + '</div>' +
-    '<div class="process-log-meta">' + escapeHtml(meta) + '</div>' +
-    '</div>' +
-    actions +
-    '</div>' +
-    '<pre class="process-log-tail">' + tail + '</pre>' +
-    '</div>';
-}
-
-function renderProcessLogInspector(selection) {
-  var tail = selection.tail && selection.tail.length > 0
-    ? escapeHtml(selection.tail.join('\n'))
-    : '<span class="process-log-empty-line">(waiting for visible output)</span>';
-
-  return '<div class="process-log-inspector">' +
-    '<div class="process-log-inspector-header">' +
-    '<div class="process-log-inspector-title">' + escapeHtml(selection.title) + '</div>' +
-    '<div class="process-log-inspector-meta">' + escapeHtml(selection.subtitle || '') + '</div>' +
-    '<div class="process-log-inspector-note">' + escapeHtml(selection.note || '') + '</div>' +
-    '</div>' +
-    '<pre class="process-log-inspector-tail">' + tail + '</pre>' +
-    '</div>';
-}
-
-function renderProcessLogs(snapshot) {
-  var container = document.getElementById('process-logs-content');
-  if (!container) return;
-
-  var selection = buildProcessLogSelection(snapshot);
-  renderProcessLogsChrome(selection);
-
-  if (!snapshot || !snapshot.project) {
-    container.innerHTML = '<div class="process-logs-empty">No project in focus yet. Start a session or switch project focus.</div>';
-    return;
-  }
-
-  if (selection) {
-    container.innerHTML = renderProcessLogInspector(selection);
-    if (state.processLogsStickToBottom) {
-      container.scrollTop = container.scrollHeight;
-    }
-    return;
-  }
-
-  var html = '';
-
-  if (snapshot.supervisor) {
-    html += renderProcessLogBlock(
-      'Supervisor \u00b7 ' + snapshot.project,
-      joinMeta([
-        'status ' + (snapshot.supervisor.status || 'unknown'),
-        snapshot.supervisor.pid ? 'pid ' + snapshot.supervisor.pid : '',
-      ]),
-      snapshot.supervisor.tail || [],
-      'supervisor'
-    );
-  }
-
-  var runs = Array.isArray(snapshot.runs) ? snapshot.runs : [];
-  for (var i = 0; i < runs.length; i++) {
-    var run = runs[i];
-    var liveAgent = getLiveAgentForRun(run.runId || '');
-    var runName = liveAgent
-      ? (liveAgent.displayName || liveAgent.agentId || run.agentId || 'agent')
-      : (run.agentId || 'agent');
-    html += renderProcessLogBlock(
-      runName + ' \u00b7 ' + snapshot.project,
-      joinMeta([
-        liveAgent ? liveAgent.persona || '' : '',
-        run.status || 'active',
-        run.runtime || '',
-        run.model || '',
-        formatMoment(run.started),
-        run.pid ? 'pid ' + run.pid : '',
-      ]),
-      run.tail || [],
-      run.runId || ''
-    );
-  }
-
-  if (!html) {
-    container.innerHTML = '<div class="process-logs-empty">No active supervisor or agent logs for ' + escapeHtml(snapshot.project) + '.</div>';
-    return;
-  }
-
   container.innerHTML = html;
 }
 
@@ -3609,91 +2742,142 @@ function renderQueueCards(containerId, itemsHtml, emptyText) {
 }
 
 function renderQueueSnapshot(snapshot) {
+  var boardContainer = document.getElementById('board-summary');
+  var streamContainer = document.getElementById('event-stream-list');
+
+  // Render board summary
+  if (boardContainer) {
+    if (!snapshot || !snapshot.project) {
+      boardContainer.innerHTML = '<div class="rail-empty">No board state available.</div>';
+    } else {
+      var approvalCount = Array.isArray(snapshot.approvals) ? snapshot.approvals.length : 0;
+      var waitingCount = Array.isArray(snapshot.waitingOnHuman) ? snapshot.waitingOnHuman.length : 0;
+      var incidentCount = Array.isArray(snapshot.incidents) ? snapshot.incidents.length : 0;
+      var boardHtml = '<div class="board-summary-grid">';
+      boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Approvals</div><div class="board-summary-stat-value' + (approvalCount > 0 ? ' board-summary-stat-value--attention' : '') + '">' + approvalCount + '</div></div>';
+      boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Waiting</div><div class="board-summary-stat-value' + (waitingCount > 0 ? ' board-summary-stat-value--attention' : '') + '">' + waitingCount + '</div></div>';
+      boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Incidents</div><div class="board-summary-stat-value' + (incidentCount > 0 ? ' board-summary-stat-value--error' : '') + '">' + incidentCount + '</div></div>';
+      boardHtml += '</div>';
+      boardContainer.innerHTML = boardHtml;
+    }
+  }
+
+  // Build unified event stream
+  if (!streamContainer) return;
+
   if (!snapshot || !snapshot.project) {
-    renderQueueCards('queue-attention', '', 'Nothing needs you right now.');
-    renderQueueCards('queue-approvals', '', 'No pending approvals.');
-    renderQueueCards('queue-waiting-human', '', 'Nothing is waiting on a human reply.');
-    renderQueueCards('queue-incidents', '', 'No active incidents.');
+    streamContainer.innerHTML = '<div class="rail-empty">No events yet.</div>';
     return;
   }
 
-  var approvalsHtml = '';
+  var events = [];
   var approvals = Array.isArray(snapshot.approvals) ? snapshot.approvals : [];
+  var waiting = Array.isArray(snapshot.waitingOnHuman) ? snapshot.waitingOnHuman : [];
+  var incidents = Array.isArray(snapshot.incidents) ? snapshot.incidents : [];
+
   for (var i = 0; i < approvals.length; i++) {
     var approval = approvals[i];
-    approvalsHtml += '<div class="queue-card queue-card--warning">';
-    approvalsHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(approval.summary || approval.kind || 'Approval requested') + '</div>';
-    approvalsHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(approval.created)) + '</div></div>';
-    approvalsHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
-      approval.kind || '',
-      approval.requestedBy ? 'requested by ' + approval.requestedBy : '',
-      approval.project || 'global',
-    ])) + '</div>';
-    if (approval.note) {
-      approvalsHtml += '<div class="queue-card-body">' + escapeHtml(truncateText(approval.note, 180)) + '</div>';
-    }
-    approvalsHtml += '<div class="queue-card-actions">';
-    approvalsHtml += renderRailActionButton('Ask Hive', {
-      'data-rail-action': 'send-prompt',
-      'data-rail-prompt':
-        'We have a pending approval: "' + (approval.summary || approval.kind || 'Approval requested') +
-        '". Give me the context, your recommendation, and the tradeoffs in 3 bullets.',
+    events.push({
+      ts: approval.created || '',
+      category: 'attention',
+      tone: 'warning',
+      title: approval.summary || approval.kind || 'Approval requested',
+      actor: approval.requestedBy || '',
+      meta: joinMeta([approval.kind || '', approval.project || 'global']),
+      body: approval.note || '',
+      promptLabel: 'Ask Hive',
+      prompt: 'We have a pending approval: "' + (approval.summary || approval.kind) + '". Context, recommendation, and tradeoffs in 3 bullets.',
     });
-    approvalsHtml += '</div>';
-    approvalsHtml += '</div>';
   }
-  renderQueueCards('queue-approvals', approvalsHtml, 'No pending approvals.');
 
-  var waitingHtml = '';
-  var waiting = Array.isArray(snapshot.waitingOnHuman) ? snapshot.waitingOnHuman : [];
   for (var j = 0; j < waiting.length; j++) {
-    var item = waiting[j];
-    waitingHtml += '<div class="queue-card queue-card--info">';
-    waitingHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(item.summary || item.type || 'Human input needed') + '</div>';
-    waitingHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(item.ts)) + '</div></div>';
-    waitingHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
-      item.type || 'message',
-      item.from ? 'from ' + item.from : '',
-      item.to ? 'to ' + item.to : '',
-    ])) + '</div>';
-    waitingHtml += '<div class="queue-card-actions">';
-    waitingHtml += renderRailActionButton('Draft Reply', {
-      'data-rail-action': 'send-prompt',
-      'data-rail-prompt':
-        'We are waiting on a human reply for "' + (item.summary || item.type || 'this thread') +
-        '". Draft the reply you recommend and tell me what happens next if I send it.',
+    var waitItem = waiting[j];
+    events.push({
+      ts: waitItem.ts || '',
+      category: 'human',
+      tone: 'info',
+      title: waitItem.summary || waitItem.type || 'Human input needed',
+      actor: waitItem.from || '',
+      direction: waitItem.from && waitItem.to ? waitItem.from + ' \u2192 ' + waitItem.to : '',
+      meta: joinMeta([waitItem.type || 'message']),
+      body: '',
+      promptLabel: 'Draft Reply',
+      prompt: 'We are waiting on a human reply for "' + (waitItem.summary || 'this thread') + '". Draft the reply you recommend.',
     });
-    waitingHtml += '</div>';
-    waitingHtml += '</div>';
   }
-  renderQueueCards('queue-waiting-human', waitingHtml, 'Nothing is waiting on a human reply.');
 
-  var incidentsHtml = '';
-  var incidents = Array.isArray(snapshot.incidents) ? snapshot.incidents : [];
   for (var k = 0; k < incidents.length; k++) {
     var incident = incidents[k];
-    incidentsHtml += '<div class="' + toneClass('queue-card', incident.severity === 'error' ? 'error' : 'warning') + '">';
-    incidentsHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(incident.summary || incident.kind || 'Incident') + '</div>';
-    incidentsHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(incident.ts)) + '</div></div>';
-    incidentsHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
-      incident.source || '',
-      incident.kind || '',
-      incident.routed ? 'routed' : 'unrouted',
-    ])) + '</div>';
-    if (incident.details && incident.details.length > 0) {
-      incidentsHtml += '<div class="queue-card-body">' + escapeHtml(truncateText(incident.details.join(' \u00b7 '), 220)) + '</div>';
-    }
-    incidentsHtml += '<div class="queue-card-actions">';
-    incidentsHtml += renderRailActionButton('Ask Hive', {
-      'data-rail-action': 'send-prompt',
-      'data-rail-prompt':
-        'I saw this incident: "' + (incident.summary || incident.kind || 'Incident') +
-        '". Give me a crisp brief on what happened, the impact, and whether you need a decision from me.',
+    events.push({
+      ts: incident.ts || '',
+      category: 'attention',
+      tone: incident.severity === 'error' ? 'error' : 'warning',
+      title: incident.summary || incident.kind || 'Incident',
+      actor: incident.source || '',
+      meta: joinMeta([incident.kind || '', incident.routed ? 'routed' : 'unrouted']),
+      body: incident.details ? incident.details.join(' \u00b7 ') : '',
+      promptLabel: 'Ask Hive',
+      prompt: 'I saw this incident: "' + (incident.summary || incident.kind) + '". Brief me on impact and whether you need a decision.',
     });
-    incidentsHtml += '</div>';
-    incidentsHtml += '</div>';
   }
-  renderQueueCards('queue-incidents', incidentsHtml, 'No active incidents.');
+
+  // Add live activity items from the live snapshot
+  var liveActivity = state.liveSnapshot && Array.isArray(state.liveSnapshot.activity)
+    ? state.liveSnapshot.activity : [];
+  for (var m = 0; m < liveActivity.length; m++) {
+    var act = liveActivity[m];
+    events.push({
+      ts: act.ts || '',
+      category: 'messages',
+      tone: act.tone || 'info',
+      title: act.title || act.kind || 'Activity',
+      actor: act.actor || '',
+      meta: joinMeta([act.kind || '', act.source || '']),
+      body: act.detail || '',
+      promptLabel: 'Follow Up',
+      prompt: 'Follow up on this: "' + (act.detail || act.title) + '". What changed, why it matters, and do you need anything from me?',
+    });
+  }
+
+  // Sort by timestamp descending
+  events.sort(function (a, b) { return (b.ts || '').localeCompare(a.ts || ''); });
+
+  // Apply filter
+  var activeFilter = state.eventStreamFilter || 'all';
+  var filtered = activeFilter === 'all' ? events : events.filter(function (ev) {
+    return ev.category === activeFilter;
+  });
+
+  if (filtered.length === 0) {
+    streamContainer.innerHTML = '<div class="rail-empty">No events match this filter.</div>';
+    return;
+  }
+
+  var html = '';
+  for (var n = 0; n < filtered.length && n < 30; n++) {
+    var ev = filtered[n];
+    html += '<div class="' + toneClass('queue-card', ev.tone) + '" data-event-category="' + escapeAttr(ev.category) + '">';
+    html += '<div class="queue-card-header">';
+    html += '<div class="queue-card-title">' + escapeHtml(ev.title) + '</div>';
+    html += '<div class="queue-card-time">' + escapeHtml(formatMoment(ev.ts)) + '</div>';
+    html += '</div>';
+    if (ev.direction) {
+      html += '<div class="queue-card-direction">' + escapeHtml(ev.direction) + '</div>';
+    }
+    html += '<div class="queue-card-meta">' + escapeHtml(joinMeta([ev.actor || '', ev.meta || ''])) + '</div>';
+    if (ev.body) {
+      html += '<div class="queue-card-body">' + escapeHtml(truncateText(ev.body, 200)) + '</div>';
+    }
+    html += '<div class="queue-card-actions">';
+    html += renderRailActionButton(ev.promptLabel || 'Ask Hive', {
+      'data-rail-action': 'send-prompt',
+      'data-rail-prompt': ev.prompt || '',
+    });
+    html += '</div>';
+    html += '</div>';
+  }
+
+  streamContainer.innerHTML = html;
 }
 
 function renderTimeline(items) {
@@ -3796,49 +2980,6 @@ async function refreshTimeline() {
     state.timelineItems = [];
     renderTimeline([]);
     renderLeadershipSurface();
-  }
-}
-
-function setupProcessLogs() {
-  var btn = document.getElementById('process-logs-refresh');
-  var backBtn = document.getElementById('process-logs-back');
-  var container = document.getElementById('process-logs-content');
-  if (btn) {
-    btn.addEventListener('click', function () {
-      scheduleProcessLogsRefresh(0);
-    });
-  }
-  if (backBtn) {
-    backBtn.addEventListener('click', function () {
-      clearProcessLogFocus();
-    });
-  }
-  if (container) {
-    container.addEventListener('scroll', function () {
-      if (!state.processLogsFocus) return;
-      var remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
-      state.processLogsStickToBottom = remaining < 48;
-    });
-  }
-}
-
-async function refreshProcessLogs() {
-  var project = getProjectFocus();
-  var params = {};
-
-  if (state.processLogsFocus) {
-    params.run = state.processLogsFocus;
-    params.lines = 400;
-  }
-
-  try {
-    var data = await apiGet(buildApiPath('/process-logs', project, params));
-    state.processLogsSnapshot = data;
-    renderProcessLogs(data);
-  } catch (e) {
-    console.error('Process logs refresh failed:', e);
-    state.processLogsSnapshot = null;
-    renderProcessLogs(null);
   }
 }
 
@@ -4174,23 +3315,22 @@ function setupLeadershipActions() {
     });
   }
 
-  var pulseToggle = document.getElementById('pulse-panel-toggle');
-  if (pulseToggle) {
-    pulseToggle.addEventListener('click', function () {
-      state.pulsesCollapsed = !state.pulsesCollapsed;
-      renderLeadershipSurface();
+  // Event stream filter chips
+  var filterContainer = document.getElementById('event-stream-filters');
+  if (filterContainer) {
+    filterContainer.addEventListener('click', function (e) {
+      var chip = e.target && e.target.closest ? e.target.closest('[data-event-filter]') : null;
+      if (!chip) return;
+      state.eventStreamFilter = chip.getAttribute('data-event-filter') || 'all';
+      var chips = filterContainer.querySelectorAll('[data-event-filter]');
+      for (var c = 0; c < chips.length; c++) {
+        chips[c].classList.toggle('event-filter-chip--active', chips[c] === chip);
+      }
+      renderQueueSnapshot(state.queueSnapshot);
     });
   }
 
   document.addEventListener('click', function (event) {
-    var toastDismiss = event.target && event.target.closest
-      ? event.target.closest('[data-toast-dismiss]')
-      : null;
-    if (toastDismiss) {
-      dismissToast(toastDismiss.getAttribute('data-toast-dismiss') || '');
-      return;
-    }
-
     var railButton = event.target && event.target.closest
       ? event.target.closest('[data-rail-action]')
       : null;
@@ -4222,11 +3362,6 @@ function setupLeadershipActions() {
         state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : [],
         railButton.getAttribute('data-rail-expanded') === 'true'
       );
-      return;
-    }
-
-    if (action === 'log') {
-      focusProcessLog(railButton.getAttribute('data-rail-run-id') || '');
       return;
     }
 
@@ -4379,9 +3514,6 @@ async function init() {
   // Set up stop all button
   setupStopAllButton();
 
-  // Set up process logs panel
-  setupProcessLogs();
-
   // Set up console detail modal
   setupConsoleDetailModal();
 
@@ -4400,7 +3532,6 @@ async function init() {
   renderCognition(null);
   renderQueueSnapshot(null);
   renderTimeline([]);
-  renderProcessLogs(null);
   renderLeadershipSurface();
 
   // Load initial data from API (non-blocking, graceful on failure)
@@ -4408,7 +3539,6 @@ async function init() {
   await loadConsoleHistory();
   await Promise.all([
     refreshLiveSnapshot(),
-    refreshProcessLogs(),
     refreshCognition(),
     refreshQueueSnapshot(),
     refreshTimeline(),
@@ -4416,10 +3546,6 @@ async function init() {
 
   setInterval(function () {
     refreshLiveSnapshot();
-  }, 2500);
-
-  setInterval(function () {
-    refreshProcessLogs();
   }, 2500);
 
   setInterval(function () {

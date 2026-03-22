@@ -50,6 +50,8 @@ export type RunResult = {
   agentId: string;
   status: Extract<RunStatus, "exited" | "failed" | "cancelled">;
   exitCode: number | null;
+  runtime: string | null;
+  model: string | null;
   assignmentMessage: string | null;
   assignmentStatusAfterExit: string | null;
   assignmentResolvedByWorker: boolean;
@@ -266,6 +268,8 @@ function toRunResult(path: string, raw: string): RunResult | null {
     agentId,
     status,
     exitCode: toNullableNumber(attributes["exit-code"]),
+    runtime: attributes["worker-runtime"] ?? null,
+    model: attributes["worker-model"] ?? null,
     assignmentMessage: attributes["assignment-message"] ?? null,
     assignmentStatusAfterExit: attributes["assignment-status-after-exit"] ?? null,
     assignmentResolvedByWorker: toBoolean(attributes["assignment-resolved-by-worker"]),
@@ -532,6 +536,14 @@ export async function writeRunResult(
     status: run.status,
     ended: run.ended ?? toIsoTimestamp(),
   };
+
+  if (run.runtime) {
+    attributes["worker-runtime"] = run.runtime;
+  }
+
+  if (run.model) {
+    attributes["worker-model"] = run.model;
+  }
 
   if (run.exitCode !== null) {
     attributes["exit-code"] = String(run.exitCode);

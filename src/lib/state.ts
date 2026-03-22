@@ -83,6 +83,8 @@ export type RecentResultSummaryItem = {
   agentId: string;
   status: RunResult["status"];
   exitCode: number | null;
+  runtime: string | null;
+  model: string | null;
   ended: string;
   assignmentMessage: string | null;
   changedFiles: string[];
@@ -323,6 +325,8 @@ function summarizeRecentResults(
       agentId: result.agentId,
       status: result.status,
       exitCode: result.exitCode,
+      runtime: result.runtime,
+      model: result.model,
       ended: result.ended,
       assignmentMessage: result.assignmentMessage,
       changedFiles: result.changedFiles,

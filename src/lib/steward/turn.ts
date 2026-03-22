@@ -1261,6 +1261,11 @@ function buildRunCompletionDelta(result: RunResult): string {
       ? result.finalVisibleOutput.split("\n").slice(0, 5).join("\n")
       : "(no output)";
   const outcomeLabel = digest?.outcome ?? result.status;
+  const modelLabel = result.runtime && result.model
+    ? ` | ran-on: ${result.runtime}/${result.model}`
+    : result.runtime
+      ? ` | ran-on: ${result.runtime}`
+      : "";
   const costLabel = result.costUsd != null ? ` | cost: $${result.costUsd.toFixed(4)}` : "";
   const filesLabel =
     (digest?.filesChanged.length ?? 0) > 0
@@ -1270,8 +1275,7 @@ function buildRunCompletionDelta(result: RunResult): string {
         : "";
 
   return [
-    `[run-completed] Worker ${result.agentId} finished (${outcomeLabel})${costLabel}${filesLabel}`,
-    `Run: ${result.runId} | exited: ${result.ended}`,
+    `[run-completed] Worker ${result.agentId} finished (${outcomeLabel})${modelLabel}${costLabel}${filesLabel}`,
     summaryText,
   ].join("\n");
 }
