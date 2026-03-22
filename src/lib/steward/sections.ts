@@ -206,9 +206,13 @@ export function renderRunResults(results: RunResult[]): string {
 
   return results
     .map((result) => {
+      const modelLabel = result.runtime
+        ? `${result.runtime}${result.model ? ` (${result.model})` : ""}`
+        : "(unknown)";
       const lines = [
         `### ${result.runId} (${result.agentId})`,
         `status: ${result.status}`,
+        `ran-on: ${modelLabel}`,
         `exit-code: ${result.exitCode ?? "unknown"}`,
         `assignment: ${result.assignmentMessage ?? "(none)"}`,
         `assignment-status-after-exit: ${result.assignmentStatusAfterExit ?? "(none)"}`,

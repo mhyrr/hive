@@ -78,13 +78,6 @@
         <p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>
       </div>
     </div>
-    <section class="pulse-panel" id="pulse-panel" hidden>
-      <div class="pulse-panel-header">
-        <div class="pulse-panel-kicker">Live Pulse</div>
-        <button class="pulse-panel-toggle" id="pulse-panel-toggle" type="button">Collapse</button>
-      </div>
-      <div class="pulse-panel-list" id="pulse-panel-list"></div>
-    </section>
     <form class="console-input" id="console-form">
       <textarea id="console-input" placeholder="Talk to HIVE... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
       <button type="submit" id="console-send-btn">Send</button>
@@ -109,58 +102,39 @@
           <div class="rail-empty">No project in focus yet.</div>
         </div>
       </section>
-      <section class="rail-section rail-section--active-agents">
-        <div class="rail-section-header">Active Agents</div>
-        <div class="live-agents" id="live-agents">
-          <div class="rail-empty">No active agents.</div>
-        </div>
-      </section>
       <section class="rail-section rail-section--cognition" id="cognition-section">
         <div class="rail-section-header">Cognition</div>
         <div class="cognition-panel" id="cognition-panel">
           <div class="rail-empty">Loading cognitive routing policy…</div>
         </div>
       </section>
-      <section class="rail-section rail-section--logs" id="process-logs-section">
-        <div class="process-logs-header">
-          <div class="process-logs-header-copy">
-            <span class="process-logs-title" id="process-logs-title">Raw Logs</span>
-            <span class="process-logs-subtitle" id="process-logs-subtitle" hidden></span>
-          </div>
-          <div class="process-logs-actions">
-            <button class="process-logs-back" id="process-logs-back" type="button" hidden>Back</button>
-            <button class="process-logs-refresh" id="process-logs-refresh" title="Refresh live data">Refresh</button>
-          </div>
-        </div>
-        <div class="process-logs-content" id="process-logs-content">
-          <div class="process-logs-empty">No live process logs yet.</div>
+      <section class="rail-section rail-section--active-agents">
+        <div class="rail-section-header">Active Agents</div>
+        <div class="live-agents" id="live-agents">
+          <div class="rail-empty">No active agents.</div>
         </div>
       </section>
     </section>
 
     <section class="rail-panel" id="rail-panel-queue" data-rail-panel="queue">
-      <section class="rail-section">
-        <div class="rail-section-header">Attention Queue</div>
-        <div class="queue-list" id="queue-attention">
-          <div class="rail-empty">Nothing needs you right now.</div>
+      <section class="rail-section rail-section--board-summary">
+        <div class="rail-section-header">Board</div>
+        <div class="board-summary" id="board-summary">
+          <div class="rail-empty">No board state available.</div>
         </div>
       </section>
-      <section class="rail-section">
-        <div class="rail-section-header">Pending Approvals</div>
-        <div class="queue-list" id="queue-approvals">
-          <div class="rail-empty">No pending approvals.</div>
+      <section class="rail-section rail-section--event-stream">
+        <div class="event-stream-header">
+          <div class="rail-section-header">Events</div>
+          <div class="event-stream-filters" id="event-stream-filters">
+            <button class="event-filter-chip event-filter-chip--active" type="button" data-event-filter="all">All</button>
+            <button class="event-filter-chip" type="button" data-event-filter="attention">Needs Attention</button>
+            <button class="event-filter-chip" type="button" data-event-filter="messages">Messages</button>
+            <button class="event-filter-chip" type="button" data-event-filter="human">Human</button>
+          </div>
         </div>
-      </section>
-      <section class="rail-section">
-        <div class="rail-section-header">Waiting On Human</div>
-        <div class="queue-list" id="queue-waiting-human">
-          <div class="rail-empty">Nothing is waiting on a human reply.</div>
-        </div>
-      </section>
-      <section class="rail-section">
-        <div class="rail-section-header">Incidents</div>
-        <div class="queue-list" id="queue-incidents">
-          <div class="rail-empty">No active incidents.</div>
+        <div class="event-stream-list" id="event-stream-list">
+          <div class="rail-empty">No events yet.</div>
         </div>
       </section>
     </section>
@@ -185,8 +159,6 @@
       <div class="turn-detail-dialog-body" id="turn-detail-body"></div>
     </div>
   </div>
-
-  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
   <script src="/app.js"></script>
 </body>
