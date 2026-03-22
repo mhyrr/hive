@@ -1,6 +1,6 @@
 import { UsageError } from "../lib/errors";
 import { appendFeedEntry } from "../lib/feed";
-import { captureGitStatusSnapshot, diffGitStatusSnapshots } from "../lib/git";
+import { captureGitContentFingerprint, captureGitStatusSnapshot, diffGitStatusSnapshots } from "../lib/git";
 import { appendLogEntry } from "../lib/log";
 import { findMessage, findOpenAssignmentMessage } from "../lib/messages";
 import { enqueueGoalForOrchestrator } from "../lib/steward/prompts";
@@ -316,6 +316,7 @@ Command: ${renderLaunchPreview(spec)}`;
           assignmentScope: assignmentMessage?.attributes.scope ?? null,
         });
   const beforeGit = captureGitStatusSnapshot(repoPath);
+  const beforeFingerprint = captureGitContentFingerprint(repoPath);
 
   let run = await createRunDraft({
     projectId: input.activeProject,
@@ -387,7 +388,11 @@ Command: ${renderLaunchPreview(spec)}`;
   });
 
   const afterGit = captureGitStatusSnapshot(repoPath);
-  const gitDelta = diffGitStatusSnapshots(beforeGit, afterGit);
+  const afterFingerprint = captureGitContentFingerprint(repoPath);
+  const gitDelta = diffGitStatusSnapshots(beforeGit, afterGit, {
+    beforeFingerprint,
+    afterFingerprint,
+  });
   const assignmentAfterExit = run.sourceMessage
     ? await findMessage(input.paths.msgDir, run.sourceMessage, input.activeProject)
     : null;

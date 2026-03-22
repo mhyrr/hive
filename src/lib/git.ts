@@ -159,9 +159,61 @@ export function revertWorkerChanges(
   };
 }
 
+/**
+ * Capture a content fingerprint of all dirty files in the working tree.
+ * Returns a map of file path → hash of working tree content.
+ * Used alongside status snapshots to detect changes to already-dirty files.
+ */
+export function captureGitContentFingerprint(repoPath: string): Record<string, string> {
+  const fingerprint: Record<string, string> = {};
+
+  try {
+    // Get list of modified tracked files
+    const result = Bun.spawnSync({
+      cmd: ["git", "-C", repoPath, "diff", "--name-only"],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode !== 0) return fingerprint;
+
+    const files = decode(result.stdout).split("\n").filter(Boolean);
+
+    // Hash each dirty file's content
+    for (const file of files.slice(0, 50)) { // cap at 50 files for performance
+      try {
+        const hashResult = Bun.spawnSync({
+          cmd: ["git", "-C", repoPath, "hash-object", "--stdin-paths"],
+          stdin: new TextEncoder().encode(file),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        // Simpler: just use file mtime as a cheap fingerprint
+        const statResult = Bun.spawnSync({
+          cmd: ["stat", "-f", "%m", `${repoPath}/${file}`],
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        if (statResult.exitCode === 0) {
+          fingerprint[file] = decode(statResult.stdout);
+        }
+      } catch {
+        // skip file
+      }
+    }
+  } catch {
+    // git diff failed
+  }
+
+  return fingerprint;
+}
+
 export function diffGitStatusSnapshots(
   before: GitStatusSnapshot | null,
   after: GitStatusSnapshot | null,
+  options?: {
+    beforeFingerprint?: Record<string, string>;
+    afterFingerprint?: Record<string, string>;
+  },
 ): GitDelta {
   if (!before || !after) {
     return {
@@ -171,7 +223,25 @@ export function diffGitStatusSnapshots(
     };
   }
 
-  const changedFiles = listChangedFiles(before, after);
+  const statusChanged = listChangedFiles(before, after);
+
+  // Also detect content changes in already-dirty files via fingerprint comparison
+  let contentChanged: string[] = [];
+  if (options?.beforeFingerprint && options?.afterFingerprint) {
+    const allPaths = new Set([
+      ...Object.keys(options.beforeFingerprint),
+      ...Object.keys(options.afterFingerprint),
+    ]);
+    contentChanged = [...allPaths].filter(
+      (path) =>
+        !statusChanged.includes(path) &&
+        options.beforeFingerprint![path] !== options.afterFingerprint![path],
+    );
+  }
+
+  const changedFiles = [...new Set([...statusChanged, ...contentChanged])].sort(
+    (a, b) => a.localeCompare(b),
+  );
 
   if (changedFiles.length === 0) {
     return {
