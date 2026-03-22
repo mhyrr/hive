@@ -171,13 +171,13 @@ export function inferRuntimeAuthMode(
   }
 
   if (normalized === "codex" || normalized === "openai") {
-    return hasEnvValue(env, "OPENAI_API_KEY") ? "api" : "unknown";
+    return hasEnvValue(env, "OPENAI_API_KEY") ? "api" : "subscription";
   }
 
   if (normalized === "gemini" || normalized === "gemini-cli" || normalized === "google") {
     return hasEnvValue(env, "GEMINI_API_KEY") || hasEnvValue(env, "GOOGLE_API_KEY")
       ? "api"
-      : "unknown";
+      : "subscription";
   }
 
   return "unknown";

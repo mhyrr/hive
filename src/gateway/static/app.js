@@ -35,6 +35,8 @@ var state = {
   timelineItems: [],
   railTab: 'live',
   eventStreamFilter: 'all',
+  usageChart: null,
+  usageHistory: [],
   cognitionRefreshTimer: null,
   agentSignals: {},
   notificationsPrimed: false,
@@ -74,6 +76,170 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// --- Animation Utilities ---
+
+function animateNumber(element, targetValue, duration) {
+  if (!element) return;
+  var startValue = parseFloat(element.textContent) || 0;
+  if (startValue === targetValue) return;
+  var startTime = null;
+  duration = duration || 400;
+  element.classList.add('animate-number');
+
+  function step(timestamp) {
+    if (!startTime) startTime = timestamp;
+    var progress = Math.min((timestamp - startTime) / duration, 1);
+    var eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+    var current = startValue + (targetValue - startValue) * eased;
+    if (Number.isInteger(targetValue)) {
+      element.textContent = Math.round(current);
+    } else {
+      element.textContent = current.toFixed(targetValue < 1 ? 4 : 2);
+    }
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    }
+  }
+
+  requestAnimationFrame(step);
+}
+
+function showSkeletonLoading(containerId, count) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+  var html = '';
+  for (var i = 0; i < (count || 3); i++) {
+    html += '<div class="skeleton skeleton-block"></div>';
+  }
+  container.innerHTML = html;
+}
+
+function getHealthPulseClass(health) {
+  if (!health || !health.status) return '';
+  var status = health.status.toLowerCase();
+  if (status === 'cruising') return 'agent-card--health-cruising';
+  if (status === 'working') return 'agent-card--health-working';
+  if (status === 'struggling') return 'agent-card--health-struggling';
+  if (status === 'stuck') return 'agent-card--health-stuck';
+  return '';
+}
+
+
+// --- Charts ---
+
+function initUsageChart(containerId) {
+  if (typeof uPlot === 'undefined') return null;
+  var container = document.getElementById(containerId);
+  if (!container) return null;
+
+  container.innerHTML = '';
+  var width = container.offsetWidth || 300;
+
+  var opts = {
+    width: width,
+    height: 130,
+    cursor: { show: true },
+    select: { show: false },
+    legend: { show: false },
+    scales: {
+      x: { time: true },
+      y: { auto: true, range: function(u, min, max) { return [0, max || 100]; } },
+    },
+    axes: [
+      {
+        stroke: 'rgba(168, 154, 136, 0.3)',
+        grid: { stroke: 'rgba(255,255,255,0.03)', width: 1 },
+        ticks: { stroke: 'rgba(255,255,255,0.03)', width: 1 },
+        font: '10px Azeret Mono',
+        size: 35,
+      },
+      {
+        stroke: 'rgba(168, 154, 136, 0.3)',
+        grid: { stroke: 'rgba(255,255,255,0.03)', width: 1 },
+        ticks: { stroke: 'rgba(255,255,255,0.03)', width: 1 },
+        font: '10px Azeret Mono',
+        size: 50,
+        values: function(u, vals) {
+          return vals.map(function(v) { return v >= 1000000 ? (v / 1000000).toFixed(1) + 'M' : v >= 1000 ? (v / 1000).toFixed(0) + 'k' : String(v); });
+        },
+      },
+    ],
+    series: [
+      {},
+      {
+        label: 'T3',
+        stroke: 'rgba(218, 162, 0, 0.8)',
+        fill: 'rgba(218, 162, 0, 0.12)',
+        width: 2,
+      },
+      {
+        label: 'T2',
+        stroke: 'rgba(74, 136, 120, 0.8)',
+        fill: 'rgba(74, 136, 120, 0.12)',
+        width: 2,
+      },
+      {
+        label: 'T1',
+        stroke: 'rgba(88, 136, 176, 0.8)',
+        fill: 'rgba(88, 136, 176, 0.12)',
+        width: 2,
+      },
+    ],
+  };
+
+  var data = [[], [], [], []];
+  var chart = new uPlot(opts, data, container);
+  return chart;
+}
+
+function updateUsageChart(cognitionSnapshot) {
+  if (typeof uPlot === 'undefined') return;
+
+  var usage = cognitionSnapshot && cognitionSnapshot.usage ? cognitionSnapshot.usage : null;
+  if (!usage || !usage.tiers) return;
+
+  var now = Math.floor(Date.now() / 1000);
+  var t3 = usage.tiers.tier3 && usage.tiers.tier3.totalTokens ? usage.tiers.tier3.totalTokens : 0;
+  var t2 = usage.tiers.tier2 && usage.tiers.tier2.totalTokens ? usage.tiers.tier2.totalTokens : 0;
+  var t1 = usage.tiers.tier1 && usage.tiers.tier1.totalTokens ? usage.tiers.tier1.totalTokens : 0;
+
+  state.usageHistory.push({ ts: now, t3: t3, t2: t2, t1: t1 });
+  if (state.usageHistory.length > 60) {
+    state.usageHistory = state.usageHistory.slice(-60);
+  }
+
+  var times = [];
+  var s1 = [];
+  var s2 = [];
+  var s3 = [];
+  for (var i = 0; i < state.usageHistory.length; i++) {
+    var pt = state.usageHistory[i];
+    times.push(pt.ts);
+    s1.push(pt.t3);
+    s2.push(pt.t2);
+    s3.push(pt.t1);
+  }
+
+  var chartContainer = document.getElementById('usage-chart-container');
+  if (!chartContainer) return;
+
+  if (!state.usageChart) {
+    state.usageChart = initUsageChart('usage-chart-container');
+  }
+
+  if (state.usageChart) {
+    state.usageChart.setData([times, s1, s2, s3]);
+  }
+}
+
+function destroyUsageChart() {
+  if (state.usageChart) {
+    state.usageChart.destroy();
+    state.usageChart = null;
+  }
+}
+
 
 function formatTime(iso) {
   if (!iso) return '';
@@ -211,26 +377,47 @@ function buildApiPath(basePath, project, params) {
   return query ? basePath + '?' + query : basePath;
 }
 
+var FILE_EXTENSIONS_RE = /\.(ts|tsx|js|jsx|mjs|cjs|json|md|css|html|yml|yaml|toml|sh|py|rs|go|java|c|cpp|h|rb|sql|graphql|proto|xml|svg|txt)$/i;
+
 function parseFileTarget(target) {
-  if (!target || target[0] !== '/') return null;
+  if (!target) return null;
 
   var normalized = String(target).trim();
-  var line = null;
-  var fragmentIndex = normalized.indexOf('#L');
 
+  // Strip trailing punctuation that's not part of the path
+  normalized = normalized.replace(/[,;:!?)]+$/, '');
+
+  var line = null;
+
+  // Handle #L123 fragment
+  var fragmentIndex = normalized.indexOf('#L');
   if (fragmentIndex !== -1) {
     var fragment = normalized.slice(fragmentIndex + 2);
     normalized = normalized.slice(0, fragmentIndex);
-    var match = fragment.match(/^(\d+)/);
-    if (match) {
-      line = match[1];
+    var fmatch = fragment.match(/^(\d+)/);
+    if (fmatch) {
+      line = fmatch[1];
     }
   }
 
-  return {
-    path: normalized,
-    line: line,
-  };
+  // Handle path:123 line suffix
+  var colonLineMatch = normalized.match(/^(.+?):(\d+)(?:-\d+)?$/);
+  if (colonLineMatch) {
+    normalized = colonLineMatch[1];
+    if (!line) line = colonLineMatch[2];
+  }
+
+  // Absolute path
+  if (normalized[0] === '/') {
+    return { path: normalized, line: line };
+  }
+
+  // Relative path with recognized extension
+  if (FILE_EXTENSIONS_RE.test(normalized) && !normalized.includes(' ') && !normalized.startsWith('http')) {
+    return { path: normalized, line: line };
+  }
+
+  return null;
 }
 
 function buildMarkdownHref(target) {
@@ -273,12 +460,14 @@ function renderInlineText(text) {
     var fileTarget = parseFileTarget(target);
 
     if (href) {
-      var attrs = 'class="turn-link" href="' + escapeAttr(href) + '" target="_blank" rel="noopener noreferrer"';
+      var attrs;
       if (fileTarget) {
-        attrs += ' data-open-path="' + escapeAttr(fileTarget.path) + '"';
+        attrs = 'class="turn-link turn-link--file" href="#" data-open-path="' + escapeAttr(fileTarget.path) + '"';
         if (fileTarget.line) {
           attrs += ' data-open-line="' + escapeAttr(fileTarget.line) + '"';
         }
+      } else {
+        attrs = 'class="turn-link" href="' + escapeAttr(href) + '" target="_blank" rel="noopener noreferrer"';
       }
 
       html += '<a ' + attrs + '>' +
@@ -295,7 +484,108 @@ function renderInlineText(text) {
   return html;
 }
 
-function renderRichText(text) {
+var markdownRendererReady = false;
+
+function initMarkdownRenderer() {
+  if (markdownRendererReady || typeof marked === 'undefined') return;
+
+  var renderer = new marked.Renderer();
+
+  renderer.link = function (data) {
+    var href = data.href || '';
+    var text = data.text || '';
+    var builtHref = buildMarkdownHref(href);
+    var fileTarget = parseFileTarget(href);
+
+    if (fileTarget) {
+      var fileAttrs = 'class="turn-link turn-link--file" href="#" data-open-path="' + escapeAttr(fileTarget.path) + '"';
+      if (fileTarget.line) {
+        fileAttrs += ' data-open-line="' + escapeAttr(fileTarget.line) + '"';
+      }
+      return '<a ' + fileAttrs + '>' + text + '</a>';
+    }
+
+    if (builtHref) {
+      return '<a class="turn-link" href="' + escapeAttr(builtHref) + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
+    }
+
+    return '<a class="turn-link" href="' + escapeAttr(href) + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
+  };
+
+  renderer.code = function (data) {
+    var code = data.text || '';
+    var lang = data.lang || '';
+    var highlighted = code;
+    if (lang && typeof Prism !== 'undefined' && Prism.languages[lang]) {
+      try {
+        highlighted = Prism.highlight(code, Prism.languages[lang], lang);
+      } catch (e) {
+        highlighted = escapeHtml(code);
+      }
+    } else {
+      highlighted = escapeHtml(code);
+    }
+    return '<pre class="turn-code-block language-' + escapeAttr(lang) + '"><code class="language-' + escapeAttr(lang) + '">' + highlighted + '</code></pre>';
+  };
+
+  renderer.codespan = function (data) {
+    var raw = data.text || '';
+    var fileTarget = parseFileTarget(raw);
+    if (fileTarget) {
+      var attrs = 'class="turn-link turn-link--file" href="#" data-open-path="' + escapeAttr(fileTarget.path) + '"';
+      if (fileTarget.line) {
+        attrs += ' data-open-line="' + escapeAttr(fileTarget.line) + '"';
+      }
+      return '<a ' + attrs + '><code class="turn-code-inline">' + escapeHtml(raw) + '</code></a>';
+    }
+    return '<code class="turn-code-inline">' + escapeHtml(raw) + '</code>';
+  };
+
+  renderer.heading = function (data) {
+    var level = data.depth || 2;
+    var tag = 'h' + Math.min(level, 4);
+    return '<' + tag + ' class="turn-heading turn-heading--' + level + '">' + data.text + '</' + tag + '>';
+  };
+
+  renderer.blockquote = function (data) {
+    return '<blockquote class="turn-blockquote">' + data.text + '</blockquote>';
+  };
+
+  renderer.table = function (data) {
+    return '<div class="turn-table-wrap"><table class="turn-table">' + data.header + data.body + '</table></div>';
+  };
+
+  renderer.hr = function () {
+    return '<hr class="turn-hr">';
+  };
+
+  marked.setOptions({
+    renderer: renderer,
+    gfm: true,
+    breaks: true,
+  });
+
+  markdownRendererReady = true;
+}
+
+function renderMarkdown(text) {
+  var source = sanitizeStewardLikeText(String(text || '')).replace(/\r\n/g, '\n').trim();
+  if (!source) return '<p class="turn-paragraph"></p>';
+
+  initMarkdownRenderer();
+
+  if (!markdownRendererReady) {
+    return renderRichTextFallback(source);
+  }
+
+  try {
+    return marked.parse(source);
+  } catch (e) {
+    return renderRichTextFallback(source);
+  }
+}
+
+function renderRichTextFallback(text) {
   var normalized = String(text || '').replace(/\r\n/g, '\n');
   var blocks = normalized.split(/\n{2,}/);
   var html = '';
@@ -314,6 +604,10 @@ function renderRichText(text) {
   }
 
   return html || '<p class="turn-paragraph"></p>';
+}
+
+function renderRichText(text) {
+  return renderMarkdown(text);
 }
 
 
@@ -1052,13 +1346,17 @@ function renderConsoleItem(item) {
   html += '</div></div>';
 
   if (item.itemType === 'draft' && !item.content) {
-    html += '<div class="turn-content">';
+    var elapsed = item.ts ? getMinutesSince(item.ts) : 0;
+    var elapsedStr = elapsed < 1 ? '<1m' : Math.round(elapsed) + 'm';
+    html += '<div class="turn-content turn-content--streaming">';
+    html += '<div class="turn-streaming-bar"></div>';
     if (item.statusText) {
-      html += '<div class="turn-draft-status">' + escapeHtml(item.statusText) + '</div>';
+      html += '<div class="turn-streaming-status">' + escapeHtml(item.statusText) + '</div>';
+    } else {
+      html += '<div class="turn-streaming-status">Thinking...</div>';
     }
-    html += '<span class="thinking-dots">';
-    html += '<span></span><span></span><span></span>';
-    html += '</span></div>';
+    html += '<div class="turn-streaming-elapsed">' + escapeHtml(elapsedStr) + ' elapsed</div>';
+    html += '</div>';
   } else {
     html += '<div class="turn-content">' + renderRichText(preview && !expanded ? preview.previewText : getConsoleItemSourceText(item)) + '</div>';
     if (preview) {
@@ -1124,6 +1422,24 @@ function renderConsoleHistory() {
       container.innerHTML = '<div class="console-welcome">' +
         '<p>Talk to the steward.</p>' +
         '<p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>' +
+        '<div class="console-welcome-prompts">' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="Give me a brief. What have the agents done recently, what is pending, and what needs my attention?">' +
+        '<span class="console-welcome-prompt-icon">&#x2728;</span>' +
+        '<span class="console-welcome-prompt-text">Get a brief</span>' +
+        '</button>' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="What is the current state of the board? Summarize tasks, blockers, and open decisions.">' +
+        '<span class="console-welcome-prompt-icon">&#x1F4CB;</span>' +
+        '<span class="console-welcome-prompt-text">Board status</span>' +
+        '</button>' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="What should I focus on right now? Prioritize the most impactful next step.">' +
+        '<span class="console-welcome-prompt-icon">&#x1F3AF;</span>' +
+        '<span class="console-welcome-prompt-text">What to focus on</span>' +
+        '</button>' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="Review recent agent work. Summarize what each agent accomplished and flag anything that needs review.">' +
+        '<span class="console-welcome-prompt-icon">&#x1F50D;</span>' +
+        '<span class="console-welcome-prompt-text">Review recent work</span>' +
+        '</button>' +
+        '</div>' +
         '</div>';
     }
     return;
@@ -1288,7 +1604,7 @@ function openConsoleDetailModal(index) {
   if (payload.content) {
     html += '<section class="turn-detail-section">';
     html += '<div class="turn-detail-section-title">Visible Message</div>';
-    html += '<pre class="turn-detail-pre">' + escapeHtml(payload.content) + '</pre>';
+    html += '<div class="turn-detail-markdown">' + renderMarkdown(payload.content) + '</div>';
     html += '</section>';
   }
   html += renderDetailSection('Usage', usageRows);
@@ -1359,6 +1675,14 @@ function setupConsoleDetailModal() {
           link.getAttribute('data-open-path') || '',
           link.getAttribute('data-open-line') || null
         );
+        return;
+      }
+
+      var welcomePrompt = event.target && event.target.closest
+        ? event.target.closest('[data-welcome-prompt]')
+        : null;
+      if (welcomePrompt) {
+        submitConsoleMessage(welcomePrompt.getAttribute('data-welcome-prompt') || '');
         return;
       }
 
@@ -2415,6 +2739,9 @@ function renderConsoleActivity(snapshot) {
   html += '</div>';
 
   container.innerHTML = html;
+
+  var hasActiveAgents = snapshot && snapshot.agents && snapshot.agents.length > 0;
+  container.classList.toggle('console-activity--live', hasActiveAgents || !!pendingConversation);
 }
 
 function renderLiveSummary(snapshot) {
@@ -2503,7 +2830,7 @@ function renderLiveAgents(agents) {
       descriptor = '';
     }
     if (Array.isArray(agent.tail) && agent.tail.length > 0) {
-      outputDetail = agent.tail.slice(-10).join('\n');
+      outputDetail = agent.tail.join('\n');
     } else if (agent.latestOutput) {
       outputDetail = String(agent.latestOutput);
     }
@@ -2522,7 +2849,8 @@ function renderLiveAgents(agents) {
         ? 'Waiting for the first streamed update from the steward.'
         : 'Waiting for the first visible update from this agent.';
     }
-    html += '<div class="agent-card' + (expanded ? ' agent-card--expanded' : '') + '" data-persona="' + escapeAttr(agent.persona || 'worker') + '">';
+    var healthPulse = getHealthPulseClass(health);
+    html += '<div class="agent-card' + (expanded ? ' agent-card--expanded' : '') + (healthPulse ? ' ' + healthPulse : '') + '" data-persona="' + escapeAttr(agent.persona || 'worker') + '">';
     html += '<div class="agent-card-header">';
     html += '<div class="agent-card-header-copy">';
     html += '<div class="agent-card-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</div>';
@@ -2533,13 +2861,35 @@ function renderLiveAgents(agents) {
     html += '<div class="' + toneClass('status-pill', toneFromStatus(agent.status)) + '">' + escapeHtml(agent.status || 'active') + '</div>';
     html += '</div>';
     html += '</div>';
-    html += '<div class="agent-card-meta">' + escapeHtml(joinMeta(meta)) + '</div>';
+    // Model/runtime chips
+    html += '<div class="agent-card-chips">';
+    if (agent.runtime) {
+      html += '<span class="agent-chip agent-chip--runtime">' + escapeHtml(agent.runtime) + '</span>';
+    }
+    if (agent.model) {
+      html += '<span class="agent-chip agent-chip--model">' + escapeHtml(agent.model) + '</span>';
+    }
+    if (agent.started) {
+      var elapsed = getMinutesSince(agent.started);
+      var elapsedLabel = elapsed < 1 ? '<1m' : (elapsed < 60 ? Math.round(elapsed) + 'm' : Math.round(elapsed / 60) + 'h');
+      html += '<span class="agent-chip agent-chip--duration">' + elapsedLabel + '</span>';
+    }
+    html += '</div>';
+
+    // Mini timeline bar
+    if (agent.started) {
+      html += '<div class="agent-timeline-bar" title="Agent lifecycle">';
+      html += '<div class="agent-timeline-fill"></div>';
+      html += '<div class="agent-timeline-pulse"></div>';
+      html += '</div>';
+    }
+
     html += '<div class="agent-card-summary">' + escapeHtml(truncateMultilineText(collapsedSummary, expanded ? 500 : 280)) + '</div>';
     if (expanded && health) {
       html += '<div class="agent-card-health-note">' + escapeHtml(health.summary) + '</div>';
     }
     if (expanded && outputDetail) {
-      html += '<div class="agent-card-output">' + escapeHtml(truncateMultilineText(outputDetail, 1200)) + '</div>';
+      html += '<div class="agent-card-output">' + escapeHtml(outputDetail) + '</div>';
     } else if (expanded) {
       var emptyOutput = agent.statusText || (agent.persona === 'steward'
         ? 'Waiting for the first streamed update from the steward.'
@@ -2649,6 +2999,8 @@ function renderCognition(snapshot) {
   var container = document.getElementById('cognition-panel');
   if (!container) return;
 
+  destroyUsageChart();
+
   var policy = snapshot && snapshot.policy ? snapshot.policy : null;
   updateBudgetChip(snapshot);
 
@@ -2718,6 +3070,7 @@ function renderCognition(snapshot) {
     html += renderCognitionUsageMeter('T2', usage.budgets && usage.budgets.tier2, usage.tiers && usage.tiers.tier2);
     html += renderCognitionUsageMeter('T1', usage.budgets && usage.budgets.tier1, usage.tiers && usage.tiers.tier1);
     html += '</div>';
+    html += '<div id="usage-chart-container" class="cognition-chart"></div>';
     html += '<div class="cognition-row cognition-row--lane">';
     html += '<div class="cognition-row-header">';
     html += '<div class="cognition-row-name">last wake</div>';
@@ -2753,11 +3106,22 @@ function renderQueueSnapshot(snapshot) {
       var approvalCount = Array.isArray(snapshot.approvals) ? snapshot.approvals.length : 0;
       var waitingCount = Array.isArray(snapshot.waitingOnHuman) ? snapshot.waitingOnHuman.length : 0;
       var incidentCount = Array.isArray(snapshot.incidents) ? snapshot.incidents.length : 0;
+      var total = approvalCount + waitingCount + incidentCount;
       var boardHtml = '<div class="board-summary-grid">';
       boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Approvals</div><div class="board-summary-stat-value' + (approvalCount > 0 ? ' board-summary-stat-value--attention' : '') + '">' + approvalCount + '</div></div>';
       boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Waiting</div><div class="board-summary-stat-value' + (waitingCount > 0 ? ' board-summary-stat-value--attention' : '') + '">' + waitingCount + '</div></div>';
       boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Incidents</div><div class="board-summary-stat-value' + (incidentCount > 0 ? ' board-summary-stat-value--error' : '') + '">' + incidentCount + '</div></div>';
       boardHtml += '</div>';
+      if (total > 0) {
+        var aPct = total > 0 ? Math.round((approvalCount / total) * 100) : 0;
+        var wPct = total > 0 ? Math.round((waitingCount / total) * 100) : 0;
+        var iPct = Math.max(0, 100 - aPct - wPct);
+        boardHtml += '<div class="board-visual-bar">';
+        if (approvalCount > 0) boardHtml += '<div class="board-visual-segment board-visual-segment--approval" style="width:' + Math.max(aPct, 5) + '%"><span>' + approvalCount + '</span></div>';
+        if (waitingCount > 0) boardHtml += '<div class="board-visual-segment board-visual-segment--waiting" style="width:' + Math.max(wPct, 5) + '%"><span>' + waitingCount + '</span></div>';
+        if (incidentCount > 0) boardHtml += '<div class="board-visual-segment board-visual-segment--incident" style="width:' + Math.max(iPct, 5) + '%"><span>' + incidentCount + '</span></div>';
+        boardHtml += '</div>';
+      }
       boardContainer.innerHTML = boardHtml;
     }
   }
@@ -2990,6 +3354,7 @@ async function refreshCognition() {
     var data = await apiGet(buildApiPath('/cognition', project));
     state.cognitionSnapshot = data;
     renderCognition(data);
+    updateUsageChart(data);
   } catch (e) {
     console.error('Cognition refresh failed:', e);
     state.cognitionSnapshot = null;
@@ -3103,7 +3468,7 @@ function setupConsoleInput() {
   // Auto-resize textarea
   input.addEventListener('input', function () {
     input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
   });
 }
 
@@ -3469,6 +3834,181 @@ function setupRestartButton() {
 
 // --- Keyboard Shortcuts ---
 
+// --- Command Palette ---
+
+var paletteCommands = [
+  { id: 'new-session', label: 'New Session', category: 'Session', shortcut: 'Ctrl+N' },
+  { id: 'brief', label: 'Ask for Brief', category: 'Session' },
+  { id: 'stop-all', label: 'Stop All Agents', category: 'Control' },
+  { id: 'restart-supervisor', label: 'Restart Supervisor', category: 'Control' },
+  { id: 'tab-live', label: 'Show Live Panel', category: 'Navigate' },
+  { id: 'tab-queue', label: 'Show Queue / Events', category: 'Navigate' },
+  { id: 'tab-timeline', label: 'Show Timeline', category: 'Navigate' },
+  { id: 'view-conversation', label: 'Conversation View', category: 'View' },
+  { id: 'view-all', label: 'Full Session View', category: 'View' },
+  { id: 'focus-input', label: 'Focus Input', category: 'Navigate', shortcut: '/' },
+];
+
+var paletteSelectedIndex = 0;
+
+function executePaletteCommand(id) {
+  closeCommandPalette();
+  if (id === 'new-session') { createNewSession(); return; }
+  if (id === 'brief') { submitConsoleMessage('Give me a brief leadership update. What have the agents done, what is pending, and what needs my attention?'); return; }
+  if (id === 'stop-all') { stopAllAgents(); return; }
+  if (id === 'restart-supervisor') { restartSupervisor(); return; }
+  if (id === 'tab-live') { setRailTab('live'); return; }
+  if (id === 'tab-queue') { setRailTab('queue'); return; }
+  if (id === 'tab-timeline') { setRailTab('timeline'); return; }
+  if (id === 'view-conversation') { setConsoleView('conversation'); return; }
+  if (id === 'view-all') { setConsoleView('all'); return; }
+  if (id === 'focus-input') { var inp = document.getElementById('console-input'); if (inp) inp.focus(); return; }
+
+  // Dynamic agent stop commands
+  if (id.indexOf('stop-agent-') === 0) {
+    var agentId = id.replace('stop-agent-', '');
+    apiPost('/stop', { target: agentId }).catch(function () {});
+    return;
+  }
+}
+
+function getDynamicCommands() {
+  var cmds = [];
+  var agents = state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : [];
+  for (var i = 0; i < agents.length; i++) {
+    var agent = agents[i];
+    cmds.push({
+      id: 'stop-agent-' + (agent.agentId || agent.runId),
+      label: 'Stop ' + (agent.displayName || agent.agentId || 'agent'),
+      category: 'Agents',
+    });
+  }
+  return cmds;
+}
+
+function fuzzyMatch(query, text) {
+  if (!query) return { score: 1, matched: true };
+  var q = query.toLowerCase();
+  var t = text.toLowerCase();
+  if (t === q) return { score: 100, matched: true };
+  if (t.indexOf(q) === 0) return { score: 80, matched: true };
+  if (t.indexOf(q) > 0) return { score: 60, matched: true };
+
+  // character-by-character fuzzy
+  var qi = 0;
+  for (var ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++;
+  }
+  if (qi === q.length) return { score: 40, matched: true };
+  return { score: 0, matched: false };
+}
+
+function renderPaletteResults(query) {
+  var container = document.getElementById('command-palette-results');
+  if (!container) return;
+
+  var allCommands = paletteCommands.concat(getDynamicCommands());
+  var results = [];
+  for (var i = 0; i < allCommands.length; i++) {
+    var cmd = allCommands[i];
+    var match = fuzzyMatch(query, cmd.label);
+    if (match.matched) {
+      results.push({ cmd: cmd, score: match.score });
+    }
+  }
+  results.sort(function (a, b) { return b.score - a.score; });
+
+  if (results.length === 0) {
+    container.innerHTML = '<div class="command-palette-empty">No matching commands</div>';
+    paletteSelectedIndex = -1;
+    return;
+  }
+
+  paletteSelectedIndex = Math.min(paletteSelectedIndex, results.length - 1);
+  if (paletteSelectedIndex < 0) paletteSelectedIndex = 0;
+
+  var html = '';
+  for (var j = 0; j < results.length; j++) {
+    var r = results[j];
+    var selected = j === paletteSelectedIndex;
+    html += '<div class="command-palette-result' + (selected ? ' command-palette-result--selected' : '') + '" data-command-id="' + escapeAttr(r.cmd.id) + '">';
+    html += '<div class="command-palette-result-label">' + escapeHtml(r.cmd.label) + '</div>';
+    html += '<div class="command-palette-result-meta">';
+    html += '<span class="command-palette-result-category">' + escapeHtml(r.cmd.category) + '</span>';
+    if (r.cmd.shortcut) {
+      html += '<span class="command-palette-result-shortcut">' + escapeHtml(r.cmd.shortcut) + '</span>';
+    }
+    html += '</div>';
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function openCommandPalette() {
+  var palette = document.getElementById('command-palette');
+  var input = document.getElementById('command-palette-input');
+  if (!palette || !input) return;
+  palette.hidden = false;
+  input.value = '';
+  paletteSelectedIndex = 0;
+  renderPaletteResults('');
+  requestAnimationFrame(function () { input.focus(); });
+}
+
+function closeCommandPalette() {
+  var palette = document.getElementById('command-palette');
+  if (palette) palette.hidden = true;
+}
+
+function setupCommandPalette() {
+  var input = document.getElementById('command-palette-input');
+  var backdrop = document.getElementById('command-palette-backdrop');
+  var results = document.getElementById('command-palette-results');
+
+  if (input) {
+    input.addEventListener('input', function () {
+      paletteSelectedIndex = 0;
+      renderPaletteResults(input.value);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      var items = document.querySelectorAll('.command-palette-result');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        paletteSelectedIndex = Math.min(paletteSelectedIndex + 1, items.length - 1);
+        renderPaletteResults(input.value);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        paletteSelectedIndex = Math.max(paletteSelectedIndex - 1, 0);
+        renderPaletteResults(input.value);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        var selected = document.querySelector('.command-palette-result--selected');
+        if (selected) {
+          executePaletteCommand(selected.getAttribute('data-command-id') || '');
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeCommandPalette();
+      }
+    });
+  }
+
+  if (backdrop) {
+    backdrop.addEventListener('click', closeCommandPalette);
+  }
+
+  if (results) {
+    results.addEventListener('click', function (e) {
+      var item = e.target.closest ? e.target.closest('.command-palette-result') : null;
+      if (item) {
+        executePaletteCommand(item.getAttribute('data-command-id') || '');
+      }
+    });
+  }
+}
+
+
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', function (e) {
     // Ctrl+N (or Cmd+N on Mac): new session
@@ -3476,6 +4016,12 @@ function setupKeyboardShortcuts() {
     if (modKey && e.key === 'n') {
       e.preventDefault();
       createNewSession();
+    }
+
+    // Cmd+K / Ctrl+K: open command palette
+    if (modKey && e.key === 'k') {
+      e.preventDefault();
+      openCommandPalette();
     }
   });
 }
@@ -3519,6 +4065,9 @@ async function init() {
 
   // Set up keyboard shortcuts
   setupKeyboardShortcuts();
+
+  // Set up command palette
+  setupCommandPalette();
 
   // Close dropdowns on outside click
   setupGlobalClickHandler();
