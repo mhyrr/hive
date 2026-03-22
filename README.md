@@ -1,58 +1,59 @@
-# HIVE
+# Hive
 
-HIVE is a file-native orchestration layer for AI agent swarms.
+Lightweight, multi-model, crash-resilient agent orchestration.
 
-It gives you:
+Hive is an orchestrator for AI coding agents. It belongs to the same
+family as OpenHands, Claude Code, and Aider. Its contribution is not a
+new paradigm — it is a set of architectural bets about how orchestration
+should work when you have access to many models, when processes die, and
+when coordination costs matter.
 
-- a persistent hive substrate in `~/.hive/`
-- a steward that coordinates work and talks to the human
-- an ephemeral worker fleet with cognitive personas across any model
-- event-driven coordination with ~200ms handoffs
-- runtime-agnostic execution across Claude, Codex, Gemini, Ollama, and future CLIs
-- a gateway UI for live observation and steering
+![Hive Gateway](hive.png)
 
-The core bet: files are the API. Durable state lives in markdown under
-`~/.hive/`; agents are ephemeral and replaceable.
+## Why Hive
 
-![HIVE Gateway](hive.png)
+**Runtime-agnostic orchestration.** Most agent tools are single-model.
+Claude Code runs Claude. Codex runs GPT. Hive dispatches to Claude, GPT,
+Gemini, DeepSeek, and local Ollama models through a common adapter
+interface. The coordinator picks runtime and model per task. You are not
+locked to one provider's pricing, capabilities, or uptime.
 
-## What HIVE Is
+**Token arbitrage.** Route cheap work to cheap models, expensive work to
+expensive models. A local qwen3:4b handles diff triage in 200ms for
+free. Haiku classifies messages for fractions of a cent. Opus gets called
+for the hard problems. The system tracks token usage and cost per run.
 
-HIVE is a shared operating surface for a team of minds, not a monolithic agent
-runtime.
+**File-native state.** All durable state lives in markdown files under
+`~/.hive/`. No database, no in-memory queues, no process-bound state. If
+every process dies, the hive is still there on disk. Restart and resume.
+For long-running autonomous operations, durability beats performance.
 
-- The **steward** owns direction, synthesis, delegation, and human communication.
-  It runs as a persistent session and coordinates everything.
-- **Workers** are ephemeral specialists. The steward picks a model and persona
-  for each task from a pool. No fixed roster, no named agents.
-- The **hive substrate** persists identity, memory, plans, board state,
-  messages, runs, and sessions across restarts.
-- The **gateway** is a live operator console over the same substrate.
+**Coordination separated from execution.** The steward coordinates.
+Workers execute. The steward never writes code — it reads the board,
+talks to the human, picks a model and persona, writes an assignment, and
+waits for results. Workers are ephemeral processes that receive a scoped
+task, do the work, report back, and exit. Failure is contained. Context
+stays clean.
 
-Because of that separation:
+## The Core Loop
 
-- prompts and files define coordination behavior
-- runtimes can change without rewriting the system
-- process restarts do not erase the hive's memory or state
-- the steward picks the right model for each task dynamically
+```
+Human speaks
+  -> Steward responds immediately (warm persistent session)
+  -> If work needed: steward writes assignment to msg/
+  -> File watcher fires (~200ms) -> worker launches
+  -> Worker completes -> watcher fires (~200ms) -> steward notified
+  -> Steward synthesizes -> responds to human
+  -> Loop continues
+```
 
-## Why Files
-
-HIVE keeps coordination in inspectable artifacts instead of hidden runtime
-state.
-
-- `PLAN.md` defines the mission
-- `BOARD.md` tracks live work and blockers
-- `LOG.md` records durable session history
-- `msg/*.md` is the message bus; assignment files trigger worker launches
-- `memory/` accumulates cross-project learning
-- `projects/<project>/state/` holds disposable derived state
-
-If everything stops, the hive is still there on disk.
+Coordination is event-driven through filesystem watchers. Total latency
+per hop is ~200ms. The supervisor's 120s poll is a safety net for zombie
+cleanup, not the primary coordination path.
 
 ## Quick Start
 
-### 1. Build the CLI
+### 1. Build
 
 ```bash
 bun build --compile ./bin/hive.ts --outfile hive
@@ -61,29 +62,22 @@ bun build --compile ./bin/hive.ts --outfile hive
 
 Or run directly: `bun run bin/hive.ts help`
 
-### 2. Bootstrap the hive
+### 2. Bootstrap
 
 ```bash
 hive init
 ```
 
-This scaffolds `~/.hive/` with:
+Scaffolds `~/.hive/` with identity files, default personas, skills,
+memory directories, and config.
 
-- `SOUL.md`, shared culture and standards
-- `IDENTITY.md`, what the hive is
-- `SELF.md`, user preferences
-- default personas (steward, architect, craftsman, critic, scout)
-- default skills
-- memory directories
-- the global config and feed
-
-### 3. Make it yours
+### 3. Configure
 
 Edit these first:
 
-- `~/.hive/SOUL.md`, shared values every agent carries
-- `~/.hive/IDENTITY.md`, who the hive is
-- `~/.hive/SELF.md`, who you are and how you work
+- `~/.hive/SOUL.md` — shared values every agent carries
+- `~/.hive/SELF.md` — who you are and how you work
+- `~/.hive/config.md` — model pool and runtime defaults
 
 ### 4. Register a project
 
@@ -91,9 +85,9 @@ Edit these first:
 hive project add myapp /absolute/path/to/myapp
 ```
 
-### 5. Configure your model pool
+### 5. Configure models
 
-Edit `~/.hive/config.md` and define available models:
+Edit `~/.hive/config.md`:
 
 ```md
 ## Model Pool
@@ -104,44 +98,67 @@ Edit `~/.hive/config.md` and define available models:
 - qwen: ollama, qwen3:4b, local fast triage
 ```
 
-The model pool is hive-wide, available to all projects. The steward sees
-this pool and picks model + persona per task. No fixed team roster.
+The steward sees this pool and picks model + persona per task.
 
-### 6. Start operating
+### 6. Start
 
 ```bash
 hive start --open
 ```
 
-This starts the gateway (web UI), managed supervisor, and file watchers.
-Open the console and talk to the steward.
-
-Or from the terminal:
+Starts the gateway (web UI), supervisor, and file watchers. Or from
+the terminal:
 
 ```bash
 hive say "build the auth system"
 hive console
 ```
 
-## The Core Loop
+## Architecture
 
-```
-Human speaks
-  → Steward responds immediately (warm persistent session)
-  → If work needed: steward writes assignment message to msg/
-  → File watcher fires (~200ms) → dispatch → worker launches
-  → Worker completes → run watcher fires (~200ms) → notification queued
-  → Next steward turn drains notifications → synthesizes → responds
-  → Loop continues
-```
+### The Hive
 
-Coordination is event-driven through file system watchers. The supervisor
-poll (120s) is only a safety net for zombie cleanup.
+The durable substrate at `~/.hive/`. Identity, memory, configuration,
+and state that persists across sessions, projects, and process restarts.
 
-## Ephemeral Workers
+### The Steward
 
-Workers are ephemeral model+persona combinations that the steward creates on
-demand.
+A persistent coordinator session. Talks to the human. Maintains context
+across a conversation. Picks models and personas for each task. Delegates
+through assignment messages. Synthesizes worker results. Never executes
+code itself.
+
+### Workers
+
+Ephemeral processes with scoped assignments. Spawned from the model pool
+with a persona. Read the substrate, do their work, report back, exit.
+Any runtime: Claude, Codex, Gemini, Ollama.
+
+### Personas
+
+Cognitive orientations, not job titles:
+
+- **architect** — system design, structure, trade-offs
+- **craftsman** — implementation, code quality
+- **critic** — review, edge cases, testing
+- **scout** — research, exploration, alternatives
+
+### The Gateway
+
+Live web UI over the hive substrate:
+
+- Console sessions with the steward
+- Active-agent view with persona and model info
+- Process log inspection
+- Cognition panel (routing policy, budget tracking)
+
+![Console session](hive1.png)
+
+![Process logs](hive2.png)
+
+![Multiple agents](hive_multi.png)
+
+## Workers in Detail
 
 The steward writes an assignment file:
 
@@ -162,106 +179,51 @@ launch: auto
 Implement POST /api/auth/login with JWT tokens.
 ```
 
-The watcher detects the file, the supervisor launches the worker, the worker
-runs with the craftsman persona on opus, completes, and the steward gets
+The watcher detects it, the supervisor launches the worker, the worker
+runs with the craftsman persona on Opus, completes, and the steward gets
 notified.
-
-Available personas:
-- **architect**: system design, structure, trade-offs
-- **craftsman**: implementation, code quality
-- **critic**: review, edge cases, testing
-- **scout**: research, exploration, alternatives
-
-## Mental Model
-
-### The Hive
-
-The durable operating system:
-
-- soul, identity, user preferences
-- memory (knowledge, decisions, entities)
-- projects, sessions, feed, messages
-
-### The Steward
-
-The persistent coordinator:
-
-- talks to the human
-- maintains session continuity
-- picks models and personas for each task
-- delegates through assignment messages
-- synthesizes worker results
-- auto-wakes when workers complete (silent when nothing new)
-
-### The Workers
-
-Ephemeral runs with scoped assignments:
-
-- spawned from the model pool with a persona
-- read the substrate, do their work, report back, exit
-- any runtime: Claude, Codex, Gemini, Ollama
-
-## Gateway
-
-The gateway is the live UI over the hive substrate.
-
-```bash
-hive start --open
-```
-
-It provides:
-
-- persistent console sessions with the steward
-- live active-agent view with persona and model info
-- process log inspection
-- session history and timeline
-- cognition panel (routing policy, execution lane, budget tracking)
-
-Screens:
-
-![Console session with the steward](hive1.png)
-
-![Process logs and run details](hive2.png)
-
-![Multiple agent types working together](hive_multi.png)
 
 ## File Layout
 
 ```text
 ~/.hive/
-├── SOUL.md
-├── IDENTITY.md
-├── SELF.md
-├── AGENTS.md
-├── TRUST.md
-├── config.md
-├── feed.md
-├── personas/
-├── skills/
+├── SOUL.md                 # shared culture
+├── IDENTITY.md             # what the hive is
+├── SELF.md                 # user preferences
+├── AGENTS.md               # operational protocols
+├── config.md               # model pool, runtime config
+├── feed.md                 # event stream
+├── personas/               # reusable persona templates
+├── skills/                 # operational skills
 ├── memory/
-│   ├── knowledge.md
-│   ├── decisions.md
-│   ├── projects/
-│   ├── journal/
-│   ├── entities/
-│   └── state/
+│   ├── knowledge.md        # curated cross-project facts
+│   ├── decisions.md        # architecture decisions
+│   ├── projects/           # per-project learnings
+│   ├── journal/            # daily logs
+│   └── state/              # derived state
 ├── projects/
 │   └── <project>/
-│       ├── config.md        # model pool, rules, stack
-│       ├── PLAN.md
-│       ├── BOARD.md
-│       ├── LOG.md
-│       ├── runs/
-│       ├── supervisor/
-│       └── state/
-├── msg/                     # assignment messages trigger worker launches
-├── sessions/
-├── approvals/
-├── events/
-└── archive/
+│       ├── config.md       # repo path, rules, stack
+│       ├── PLAN.md         # current mission
+│       ├── BOARD.md        # live state (steward-owned)
+│       ├── LOG.md          # session history
+│       ├── runs/           # worker execution records
+│       └── state/          # derived runtime state
+├── msg/                    # message bus (one file per message)
+├── sessions/               # session metadata
+└── archive/                # past sessions
 ```
 
-## Core Commands
+## Commands
+
+### Human Interface
+
+| Command | Purpose |
+| --- | --- |
+| `hive start [--open]` | Start gateway + supervisor |
+| `hive console` | Interactive steward session |
+| `hive say <message>` | One-shot steward turn |
+| `hive watch [count]` | Live operator console |
 
 ### Setup
 
@@ -269,24 +231,14 @@ Screens:
 | --- | --- |
 | `hive init` | Scaffold `~/.hive/` |
 | `hive project add <name> <path>` | Register a project |
-| `hive work [project]` | Show or switch the active project |
+| `hive work [project]` | Show or switch active project |
 
-### Human Interface
-
-| Command | Purpose |
-| --- | --- |
-| `hive start [--open]` | Start gateway + managed supervisor |
-| `hive console` | Interactive steward session |
-| `hive say <message>` | One-shot steward turn |
-
-### Workers / Supervision
+### Workers
 
 | Command | Purpose |
 | --- | --- |
 | `hive launch <agent>` | Run a worker manually |
 | `hive supervise` | Background auto-launch loop |
-| `hive supervise status` | Show supervisor state |
-| `hive supervise stop` | Stop the supervisor |
 | `hive ps` | Show active and recent runs |
 | `hive stop <agent\|run>` | Stop an active run |
 
@@ -295,37 +247,24 @@ Screens:
 | Command | Purpose |
 | --- | --- |
 | `hive msg <from> <to> <body>` | Create a message |
-| `hive msg show <id>` | Show a message |
-| `hive msg resolve <id> <actor> <answer>` | Resolve a thread |
-| `hive msg close <id> <actor> [note]` | Close a thread |
-| `hive inbox [agent]` | Show open messages |
 | `hive nudge <message>` | Human priority signal |
-| `hive log <message>` | Append durable project log |
+| `hive inbox [agent]` | Show open messages |
+| `hive log <message>` | Append to project log |
+| `hive status` | Board + open-message summary |
+| `hive feed [count]` | Event stream |
 
-### Inspection
-
-| Command | Purpose |
-| --- | --- |
-| `hive status` | Current board + open-message status |
-| `hive feed [count]` | High-signal event stream |
-| `hive watch [count]` | Live operator console |
-| `hive prompt <agent>` | Assemble the full prompt for an agent |
-| `hive runtimes` | Show runtime adapters |
-| `hive cognition` | Show cognitive routing policy |
-
-### Memory / Maintenance
+### Memory
 
 | Command | Purpose |
 | --- | --- |
 | `hive memory` | Show project memory |
-| `hive memory fact\|convention\|decision\|question <text>` | Append memory |
-| `hive memory extract` | Rebuild derived memory state |
-| `hive sync` | Copy plan into the repo |
-| `hive archive` | Snapshot and roll the session |
+| `hive memory fact\|decision <text>` | Append memory |
+| `hive sync` | Copy plan into repo |
+| `hive archive` | Snapshot and roll session |
 
 ## Configuration
 
-### Global config: `~/.hive/config.md`
+### Global: `~/.hive/config.md`
 
 ```md
 runtime: claude
@@ -336,13 +275,12 @@ pi-model-claude: claude-sonnet-4-6
 pi-auth-anthropic: oauth-only
 
 cognitive-bias: balanced
-cognitive-max-fanout: 4
 cognitive-max-parallel: 3
 tier1_local: qwen3:4b
 ollama-base-url: http://127.0.0.1:11434
 ```
 
-### Project config: `~/.hive/projects/<project>/config.md`
+### Project: `~/.hive/projects/<project>/config.md`
 
 ```md
 path: /absolute/path/to/repo
@@ -355,14 +293,14 @@ path: /absolute/path/to/repo
 ## Requirements
 
 - [Bun](https://bun.sh/) 1.3+
-- macOS or Linux shell environment
+- macOS or Linux
 
 Optional, depending on your model pool:
 
 - `claude` CLI for Claude models
-- `codex` CLI for OpenAI models and Ollama routing
+- `codex` CLI for OpenAI models
 - `gemini` CLI for Gemini models
-- `ollama` for local models (routed through codex with `--oss`)
+- `ollama` for local models
 
 ## Development
 
@@ -376,32 +314,24 @@ Environment variables:
 - `HIVE_HOME`: override `~/.hive/`
 - `HIVE_FIXED_NOW`: deterministic timestamps in tests
 
-## Current Status
+## Design Values
 
-Implemented:
+**Inspectability over abstraction.** `cat BOARD.md` tells you what is
+happening. No query language, no dashboard required.
 
-- file-native hive substrate
-- persistent steward session via Pi-agent SDK
-- ephemeral model pool (steward picks model+persona per task)
-- event-driven coordination with file watchers (~200ms handoffs)
-- auto-wake steward on worker completion (silent when nothing new)
-- runtime adapters for Claude, Codex, Gemini, and Ollama
-- gateway web UI with live agent view
-- disposable worker runs with persona assignment
-- cognitive routing policy surface
+**Durability over performance.** Files survive crashes, are trivially
+backed up, and can be versioned with git.
 
-Still to do:
+**Policy over infrastructure.** Routing decisions are configuration, not
+a distributed scheduler.
 
-- gateway UI updates for ephemeral worker display
-- idle log and memory compression
-- external event integration
-- IDENTITY.md / steward persona separation
+**Simplicity over features.** Zero npm dependencies. Markdown is the data
+model. Compiles to a single binary.
 
 ## Further Reading
 
-- [docs/CORE-LOOP-CONSOLIDATION.md](./docs/CORE-LOOP-CONSOLIDATION.md)
-- [docs/USAGE.md](./docs/USAGE.md)
-- [docs/PERSISTENT-STEWARD-DESIGN.md](./docs/PERSISTENT-STEWARD-DESIGN.md)
-- [docs/COGNITIVE-RESOURCE-MANAGEMENT.md](./docs/COGNITIVE-RESOURCE-MANAGEMENT.md)
-- [docs/PHASE-5-GATEWAY.md](./docs/PHASE-5-GATEWAY.md)
-- [docs/FINAL-PRD.md](./docs/FINAL-PRD.md)
+- [docs/PHILOSOPHY.md](./docs/PHILOSOPHY.md) — architectural bets and honest positioning
+- [docs/CORE-LOOP-CONSOLIDATION.md](./docs/CORE-LOOP-CONSOLIDATION.md) — watcher-based coordination
+- [docs/PERSISTENT-STEWARD-DESIGN.md](./docs/PERSISTENT-STEWARD-DESIGN.md) — steward runtime
+- [docs/COGNITIVE-RESOURCE-MANAGEMENT.md](./docs/COGNITIVE-RESOURCE-MANAGEMENT.md) — model routing
+- [docs/FINAL-PRD.md](./docs/FINAL-PRD.md) — complete requirements
