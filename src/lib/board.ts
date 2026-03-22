@@ -6,11 +6,18 @@ export type BoardAgent = {
   fields: Record<string, string>;
 };
 
+export type TaskDependency = {
+  taskLine: string;
+  taskId: string | null;
+  dependsOn: string[];
+};
+
 export type ParsedBoard = {
   tasks: string[];
   agents: BoardAgent[];
   blockers: string[];
   decisions: string[];
+  dependencies: TaskDependency[];
   raw: string;
 };
 
@@ -198,12 +205,48 @@ function parseTimeOfDay(value: string): Date | null {
   return date;
 }
 
+function parseTaskDependencies(board: string): TaskDependency[] {
+  const taskLines = parseTaskLines(board);
+  const results: TaskDependency[] = [];
+
+  for (const line of taskLines) {
+    const segments = parsePipeRow(line);
+    if (!segments) continue;
+
+    // Look for a "depends:" or "depends_on:" segment.
+    let taskId: string | null = null;
+    const dependsOn: string[] = [];
+
+    for (const segment of segments) {
+      const depMatch = segment.match(/^depends(?:_on)?:\s*(.+)$/i);
+      if (depMatch) {
+        dependsOn.push(
+          ...depMatch[1].split(",").map((d) => d.trim()).filter(Boolean),
+        );
+        continue;
+      }
+
+      // First pipe-separated segment that looks like a task ID.
+      if (!taskId && /^[a-z0-9_-]+$/i.test(segment) && !segment.startsWith("[")) {
+        taskId = segment;
+      }
+    }
+
+    if (dependsOn.length > 0) {
+      results.push({ taskLine: line, taskId, dependsOn });
+    }
+  }
+
+  return results;
+}
+
 export function parseBoard(board: string): ParsedBoard {
   return {
     tasks: parseTaskLines(board),
     agents: parseAgentSections(board),
     blockers: parseSectionLines(board, "Blockers"),
     decisions: parseSectionLines(board, "Decisions"),
+    dependencies: parseTaskDependencies(board),
     raw: board.trim(),
   };
 }

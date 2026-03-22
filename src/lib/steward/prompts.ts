@@ -91,7 +91,7 @@ ${modelPoolSection}
 
 Session rules:
 - When the human specifies a model, runtime, or perspective, honor that choice exactly. Do not substitute a cheaper model. Human model requests are non-negotiable.
-- Use compact state first. Only read raw files when the turn actually needs them.
+- Start with the compact state summary in your prompt. If you need more detail, use the inspection tools (\`inspect_board\`, \`inspect_messages\`, \`inspect_memory\`, \`inspect_results\`, \`inspect_history\`) to pull specific context on demand. Don't request everything — pull only what the current task needs.
 - Use absolute paths when working across HIVE home and project files.
 - Update PLAN.md, BOARD.md, LOG.md, and message files when state changes.
 - Use the \`delegate\` tool to dispatch workers. Do NOT write assignment files manually with \`write\`.
@@ -195,38 +195,33 @@ export function buildPersistentStewardRefreshMessage(input: StewardContext & {
   cognitiveRoutingPolicy: string;
   globalConfig?: string;
 }): string {
-  const modelPool = input.globalConfig ? parseModelPool(input.globalConfig) : [];
-  const modelPoolSection = renderModelPoolSection(modelPool);
+  // Refresh messages are lean by design — only volatile state that changed
+  // since the last turn. Stable context (paths, model pool, routing policy)
+  // is already in the system prompt or the bootstrap message, so repeating
+  // it here wastes tokens and dilutes the signal. This pattern follows the
+  // "messages for updates, not prompt mutations" principle from Claude Code:
+  // keep the prefix stable, send only deltas as conversation messages.
 
-  return `Refresh the existing live HIVE steward session with the latest compact state and then answer the human turn.
+  const sections: string[] = [
+    "Continue the HIVE steward session. Here is the latest state update.",
+  ];
 
-## Session
-- project: ${input.projectId}
-- repo: ${input.repoPath}
-- current-revision: ${input.currentRevision}
-- last-revision-seen-in-hive-session: ${input.sessionRevision}
-- configured-steward-runtime: ${input.sessionRuntime}${input.sessionModel ? ` (${input.sessionModel})` : ""}
+  // Session revision tracking — always include so steward knows where it is.
+  sections.push(
+    `## Session Update`,
+    `- current-revision: ${input.currentRevision}`,
+    `- last-revision-seen: ${input.sessionRevision}`,
+  );
 
-${modelPoolSection}
+  // Delta history — only include if there are actual changes.
+  const deltaText = renderDeltaHistory(input.deltaHistory, input.sessionRevision);
+  if (input.deltaHistory.length > 0) {
+    sections.push(`## Changes Since Last Turn`, deltaText);
+  }
 
-  ${renderPathList("Current Paths", [
-    { label: "project-config", value: input.projectPaths.config },
-    { label: "PLAN.md", value: input.projectPaths.plan },
-    { label: "BOARD.md", value: input.projectPaths.board },
-    { label: "LOG.md", value: input.projectPaths.log },
-    { label: "project-memory", value: input.projectPaths.memory },
-    { label: "messages-dir", value: input.hivePaths.msgDir },
-    { label: "state-dir", value: input.projectPaths.stateDir },
-  ])}
-
-## Cognitive Routing Policy
-${input.cognitiveRoutingPolicy}
-
-## Delta Since Last Seen
-${renderDeltaHistory(input.deltaHistory, input.sessionRevision)}
-
-${renderCompactState({
-    heading: "Compact Snapshot",
+  // Compact state snapshot — always include but keep it tight.
+  sections.push(renderCompactState({
+    heading: "Current State",
     boardDigest: input.boardDigest,
     openDecisionsDigest: input.openDecisionsDigest,
     openMessagesDigest: input.openMessagesDigest,
@@ -237,19 +232,20 @@ ${renderCompactState({
     phaseSummaryDigest: input.phaseSummaryDigest,
     memoryHotsetDigest: input.memoryHotsetDigest,
     staleMemoryDigest: input.staleMemoryDigest,
-  })}
+  }));
 
-${renderDurableMemory({
+  // Durable memory — only recent decisions and entity updates, skip
+  // global knowledge (already loaded in bootstrap, changes rarely).
+  sections.push(renderDurableMemory({
     knowledgeDigest: null,
     recentDecisionsDigest: input.recentDecisionsDigest,
     projectEntityDigest: input.projectEntityDigest,
-  })}
+  }));
 
-## Recent HIVE Session Tail
-${input.recentTurns}
+  // Human turn — the actual message.
+  sections.push(`## Human Turn`, input.humanMessage);
 
-## Human Turn
-${input.humanMessage}`;
+  return sections.join("\n\n");
 }
 
 export function buildDirectStewardTurnPrompt(input: StewardContext & {

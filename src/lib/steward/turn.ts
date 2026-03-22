@@ -543,6 +543,7 @@ async function startPersistentStewardHandle(input: {
     msgDir: input.hivePaths.msgDir,
     projectId: input.projectId,
     globalConfig: input.globalConfig,
+    hivePaths: input.hivePaths,
   }) as never);
 
   if (!process.env.HIVE_TEST_PI_BEHAVIOR) {
@@ -938,15 +939,25 @@ export async function runPersistentStewardTurn(input: {
       outputChain: Promise.resolve(),
     };
     handle.activeTurn = turn;
-    handle.systemPrompt = systemPrompt;
-    handle.agent.setSystemPrompt(systemPrompt);
-    handle.agent.setTools(buildPersistentStewardTools({
-      hiveHome: input.hivePaths.home,
-      repoPath: context.repoPath,
-      msgDir: input.hivePaths.msgDir,
-      projectId: input.projectId,
-      globalConfig: context.globalConfig,
-    }) as never);
+    // Only reset system prompt if it actually changed — resetting invalidates
+    // the provider's automatic prefix cache for the entire conversation.
+    if (handle.systemPrompt !== systemPrompt) {
+      handle.systemPrompt = systemPrompt;
+      handle.agent.setSystemPrompt(systemPrompt);
+    }
+
+    // Only rebuild tools on first bootstrap — tool definitions are stable
+    // within a session and changing them breaks prefix caching.
+    if (!handle.bootstrapped) {
+      handle.agent.setTools(buildPersistentStewardTools({
+        hiveHome: input.hivePaths.home,
+        repoPath: context.repoPath,
+        msgDir: input.hivePaths.msgDir,
+        projectId: input.projectId,
+        globalConfig: context.globalConfig,
+        hivePaths: input.hivePaths,
+      }) as never);
+    }
     clearIdleTimer(handle);
 
     // Drain any queued worker-completion notifications and prepend them
