@@ -720,7 +720,7 @@ export async function buildGatewayLiveSnapshot(input: {
         ...agentContext,
         agentId: run.agentId,
       });
-      const tail = await readRunOutputTail(run, 12);
+      const tail = await readRunOutputTail(run, 50);
 
       return {
         runId: run.runId,

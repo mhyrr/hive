@@ -1,8 +1,87 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { getEnvApiKey, getModel, getModels, type KnownProvider } from "@mariozechner/pi-ai";
 
 import { UsageError } from "../errors";
 import { isPiModelSupported, isPiProviderSupported } from "../pi";
 import { resolvePiRuntimeRoute } from "../runtime";
+
+let cachedClaudeOAuthToken: string | null = null;
+let cachedClaudeOAuthExpiry: number = 0;
+
+// placeholder — token refresh handled by Claude CLI itself; we just re-read after
+async function triggerClaudeCliTokenRefresh(_credPath: string): Promise<string | null> {
+  // Clear cache to force re-read from keychain/file
+  cachedClaudeOAuthToken = null;
+  cachedClaudeOAuthExpiry = 0;
+  return readClaudeSubscriptionToken();
+}
+
+async function readClaudeSubscriptionToken(): Promise<string | null> {
+  // Return cached token if still valid (with 5min buffer)
+  if (cachedClaudeOAuthToken && cachedClaudeOAuthExpiry > Date.now() + 300_000) {
+    return cachedClaudeOAuthToken;
+  }
+
+  try {
+    // Try macOS keychain first (newer Claude CLI), then fall back to file
+    let credText: string | null = null;
+
+    if (process.platform === "darwin") {
+      try {
+        const proc = Bun.spawn(
+          ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+          { stdio: ["ignore", "pipe", "pipe"], timeout: 5_000 },
+        );
+        const out = await new Response(proc.stdout).text();
+        await proc.exited;
+        if (out.trim().startsWith("{")) {
+          credText = out.trim();
+        }
+      } catch {
+        // keychain not available
+      }
+    }
+
+    // Fall back to credentials file
+    if (!credText) {
+      const credPath = join(homedir(), ".claude", ".credentials.json");
+      credText = await Bun.file(credPath).text();
+    }
+
+    const creds = JSON.parse(credText);
+    const oauth = creds?.claudeAiOauth;
+    if (!oauth) return null;
+
+    const token = oauth.accessToken;
+    const refreshToken = oauth.refreshToken;
+    const expiresAt = oauth.expiresAt ? new Date(oauth.expiresAt).getTime() : 0;
+
+    // If token is still valid (with 5min buffer), use it
+    if (typeof token === "string" && token.trim() && expiresAt > Date.now() + 300_000) {
+      cachedClaudeOAuthToken = token.trim();
+      cachedClaudeOAuthExpiry = expiresAt;
+      return cachedClaudeOAuthToken;
+    }
+
+    // Token expired or expiring soon — trigger Claude CLI to refresh it
+    if (typeof refreshToken === "string" && refreshToken.trim()) {
+      console.error("[hive-auth] OAuth token expired, triggering Claude CLI refresh...");
+      const refreshed = await triggerClaudeCliTokenRefresh("");
+      if (refreshed) return refreshed;
+    }
+
+    // No refresh token, return expired token and let it fail downstream
+    if (typeof token === "string" && token.trim()) {
+      return token.trim();
+    }
+  } catch (err) {
+    console.error(`[hive-auth] failed to read Claude credentials: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return null;
+}
 
 export type PersistentStewardRuntimeConfig = {
   provider: string;
@@ -18,18 +97,38 @@ export function describePiModel(input: {
   return `${input.provider}/${input.modelId}`;
 }
 
-export function resolvePiApiKey(
+export async function resolvePiApiKey(
   provider: string,
   input: {
     authPolicy: "oauth-only" | "env" | null;
   },
-): string | undefined {
-  if (provider === "anthropic" && input.authPolicy === "oauth-only") {
-    return process.env.ANTHROPIC_OAUTH_TOKEN?.trim() || undefined;
+): Promise<string | undefined> {
+  // 1. Explicit env var for OAuth token
+  const oauthToken = process.env.ANTHROPIC_OAUTH_TOKEN?.trim();
+  if (provider === "anthropic" && oauthToken) {
+    return oauthToken;
   }
 
-  const apiKey = getEnvApiKey(provider);
-  return typeof apiKey === "string" && apiKey.trim() ? apiKey : undefined;
+  // 2. Standard env var (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+  if (input.authPolicy !== "oauth-only") {
+    const apiKey = getEnvApiKey(provider);
+    if (typeof apiKey === "string" && apiKey.trim()) {
+      return apiKey;
+    }
+  }
+
+  // 3. Read subscription OAuth token from Claude CLI credentials
+  if (provider === "anthropic") {
+    const subscriptionToken = await readClaudeSubscriptionToken();
+    if (subscriptionToken) {
+      return subscriptionToken;
+    }
+    console.error(`[hive-auth] readClaudeSubscriptionToken returned null for provider=${provider} authPolicy=${input.authPolicy}`);
+  } else {
+    console.error(`[hive-auth] skipping subscription token read: provider=${provider} !== anthropic`);
+  }
+
+  return undefined;
 }
 
 export function resolvePersistentStewardModel(input: {

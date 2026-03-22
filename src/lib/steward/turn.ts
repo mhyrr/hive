@@ -373,26 +373,15 @@ function queuePersistentTurnOutput(input: {
   });
 }
 
-function getMockAuthState(input: {
+async function getMockAuthState(input: {
   provider: string;
   authPolicy: "oauth-only" | "env" | null;
-}): string {
-  if (input.provider !== "anthropic") {
-    return resolvePiApiKey(input.provider, { authPolicy: input.authPolicy }) ? "configured" : "none";
+}): Promise<string> {
+  const key = await resolvePiApiKey(input.provider, { authPolicy: input.authPolicy });
+  if (key) {
+    if (key.startsWith("sk-ant-oat")) return "oauth";
+    return input.provider === "anthropic" ? "api" : "configured";
   }
-
-  if (input.authPolicy === "oauth-only") {
-    return process.env.ANTHROPIC_OAUTH_TOKEN?.trim() ? "oauth" : "none";
-  }
-
-  if (process.env.ANTHROPIC_OAUTH_TOKEN?.trim()) {
-    return "oauth";
-  }
-
-  if (process.env.ANTHROPIC_API_KEY?.trim()) {
-    return "api";
-  }
-
   return "none";
 }
 
@@ -411,7 +400,7 @@ async function runMockPersistentStewardTurn(input: {
   const humanTurn = humanTurnMatch?.[1]?.trim() || "mock task";
   const replyPrefix =
     behavior === "auth"
-      ? `Mock persistent steward auth: ${getMockAuthState({
+      ? `Mock persistent steward auth: ${await getMockAuthState({
           provider: input.handle.provider,
           authPolicy: input.handle.authPolicy,
         })} | `
@@ -557,13 +546,13 @@ async function startPersistentStewardHandle(input: {
   }) as never);
 
   if (!process.env.HIVE_TEST_PI_BEHAVIOR) {
-    const apiKey = resolvePiApiKey(input.runtimeConfig.provider, {
+    const apiKey = await resolvePiApiKey(input.runtimeConfig.provider, {
       authPolicy: input.runtimeConfig.authPolicy,
     });
 
     if (!apiKey) {
       throw new UsageError(
-        `No Pi credentials are available for provider '${input.runtimeConfig.provider}'.`,
+        `No Pi credentials are available for provider '${input.runtimeConfig.provider}'. Set ANTHROPIC_API_KEY, ANTHROPIC_OAUTH_TOKEN, or sign in with Claude CLI.`,
       );
     }
   }

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HIVE</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1/themes/prism-tomorrow.min.css">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -82,9 +83,6 @@
       <textarea id="console-input" placeholder="Talk to HIVE... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
       <button type="submit" id="console-send-btn">Send</button>
     </form>
-    <div class="console-activity" id="console-activity">
-      <div class="console-activity-empty">No live hive activity yet.</div>
-    </div>
   </main>
 
   <!-- Operations rail -->
@@ -160,6 +158,28 @@
     </div>
   </div>
 
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1/dist/uPlot.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/uplot@1/dist/uPlot.iife.min.js"></script>
+
+  <!-- Command Palette -->
+  <div class="command-palette" id="command-palette" hidden>
+    <div class="command-palette-backdrop" id="command-palette-backdrop"></div>
+    <div class="command-palette-dialog">
+      <div class="command-palette-input-wrap">
+        <input class="command-palette-input" id="command-palette-input"
+               type="text" placeholder="Type a command..." autocomplete="off" spellcheck="false">
+      </div>
+      <div class="command-palette-results" id="command-palette-results"></div>
+      <div class="command-palette-footer">
+        <span class="command-palette-hint">&#x2191;&#x2193; navigate</span>
+        <span class="command-palette-hint">&#x23CE; select</span>
+        <span class="command-palette-hint">esc close</span>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/plugins/autoloader/prism-autoloader.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
