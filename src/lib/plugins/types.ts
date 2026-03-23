@@ -1,4 +1,12 @@
-import type { PersistentStewardTool } from "../steward/tools/index";
+import type { Tool } from "@mariozechner/pi-ai";
+
+export type PluginTool = Tool & {
+  execute: (
+    toolCallId: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => Promise<string>;
+};
 
 export type PluginCommand = {
   name: string;
@@ -21,5 +29,5 @@ export type HivePlugin = {
   commands?: PluginCommand[];
 
   /** Steward tools merged into the steward's tool set at session start. */
-  tools?: (ctx: PluginToolContext) => PersistentStewardTool[];
+  tools?: (ctx: PluginToolContext) => PluginTool[];
 };

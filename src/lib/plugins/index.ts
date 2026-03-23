@@ -1,2 +1,2 @@
-export { getPlugins, routePluginCommand, getPluginTools } from "./registry";
-export type { HivePlugin, PluginCommand, PluginToolContext } from "./types";
+export { routePluginCommand, getPluginTools } from "./registry";
+export type { HivePlugin, PluginCommand, PluginTool, PluginToolContext } from "./types";
