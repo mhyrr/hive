@@ -116,13 +116,7 @@ function showSkeletonLoading(containerId, count) {
   container.innerHTML = html;
 }
 
-function getHealthPulseClass(health) {
-  if (!health || !health.status) return '';
-  var status = health.status.toLowerCase();
-  if (status === 'cruising') return 'agent-card--health-cruising';
-  if (status === 'working') return 'agent-card--health-working';
-  if (status === 'struggling') return 'agent-card--health-struggling';
-  if (status === 'stuck') return 'agent-card--health-stuck';
+function getHealthPulseClass() {
   return '';
 }
 
@@ -137,9 +131,60 @@ function initUsageChart(containerId) {
   container.innerHTML = '';
   var width = container.offsetWidth || 300;
 
+  function formatTokenCount(v) {
+    if (v == null) return '—';
+    if (v >= 1000000) return (v / 1000000).toFixed(2) + 'M';
+    if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+    return String(v);
+  }
+
+  // Tooltip element
+  var tooltip = document.createElement('div');
+  tooltip.className = 'usage-chart-tooltip';
+  tooltip.style.display = 'none';
+  container.appendChild(tooltip);
+
+  var tooltipPlugin = {
+    hooks: {
+      setCursor: function(u) {
+        var idx = u.cursor.idx;
+        if (idx == null) {
+          tooltip.style.display = 'none';
+          return;
+        }
+
+        var ts = u.data[0][idx];
+        var t3 = u.data[1][idx];
+        var t2 = u.data[2][idx];
+        var t1 = u.data[3][idx];
+
+        var time = new Date(ts * 1000);
+        var timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        tooltip.innerHTML =
+          '<div class="usage-tooltip-time">' + timeStr + '</div>' +
+          '<div class="usage-tooltip-row usage-tooltip-t3">T3 (frontier): ' + formatTokenCount(t3) + '</div>' +
+          '<div class="usage-tooltip-row usage-tooltip-t2">T2 (standard): ' + formatTokenCount(t2) + '</div>' +
+          '<div class="usage-tooltip-row usage-tooltip-t1">T1 (local): ' + formatTokenCount(t1) + '</div>';
+        tooltip.style.display = 'block';
+
+        var left = u.cursor.left;
+        var chartWidth = u.over.offsetWidth;
+        // Flip tooltip to left side if near right edge
+        if (left > chartWidth - 140) {
+          tooltip.style.left = (left - 130) + 'px';
+        } else {
+          tooltip.style.left = (left + 16) + 'px';
+        }
+        tooltip.style.top = '4px';
+      },
+    },
+  };
+
   var opts = {
     width: width,
     height: 130,
+    plugins: [tooltipPlugin],
     cursor: { show: true },
     select: { show: false },
     legend: { show: false },
@@ -173,18 +218,21 @@ function initUsageChart(containerId) {
         stroke: 'rgba(218, 162, 0, 0.8)',
         fill: 'rgba(218, 162, 0, 0.12)',
         width: 2,
+        points: { show: true, size: 5 },
       },
       {
         label: 'T2',
         stroke: 'rgba(74, 136, 120, 0.8)',
         fill: 'rgba(74, 136, 120, 0.12)',
         width: 2,
+        points: { show: true, size: 5 },
       },
       {
         label: 'T1',
         stroke: 'rgba(88, 136, 176, 0.8)',
         fill: 'rgba(88, 136, 176, 0.12)',
         width: 2,
+        points: { show: true, size: 5 },
       },
     ],
   };
@@ -751,7 +799,7 @@ function classifyFeedStatus(entry) {
   if (text.indexOf('complete') !== -1 || text.indexOf('done') !== -1 || text.indexOf('success') !== -1) {
     return 'success';
   }
-  if (text.indexOf('warn') !== -1 || text.indexOf('block') !== -1 || text.indexOf('stuck') !== -1) {
+  if (text.indexOf('warn') !== -1 || text.indexOf('block') !== -1) {
     return 'warning';
   }
   return 'info';
@@ -2139,84 +2187,19 @@ function updateAgentSignals(agents) {
   state.agentSignals = nextSignals;
 }
 
-function countPatternMatches(text, pattern) {
-  if (!text) return 0;
-  var matches = text.match(pattern);
-  return matches ? matches.length : 0;
-}
-
-function healthTone(level) {
-  if (level === 'cruising') return 'success';
-  if (level === 'struggling') return 'warning';
-  if (level === 'stuck') return 'error';
-  return 'info';
-}
-
-function healthIcon(level) {
-  if (level === 'cruising') return '●';
-  if (level === 'struggling') return '▲';
-  if (level === 'stuck') return '■';
-  return '·';
-}
-
-function formatHealthLevel(level) {
-  return level || 'working';
-}
 
 function buildAgentHealth(agent) {
   var key = getAgentKey(agent);
-  var signal = key ? state.agentSignals[key] : null;
-  var text = buildAgentOutputFingerprint(agent).toLowerCase();
-  var ageMinutes = getMinutesSince(agent.started);
-  var staleMinutes = getMinutesSince(signal ? signal.lastChangedAt : agent.started);
-  var outputSeen = signal ? signal.outputSeen : Boolean(text);
-  var changeCount = signal ? signal.changeCount : 0;
-  var blockedMatches = countPatternMatches(
-    text,
-    /\b(blocked|stuck|waiting on|needs human|needs your|approval required|cannot proceed|can't proceed|permission denied)\b/g,
-  );
-  var struggleMatches = countPatternMatches(
-    text,
-    /\b(error|failed|retry|retrying|exception|timeout|timed out|not found|unable|cannot|can't|conflict|warning|failing|fixing|investigating)\b/g,
-  );
-  var progressMatches = countPatternMatches(
-    text,
-    /\b(completed|updated|wrote|fixed|verified|created|launched|running|working|finished|done|passed|clean|resolved)\b/g,
-  );
-  var level = 'working';
-  var reason = 'Work is moving normally.';
-
-  if (agent.status === 'failed' || agent.status === 'error' || agent.status === 'cancelled') {
-    level = 'stuck';
-    reason = 'This run is no longer healthy and likely needs intervention.';
-  } else if (blockedMatches > 0 || ((staleMinutes >= 14 && ageMinutes >= 15) || (!outputSeen && ageMinutes >= 12))) {
-    level = 'stuck';
-    reason = blockedMatches > 0
-      ? 'The latest output reads like a blocker or a wait state.'
-      : 'No meaningful visible movement for ' + Math.round(staleMinutes) + 'm.';
-  } else if (struggleMatches > 0 || (staleMinutes >= 7 && ageMinutes >= 9)) {
-    level = 'struggling';
-    reason = struggleMatches > 0
-      ? 'Retries, errors, or warnings are showing up in the recent output.'
-      : 'Progress has gone quiet for ' + Math.round(staleMinutes) + 'm.';
-  } else if ((progressMatches > 0 && staleMinutes <= 3) || (changeCount >= 3 && staleMinutes <= 4) || (outputSeen && ageMinutes <= 4)) {
-    level = 'cruising';
-    reason = 'Recent output suggests steady forward progress.';
-  }
+  var status = agent.status || 'active';
+  var level = status;
+  var tone = toneFromStatus(status);
 
   return {
     key: key,
     level: level,
-    tone: healthTone(level),
-    icon: healthIcon(level),
-    label: formatHealthLevel(level),
-    summary: reason,
-    ageMinutes: ageMinutes,
-    staleMinutes: staleMinutes,
-    ageLabel: formatRelativeAge(agent.started),
-    staleLabel: Math.round(staleMinutes) + 'm quiet',
-    outputSeen: outputSeen,
-    changeCount: changeCount,
+    tone: tone,
+    label: status,
+    agent: agent,
   };
 }
 
@@ -2225,43 +2208,25 @@ function buildHealthSnapshot(liveSnapshot) {
   updateAgentSignals(agents);
 
   var healthAgents = [];
-  var counts = {
-    cruising: 0,
-    working: 0,
-    struggling: 0,
-    stuck: 0,
-  };
+  var activeCount = 0;
 
   for (var i = 0; i < agents.length; i++) {
     var health = buildAgentHealth(agents[i]);
-    health.agent = agents[i];
     healthAgents.push(health);
-    counts[health.level] += 1;
+    var s = (agents[i].status || 'active').toLowerCase();
+    if (s === 'active' || s === 'starting') activeCount += 1;
   }
 
-  var aggregate = 'idle';
-  if (counts.stuck > 0) {
-    aggregate = 'stuck';
-  } else if (counts.struggling > 0) {
-    aggregate = 'struggling';
-  } else if (counts.working > 0) {
-    aggregate = 'working';
-  } else if (counts.cruising > 0) {
-    aggregate = 'cruising';
-  }
-
-  var summaryParts = [];
-  if (counts.cruising > 0) summaryParts.push(countLabel(counts.cruising, 'cruising agent', 'cruising agents'));
-  if (counts.working > 0) summaryParts.push(countLabel(counts.working, 'working agent', 'working agents'));
-  if (counts.struggling > 0) summaryParts.push(countLabel(counts.struggling, 'struggling agent', 'struggling agents'));
-  if (counts.stuck > 0) summaryParts.push(countLabel(counts.stuck, 'stuck agent', 'stuck agents'));
+  var aggregate = activeCount > 0 ? 'active' : 'idle';
+  var summary = activeCount > 0
+    ? countLabel(activeCount, 'active agent', 'active agents')
+    : 'No active agents.';
 
   return {
     aggregate: aggregate,
-    tone: healthTone(aggregate === 'idle' ? 'working' : aggregate),
-    counts: counts,
+    tone: activeCount > 0 ? 'info' : 'info',
     agents: healthAgents,
-    summary: summaryParts.join(' \u00b7 ') || 'No active health signals.',
+    summary: summary,
   };
 }
 
@@ -2414,40 +2379,6 @@ function buildAttentionItems(liveSnapshot, queueSnapshot, healthSnapshot) {
     });
   }
 
-  var healthIssues = healthSnapshot && Array.isArray(healthSnapshot.agents)
-    ? healthSnapshot.agents.filter(function (item) {
-      return item.level === 'stuck' || item.level === 'struggling';
-    })
-    : [];
-  for (var h = 0; h < healthIssues.length; h++) {
-    var issue = healthIssues[h];
-    var issueAgent = issue.agent || null;
-    var issueName = issueAgent ? (issueAgent.displayName || issueAgent.agentId || 'agent') : 'agent';
-    var issuePriority = issue.level === 'stuck' ? 0 : 3;
-    items.push({
-      id: 'health-' + issue.key,
-      kind: 'health',
-      tone: issue.level === 'stuck' ? 'error' : 'warning',
-      priority: issuePriority,
-      ts: issueAgent ? issueAgent.started : '',
-      title: issue.level === 'stuck'
-        ? issueName + ' looks stuck.'
-        : issueName + ' is starting to struggle.',
-      summary: issue.summary,
-      meta: joinMeta([
-        issue.label,
-        issue.staleLabel,
-        issue.ageLabel,
-      ]),
-      prompt:
-        'Take a look at ' + issueName +
-        '. Give me a short health brief: what it is doing, why it looks ' + issue.label +
-        ', and whether you want me to intervene.',
-      openTab: 'live',
-      focusId: 'live-agents',
-    });
-  }
-
   if (agents.length > 0) {
     var agentNames = listAgentNames(agents);
     items.push({
@@ -2519,8 +2450,7 @@ function buildLeadershipSnapshot() {
     if (
       attentionItems[i].kind === 'approval' ||
       attentionItems[i].kind === 'waiting' ||
-      attentionItems[i].kind === 'incident' ||
-      (attentionItems[i].kind === 'health' && attentionItems[i].tone === 'error')
+      attentionItems[i].kind === 'incident'
     ) {
       needsYouCount += 1;
     }
@@ -2579,26 +2509,21 @@ function renderHealthIndicator(healthSnapshot) {
   var icon = button.querySelector('.topbar-health-icon');
   var label = button.querySelector('.topbar-health-label');
   var aggregate = healthSnapshot ? healthSnapshot.aggregate : 'idle';
-  var summary = healthSnapshot ? healthSnapshot.summary : 'No active health signals.';
+  var summary = healthSnapshot ? healthSnapshot.summary : 'No active agents.';
 
   button.className = 'topbar-health topbar-health--' + aggregate;
   button.setAttribute('title', summary);
 
   if (icon) {
-    icon.textContent = healthIcon(aggregate);
+    icon.textContent = aggregate === 'active' ? '●' : '·';
   }
   if (label) {
     label.textContent = aggregate;
   }
 }
 
-function renderHealthPill(health) {
-  if (!health) return '';
-
-  return '<div class="health-pill health-pill--' + escapeAttr(health.label) + '">' +
-    '<span class="health-pill-icon">' + escapeHtml(health.icon) + '</span>' +
-    '<span>' + escapeHtml(health.label) + '</span>' +
-    '</div>';
+function renderHealthPill() {
+  return '';
 }
 
 function renderAttentionQueue(leadership) {
@@ -2775,12 +2700,6 @@ function renderLiveSummary(snapshot) {
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Session</div><div class="live-summary-stat-value">' + escapeHtml(snapshot.sessionId || 'none') + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Supervisor</div><div class="live-summary-stat-value">' + escapeHtml(supervisorStatus) + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Live Agents</div><div class="live-summary-stat-value">' + escapeHtml(String(visibleAgents.length)) + '</div></div>';
-  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Team Health</div><div class="live-summary-stat-value">' +
-    escapeHtml(healthSnapshot ? healthSnapshot.aggregate : 'idle') +
-    '</div></div>';
-  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Health Mix</div><div class="live-summary-stat-value">' +
-    escapeHtml(healthSnapshot ? healthSnapshot.summary : 'No active health signals.') +
-    '</div></div>';
   html += '</div>';
 
   container.innerHTML = html;
@@ -2842,7 +2761,7 @@ function renderLiveAgents(agents) {
     ];
     var collapsedSummary = outputDetail
       ? truncateMultilineText(outputDetail, 180)
-      : (agent.statusText || (health ? health.summary : ''));
+      : (agent.statusText || '');
     if (!collapsedSummary) {
       collapsedSummary = agent.persona === 'steward'
         ? 'Waiting for the first streamed update from the steward.'
@@ -2884,9 +2803,6 @@ function renderLiveAgents(agents) {
     }
 
     html += '<div class="agent-card-summary">' + escapeHtml(truncateMultilineText(collapsedSummary, expanded ? 500 : 280)) + '</div>';
-    if (expanded && health) {
-      html += '<div class="agent-card-health-note">' + escapeHtml(health.summary) + '</div>';
-    }
     if (expanded && outputDetail) {
       html += '<div class="agent-card-output">' + escapeHtml(outputDetail) + '</div>';
     } else if (expanded) {

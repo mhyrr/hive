@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, writeFileSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
 import { extractConfigValue } from "./config";
@@ -180,6 +180,10 @@ export function inferRuntimeAuthMode(
       : "subscription";
   }
 
+  if (normalized === "ollama" || normalized === "local" || normalized === "oss") {
+    return "api";
+  }
+
   return "unknown";
 }
 
@@ -307,6 +311,111 @@ function createClaudeOutputCapture(): RuntimeOutputCapture {
   };
 }
 
+// --- Codex JSONL Output Parsing ---
+
+function parseCodexJsonlOutput(rawStdout: string): ParsedOutput {
+  const lines = rawStdout.trim().split("\n");
+  let lastAgentMessage = "";
+  let metadata: RuntimeMetadata | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed || !trimmed.startsWith("{")) {
+      continue;
+    }
+
+    try {
+      const event = JSON.parse(trimmed);
+      const root = toRecord(event);
+
+      if (!root) {
+        continue;
+      }
+
+      const eventType = toNullableString(root.type);
+
+      // Extract text from agent_message items
+      if (eventType === "item.completed" || eventType === "item.updated") {
+        const itemType = toNullableString(root.item_type);
+        const text = toNullableString(root.text);
+
+        if (itemType === "agent_message" && text) {
+          lastAgentMessage = text;
+        }
+      }
+
+      // Extract usage from turn.completed
+      if (eventType === "turn.completed") {
+        const usage = toRecord(root.usage);
+
+        if (usage) {
+          metadata = withDerivedTotalTokens({
+            authMode: "api",
+            costUsd: null,
+            durationMs: null,
+            durationApiMs: null,
+            numTurns: null,
+            sessionId: null,
+            inputTokens: readFirstNumber(usage, ["input_tokens", "prompt_tokens"]),
+            outputTokens: readFirstNumber(usage, ["output_tokens", "completion_tokens"]),
+            cacheCreationInputTokens: null,
+            cacheReadInputTokens: readFirstNumber(usage, ["cached_input_tokens"]),
+            totalTokens: readFirstNumber(usage, ["total_tokens"]),
+          });
+        }
+      }
+    } catch {
+      // Skip malformed JSON lines
+    }
+  }
+
+  return {
+    text: lastAgentMessage || rawStdout.trim(),
+    metadata,
+  };
+}
+
+function createCodexOutputCapture(): RuntimeOutputCapture {
+  let currentMessage = "";
+
+  return {
+    handleStdoutLine(line: string) {
+      let data: unknown;
+
+      try {
+        data = JSON.parse(line);
+      } catch {
+        return null;
+      }
+
+      const root = toRecord(data);
+
+      if (!root) {
+        return null;
+      }
+
+      const eventType = toNullableString(root.type);
+
+      // Handle agent message text updates
+      if (
+        (eventType === "item.completed" || eventType === "item.updated") &&
+        toNullableString(root.item_type) === "agent_message"
+      ) {
+        const text = toNullableString(root.text);
+
+        if (text && text.length > currentMessage.length) {
+          const chunk = text.slice(currentMessage.length);
+          currentMessage = text;
+          return chunk;
+        }
+      }
+
+      return null;
+    },
+  };
+}
+
 // --- Built-in Adapters ---
 
 const claudeAdapter: RuntimeAdapter = {
@@ -423,6 +532,24 @@ const claudeAdapter: RuntimeAdapter = {
   },
 };
 
+function isCodexNoiseLine(line: string): boolean {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  return (
+    trimmed === "mcp startup: no servers" ||
+    /WARN codex_core::state_db: state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back\b/.test(
+      trimmed,
+    ) ||
+    /ERROR codex_core::rollout::list: state db missing rollout path for thread\b/.test(
+      trimmed,
+    )
+  );
+}
+
 const codexAdapter: RuntimeAdapter = {
   name: "codex",
   aliases: ["openai"],
@@ -430,6 +557,7 @@ const codexAdapter: RuntimeAdapter = {
   buildLaunchArgs: ({ model, repoPath, hiveHome, prompt }) => [
     "exec",
     "--full-auto",
+    "--json",
     "-C",
     repoPath,
     "--add-dir",
@@ -446,24 +574,10 @@ const codexAdapter: RuntimeAdapter = {
     ...(model ? ["--model", model] : []),
     systemPrompt,
   ],
-  suppressLine: (line: string) => {
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      return false;
-    }
-
-    return (
-      trimmed === "mcp startup: no servers" ||
-      /WARN codex_core::state_db: state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back\b/.test(
-        trimmed,
-      ) ||
-      /ERROR codex_core::rollout::list: state db missing rollout path for thread\b/.test(
-        trimmed,
-      )
-    );
-  },
+  suppressLine: isCodexNoiseLine,
   detectInstalled: () => commandExists("codex"),
+  parseOutput: parseCodexJsonlOutput,
+  createOutputCapture: () => createCodexOutputCapture(),
 };
 
 const geminiAdapter: RuntimeAdapter = {
@@ -492,26 +606,40 @@ const ollamaAdapter: RuntimeAdapter = {
   buildLaunchArgs: ({ model, repoPath, hiveHome, prompt }) => [
     "exec",
     "--full-auto",
+    "--json",
     "--oss",
+    "--local-provider",
+    "ollama",
     "-C",
     repoPath,
     "--add-dir",
     hiveHome,
-    ...(model ? ["-m", model] : []),
+    ...(model ? ["--model", model] : []),
     prompt,
   ],
   buildInteractiveArgs: ({ model, repoPath, hiveHome, systemPrompt }) => [
     "--full-auto",
     "--oss",
+    "--local-provider",
+    "ollama",
     "-C",
     repoPath,
     "--add-dir",
     hiveHome,
-    ...(model ? ["-m", model] : []),
+    ...(model ? ["--model", model] : []),
     systemPrompt,
   ],
-  suppressLine: (line: string) => codexAdapter.suppressLine(line),
-  detectInstalled: () => commandExists("codex"),
+  suppressLine: isCodexNoiseLine,
+  detectInstalled: async () => {
+    const [hasCodex, hasOllama] = await Promise.all([
+      commandExists("codex"),
+      commandExists("ollama"),
+    ]);
+
+    return hasCodex && hasOllama;
+  },
+  parseOutput: parseCodexJsonlOutput,
+  createOutputCapture: () => createCodexOutputCapture(),
 };
 
 // --- Registry ---
@@ -1071,23 +1199,7 @@ export function startLaunchSpec(
   const adapter = getAdapter(spec.runtime);
   const hasJsonOutput = !!adapter?.parseOutput;
   const outputCapture = adapter?.createOutputCapture?.() ?? null;
-  const codexLastMessagePath =
-    spec.runtime === "codex" && options.outputPath
-      ? `${options.outputPath}.last-message.txt`
-      : null;
-  const launchArgs =
-    codexLastMessagePath && spec.args.length > 0
-      ? [
-          ...spec.args.slice(0, -1),
-          "--output-last-message",
-          codexLastMessagePath,
-          spec.args[spec.args.length - 1]!,
-        ]
-      : spec.args;
-
-  if (codexLastMessagePath) {
-    writeFileSync(codexLastMessagePath, "");
-  }
+  const launchArgs = spec.args;
 
   const child = spawn(spec.command, launchArgs, {
     cwd: repoPath,
@@ -1177,23 +1289,6 @@ export function startLaunchSpec(
               })
             : baseRuntimeMetadata(spec.runtime),
         };
-      }
-
-      if (codexLastMessagePath) {
-        const lastMessageFile = Bun.file(codexLastMessagePath);
-
-        if (await lastMessageFile.exists()) {
-          const lastMessage = (await lastMessageFile.text()).trim();
-
-          if (lastMessage) {
-            return {
-              code,
-              signal: child.signalCode ?? null,
-              visibleOutput: lastMessage,
-              metadata: baseRuntimeMetadata(spec.runtime),
-            };
-          }
-        }
       }
 
       return {
