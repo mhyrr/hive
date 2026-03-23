@@ -1,7 +1,6 @@
 import { Type } from "@mariozechner/pi-ai";
 
-import type { PersistentStewardTool } from "../../lib/steward/tools/index";
-import type { PluginToolContext } from "../../lib/plugins/types";
+import type { PluginTool, PluginToolContext } from "../../lib/plugins/types";
 import {
   ClawHubClient,
   HubNotFoundError,
@@ -10,7 +9,7 @@ import {
 } from "./client";
 import { installSkill, listInstalledHubSkills } from "./install";
 
-export function createHubTools(ctx: PluginToolContext): PersistentStewardTool[] {
+export function createHubTools(ctx: PluginToolContext): PluginTool[] {
   function makeClient(): ClawHubClient {
     return new ClawHubClient({ baseUrl: resolveHubUrl(ctx.globalConfig) });
   }
@@ -112,5 +111,5 @@ export function createHubTools(ctx: PluginToolContext): PersistentStewardTool[] 
         }
       },
     },
-  ] as PersistentStewardTool[];
+  ] as PluginTool[];
 }

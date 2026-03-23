@@ -4,7 +4,6 @@ import { createBashTool } from "./bash";
 import { createDelegationTools } from "./delegate";
 import { createFileTools, createStewardExecutionContext } from "./files";
 import { createSearchTools } from "./search";
-import { getPluginTools } from "../../plugins";
 
 export type PersistentStewardTool = Tool & {
   execute: (
@@ -14,14 +13,21 @@ export type PersistentStewardTool = Tool & {
   ) => Promise<string>;
 };
 
-export function buildPersistentStewardTools(input: {
+export async function buildPersistentStewardTools(input: {
   hiveHome: string;
   repoPath: string;
   msgDir: string;
   projectId: string;
   globalConfig: string;
-}): PersistentStewardTool[] {
+}): Promise<PersistentStewardTool[]> {
   const execution = createStewardExecutionContext(input);
+
+  const { getPluginTools } = await import("../../plugins");
+  const pluginTools = await getPluginTools({
+    hiveHome: input.hiveHome,
+    skillsDir: `${input.hiveHome}/skills`,
+    globalConfig: input.globalConfig,
+  });
 
   return [
     ...createFileTools(execution),
@@ -32,10 +38,6 @@ export function buildPersistentStewardTools(input: {
       projectId: input.projectId,
       globalConfig: input.globalConfig,
     }),
-    ...getPluginTools({
-      hiveHome: input.hiveHome,
-      skillsDir: `${input.hiveHome}/skills`,
-      globalConfig: input.globalConfig,
-    }),
+    ...pluginTools,
   ] as PersistentStewardTool[];
 }

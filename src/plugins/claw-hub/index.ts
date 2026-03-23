@@ -1,6 +1,5 @@
 import { join } from "node:path";
 
-import type { HivePlugin, PluginCommand } from "../../lib/plugins/types";
 import { createHubCommands } from "./commands";
 import { createHubTools } from "./tool";
 import { resolveHiveHome } from "../../lib/paths";
@@ -19,7 +18,7 @@ async function readGlobalConfig(hiveHome: string): Promise<string> {
  * Build commands that read config lazily (at execution time, not at import time).
  * Each command wraps the real command with a config read.
  */
-function createLazyCommands(): PluginCommand[] {
+function createLazyCommands() {
   const subcommandNames = ["search", "install", "list", "info", "remove", "sync"];
 
   return subcommandNames.map((name) => ({
@@ -43,7 +42,7 @@ function createLazyCommands(): PluginCommand[] {
   }));
 }
 
-export const clawHubPlugin: HivePlugin = {
+export const clawHubPlugin = {
   name: "hub",
   version: "0.1.0",
   description: "Search, install, and manage skills from the Claw Hub",

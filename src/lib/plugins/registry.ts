@@ -1,11 +1,41 @@
-import type { PersistentStewardTool } from "../steward/tools/index";
-import type { HivePlugin, PluginToolContext } from "./types";
-import { clawHubPlugin } from "../../plugins/claw-hub/index";
+import { join } from "node:path";
 
-const plugins: HivePlugin[] = [clawHubPlugin];
+import type { HivePlugin, PluginTool, PluginToolContext } from "./types";
+import { resolveHiveHome } from "../paths";
 
-export function getPlugins(): HivePlugin[] {
-  return plugins;
+/**
+ * Lazily load all registered plugins. Dynamic import breaks the circular
+ * dependency between steward/tools → plugins/registry → claw-hub → pi-ai.
+ */
+async function loadPlugins(): Promise<HivePlugin[]> {
+  const { clawHubPlugin } = await import("../../plugins/claw-hub/index");
+
+  return [clawHubPlugin as HivePlugin];
+}
+
+/**
+ * Check whether a plugin is enabled in the global config.
+ * Plugins are disabled by default — the config must contain
+ * `<plugin-name>: enabled` to activate one.
+ */
+function isPluginEnabled(pluginName: string, globalConfig: string): boolean {
+  const pattern = new RegExp(`^${pluginName}:\\s*enabled\\s*$`, "m");
+
+  return pattern.test(globalConfig);
+}
+
+async function readGlobalConfig(): Promise<string> {
+  try {
+    const file = Bun.file(join(resolveHiveHome(), "config.md"));
+
+    if (!(await file.exists())) {
+      return "";
+    }
+
+    return await file.text();
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -16,44 +46,60 @@ export async function routePluginCommand(
   command: string,
   args: string[],
 ): Promise<string | null> {
-  for (const plugin of plugins) {
-    if (plugin.name !== command || !plugin.commands) {
-      continue;
-    }
+  const allPlugins = await loadPlugins();
+  const plugin = allPlugins.find((p) => p.name === command);
 
-    const [subcommand, ...rest] = args;
-
-    if (!subcommand) {
-      const lines = [
-        `${plugin.name} — ${plugin.description}`,
-        "",
-        "Commands:",
-        ...plugin.commands.map((cmd) => `  ${cmd.name}  ${cmd.description}`),
-      ];
-
-      return lines.join("\n");
-    }
-
-    const cmd = plugin.commands.find((c) => c.name === subcommand);
-
-    if (!cmd) {
-      return `Unknown ${plugin.name} subcommand: ${subcommand}\nAvailable: ${plugin.commands.map((c) => c.name).join(", ")}`;
-    }
-
-    return cmd.execute(rest);
+  if (!plugin) {
+    return null;
   }
 
-  return null;
+  const globalConfig = await readGlobalConfig();
+
+  if (!isPluginEnabled(plugin.name, globalConfig)) {
+    return [
+      `The "${plugin.name}" plugin is installed but not enabled.`,
+      "",
+      `To enable it, add this line to your hive config (~/.hive/config.md):`,
+      "",
+      `  ${plugin.name}: enabled`,
+    ].join("\n");
+  }
+
+  if (!plugin.commands) {
+    return `Plugin "${plugin.name}" has no CLI commands.`;
+  }
+
+  const [subcommand, ...rest] = args;
+
+  if (!subcommand) {
+    const lines = [
+      `${plugin.name} — ${plugin.description}`,
+      "",
+      "Commands:",
+      ...plugin.commands.map((cmd) => `  ${cmd.name}  ${cmd.description}`),
+    ];
+
+    return lines.join("\n");
+  }
+
+  const cmd = plugin.commands.find((c) => c.name === subcommand);
+
+  if (!cmd) {
+    return `Unknown ${plugin.name} subcommand: ${subcommand}\nAvailable: ${plugin.commands.map((c) => c.name).join(", ")}`;
+  }
+
+  return cmd.execute(rest);
 }
 
 /**
- * Collect steward tools from all plugins.
+ * Collect steward tools from enabled plugins only.
  */
-export function getPluginTools(ctx: PluginToolContext): PersistentStewardTool[] {
-  const tools: PersistentStewardTool[] = [];
+export async function getPluginTools(ctx: PluginToolContext): Promise<PluginTool[]> {
+  const allPlugins = await loadPlugins();
+  const tools: PluginTool[] = [];
 
-  for (const plugin of plugins) {
-    if (plugin.tools) {
+  for (const plugin of allPlugins) {
+    if (isPluginEnabled(plugin.name, ctx.globalConfig) && plugin.tools) {
       tools.push(...plugin.tools(ctx));
     }
   }
