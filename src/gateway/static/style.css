@@ -404,28 +404,10 @@ body::after {
   color: var(--text-secondary);
 }
 
-.topbar-health--cruising {
-  border-color: rgba(90, 138, 74, 0.28);
-  background: rgba(90, 138, 74, 0.1);
-  color: var(--green-bright);
-}
-
-.topbar-health--working {
+.topbar-health--active {
   border-color: rgba(88, 136, 176, 0.25);
   background: rgba(88, 136, 176, 0.1);
   color: #96b6cf;
-}
-
-.topbar-health--struggling {
-  border-color: rgba(212, 154, 0, 0.34);
-  background: rgba(212, 154, 0, 0.11);
-  color: var(--amber-bright);
-}
-
-.topbar-health--stuck {
-  border-color: rgba(184, 72, 56, 0.36);
-  background: rgba(184, 72, 56, 0.12);
-  color: var(--red-bright);
 }
 
 .topbar-attention-icon {
@@ -595,20 +577,8 @@ body::after {
   text-transform: lowercase;
 }
 
-.agent-dropdown-health--cruising {
-  color: var(--green-bright);
-}
-
-.agent-dropdown-health--working {
+.agent-dropdown-health--active {
   color: #96b6cf;
-}
-
-.agent-dropdown-health--struggling {
-  color: var(--amber-bright);
-}
-
-.agent-dropdown-health--stuck {
-  color: var(--red-bright);
 }
 
 .agent-dropdown-runtime {
@@ -935,31 +905,6 @@ body::after {
   line-height: 1;
 }
 
-.health-pill--cruising {
-  border-color: rgba(90, 138, 74, 0.34);
-  color: var(--green-bright);
-}
-
-.health-pill--working {
-  border-color: rgba(88, 136, 176, 0.25);
-  color: #96b6cf;
-}
-
-.health-pill--struggling {
-  border-color: rgba(212, 154, 0, 0.38);
-  color: var(--amber-bright);
-}
-
-.health-pill--stuck {
-  border-color: rgba(184, 72, 56, 0.36);
-  color: var(--red-bright);
-}
-
-.agent-card-health-note {
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  line-height: 1.5;
-}
 
 
 /* --- Welcome Screen --- */
@@ -1834,6 +1779,33 @@ body.modal-open {
 .cognition-chart .u-wrap {
   border-radius: var(--r);
 }
+
+.usage-chart-tooltip {
+  position: absolute;
+  z-index: 50;
+  background: rgba(13, 17, 23, 0.92);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r);
+  padding: var(--s2) var(--s3);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.usage-tooltip-time {
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+  font-size: 10px;
+}
+
+.usage-tooltip-row {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-tooltip-t3 { color: rgba(218, 162, 0, 0.9); }
+.usage-tooltip-t2 { color: rgba(74, 136, 120, 0.9); }
+.usage-tooltip-t1 { color: rgba(88, 136, 176, 0.9); }
 
 .cognition-meter {
   padding: var(--s1) 0;
@@ -2894,42 +2866,6 @@ body.modal-open {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Agent card health pulse */
-.agent-card--health-cruising {
-  animation: pulse-green 3s ease-in-out infinite;
-}
-
-.agent-card--health-working {
-  animation: pulse-blue 2.5s ease-in-out infinite;
-}
-
-.agent-card--health-struggling {
-  animation: pulse-amber 2s ease-in-out infinite;
-}
-
-.agent-card--health-stuck {
-  animation: pulse-red 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-green {
-  0%, 100% { border-left-color: rgba(90, 138, 74, 0.35); }
-  50% { border-left-color: rgba(90, 138, 74, 0.7); box-shadow: -3px 0 12px rgba(90, 138, 74, 0.12); }
-}
-
-@keyframes pulse-blue {
-  0%, 100% { border-left-color: rgba(88, 136, 176, 0.35); }
-  50% { border-left-color: rgba(88, 136, 176, 0.6); box-shadow: -3px 0 12px rgba(88, 136, 176, 0.1); }
-}
-
-@keyframes pulse-amber {
-  0%, 100% { border-left-color: rgba(218, 162, 0, 0.35); }
-  50% { border-left-color: rgba(218, 162, 0, 0.7); box-shadow: -3px 0 12px rgba(218, 162, 0, 0.12); }
-}
-
-@keyframes pulse-red {
-  0%, 100% { border-left-color: rgba(184, 72, 56, 0.35); }
-  50% { border-left-color: rgba(184, 72, 56, 0.7); box-shadow: -3px 0 12px rgba(184, 72, 56, 0.15); }
-}
 
 /* Console activity pulse when agents are active */
 .console-activity--live {
