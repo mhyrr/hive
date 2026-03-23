@@ -22,6 +22,7 @@ import { statusCommand } from "./commands/status";
 import { stopCommand } from "./commands/stop";
 import { superviseCommand } from "./commands/supervise";
 import { syncCommand } from "./commands/sync";
+import { thinkCommand } from "./commands/think";
 import { workCommand } from "./commands/work";
 import { UsageError } from "./lib/errors";
 
@@ -88,6 +89,8 @@ export async function runCli(args: string[]): Promise<string> {
       return archiveCommand();
     case "sync":
       return syncCommand();
+    case "think":
+      return thinkCommand(rest);
     default:
       throw new UsageError(`Unknown command: ${command}`);
   }

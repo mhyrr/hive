@@ -321,12 +321,14 @@ async function ensureManagedGatewayDaemon(input: {
 
 async function startManagedGatewayChild(options: GatewayCommandOptions): Promise<string> {
   const paths = await ensureHiveScaffold();
+  const activeProject = await getActiveProject(paths);
   let state;
 
   try {
     state = startGateway({
       port: options.port,
       hivePaths: paths,
+      projectId: activeProject,
       manageSupervisorChildren: true,
       supervisorIntervalSeconds: options.intervalSeconds,
       supervisorMaxParallel: options.maxParallel,
@@ -341,7 +343,6 @@ async function startManagedGatewayChild(options: GatewayCommandOptions): Promise
 
   const url = `http://localhost:${options.port}`;
   const started = new Date().toISOString();
-  const activeProject = await getActiveProject(paths);
   const supervisorState = activeProject
     ? await ensureManagedGatewaySupervisor({
         hivePaths: paths,

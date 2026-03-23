@@ -78,7 +78,7 @@ export function renderCompactState(input: {
   openDecisionsDigest?: string | null;
   openMessagesDigest: string;
   activeRunsDigest: string;
-  recentResultsDigest: string;
+  recentResultsDigest?: string | null;
   humanInboxDigest: string;
   logRollupDigest?: string | null;
   phaseSummaryDigest?: string | null;
@@ -102,9 +102,11 @@ export function renderCompactState(input: {
     "### Active Runs",
     input.activeRunsDigest,
     "",
-    "### Recent Results",
-    input.recentResultsDigest,
-    "",
+    ...(input.recentResultsDigest != null ? [
+      "### Recent Results",
+      input.recentResultsDigest,
+      "",
+    ] : []),
     "### Human Inbox",
     input.humanInboxDigest,
     ...(input.phaseSummaryDigest ? [

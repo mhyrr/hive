@@ -24,6 +24,21 @@ import {
   renderRecentTurns,
 } from "./sections";
 
+// Session-scoped dedup: track which runIds have already been injected into the
+// prompt for a given session. Keyed by sessionId. Resets when the steward
+// process restarts, which is the correct behavior — a fresh session should see
+// all current results on bootstrap, then suppress repeats on subsequent turns.
+const _seenRunIdsBySession = new Map<string, Set<string>>();
+
+function getSeenRunIds(sessionId: string): Set<string> {
+  let seen = _seenRunIdsBySession.get(sessionId);
+  if (!seen) {
+    seen = new Set();
+    _seenRunIdsBySession.set(sessionId, seen);
+  }
+  return seen;
+}
+
 export type StewardContext = {
   globalConfig: string;
   projectConfig: string;
@@ -45,7 +60,7 @@ export type StewardContext = {
   openDecisionsDigest: string;
   openMessagesDigest: string;
   activeRunsDigest: string;
-  recentResultsDigest: string;
+  recentResultsDigest: string | null;
   humanInboxDigest: string;
   logRollupDigest?: string | null;
   phaseSummaryDigest?: string | null;
@@ -146,7 +161,18 @@ export async function loadStewardContext(input: {
     openDecisionsDigest: renderOpenDecisions(runtimeState.boardSummary, runtimeState.humanInboxSummary),
     openMessagesDigest: runtimeState.openMessagesSummary.digest,
     activeRunsDigest: runtimeState.activeRunsSummary.digest,
-    recentResultsDigest: renderRecentResults(runtimeState.recentResultsSummary),
+    recentResultsDigest: (() => {
+      const seenRunIds = getSeenRunIds(input.sessionId);
+      const newItems = runtimeState.recentResultsSummary.items.filter(
+        (item) => !seenRunIds.has(item.runId),
+      );
+      for (const item of newItems) {
+        seenRunIds.add(item.runId);
+      }
+      return newItems.length > 0
+        ? renderRecentResults({ ...runtimeState.recentResultsSummary, items: newItems })
+        : null;
+    })(),
     humanInboxDigest: renderHumanInbox(runtimeState.humanInboxSummary),
     // logRollupDigest, phaseSummaryDigest, memoryHotsetDigest, staleMemoryDigest:
     // omitted — these were produced by the old cognition packet compiler which
