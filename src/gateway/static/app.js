@@ -1398,14 +1398,19 @@ function renderConsoleItem(item) {
     html += '<div class="turn-content turn-content--streaming">';
     html += '<div class="turn-streaming-bar"></div>';
     if (item.statusText) {
-      html += '<div class="turn-streaming-status">' + escapeHtml(item.statusText) + '</div>';
+      html += '<div class="turn-streaming-status">' + escapeHtml(item.statusText) + ' <span class="streaming-cursor"></span></div>';
     } else {
-      html += '<div class="turn-streaming-status">Thinking...</div>';
+      html += '<div class="turn-streaming-status">Thinking... <span class="streaming-cursor"></span></div>';
     }
     html += '<div class="turn-streaming-elapsed">' + escapeHtml(elapsedStr) + ' elapsed</div>';
     html += '</div>';
   } else {
-    html += '<div class="turn-content">' + renderRichText(preview && !expanded ? preview.previewText : getConsoleItemSourceText(item)) + '</div>';
+    var contentHtml = renderRichText(preview && !expanded ? preview.previewText : getConsoleItemSourceText(item));
+    html += '<div class="turn-content">' + contentHtml;
+    if (item.itemType === 'draft') {
+      html += '<span class="streaming-cursor"></span>';
+    }
+    html += '</div>';
     if (preview) {
       html += '<div class="turn-collapse-meta">';
       html += '<span class="turn-collapse-note">' + escapeHtml(getConsoleCollapseMeta(preview)) + '</span>';
@@ -3376,9 +3381,9 @@ function setupConsoleInput() {
     sendConsoleMessage();
   });
 
-  // Enter to send (no shift), Shift+Enter for newline
+  // Enter to send (no shift), Shift+Enter for newline, Cmd/Ctrl+Enter also sends
   input.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
       e.preventDefault();
       sendConsoleMessage();
     }
