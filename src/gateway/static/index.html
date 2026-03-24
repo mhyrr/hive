@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HIVE</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1/themes/prism-tomorrow.min.css">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -74,23 +75,24 @@
 
     <div class="console-history" id="console-history">
       <div class="console-welcome">
-        <p>Talk to the steward.</p>
+        <p>HIVE steward session</p>
         <p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>
+        <div class="console-welcome-prompts">
+          <button class="console-welcome-prompt" data-welcome-prompt="hive status" type="button">hive status</button>
+          <button class="console-welcome-prompt" data-welcome-prompt="What's on the board?" type="button">What's on the board?</button>
+          <button class="console-welcome-prompt" data-welcome-prompt="Review the current plan" type="button">Review the current plan</button>
+          <button class="console-welcome-prompt" data-welcome-prompt="What needs my attention?" type="button">What needs my attention?</button>
+        </div>
       </div>
     </div>
-    <section class="pulse-panel" id="pulse-panel" hidden>
-      <div class="pulse-panel-header">
-        <div class="pulse-panel-kicker">Live Pulse</div>
-        <button class="pulse-panel-toggle" id="pulse-panel-toggle" type="button">Collapse</button>
+    <div class="console-input-wrap">
+      <div class="slash-autocomplete" id="slash-autocomplete" hidden>
+        <ul class="slash-autocomplete-list" id="slash-autocomplete-list" role="listbox"></ul>
       </div>
-      <div class="pulse-panel-list" id="pulse-panel-list"></div>
-    </section>
-    <form class="console-input" id="console-form">
-      <textarea id="console-input" placeholder="Talk to HIVE... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
-      <button type="submit" id="console-send-btn">Send</button>
-    </form>
-    <div class="console-activity" id="console-activity">
-      <div class="console-activity-empty">No live hive activity yet.</div>
+      <form class="console-input" id="console-form">
+        <textarea id="console-input" placeholder="Talk to HIVE... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
+        <button type="submit" id="console-send-btn">Send</button>
+      </form>
     </div>
   </main>
 
@@ -109,58 +111,39 @@
           <div class="rail-empty">No project in focus yet.</div>
         </div>
       </section>
-      <section class="rail-section rail-section--active-agents">
-        <div class="rail-section-header">Active Agents</div>
-        <div class="live-agents" id="live-agents">
-          <div class="rail-empty">No active agents.</div>
-        </div>
-      </section>
       <section class="rail-section rail-section--cognition" id="cognition-section">
         <div class="rail-section-header">Cognition</div>
         <div class="cognition-panel" id="cognition-panel">
           <div class="rail-empty">Loading cognitive routing policy…</div>
         </div>
       </section>
-      <section class="rail-section rail-section--logs" id="process-logs-section">
-        <div class="process-logs-header">
-          <div class="process-logs-header-copy">
-            <span class="process-logs-title" id="process-logs-title">Raw Logs</span>
-            <span class="process-logs-subtitle" id="process-logs-subtitle" hidden></span>
-          </div>
-          <div class="process-logs-actions">
-            <button class="process-logs-back" id="process-logs-back" type="button" hidden>Back</button>
-            <button class="process-logs-refresh" id="process-logs-refresh" title="Refresh live data">Refresh</button>
-          </div>
-        </div>
-        <div class="process-logs-content" id="process-logs-content">
-          <div class="process-logs-empty">No live process logs yet.</div>
+      <section class="rail-section rail-section--active-agents">
+        <div class="rail-section-header">Active Agents</div>
+        <div class="live-agents" id="live-agents">
+          <div class="rail-empty">No active agents.</div>
         </div>
       </section>
     </section>
 
     <section class="rail-panel" id="rail-panel-queue" data-rail-panel="queue">
-      <section class="rail-section">
-        <div class="rail-section-header">Attention Queue</div>
-        <div class="queue-list" id="queue-attention">
-          <div class="rail-empty">Nothing needs you right now.</div>
+      <section class="rail-section rail-section--board-summary">
+        <div class="rail-section-header">Board</div>
+        <div class="board-summary" id="board-summary">
+          <div class="rail-empty">No board state available.</div>
         </div>
       </section>
-      <section class="rail-section">
-        <div class="rail-section-header">Pending Approvals</div>
-        <div class="queue-list" id="queue-approvals">
-          <div class="rail-empty">No pending approvals.</div>
+      <section class="rail-section rail-section--event-stream">
+        <div class="event-stream-header">
+          <div class="rail-section-header">Events</div>
+          <div class="event-stream-filters" id="event-stream-filters">
+            <button class="event-filter-chip event-filter-chip--active" type="button" data-event-filter="all">All</button>
+            <button class="event-filter-chip" type="button" data-event-filter="attention">Needs Attention</button>
+            <button class="event-filter-chip" type="button" data-event-filter="messages">Messages</button>
+            <button class="event-filter-chip" type="button" data-event-filter="human">Human</button>
+          </div>
         </div>
-      </section>
-      <section class="rail-section">
-        <div class="rail-section-header">Waiting On Human</div>
-        <div class="queue-list" id="queue-waiting-human">
-          <div class="rail-empty">Nothing is waiting on a human reply.</div>
-        </div>
-      </section>
-      <section class="rail-section">
-        <div class="rail-section-header">Incidents</div>
-        <div class="queue-list" id="queue-incidents">
-          <div class="rail-empty">No active incidents.</div>
+        <div class="event-stream-list" id="event-stream-list">
+          <div class="rail-empty">No events yet.</div>
         </div>
       </section>
     </section>
@@ -186,8 +169,28 @@
     </div>
   </div>
 
-  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1/dist/uPlot.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/uplot@1/dist/uPlot.iife.min.js"></script>
 
+  <!-- Command Palette -->
+  <div class="command-palette" id="command-palette" hidden>
+    <div class="command-palette-backdrop" id="command-palette-backdrop"></div>
+    <div class="command-palette-dialog">
+      <div class="command-palette-input-wrap">
+        <input class="command-palette-input" id="command-palette-input"
+               type="text" placeholder="Type a command..." autocomplete="off" spellcheck="false">
+      </div>
+      <div class="command-palette-results" id="command-palette-results"></div>
+      <div class="command-palette-footer">
+        <span class="command-palette-hint">&#x2191;&#x2193; navigate</span>
+        <span class="command-palette-hint">&#x23CE; select</span>
+        <span class="command-palette-hint">esc close</span>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/plugins/autoloader/prism-autoloader.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

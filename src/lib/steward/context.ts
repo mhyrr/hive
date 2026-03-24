@@ -16,7 +16,12 @@ import {
   getSessionPrompt,
   getSessionState,
 } from "../sessions";
-import { readStewardDeltaHistory, refreshProjectRuntimeState } from "../state";
+import {
+  markSeenResultRunIds,
+  readSeenResultRunIds,
+  readStewardDeltaHistory,
+  refreshProjectRuntimeState,
+} from "../state";
 
 import {
   type DeltaHistoryEntry,
@@ -45,7 +50,7 @@ export type StewardContext = {
   openDecisionsDigest: string;
   openMessagesDigest: string;
   activeRunsDigest: string;
-  recentResultsDigest: string;
+  recentResultsDigest: string | null;
   humanInboxDigest: string;
   logRollupDigest?: string | null;
   phaseSummaryDigest?: string | null;
@@ -84,7 +89,7 @@ export async function loadStewardContext(input: {
   recentTurnLimit?: number;
 }): Promise<StewardContext> {
   const projectPaths = getProjectPaths(input.hivePaths, input.projectId);
-  const [globalConfig, projectConfig, sessionMeta, sessionState, sessionPrompt, runtimeState, soul, identity, self, memoryContext, history] =
+  const [globalConfig, projectConfig, sessionMeta, sessionState, sessionPrompt, runtimeState, soul, identity, self, memoryContext, history, seenRunIds] =
     await Promise.all([
       Bun.file(input.hivePaths.config).text().catch(() => ""),
       Bun.file(projectPaths.config).text(),
@@ -101,6 +106,7 @@ export async function loadStewardContext(input: {
       Bun.file(input.hivePaths.self).text().catch(() => ""),
       loadPromptMemoryContext(input.hivePaths, input.projectId),
       getSessionHistory(input.hivePaths.sessionsDir, input.sessionId),
+      readSeenResultRunIds(projectPaths),
     ]);
 
   const repoPath = extractRepoPath(projectConfig);
@@ -146,7 +152,17 @@ export async function loadStewardContext(input: {
     openDecisionsDigest: renderOpenDecisions(runtimeState.boardSummary, runtimeState.humanInboxSummary),
     openMessagesDigest: runtimeState.openMessagesSummary.digest,
     activeRunsDigest: runtimeState.activeRunsSummary.digest,
-    recentResultsDigest: renderRecentResults(runtimeState.recentResultsSummary),
+    recentResultsDigest: await (async () => {
+      const newItems = runtimeState.recentResultsSummary.items.filter(
+        (item) => !seenRunIds.has(item.runId),
+      );
+      if (newItems.length > 0) {
+        await markSeenResultRunIds(projectPaths, newItems.map((item) => item.runId));
+      }
+      return newItems.length > 0
+        ? renderRecentResults({ ...runtimeState.recentResultsSummary, items: newItems })
+        : null;
+    })(),
     humanInboxDigest: renderHumanInbox(runtimeState.humanInboxSummary),
     // logRollupDigest, phaseSummaryDigest, memoryHotsetDigest, staleMemoryDigest:
     // omitted — these were produced by the old cognition packet compiler which

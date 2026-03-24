@@ -373,26 +373,26 @@ function queuePersistentTurnOutput(input: {
   });
 }
 
-function getMockAuthState(input: {
+async function getMockAuthState(input: {
   provider: string;
   authPolicy: "oauth-only" | "env" | null;
-}): string {
-  if (input.provider !== "anthropic") {
-    return resolvePiApiKey(input.provider, { authPolicy: input.authPolicy }) ? "configured" : "none";
+}): Promise<string> {
+  if (input.provider === "anthropic") {
+    if (process.env.ANTHROPIC_OAUTH_TOKEN?.trim()) {
+      return "oauth";
+    }
+
+    if (input.authPolicy !== "oauth-only" && process.env.ANTHROPIC_API_KEY?.trim()) {
+      return "api";
+    }
+
+    return "none";
   }
 
-  if (input.authPolicy === "oauth-only") {
-    return process.env.ANTHROPIC_OAUTH_TOKEN?.trim() ? "oauth" : "none";
+  const key = await resolvePiApiKey(input.provider, { authPolicy: input.authPolicy });
+  if (key) {
+    return "configured";
   }
-
-  if (process.env.ANTHROPIC_OAUTH_TOKEN?.trim()) {
-    return "oauth";
-  }
-
-  if (process.env.ANTHROPIC_API_KEY?.trim()) {
-    return "api";
-  }
-
   return "none";
 }
 
@@ -411,7 +411,7 @@ async function runMockPersistentStewardTurn(input: {
   const humanTurn = humanTurnMatch?.[1]?.trim() || "mock task";
   const replyPrefix =
     behavior === "auth"
-      ? `Mock persistent steward auth: ${getMockAuthState({
+      ? `Mock persistent steward auth: ${await getMockAuthState({
           provider: input.handle.provider,
           authPolicy: input.handle.authPolicy,
         })} | `
@@ -539,10 +539,12 @@ async function startPersistentStewardHandle(input: {
   const key = getHandleKey(input.hivePaths.home, input.sessionId);
   const agent = new Agent({
     transport: new ProviderTransport({
-      getApiKey: (provider) =>
-        resolvePiApiKey(provider, {
+      getApiKey: async (provider) => {
+        const resolved = await resolvePiApiKey(provider, {
           authPolicy: input.runtimeConfig.authPolicy,
-        }),
+        });
+        return resolved?.token;
+      },
     }),
   });
 
@@ -554,16 +556,17 @@ async function startPersistentStewardHandle(input: {
     msgDir: input.hivePaths.msgDir,
     projectId: input.projectId,
     globalConfig: input.globalConfig,
+    hivePaths: input.hivePaths,
   }) as never);
 
   if (!process.env.HIVE_TEST_PI_BEHAVIOR) {
-    const apiKey = resolvePiApiKey(input.runtimeConfig.provider, {
+    const apiKey = await resolvePiApiKey(input.runtimeConfig.provider, {
       authPolicy: input.runtimeConfig.authPolicy,
     });
 
     if (!apiKey) {
       throw new UsageError(
-        `No Pi credentials are available for provider '${input.runtimeConfig.provider}'.`,
+        `No Pi credentials are available for provider '${input.runtimeConfig.provider}'. Set ANTHROPIC_API_KEY, ANTHROPIC_OAUTH_TOKEN, or sign in with Claude CLI.`,
       );
     }
   }
@@ -949,15 +952,25 @@ export async function runPersistentStewardTurn(input: {
       outputChain: Promise.resolve(),
     };
     handle.activeTurn = turn;
-    handle.systemPrompt = systemPrompt;
-    handle.agent.setSystemPrompt(systemPrompt);
-    handle.agent.setTools(await buildPersistentStewardTools({
-      hiveHome: input.hivePaths.home,
-      repoPath: context.repoPath,
-      msgDir: input.hivePaths.msgDir,
-      projectId: input.projectId,
-      globalConfig: context.globalConfig,
-    }) as never);
+    // Only reset system prompt if it actually changed — resetting invalidates
+    // the provider's automatic prefix cache for the entire conversation.
+    if (handle.systemPrompt !== systemPrompt) {
+      handle.systemPrompt = systemPrompt;
+      handle.agent.setSystemPrompt(systemPrompt);
+    }
+
+    // Only rebuild tools on first bootstrap — tool definitions are stable
+    // within a session and changing them breaks prefix caching.
+    if (!handle.bootstrapped) {
+      handle.agent.setTools(await buildPersistentStewardTools({
+        hiveHome: input.hivePaths.home,
+        repoPath: context.repoPath,
+        msgDir: input.hivePaths.msgDir,
+        projectId: input.projectId,
+        globalConfig: context.globalConfig,
+        hivePaths: input.hivePaths,
+      }) as never);
+    }
     clearIdleTimer(handle);
 
     // Drain any queued worker-completion notifications and prepend them
@@ -1261,6 +1274,11 @@ function buildRunCompletionDelta(result: RunResult): string {
       ? result.finalVisibleOutput.split("\n").slice(0, 5).join("\n")
       : "(no output)";
   const outcomeLabel = digest?.outcome ?? result.status;
+  const modelLabel = result.runtime && result.model
+    ? ` | ran-on: ${result.runtime}/${result.model}`
+    : result.runtime
+      ? ` | ran-on: ${result.runtime}`
+      : "";
   const costLabel = result.costUsd != null ? ` | cost: $${result.costUsd.toFixed(4)}` : "";
   const filesLabel =
     (digest?.filesChanged.length ?? 0) > 0
@@ -1270,8 +1288,7 @@ function buildRunCompletionDelta(result: RunResult): string {
         : "";
 
   return [
-    `[run-completed] Worker ${result.agentId} finished (${outcomeLabel})${costLabel}${filesLabel}`,
-    `Run: ${result.runId} | exited: ${result.ended}`,
+    `[run-completed] Worker ${result.agentId} finished (${outcomeLabel})${modelLabel}${costLabel}${filesLabel}`,
     summaryText,
   ].join("\n");
 }

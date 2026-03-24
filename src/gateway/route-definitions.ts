@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { feedCommand } from "../commands/feed";
 import { inboxCommand } from "../commands/inbox";
 import { logCommand } from "../commands/log";
-import { msgCommand, nudgeCommand } from "../commands/msg";
+import { msgCommand } from "../commands/msg";
 import { psCommand } from "../commands/ps";
 import { sayCommand } from "../commands/say";
 import { statusCommand } from "../commands/status";
@@ -19,6 +19,7 @@ import { UsageError } from "../lib/errors";
 import { appendFeedEntry, parseStructuredFeedEntries } from "../lib/feed";
 import { appendLogEntry } from "../lib/log";
 import { getActiveProject, getProjectPaths, listProjects } from "../lib/paths";
+import { extractRepoPath } from "../lib/project";
 import {
   getRunOutputPath,
   listActiveRuns,
@@ -169,7 +170,7 @@ async function openLocalPath(input: {
   }
 
   if (!normalizedPath.startsWith("/")) {
-    throw new UsageError("Path must be absolute");
+    throw new UsageError(`Path must be absolute (got "${normalizedPath}" — relative path resolution may have failed)`);
   }
 
   const file = Bun.file(normalizedPath);
@@ -262,10 +263,13 @@ type RouteHandler = (
 ) => Promise<Response>;
 
 const getRoutes: Record<string, RouteHandler> = {
-  "/api/status": async (_req, _url, _options, _broadcast) => {
+  "/api/status": async (_req, _url, options, _broadcast) => {
     try {
       const result = await statusCommand();
-      return jsonOk(result);
+      const identityText = await Bun.file(options.hivePaths.identity).text().catch(() => "");
+      const nameMatch = identityText.match(/^-\s*Name:\s*(.+)$/m);
+      const hiveName = nameMatch ? nameMatch[1].trim() : null;
+      return jsonOk({ result, hiveName });
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
@@ -466,6 +470,17 @@ const getRoutes: Record<string, RouteHandler> = {
     } catch (err) {
       return jsonError(500, err instanceof Error ? err.message : "Unknown error");
     }
+  },
+
+  "/api/slash-commands": async (_req, _url, _options, _broadcast) => {
+    return jsonOk({
+      commands: [
+        { command: "/help", description: "Show available commands and shortcuts" },
+        { command: "/dream", description: "Launch an overnight goal", args: "<goal>" },
+        { command: "/project", description: "Switch or message a project", args: "[project] [message]" },
+        { command: "/runtime", description: "Switch steward runtime", args: "[runtime] [model]" },
+      ],
+    });
   },
 
   "/api/cognition": async (_req, url, options, _broadcast) => {
@@ -995,7 +1010,7 @@ const postRoutes: Record<string, RouteHandler> = {
       if (!body.message) {
         return jsonError(400, "Missing 'message' field in request body");
       }
-      const result = await nudgeCommand([body.message]);
+      const result = await msgCommand(["nudge", body.message]);
       return jsonOk(result);
     } catch (err) {
       if (err instanceof SyntaxError) {
@@ -1042,13 +1057,32 @@ const postRoutes: Record<string, RouteHandler> = {
     }
   },
 
-  "/api/open": async (req, _url, _options, _broadcast) => {
+  "/api/open": async (req, _url, options, _broadcast) => {
     try {
       const body = await req.json() as { path?: string; line?: number | string | null };
-      const path = body.path?.trim();
+      let path = body.path?.trim();
 
       if (!path) {
         return jsonError(400, "Missing 'path' field");
+      }
+
+      // Resolve relative paths against active project working directory
+      if (!path.startsWith("/")) {
+        const activeProjectId = await getActiveProject(options.hivePaths);
+        if (activeProjectId) {
+          const projectPaths = getProjectPaths(options.hivePaths, activeProjectId);
+          const projectConfig = await Bun.file(projectPaths.config).text().catch(() => "");
+          const repoPath = extractRepoPath(projectConfig);
+          const candidates = repoPath
+            ? [join(repoPath, path), join(projectPaths.root, path)]
+            : [join(projectPaths.root, path)];
+          for (const candidate of candidates) {
+            if (await Bun.file(candidate).exists()) {
+              path = candidate;
+              break;
+            }
+          }
+        }
       }
 
       const result = await openLocalPath({
