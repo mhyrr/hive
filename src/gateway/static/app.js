@@ -1491,6 +1491,10 @@ function renderConsoleHistory() {
         '<span class="console-welcome-prompt-icon">&#x1F50D;</span>' +
         '<span class="console-welcome-prompt-text">Review recent work</span>' +
         '</button>' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="/dream improve the hive status output">' +
+        '<span class="console-welcome-prompt-icon">&#x1F319;</span>' +
+        '<span class="console-welcome-prompt-text">Launch a dream</span>' +
+        '</button>' +
         '</div>' +
         '</div>';
     }
