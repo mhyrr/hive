@@ -1,4 +1,6 @@
 import { archiveCommand } from "./commands/archive";
+import { dreamCommand } from "./commands/dream";
+import { goalCommand } from "./commands/goal";
 import { approvalCommand } from "./commands/approval";
 import { cognitionCommand } from "./commands/cognition";
 import { consoleCommand } from "./commands/console";
@@ -91,6 +93,10 @@ export async function runCli(args: string[]): Promise<string> {
       return syncCommand();
     case "think":
       return thinkCommand(rest);
+    case "dream":
+      return dreamCommand(rest);
+    case "goal":
+      return goalCommand(rest);
     default:
       throw new UsageError(`Unknown command: ${command}`);
   }
