@@ -550,7 +550,7 @@ async function startPersistentStewardHandle(input: {
 
   agent.setSystemPrompt(input.systemPrompt);
   agent.setModel(buildPiModel(input.runtimeConfig) as never);
-  agent.setTools(buildPersistentStewardTools({
+  agent.setTools(await buildPersistentStewardTools({
     hiveHome: input.hivePaths.home,
     repoPath: input.repoPath,
     msgDir: input.hivePaths.msgDir,
@@ -962,7 +962,7 @@ export async function runPersistentStewardTurn(input: {
     // Only rebuild tools on first bootstrap — tool definitions are stable
     // within a session and changing them breaks prefix caching.
     if (!handle.bootstrapped) {
-      handle.agent.setTools(buildPersistentStewardTools({
+      handle.agent.setTools(await buildPersistentStewardTools({
         hiveHome: input.hivePaths.home,
         repoPath: context.repoPath,
         msgDir: input.hivePaths.msgDir,
