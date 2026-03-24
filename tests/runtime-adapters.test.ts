@@ -243,6 +243,7 @@ describe("codex adapter", () => {
     expect(args).toEqual([
       "exec",
       "--full-auto",
+      "--json",
       "-C",
       "/repo",
       "--add-dir",
@@ -262,6 +263,7 @@ describe("codex adapter", () => {
     expect(args).toEqual([
       "exec",
       "--full-auto",
+      "--json",
       "-C",
       "/repo",
       "--add-dir",
@@ -328,6 +330,54 @@ describe("codex adapter", () => {
     expect(adapter.suppressLine("OpenAI Codex v0.101.0 (research preview)")).toBe(false);
     expect(adapter.suppressLine("Review complete.")).toBe(false);
   });
+
+  test("parses codex JSONL turn.completed usage metadata", () => {
+    const parsed = adapter.parseOutput?.([
+      JSON.stringify({ type: "turn.started" }),
+      JSON.stringify({
+        type: "item.completed",
+        item_type: "agent_message",
+        text: "Done. I fixed the bug.",
+      }),
+      JSON.stringify({
+        type: "turn.completed",
+        usage: { input_tokens: 5000, cached_input_tokens: 3200, output_tokens: 450 },
+      }),
+    ].join("\n"));
+
+    expect(parsed?.text).toBe("Done. I fixed the bug.");
+    expect(parsed?.metadata?.inputTokens).toBe(5000);
+    expect(parsed?.metadata?.outputTokens).toBe(450);
+    expect(parsed?.metadata?.cacheReadInputTokens).toBe(3200);
+    expect(parsed?.metadata?.authMode).toBe("api");
+    expect(parsed?.metadata?.totalTokens).toBe(8650);
+  });
+
+  test("extracts live text from codex JSONL agent_message events", () => {
+    const capture = adapter.createOutputCapture?.();
+
+    expect(capture?.handleStdoutLine(JSON.stringify({
+      type: "turn.started",
+    }))).toBeNull();
+
+    expect(capture?.handleStdoutLine(JSON.stringify({
+      type: "item.updated",
+      item_type: "agent_message",
+      text: "Hello",
+    }))).toBe("Hello");
+
+    expect(capture?.handleStdoutLine(JSON.stringify({
+      type: "item.updated",
+      item_type: "agent_message",
+      text: "Hello world",
+    }))).toBe(" world");
+
+    expect(capture?.handleStdoutLine(JSON.stringify({
+      type: "item.completed",
+      item_type: "command_execution",
+      text: "ls -la",
+    }))).toBeNull();
+  });
 });
 
 // --- Gemini adapter arg building ---
@@ -385,6 +435,111 @@ describe("gemini adapter", () => {
   });
 });
 
+// --- Ollama adapter arg building ---
+
+describe("ollama adapter", () => {
+  const adapter = getAdapter("ollama")!;
+
+  test("builds launch args with --json, --oss, --local-provider ollama", () => {
+    const args = adapter.buildLaunchArgs({
+      model: "qwen3:4b",
+      repoPath: "/repo",
+      hiveHome: "/hive",
+      prompt: "triage this diff",
+    });
+
+    expect(args).toEqual([
+      "exec",
+      "--full-auto",
+      "--json",
+      "--oss",
+      "--local-provider",
+      "ollama",
+      "-C",
+      "/repo",
+      "--add-dir",
+      "/hive",
+      "--model",
+      "qwen3:4b",
+      "triage this diff",
+    ]);
+  });
+
+  test("builds launch args without model", () => {
+    const args = adapter.buildLaunchArgs({
+      model: null,
+      repoPath: "/repo",
+      hiveHome: "/hive",
+      prompt: "do stuff",
+    });
+
+    expect(args).not.toContain("--model");
+    expect(args).toContain("--oss");
+    expect(args).toContain("--json");
+  });
+
+  test("builds interactive args with --oss and --local-provider ollama", () => {
+    const args = adapter.buildInteractiveArgs({
+      model: "qwen3:4b",
+      repoPath: "/repo",
+      hiveHome: "/hive",
+      systemPrompt: "You are a triage agent",
+    });
+
+    expect(args).toContain("--oss");
+    expect(args).toContain("--local-provider");
+    expect(args).toContain("ollama");
+    expect(args).toContain("--model");
+    expect(args).toContain("qwen3:4b");
+  });
+
+  test("uses --model flag (not -m)", () => {
+    const args = adapter.buildLaunchArgs({
+      model: "qwen3:4b",
+      repoPath: "/repo",
+      hiveHome: "/hive",
+      prompt: "task",
+    });
+
+    expect(args).toContain("--model");
+    expect(args).not.toContain("-m");
+  });
+
+  test("suppressLine filters codex noise", () => {
+    expect(adapter.suppressLine("mcp startup: no servers")).toBe(true);
+    expect(adapter.suppressLine("Review complete.")).toBe(false);
+  });
+
+  test("has parseOutput (shares codex JSONL parser)", () => {
+    expect(adapter.parseOutput).toBeDefined();
+
+    const parsed = adapter.parseOutput?.([
+      JSON.stringify({
+        type: "item.completed",
+        item_type: "agent_message",
+        text: "Done.",
+      }),
+      JSON.stringify({
+        type: "turn.completed",
+        usage: { input_tokens: 800, output_tokens: 50 },
+      }),
+    ].join("\n"));
+
+    expect(parsed?.text).toBe("Done.");
+    expect(parsed?.metadata?.inputTokens).toBe(800);
+    expect(parsed?.metadata?.outputTokens).toBe(50);
+  });
+
+  test("has createOutputCapture (shares codex capture)", () => {
+    expect(adapter.createOutputCapture).toBeDefined();
+  });
+
+  test("lookup by alias", () => {
+    expect(getAdapter("local")?.name).toBe("ollama");
+    expect(getAdapter("oss")?.name).toBe("ollama");
+  });
+});
+
 // --- shouldSuppressRuntimeLine (public API) ---
 
 describe("shouldSuppressRuntimeLine via adapter dispatch", () => {
@@ -430,8 +585,8 @@ describe("shouldSuppressRuntimeLine via adapter dispatch", () => {
 
 // --- buildLaunchSpec backward compatibility ---
 
-describe("buildLaunchSpec backward compatibility", () => {
-  test("produces identical codex launch spec as before", () => {
+describe("buildLaunchSpec", () => {
+  test("produces codex launch spec with --json for JSONL output", () => {
     const spec = buildLaunchSpec({
       runtime: "codex",
       model: "o3",
@@ -447,6 +602,7 @@ describe("buildLaunchSpec backward compatibility", () => {
       args: [
         "exec",
         "--full-auto",
+        "--json",
         "-C",
         "/my/repo",
         "--add-dir",
@@ -538,6 +694,37 @@ describe("buildLaunchSpec backward compatibility", () => {
       model: "gemini-2.5-pro",
       command: "gemini",
       args: ["-C", "/my/repo", "--model", "gemini-2.5-pro", "Fix the bug"],
+    });
+  });
+
+  test("builds ollama launch spec with codex --oss and --json", () => {
+    const spec = buildLaunchSpec({
+      runtime: "ollama",
+      model: "qwen3:4b",
+      repoPath: "/my/repo",
+      hiveHome: "/home/.hive",
+      prompt: "Triage this",
+    });
+
+    expect(spec).toEqual({
+      runtime: "ollama",
+      model: "qwen3:4b",
+      command: "codex",
+      args: [
+        "exec",
+        "--full-auto",
+        "--json",
+        "--oss",
+        "--local-provider",
+        "ollama",
+        "-C",
+        "/my/repo",
+        "--add-dir",
+        "/home/.hive",
+        "--model",
+        "qwen3:4b",
+        "Triage this",
+      ],
     });
   });
 });

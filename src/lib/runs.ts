@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter";
 import { ensureDirectory, ProjectPaths } from "./paths";
+import { isProcessAlive } from "./process";
 import { parseScopeRoots } from "./project";
 import { getAdapter, RuntimeName } from "./runtime";
 import { now, toCompactTimestamp, toDateParts, toIsoTimestamp } from "./time";
@@ -50,6 +51,8 @@ export type RunResult = {
   agentId: string;
   status: Extract<RunStatus, "exited" | "failed" | "cancelled">;
   exitCode: number | null;
+  runtime: string | null;
+  model: string | null;
   assignmentMessage: string | null;
   assignmentStatusAfterExit: string | null;
   assignmentResolvedByWorker: boolean;
@@ -103,29 +106,6 @@ type PromptArtifact = {
   promptPath: string;
   runId: string;
 };
-
-function isProcessAlive(pid: number | null): boolean {
-  if (!pid || pid <= 0) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : null;
-
-    if (code === "EPERM") {
-      return true;
-    }
-
-    if (code === "ESRCH") {
-      return false;
-    }
-
-    throw error;
-  }
-}
 
 function toNullableNumber(value: string | undefined): number | null {
   if (!value) {
@@ -266,6 +246,8 @@ function toRunResult(path: string, raw: string): RunResult | null {
     agentId,
     status,
     exitCode: toNullableNumber(attributes["exit-code"]),
+    runtime: attributes["worker-runtime"] ?? null,
+    model: attributes["worker-model"] ?? null,
     assignmentMessage: attributes["assignment-message"] ?? null,
     assignmentStatusAfterExit: attributes["assignment-status-after-exit"] ?? null,
     assignmentResolvedByWorker: toBoolean(attributes["assignment-resolved-by-worker"]),
@@ -532,6 +514,14 @@ export async function writeRunResult(
     status: run.status,
     ended: run.ended ?? toIsoTimestamp(),
   };
+
+  if (run.runtime) {
+    attributes["worker-runtime"] = run.runtime;
+  }
+
+  if (run.model) {
+    attributes["worker-model"] = run.model;
+  }
 
   if (run.exitCode !== null) {
     attributes["exit-code"] = String(run.exitCode);

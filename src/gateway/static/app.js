@@ -29,21 +29,18 @@ var state = {
   sessionId: null,
   pendingSends: 0,
   liveSnapshot: null,
-  processLogsSnapshot: null,
   cognitionSnapshot: null,
   healthSnapshot: null,
   queueSnapshot: null,
   timelineItems: [],
   railTab: 'live',
-  pulsesCollapsed: true,
-  processLogsFocus: null,
-  processLogsStickToBottom: true,
-  processLogsRefreshTimer: null,
+  eventStreamFilter: 'all',
+  hiveName: null,
+  usageChart: null,
+  usageHistory: [],
   cognitionRefreshTimer: null,
   agentSignals: {},
   notificationsPrimed: false,
-  toastSeenKeys: {},
-  toasts: [],
 };
 
 
@@ -80,6 +77,218 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// --- Animation Utilities ---
+
+function animateNumber(element, targetValue, duration) {
+  if (!element) return;
+  var startValue = parseFloat(element.textContent) || 0;
+  if (startValue === targetValue) return;
+  var startTime = null;
+  duration = duration || 400;
+  element.classList.add('animate-number');
+
+  function step(timestamp) {
+    if (!startTime) startTime = timestamp;
+    var progress = Math.min((timestamp - startTime) / duration, 1);
+    var eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+    var current = startValue + (targetValue - startValue) * eased;
+    if (Number.isInteger(targetValue)) {
+      element.textContent = Math.round(current);
+    } else {
+      element.textContent = current.toFixed(targetValue < 1 ? 4 : 2);
+    }
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    }
+  }
+
+  requestAnimationFrame(step);
+}
+
+function showSkeletonLoading(containerId, count) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+  var html = '';
+  for (var i = 0; i < (count || 3); i++) {
+    html += '<div class="skeleton skeleton-block"></div>';
+  }
+  container.innerHTML = html;
+}
+
+function getHealthPulseClass() {
+  return '';
+}
+
+
+// --- Charts ---
+
+function initUsageChart(containerId) {
+  if (typeof uPlot === 'undefined') return null;
+  var container = document.getElementById(containerId);
+  if (!container) return null;
+
+  container.innerHTML = '';
+  var width = container.offsetWidth || 300;
+
+  function formatTokenCount(v) {
+    if (v == null) return '—';
+    if (v >= 1000000) return (v / 1000000).toFixed(2) + 'M';
+    if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+    return String(v);
+  }
+
+  // Tooltip element
+  var tooltip = document.createElement('div');
+  tooltip.className = 'usage-chart-tooltip';
+  tooltip.style.display = 'none';
+  container.appendChild(tooltip);
+
+  var tooltipPlugin = {
+    hooks: {
+      setCursor: function(u) {
+        var idx = u.cursor.idx;
+        if (idx == null) {
+          tooltip.style.display = 'none';
+          return;
+        }
+
+        var ts = u.data[0][idx];
+        var t3 = u.data[1][idx];
+        var t2 = u.data[2][idx];
+        var t1 = u.data[3][idx];
+
+        var time = new Date(ts * 1000);
+        var timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        tooltip.innerHTML =
+          '<div class="usage-tooltip-time">' + timeStr + '</div>' +
+          '<div class="usage-tooltip-row usage-tooltip-t3">T3 (frontier): ' + formatTokenCount(t3) + '</div>' +
+          '<div class="usage-tooltip-row usage-tooltip-t2">T2 (standard): ' + formatTokenCount(t2) + '</div>' +
+          '<div class="usage-tooltip-row usage-tooltip-t1">T1 (local): ' + formatTokenCount(t1) + '</div>';
+        tooltip.style.display = 'block';
+
+        var left = u.cursor.left;
+        var chartWidth = u.over.offsetWidth;
+        // Flip tooltip to left side if near right edge
+        if (left > chartWidth - 140) {
+          tooltip.style.left = (left - 130) + 'px';
+        } else {
+          tooltip.style.left = (left + 16) + 'px';
+        }
+        tooltip.style.top = '4px';
+      },
+    },
+  };
+
+  var opts = {
+    width: width,
+    height: 130,
+    plugins: [tooltipPlugin],
+    cursor: { show: true },
+    select: { show: false },
+    legend: { show: false },
+    scales: {
+      x: { time: true },
+      y: { auto: true, range: function(u, min, max) { return [0, max || 100]; } },
+    },
+    axes: [
+      {
+        stroke: 'rgba(168, 154, 136, 0.3)',
+        grid: { stroke: 'rgba(255,255,255,0.03)', width: 1 },
+        ticks: { stroke: 'rgba(255,255,255,0.03)', width: 1 },
+        font: '10px Azeret Mono',
+        size: 35,
+      },
+      {
+        stroke: 'rgba(168, 154, 136, 0.3)',
+        grid: { stroke: 'rgba(255,255,255,0.03)', width: 1 },
+        ticks: { stroke: 'rgba(255,255,255,0.03)', width: 1 },
+        font: '10px Azeret Mono',
+        size: 50,
+        values: function(u, vals) {
+          return vals.map(function(v) { return v >= 1000000 ? (v / 1000000).toFixed(1) + 'M' : v >= 1000 ? (v / 1000).toFixed(0) + 'k' : String(v); });
+        },
+      },
+    ],
+    series: [
+      {},
+      {
+        label: 'T3',
+        stroke: 'rgba(218, 162, 0, 0.8)',
+        fill: 'rgba(218, 162, 0, 0.12)',
+        width: 2,
+        points: { show: true, size: 5 },
+      },
+      {
+        label: 'T2',
+        stroke: 'rgba(74, 136, 120, 0.8)',
+        fill: 'rgba(74, 136, 120, 0.12)',
+        width: 2,
+        points: { show: true, size: 5 },
+      },
+      {
+        label: 'T1',
+        stroke: 'rgba(88, 136, 176, 0.8)',
+        fill: 'rgba(88, 136, 176, 0.12)',
+        width: 2,
+        points: { show: true, size: 5 },
+      },
+    ],
+  };
+
+  var data = [[], [], [], []];
+  var chart = new uPlot(opts, data, container);
+  return chart;
+}
+
+function updateUsageChart(cognitionSnapshot) {
+  if (typeof uPlot === 'undefined') return;
+
+  var usage = cognitionSnapshot && cognitionSnapshot.usage ? cognitionSnapshot.usage : null;
+  if (!usage || !usage.tiers) return;
+
+  var now = Math.floor(Date.now() / 1000);
+  var t3 = usage.tiers.tier3 && usage.tiers.tier3.totalTokens ? usage.tiers.tier3.totalTokens : 0;
+  var t2 = usage.tiers.tier2 && usage.tiers.tier2.totalTokens ? usage.tiers.tier2.totalTokens : 0;
+  var t1 = usage.tiers.tier1 && usage.tiers.tier1.totalTokens ? usage.tiers.tier1.totalTokens : 0;
+
+  state.usageHistory.push({ ts: now, t3: t3, t2: t2, t1: t1 });
+  if (state.usageHistory.length > 60) {
+    state.usageHistory = state.usageHistory.slice(-60);
+  }
+
+  var times = [];
+  var s1 = [];
+  var s2 = [];
+  var s3 = [];
+  for (var i = 0; i < state.usageHistory.length; i++) {
+    var pt = state.usageHistory[i];
+    times.push(pt.ts);
+    s1.push(pt.t3);
+    s2.push(pt.t2);
+    s3.push(pt.t1);
+  }
+
+  var chartContainer = document.getElementById('usage-chart-container');
+  if (!chartContainer) return;
+
+  if (!state.usageChart) {
+    state.usageChart = initUsageChart('usage-chart-container');
+  }
+
+  if (state.usageChart) {
+    state.usageChart.setData([times, s1, s2, s3]);
+  }
+}
+
+function destroyUsageChart() {
+  if (state.usageChart) {
+    state.usageChart.destroy();
+    state.usageChart = null;
+  }
+}
+
 
 function formatTime(iso) {
   if (!iso) return '';
@@ -217,26 +426,47 @@ function buildApiPath(basePath, project, params) {
   return query ? basePath + '?' + query : basePath;
 }
 
+var FILE_EXTENSIONS_RE = /\.(ts|tsx|js|jsx|mjs|cjs|json|md|css|html|yml|yaml|toml|sh|py|rs|go|java|c|cpp|h|rb|sql|graphql|proto|xml|svg|txt)$/i;
+
 function parseFileTarget(target) {
-  if (!target || target[0] !== '/') return null;
+  if (!target) return null;
 
   var normalized = String(target).trim();
-  var line = null;
-  var fragmentIndex = normalized.indexOf('#L');
 
+  // Strip trailing punctuation that's not part of the path
+  normalized = normalized.replace(/[,;:!?)]+$/, '');
+
+  var line = null;
+
+  // Handle #L123 fragment
+  var fragmentIndex = normalized.indexOf('#L');
   if (fragmentIndex !== -1) {
     var fragment = normalized.slice(fragmentIndex + 2);
     normalized = normalized.slice(0, fragmentIndex);
-    var match = fragment.match(/^(\d+)/);
-    if (match) {
-      line = match[1];
+    var fmatch = fragment.match(/^(\d+)/);
+    if (fmatch) {
+      line = fmatch[1];
     }
   }
 
-  return {
-    path: normalized,
-    line: line,
-  };
+  // Handle path:123 line suffix
+  var colonLineMatch = normalized.match(/^(.+?):(\d+)(?:-\d+)?$/);
+  if (colonLineMatch) {
+    normalized = colonLineMatch[1];
+    if (!line) line = colonLineMatch[2];
+  }
+
+  // Absolute path
+  if (normalized[0] === '/') {
+    return { path: normalized, line: line };
+  }
+
+  // Relative path with recognized extension
+  if (FILE_EXTENSIONS_RE.test(normalized) && !normalized.includes(' ') && !normalized.startsWith('http')) {
+    return { path: normalized, line: line };
+  }
+
+  return null;
 }
 
 function buildMarkdownHref(target) {
@@ -246,15 +476,8 @@ function buildMarkdownHref(target) {
     return target;
   }
 
-  var fileTarget = parseFileTarget(target);
-  if (!fileTarget) {
-    return null;
-  }
-
-  return buildApiPath('/file', null, {
-    path: fileTarget.path,
-    line: fileTarget.line,
-  });
+  // File paths are handled via data-open-path click handler, not navigable URLs
+  return null;
 }
 
 function buildPreviewHref(path, line) {
@@ -279,12 +502,14 @@ function renderInlineText(text) {
     var fileTarget = parseFileTarget(target);
 
     if (href) {
-      var attrs = 'class="turn-link" href="' + escapeAttr(href) + '" target="_blank" rel="noopener noreferrer"';
+      var attrs;
       if (fileTarget) {
-        attrs += ' data-open-path="' + escapeAttr(fileTarget.path) + '"';
+        attrs = 'class="turn-link turn-link--file" href="#" data-open-path="' + escapeAttr(fileTarget.path) + '"';
         if (fileTarget.line) {
           attrs += ' data-open-line="' + escapeAttr(fileTarget.line) + '"';
         }
+      } else {
+        attrs = 'class="turn-link" href="' + escapeAttr(href) + '" target="_blank" rel="noopener noreferrer"';
       }
 
       html += '<a ' + attrs + '>' +
@@ -301,7 +526,108 @@ function renderInlineText(text) {
   return html;
 }
 
-function renderRichText(text) {
+var markdownRendererReady = false;
+
+function initMarkdownRenderer() {
+  if (markdownRendererReady || typeof marked === 'undefined') return;
+
+  var renderer = new marked.Renderer();
+
+  renderer.link = function (data) {
+    var href = data.href || '';
+    var text = data.text || '';
+    var builtHref = buildMarkdownHref(href);
+    var fileTarget = parseFileTarget(href);
+
+    if (fileTarget) {
+      var fileAttrs = 'class="turn-link turn-link--file" href="#" data-open-path="' + escapeAttr(fileTarget.path) + '"';
+      if (fileTarget.line) {
+        fileAttrs += ' data-open-line="' + escapeAttr(fileTarget.line) + '"';
+      }
+      return '<a ' + fileAttrs + '>' + text + '</a>';
+    }
+
+    if (builtHref) {
+      return '<a class="turn-link" href="' + escapeAttr(builtHref) + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
+    }
+
+    return '<a class="turn-link" href="' + escapeAttr(href) + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
+  };
+
+  renderer.code = function (data) {
+    var code = data.text || '';
+    var lang = data.lang || '';
+    var highlighted = code;
+    if (lang && typeof Prism !== 'undefined' && Prism.languages[lang]) {
+      try {
+        highlighted = Prism.highlight(code, Prism.languages[lang], lang);
+      } catch (e) {
+        highlighted = escapeHtml(code);
+      }
+    } else {
+      highlighted = escapeHtml(code);
+    }
+    return '<pre class="turn-code-block language-' + escapeAttr(lang) + '"><code class="language-' + escapeAttr(lang) + '">' + highlighted + '</code></pre>';
+  };
+
+  renderer.codespan = function (data) {
+    var raw = data.text || '';
+    var fileTarget = parseFileTarget(raw);
+    if (fileTarget) {
+      var attrs = 'class="turn-link turn-link--file" href="#" data-open-path="' + escapeAttr(fileTarget.path) + '"';
+      if (fileTarget.line) {
+        attrs += ' data-open-line="' + escapeAttr(fileTarget.line) + '"';
+      }
+      return '<a ' + attrs + '><code class="turn-code-inline">' + escapeHtml(raw) + '</code></a>';
+    }
+    return '<code class="turn-code-inline">' + escapeHtml(raw) + '</code>';
+  };
+
+  renderer.heading = function (data) {
+    var level = data.depth || 2;
+    var tag = 'h' + Math.min(level, 4);
+    return '<' + tag + ' class="turn-heading turn-heading--' + level + '">' + data.text + '</' + tag + '>';
+  };
+
+  renderer.blockquote = function (data) {
+    return '<blockquote class="turn-blockquote">' + data.text + '</blockquote>';
+  };
+
+  renderer.table = function (data) {
+    return '<div class="turn-table-wrap"><table class="turn-table">' + data.header + data.body + '</table></div>';
+  };
+
+  renderer.hr = function () {
+    return '<hr class="turn-hr">';
+  };
+
+  marked.setOptions({
+    renderer: renderer,
+    gfm: true,
+    breaks: true,
+  });
+
+  markdownRendererReady = true;
+}
+
+function renderMarkdown(text) {
+  var source = sanitizeStewardLikeText(String(text || '')).replace(/\r\n/g, '\n').trim();
+  if (!source) return '<p class="turn-paragraph"></p>';
+
+  initMarkdownRenderer();
+
+  if (!markdownRendererReady) {
+    return renderRichTextFallback(source);
+  }
+
+  try {
+    return marked.parse(source);
+  } catch (e) {
+    return renderRichTextFallback(source);
+  }
+}
+
+function renderRichTextFallback(text) {
   var normalized = String(text || '').replace(/\r\n/g, '\n');
   var blocks = normalized.split(/\n{2,}/);
   var html = '';
@@ -320,6 +646,10 @@ function renderRichText(text) {
   }
 
   return html || '<p class="turn-paragraph"></p>';
+}
+
+function renderRichText(text) {
+  return renderMarkdown(text);
 }
 
 
@@ -469,7 +799,7 @@ function classifyFeedStatus(entry) {
   if (text.indexOf('complete') !== -1 || text.indexOf('done') !== -1 || text.indexOf('success') !== -1) {
     return 'success';
   }
-  if (text.indexOf('warn') !== -1 || text.indexOf('block') !== -1 || text.indexOf('stuck') !== -1) {
+  if (text.indexOf('warn') !== -1 || text.indexOf('block') !== -1) {
     return 'warning';
   }
   return 'info';
@@ -553,6 +883,11 @@ function getTurnPresentation(role, source) {
 
   if (role === 'assistant' && source === 'system') {
     return { cssRole: 'system', label: 'buzz' };
+  }
+
+  if (role === 'assistant') {
+    var name = state.hiveName || 'hive';
+    return { cssRole: 'assistant', label: name.toLowerCase() };
   }
 
   return { cssRole: role, label: role };
@@ -1058,13 +1393,17 @@ function renderConsoleItem(item) {
   html += '</div></div>';
 
   if (item.itemType === 'draft' && !item.content) {
-    html += '<div class="turn-content">';
+    var elapsed = item.ts ? getMinutesSince(item.ts) : 0;
+    var elapsedStr = elapsed < 1 ? '<1m' : Math.round(elapsed) + 'm';
+    html += '<div class="turn-content turn-content--streaming">';
+    html += '<div class="turn-streaming-bar"></div>';
     if (item.statusText) {
-      html += '<div class="turn-draft-status">' + escapeHtml(item.statusText) + '</div>';
+      html += '<div class="turn-streaming-status">' + escapeHtml(item.statusText) + '</div>';
+    } else {
+      html += '<div class="turn-streaming-status">Thinking...</div>';
     }
-    html += '<span class="thinking-dots">';
-    html += '<span></span><span></span><span></span>';
-    html += '</span></div>';
+    html += '<div class="turn-streaming-elapsed">' + escapeHtml(elapsedStr) + ' elapsed</div>';
+    html += '</div>';
   } else {
     html += '<div class="turn-content">' + renderRichText(preview && !expanded ? preview.previewText : getConsoleItemSourceText(item)) + '</div>';
     if (preview) {
@@ -1130,6 +1469,24 @@ function renderConsoleHistory() {
       container.innerHTML = '<div class="console-welcome">' +
         '<p>Talk to the steward.</p>' +
         '<p class="console-welcome-hint">The head stays here. Delegation runs in the background.</p>' +
+        '<div class="console-welcome-prompts">' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="Give me a brief. What have the agents done recently, what is pending, and what needs my attention?">' +
+        '<span class="console-welcome-prompt-icon">&#x2728;</span>' +
+        '<span class="console-welcome-prompt-text">Get a brief</span>' +
+        '</button>' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="What is the current state of the board? Summarize tasks, blockers, and open decisions.">' +
+        '<span class="console-welcome-prompt-icon">&#x1F4CB;</span>' +
+        '<span class="console-welcome-prompt-text">Board status</span>' +
+        '</button>' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="What should I focus on right now? Prioritize the most impactful next step.">' +
+        '<span class="console-welcome-prompt-icon">&#x1F3AF;</span>' +
+        '<span class="console-welcome-prompt-text">What to focus on</span>' +
+        '</button>' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="Review recent agent work. Summarize what each agent accomplished and flag anything that needs review.">' +
+        '<span class="console-welcome-prompt-icon">&#x1F50D;</span>' +
+        '<span class="console-welcome-prompt-text">Review recent work</span>' +
+        '</button>' +
+        '</div>' +
         '</div>';
     }
     return;
@@ -1294,7 +1651,7 @@ function openConsoleDetailModal(index) {
   if (payload.content) {
     html += '<section class="turn-detail-section">';
     html += '<div class="turn-detail-section-title">Visible Message</div>';
-    html += '<pre class="turn-detail-pre">' + escapeHtml(payload.content) + '</pre>';
+    html += '<div class="turn-detail-markdown">' + renderMarkdown(payload.content) + '</div>';
     html += '</section>';
   }
   html += renderDetailSection('Usage', usageRows);
@@ -1368,6 +1725,14 @@ function setupConsoleDetailModal() {
         return;
       }
 
+      var welcomePrompt = event.target && event.target.closest
+        ? event.target.closest('[data-welcome-prompt]')
+        : null;
+      if (welcomePrompt) {
+        submitConsoleMessage(welcomePrompt.getAttribute('data-welcome-prompt') || '');
+        return;
+      }
+
       var expandButton = event.target && event.target.closest
         ? event.target.closest('[data-console-expand]')
         : null;
@@ -1403,14 +1768,6 @@ function setupConsoleDetailModal() {
 
 // --- Session Management ---
 
-function resetProcessLogFocus(clearSnapshot) {
-  state.processLogsFocus = null;
-  state.processLogsStickToBottom = true;
-  if (clearSnapshot) {
-    state.processLogsSnapshot = null;
-  }
-}
-
 function renderProjectName() {
   var projectEl = document.getElementById('project-name');
   if (!projectEl) return;
@@ -1418,24 +1775,15 @@ function renderProjectName() {
 }
 
 function updateSessionProject(project) {
-  var nextProject = project || null;
-  if (state.sessionProject !== nextProject) {
-    resetProcessLogFocus(true);
-  }
-  state.sessionProject = nextProject;
+  state.sessionProject = project || null;
   renderProjectName();
-  renderProcessLogs(state.processLogsSnapshot);
   scheduleOperationsRefresh(0);
 }
 
 function updateSessionIndicator(sessionId, project) {
   if (state.sessionId !== sessionId) {
     state.consoleExpanded = {};
-    state.pulsesCollapsed = true;
-    resetProcessLogFocus(true);
     state.notificationsPrimed = false;
-    state.toastSeenKeys = {};
-    state.toasts = [];
   }
   state.sessionId = sessionId;
   if (project !== undefined) {
@@ -1752,17 +2100,6 @@ function scheduleTimelineRefresh(delay) {
   }, typeof delay === 'number' ? delay : 280);
 }
 
-function scheduleProcessLogsRefresh(delay) {
-  if (state.processLogsRefreshTimer) {
-    clearTimeout(state.processLogsRefreshTimer);
-  }
-
-  state.processLogsRefreshTimer = setTimeout(function () {
-    state.processLogsRefreshTimer = null;
-    refreshProcessLogs();
-  }, typeof delay === 'number' ? delay : 200);
-}
-
 function scheduleCognitionRefresh(delay) {
   if (state.cognitionRefreshTimer) {
     clearTimeout(state.cognitionRefreshTimer);
@@ -1777,7 +2114,6 @@ function scheduleCognitionRefresh(delay) {
 function scheduleOperationsRefresh(delay) {
   var base = typeof delay === 'number' ? delay : 180;
   scheduleLiveRefresh(base);
-  scheduleProcessLogsRefresh(base + 30);
   scheduleCognitionRefresh(base + 60);
   scheduleQueueRefresh(base + 90);
   scheduleTimelineRefresh(base + 150);
@@ -1851,84 +2187,19 @@ function updateAgentSignals(agents) {
   state.agentSignals = nextSignals;
 }
 
-function countPatternMatches(text, pattern) {
-  if (!text) return 0;
-  var matches = text.match(pattern);
-  return matches ? matches.length : 0;
-}
-
-function healthTone(level) {
-  if (level === 'cruising') return 'success';
-  if (level === 'struggling') return 'warning';
-  if (level === 'stuck') return 'error';
-  return 'info';
-}
-
-function healthIcon(level) {
-  if (level === 'cruising') return '●';
-  if (level === 'struggling') return '▲';
-  if (level === 'stuck') return '■';
-  return '·';
-}
-
-function formatHealthLevel(level) {
-  return level || 'working';
-}
 
 function buildAgentHealth(agent) {
   var key = getAgentKey(agent);
-  var signal = key ? state.agentSignals[key] : null;
-  var text = buildAgentOutputFingerprint(agent).toLowerCase();
-  var ageMinutes = getMinutesSince(agent.started);
-  var staleMinutes = getMinutesSince(signal ? signal.lastChangedAt : agent.started);
-  var outputSeen = signal ? signal.outputSeen : Boolean(text);
-  var changeCount = signal ? signal.changeCount : 0;
-  var blockedMatches = countPatternMatches(
-    text,
-    /\b(blocked|stuck|waiting on|needs human|needs your|approval required|cannot proceed|can't proceed|permission denied)\b/g,
-  );
-  var struggleMatches = countPatternMatches(
-    text,
-    /\b(error|failed|retry|retrying|exception|timeout|timed out|not found|unable|cannot|can't|conflict|warning|failing|fixing|investigating)\b/g,
-  );
-  var progressMatches = countPatternMatches(
-    text,
-    /\b(completed|updated|wrote|fixed|verified|created|launched|running|working|finished|done|passed|clean|resolved)\b/g,
-  );
-  var level = 'working';
-  var reason = 'Work is moving normally.';
-
-  if (agent.status === 'failed' || agent.status === 'error' || agent.status === 'cancelled') {
-    level = 'stuck';
-    reason = 'This run is no longer healthy and likely needs intervention.';
-  } else if (blockedMatches > 0 || ((staleMinutes >= 14 && ageMinutes >= 15) || (!outputSeen && ageMinutes >= 12))) {
-    level = 'stuck';
-    reason = blockedMatches > 0
-      ? 'The latest output reads like a blocker or a wait state.'
-      : 'No meaningful visible movement for ' + Math.round(staleMinutes) + 'm.';
-  } else if (struggleMatches > 0 || (staleMinutes >= 7 && ageMinutes >= 9)) {
-    level = 'struggling';
-    reason = struggleMatches > 0
-      ? 'Retries, errors, or warnings are showing up in the recent output.'
-      : 'Progress has gone quiet for ' + Math.round(staleMinutes) + 'm.';
-  } else if ((progressMatches > 0 && staleMinutes <= 3) || (changeCount >= 3 && staleMinutes <= 4) || (outputSeen && ageMinutes <= 4)) {
-    level = 'cruising';
-    reason = 'Recent output suggests steady forward progress.';
-  }
+  var status = agent.status || 'active';
+  var level = status;
+  var tone = toneFromStatus(status);
 
   return {
     key: key,
     level: level,
-    tone: healthTone(level),
-    icon: healthIcon(level),
-    label: formatHealthLevel(level),
-    summary: reason,
-    ageMinutes: ageMinutes,
-    staleMinutes: staleMinutes,
-    ageLabel: formatRelativeAge(agent.started),
-    staleLabel: Math.round(staleMinutes) + 'm quiet',
-    outputSeen: outputSeen,
-    changeCount: changeCount,
+    tone: tone,
+    label: status,
+    agent: agent,
   };
 }
 
@@ -1937,43 +2208,25 @@ function buildHealthSnapshot(liveSnapshot) {
   updateAgentSignals(agents);
 
   var healthAgents = [];
-  var counts = {
-    cruising: 0,
-    working: 0,
-    struggling: 0,
-    stuck: 0,
-  };
+  var activeCount = 0;
 
   for (var i = 0; i < agents.length; i++) {
     var health = buildAgentHealth(agents[i]);
-    health.agent = agents[i];
     healthAgents.push(health);
-    counts[health.level] += 1;
+    var s = (agents[i].status || 'active').toLowerCase();
+    if (s === 'active' || s === 'starting') activeCount += 1;
   }
 
-  var aggregate = 'idle';
-  if (counts.stuck > 0) {
-    aggregate = 'stuck';
-  } else if (counts.struggling > 0) {
-    aggregate = 'struggling';
-  } else if (counts.working > 0) {
-    aggregate = 'working';
-  } else if (counts.cruising > 0) {
-    aggregate = 'cruising';
-  }
-
-  var summaryParts = [];
-  if (counts.cruising > 0) summaryParts.push(countLabel(counts.cruising, 'cruising agent', 'cruising agents'));
-  if (counts.working > 0) summaryParts.push(countLabel(counts.working, 'working agent', 'working agents'));
-  if (counts.struggling > 0) summaryParts.push(countLabel(counts.struggling, 'struggling agent', 'struggling agents'));
-  if (counts.stuck > 0) summaryParts.push(countLabel(counts.stuck, 'stuck agent', 'stuck agents'));
+  var aggregate = activeCount > 0 ? 'active' : 'idle';
+  var summary = activeCount > 0
+    ? countLabel(activeCount, 'active agent', 'active agents')
+    : 'No active agents.';
 
   return {
     aggregate: aggregate,
-    tone: healthTone(aggregate === 'idle' ? 'working' : aggregate),
-    counts: counts,
+    tone: activeCount > 0 ? 'info' : 'info',
     agents: healthAgents,
-    summary: summaryParts.join(' \u00b7 ') || 'No active health signals.',
+    summary: summary,
   };
 }
 
@@ -2126,40 +2379,6 @@ function buildAttentionItems(liveSnapshot, queueSnapshot, healthSnapshot) {
     });
   }
 
-  var healthIssues = healthSnapshot && Array.isArray(healthSnapshot.agents)
-    ? healthSnapshot.agents.filter(function (item) {
-      return item.level === 'stuck' || item.level === 'struggling';
-    })
-    : [];
-  for (var h = 0; h < healthIssues.length; h++) {
-    var issue = healthIssues[h];
-    var issueAgent = issue.agent || null;
-    var issueName = issueAgent ? (issueAgent.displayName || issueAgent.agentId || 'agent') : 'agent';
-    var issuePriority = issue.level === 'stuck' ? 0 : 3;
-    items.push({
-      id: 'health-' + issue.key,
-      kind: 'health',
-      tone: issue.level === 'stuck' ? 'error' : 'warning',
-      priority: issuePriority,
-      ts: issueAgent ? issueAgent.started : '',
-      title: issue.level === 'stuck'
-        ? issueName + ' looks stuck.'
-        : issueName + ' is starting to struggle.',
-      summary: issue.summary,
-      meta: joinMeta([
-        issue.label,
-        issue.staleLabel,
-        issue.ageLabel,
-      ]),
-      prompt:
-        'Take a look at ' + issueName +
-        '. Give me a short health brief: what it is doing, why it looks ' + issue.label +
-        ', and whether you want me to intervene.',
-      openTab: 'live',
-      focusId: 'live-agents',
-    });
-  }
-
   if (agents.length > 0) {
     var agentNames = listAgentNames(agents);
     items.push({
@@ -2231,8 +2450,7 @@ function buildLeadershipSnapshot() {
     if (
       attentionItems[i].kind === 'approval' ||
       attentionItems[i].kind === 'waiting' ||
-      attentionItems[i].kind === 'incident' ||
-      (attentionItems[i].kind === 'health' && attentionItems[i].tone === 'error')
+      attentionItems[i].kind === 'incident'
     ) {
       needsYouCount += 1;
     }
@@ -2291,26 +2509,21 @@ function renderHealthIndicator(healthSnapshot) {
   var icon = button.querySelector('.topbar-health-icon');
   var label = button.querySelector('.topbar-health-label');
   var aggregate = healthSnapshot ? healthSnapshot.aggregate : 'idle';
-  var summary = healthSnapshot ? healthSnapshot.summary : 'No active health signals.';
+  var summary = healthSnapshot ? healthSnapshot.summary : 'No active agents.';
 
   button.className = 'topbar-health topbar-health--' + aggregate;
   button.setAttribute('title', summary);
 
   if (icon) {
-    icon.textContent = healthIcon(aggregate);
+    icon.textContent = aggregate === 'active' ? '●' : '·';
   }
   if (label) {
     label.textContent = aggregate;
   }
 }
 
-function renderHealthPill(health) {
-  if (!health) return '';
-
-  return '<div class="health-pill health-pill--' + escapeAttr(health.label) + '">' +
-    '<span class="health-pill-icon">' + escapeHtml(health.icon) + '</span>' +
-    '<span>' + escapeHtml(health.label) + '</span>' +
-    '</div>';
+function renderHealthPill() {
+  return '';
 }
 
 function renderAttentionQueue(leadership) {
@@ -2381,369 +2594,14 @@ function humanizeActivityTitle(activity) {
   return actor + ' made a move.';
 }
 
-function buildPulseItems(leadership, liveSnapshot) {
-  var items = [];
-  var seen = {};
-  var attentionItems = leadership && Array.isArray(leadership.attentionItems) ? leadership.attentionItems : [];
-  var recentCompletions = liveSnapshot && Array.isArray(liveSnapshot.recentCompletions)
-    ? liveSnapshot.recentCompletions
-    : [];
-  var activity = liveSnapshot && Array.isArray(liveSnapshot.activity) ? liveSnapshot.activity : [];
-  var agents = liveSnapshot && Array.isArray(liveSnapshot.agents) ? liveSnapshot.agents : [];
-
-  function pushPulse(item) {
-    if (!item || !item.id || seen[item.id]) return;
-    seen[item.id] = true;
-    items.push(item);
-  }
-
-  for (var i = 0; i < attentionItems.length && i < 2; i++) {
-    var attention = attentionItems[i];
-    if (
-      attention.kind !== 'incident' &&
-      attention.kind !== 'approval' &&
-      attention.kind !== 'waiting' &&
-      attention.kind !== 'health'
-    ) {
-      continue;
-    }
-
-    pushPulse({
-      id: 'pulse-attention-' + attention.id,
-      tone: attention.tone,
-      tag: attention.kind === 'incident'
-        ? 'Needs you now'
-        : (attention.kind === 'approval'
-          ? 'Decision waiting'
-          : (attention.kind === 'waiting' ? 'Reply waiting' : 'Health watch')),
-      title: attention.title,
-      summary: attention.summary,
-      meta: attention.meta,
-      ts: attention.ts,
-      actionLabel: attention.kind === 'waiting' ? 'Draft Reply' : 'Ask Hive',
-      actionPrompt: attention.prompt,
-      secondaryLabel: 'Open Queue',
-      secondaryTab: 'queue',
-      secondaryFocusId: attention.focusId || 'queue-attention',
-    });
-  }
-
-  for (var j = 0; j < recentCompletions.length && items.length < 4; j++) {
-    var completion = recentCompletions[j];
-    var changedFiles = Array.isArray(completion.changedFiles) ? completion.changedFiles.length : 0;
-    pushPulse({
-      id: 'pulse-completion-' + (completion.runId || j),
-      tone: 'success',
-      tag: 'Just finished',
-      title: (completion.displayName || completion.agentId || 'worker') + ' wrapped a pass.',
-      summary: truncateText(
-        (completion.summary || 'Work completed cleanly.') +
-        (changedFiles > 0 ? ' ' + countLabel(changedFiles, 'file') + ' changed.' : ''),
-        170
-      ),
-      meta: joinMeta([
-        completion.runtime || '',
-        completion.model || '',
-        formatMoment(completion.ended),
-      ]),
-      ts: completion.ended,
-      secondaryLabel: 'Open Timeline',
-      secondaryTab: 'timeline',
-      secondaryFocusId: 'timeline-list',
-    });
-  }
-
-  for (var k = 0; k < activity.length && items.length < 4; k++) {
-    var activityItem = activity[k];
-    pushPulse({
-      id: 'pulse-activity-' + (activityItem.id || k),
-      tone: activityItem.tone || 'info',
-      tag: activityItem.actor ? activityItem.actor : 'Live signal',
-      title: humanizeActivityTitle(activityItem),
-      summary: truncateText(activityItem.detail || 'Fresh movement just hit the board.', 170),
-      meta: joinMeta([
-        activityItem.kind || '',
-        formatMoment(activityItem.ts),
-      ]),
-      ts: activityItem.ts,
-      actionLabel: 'Ask Context',
-      actionPrompt:
-        'Give me the context behind this update: "' + (activityItem.detail || activityItem.title || 'live signal') +
-        '". Tell me what changed, why it matters, and whether you need anything from me.',
-      secondaryLabel: 'Open Live',
-      secondaryTab: 'live',
-      secondaryFocusId: 'live-agents',
-    });
-  }
-
-  if (items.length === 0 && agents.length > 0) {
-    var activeAgent = agents[0];
-    pushPulse({
-      id: 'pulse-active-' + (activeAgent.runId || 'steward'),
-      tone: 'info',
-      tag: 'Still moving',
-      title: (activeAgent.displayName || activeAgent.agentId || 'The steward') + ' is still working.',
-      summary: truncateText(activeAgent.latestOutput || 'There is active work in flight right now.', 170),
-      meta: joinMeta([
-        activeAgent.runtime || '',
-        activeAgent.model || '',
-        formatMoment(activeAgent.started),
-      ]),
-      ts: activeAgent.started,
-      secondaryLabel: 'Logs',
-      secondaryRunId: activeAgent.runId || '',
-    });
-  }
-
-  return items.slice(0, 4);
-}
-
-function renderPulsePanel(leadership) {
-  var panel = document.getElementById('pulse-panel');
-  var list = document.getElementById('pulse-panel-list');
-  var toggle = document.getElementById('pulse-panel-toggle');
-
-  if (!panel || !list || !toggle) return;
-
-  var pulseItems = buildPulseItems(leadership, state.liveSnapshot);
-  if (!leadership || !leadership.project || pulseItems.length === 0) {
-    panel.hidden = true;
-    panel.classList.remove('pulse-panel--collapsed');
-    list.innerHTML = '';
-    toggle.textContent = 'Collapse';
-    return;
-  }
-
-  panel.hidden = false;
-  panel.classList.toggle('pulse-panel--collapsed', state.pulsesCollapsed);
-  toggle.textContent = state.pulsesCollapsed ? 'Expand' : 'Collapse';
-
-  if (state.pulsesCollapsed) {
-    list.innerHTML = '';
-    return;
-  }
-
-  var html = '';
-  for (var i = 0; i < pulseItems.length; i++) {
-    var item = pulseItems[i];
-    html += '<div class="' + toneClass('pulse-card', item.tone) + '">';
-    html += '<div class="pulse-card-header">';
-    html += '<div class="pulse-card-tag">' + escapeHtml(item.tag || 'Live pulse') + '</div>';
-    html += '<div class="pulse-card-time">' + escapeHtml(formatMoment(item.ts)) + '</div>';
-    html += '</div>';
-    html += '<div class="pulse-card-title">' + escapeHtml(item.title) + '</div>';
-    html += '<div class="pulse-card-summary">' + escapeHtml(item.summary || '') + '</div>';
-    if (item.meta) {
-      html += '<div class="pulse-card-meta">' + escapeHtml(item.meta) + '</div>';
-    }
-    html += '<div class="pulse-card-actions">';
-    if (item.actionPrompt) {
-      html += renderRailActionButton(item.actionLabel || 'Ask Hive', {
-        'data-rail-action': 'send-prompt',
-        'data-rail-prompt': item.actionPrompt,
-      });
-    }
-    if (item.secondaryRunId) {
-      html += renderRailActionButton(item.secondaryLabel || 'Logs', {
-        'data-rail-action': 'log',
-        'data-rail-run-id': item.secondaryRunId,
-      }, true);
-    } else if (item.secondaryTab) {
-      html += renderRailActionButton(item.secondaryLabel || 'Open', {
-        'data-rail-action': 'focus-tab',
-        'data-rail-tab-target': item.secondaryTab,
-        'data-rail-focus-id': item.secondaryFocusId || '',
-      }, true);
-    }
-    html += '</div>';
-    html += '</div>';
-  }
-
-  list.innerHTML = html;
-}
-
-function dismissToast(key) {
-  if (!key) return;
-  state.toasts = state.toasts.filter(function (item) {
-    return item.key !== key;
-  });
-  renderToastStack();
-}
-
-function renderToastStack() {
-  var container = document.getElementById('toast-stack');
-  if (!container) return;
-
-  if (!state.toasts || state.toasts.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  var html = '';
-  for (var i = 0; i < state.toasts.length; i++) {
-    var toast = state.toasts[i];
-    html += '<div class="' + toneClass('toast-card', toast.tone) + '">';
-    html += '<div class="toast-card-header">';
-    html += '<div class="toast-card-kicker">' + escapeHtml(toast.kicker || 'HIVE') + '</div>';
-    html += '<div class="toast-card-time">' + escapeHtml(formatMoment(toast.ts)) + '</div>';
-    html += '</div>';
-    html += '<div class="toast-card-title">' + escapeHtml(toast.title) + '</div>';
-    html += '<div class="toast-card-summary">' + escapeHtml(toast.summary || '') + '</div>';
-    html += '<div class="toast-card-actions">';
-    if (toast.actionPrompt) {
-      html += renderRailActionButton(toast.actionLabel || 'Ask Hive', {
-        'data-rail-action': 'send-prompt',
-        'data-rail-prompt': toast.actionPrompt,
-      });
-    }
-    if (toast.secondaryRunId) {
-      html += renderRailActionButton(toast.secondaryLabel || 'Logs', {
-        'data-rail-action': 'log',
-        'data-rail-run-id': toast.secondaryRunId,
-      }, true);
-    } else if (toast.secondaryTab) {
-      html += renderRailActionButton(toast.secondaryLabel || 'Open', {
-        'data-rail-action': 'focus-tab',
-        'data-rail-tab-target': toast.secondaryTab,
-        'data-rail-focus-id': toast.secondaryFocusId || '',
-      }, true);
-    }
-    html += '<button class="toast-dismiss" type="button" data-toast-dismiss="' + escapeAttr(toast.key) + '">Dismiss</button>';
-    html += '</div>';
-    html += '</div>';
-  }
-
-  container.innerHTML = html;
-}
-
-function addToast(toast) {
-  if (!toast || !toast.key || state.toastSeenKeys[toast.key]) return;
-
-  state.toastSeenKeys[toast.key] = true;
-  state.toasts = [toast].concat(state.toasts || []).slice(0, 4);
-  renderToastStack();
-
-  var ttl = toast.tone === 'error' ? 18000 : (toast.tone === 'warning' ? 14000 : 9000);
-  setTimeout(function () {
-    dismissToast(toast.key);
-  }, ttl);
-}
-
-function isHealthToastKey(key) {
-  return String(key || '').indexOf('toast-attention-health-') === 0;
-}
-
-function pruneHealthToasts(activeKeys) {
-  var allowed = activeKeys || {};
-  var nextToasts = [];
-  var removed = false;
-
-  for (var i = 0; i < (state.toasts || []).length; i++) {
-    var toast = state.toasts[i];
-    if (isHealthToastKey(toast.key) && !allowed[toast.key]) {
-      removed = true;
-      delete state.toastSeenKeys[toast.key];
-      continue;
-    }
-    nextToasts.push(toast);
-  }
-
-  if (removed) {
-    state.toasts = nextToasts;
-    renderToastStack();
-  }
-}
-
-function maybeEmitLeadershipToasts(leadership) {
-  if (!leadership || !leadership.project) return;
-
-  var candidates = [];
-  var activeHealthToastKeys = {};
-  var attentionItems = leadership.attentionItems || [];
-  var recentCompletions = state.liveSnapshot && Array.isArray(state.liveSnapshot.recentCompletions)
-    ? state.liveSnapshot.recentCompletions
-    : [];
-
-  for (var i = 0; i < attentionItems.length; i++) {
-    var item = attentionItems[i];
-    if (item.kind === 'health' && item.tone !== 'error') {
-      continue;
-    }
-
-    if (item.tone !== 'error' && item.kind !== 'approval') {
-      continue;
-    }
-
-    var candidate = {
-      key: 'toast-attention-' + item.id,
-      tone: item.tone,
-      kicker: item.tone === 'error' ? 'Needs you now' : 'Leadership heads-up',
-      title: item.title,
-      summary: item.summary,
-      ts: item.ts,
-      actionLabel: item.kind === 'waiting' ? 'Draft Reply' : 'Ask Hive',
-      actionPrompt: item.prompt,
-      secondaryLabel: item.openTab === 'queue' ? 'Open Queue' : 'Open Live',
-      secondaryTab: item.openTab || 'queue',
-      secondaryFocusId: item.focusId || '',
-    };
-
-    if (item.kind === 'health') {
-      activeHealthToastKeys[candidate.key] = true;
-    }
-
-    candidates.push(candidate);
-  }
-
-  pruneHealthToasts(activeHealthToastKeys);
-
-  if (recentCompletions.length > 0) {
-    var completion = recentCompletions[0];
-    candidates.push({
-      key: 'toast-completion-' + (completion.runId || 'latest'),
-      tone: 'success',
-      kicker: 'Completed',
-      title: (completion.displayName || completion.agentId || 'worker') + ' wrapped a pass.',
-      summary: truncateText(completion.summary || 'Recent work completed cleanly.', 150),
-      ts: completion.ended,
-      secondaryLabel: 'Open Timeline',
-      secondaryTab: 'timeline',
-      secondaryFocusId: 'timeline-list',
-    });
-  }
-
-  if (!state.notificationsPrimed) {
-    for (var p = 0; p < candidates.length; p++) {
-      if (candidates[p].tone !== 'error') {
-        state.toastSeenKeys[candidates[p].key] = true;
-      }
-    }
-    state.notificationsPrimed = true;
-    candidates = candidates.filter(function (item) {
-      return item.tone === 'error';
-    });
-  }
-
-  for (var j = 0; j < candidates.length && j < 2; j++) {
-    addToast(candidates[j]);
-  }
-}
-
 function renderLeadershipSurface() {
   var leadership = buildLeadershipSnapshot();
   renderHealthIndicator(leadership.health);
   renderAttentionBadge(leadership);
   renderAttentionQueue(leadership);
-  renderPulsePanel(leadership);
-  maybeEmitLeadershipToasts(leadership);
-  renderToastStack();
 }
 
 function focusRailSection(tab, focusId) {
-  if (tab === 'live' && focusId && focusId !== 'process-logs-section' && state.processLogsFocus) {
-    clearProcessLogFocus();
-  }
-
   setRailTab(tab || 'live');
 
   window.requestAnimationFrame(function () {
@@ -2751,33 +2609,6 @@ function focusRailSection(tab, focusId) {
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-}
-
-function focusProcessLog(runId) {
-  if (!runId) return;
-
-  state.processLogsFocus = runId;
-  state.processLogsStickToBottom = true;
-  setRailTab('live');
-  renderProcessLogs(state.processLogsSnapshot);
-  scheduleProcessLogsRefresh(0);
-
-  window.requestAnimationFrame(function () {
-    var section = document.getElementById('process-logs-section');
-    var container = document.getElementById('process-logs-content');
-    if (section) {
-      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-  });
-}
-
-function clearProcessLogFocus() {
-  if (!state.processLogsFocus) return;
-  resetProcessLogFocus(false);
-  renderProcessLogs(state.processLogsSnapshot);
 }
 
 function renderConsoleActivity(snapshot) {
@@ -2832,6 +2663,9 @@ function renderConsoleActivity(snapshot) {
   html += '</div>';
 
   container.innerHTML = html;
+
+  var hasActiveAgents = snapshot && snapshot.agents && snapshot.agents.length > 0;
+  container.classList.toggle('console-activity--live', hasActiveAgents || !!pendingConversation);
 }
 
 function renderLiveSummary(snapshot) {
@@ -2866,12 +2700,6 @@ function renderLiveSummary(snapshot) {
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Session</div><div class="live-summary-stat-value">' + escapeHtml(snapshot.sessionId || 'none') + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Supervisor</div><div class="live-summary-stat-value">' + escapeHtml(supervisorStatus) + '</div></div>';
   html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Live Agents</div><div class="live-summary-stat-value">' + escapeHtml(String(visibleAgents.length)) + '</div></div>';
-  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Team Health</div><div class="live-summary-stat-value">' +
-    escapeHtml(healthSnapshot ? healthSnapshot.aggregate : 'idle') +
-    '</div></div>';
-  html += '<div class="live-summary-stat"><div class="live-summary-stat-label">Health Mix</div><div class="live-summary-stat-value">' +
-    escapeHtml(healthSnapshot ? healthSnapshot.summary : 'No active health signals.') +
-    '</div></div>';
   html += '</div>';
 
   container.innerHTML = html;
@@ -2920,7 +2748,7 @@ function renderLiveAgents(agents) {
       descriptor = '';
     }
     if (Array.isArray(agent.tail) && agent.tail.length > 0) {
-      outputDetail = agent.tail.slice(-10).join('\n');
+      outputDetail = agent.tail.join('\n');
     } else if (agent.latestOutput) {
       outputDetail = String(agent.latestOutput);
     }
@@ -2933,13 +2761,14 @@ function renderLiveAgents(agents) {
     ];
     var collapsedSummary = outputDetail
       ? truncateMultilineText(outputDetail, 180)
-      : (agent.statusText || (health ? health.summary : ''));
+      : (agent.statusText || '');
     if (!collapsedSummary) {
       collapsedSummary = agent.persona === 'steward'
         ? 'Waiting for the first streamed update from the steward.'
         : 'Waiting for the first visible update from this agent.';
     }
-    html += '<div class="agent-card' + (expanded ? ' agent-card--expanded' : '') + '">';
+    var healthPulse = getHealthPulseClass(health);
+    html += '<div class="agent-card' + (expanded ? ' agent-card--expanded' : '') + (healthPulse ? ' ' + healthPulse : '') + '" data-persona="' + escapeAttr(agent.persona || 'worker') + '">';
     html += '<div class="agent-card-header">';
     html += '<div class="agent-card-header-copy">';
     html += '<div class="agent-card-name">' + escapeHtml(agent.displayName || agent.agentId || 'agent') + '</div>';
@@ -2950,13 +2779,32 @@ function renderLiveAgents(agents) {
     html += '<div class="' + toneClass('status-pill', toneFromStatus(agent.status)) + '">' + escapeHtml(agent.status || 'active') + '</div>';
     html += '</div>';
     html += '</div>';
-    html += '<div class="agent-card-meta">' + escapeHtml(joinMeta(meta)) + '</div>';
-    html += '<div class="agent-card-summary">' + escapeHtml(truncateMultilineText(collapsedSummary, expanded ? 320 : 180)) + '</div>';
-    if (expanded && health) {
-      html += '<div class="agent-card-health-note">' + escapeHtml(health.summary) + '</div>';
+    // Model/runtime chips
+    html += '<div class="agent-card-chips">';
+    if (agent.runtime) {
+      html += '<span class="agent-chip agent-chip--runtime">' + escapeHtml(agent.runtime) + '</span>';
     }
+    if (agent.model) {
+      html += '<span class="agent-chip agent-chip--model">' + escapeHtml(agent.model) + '</span>';
+    }
+    if (agent.started) {
+      var elapsed = getMinutesSince(agent.started);
+      var elapsedLabel = elapsed < 1 ? '<1m' : (elapsed < 60 ? Math.round(elapsed) + 'm' : Math.round(elapsed / 60) + 'h');
+      html += '<span class="agent-chip agent-chip--duration">' + elapsedLabel + '</span>';
+    }
+    html += '</div>';
+
+    // Mini timeline bar
+    if (agent.started) {
+      html += '<div class="agent-timeline-bar" title="Agent lifecycle">';
+      html += '<div class="agent-timeline-fill"></div>';
+      html += '<div class="agent-timeline-pulse"></div>';
+      html += '</div>';
+    }
+
+    html += '<div class="agent-card-summary">' + escapeHtml(truncateMultilineText(collapsedSummary, expanded ? 500 : 280)) + '</div>';
     if (expanded && outputDetail) {
-      html += '<div class="agent-card-output">' + escapeHtml(truncateMultilineText(outputDetail, 1200)) + '</div>';
+      html += '<div class="agent-card-output">' + escapeHtml(outputDetail) + '</div>';
     } else if (expanded) {
       var emptyOutput = agent.statusText || (agent.persona === 'steward'
         ? 'Waiting for the first streamed update from the steward.'
@@ -2968,10 +2816,6 @@ function renderLiveAgents(agents) {
       'data-rail-action': 'toggle-agent',
       'data-rail-agent-key': agentKey,
     }, true);
-    html += renderRailActionButton(state.processLogsFocus === (agent.runId || '') ? 'Watching' : 'Logs', {
-      'data-rail-action': 'log',
-      'data-rail-run-id': agent.runId || '',
-    }, state.processLogsFocus === (agent.runId || ''));
     html += renderRailActionButton('Stop', {
       'data-rail-action': 'stop-agent',
       'data-rail-stop-target': agent.agentId || agent.runId || '',
@@ -2981,25 +2825,6 @@ function renderLiveAgents(agents) {
   }
 
   container.innerHTML = html;
-}
-
-function formatCognitionLaneRoute(lane) {
-  if (!lane || !lane.piRoute || !lane.piRoute.provider) {
-    return 'direct CLI-backed by default';
-  }
-
-  var route = lane.piRoute;
-  var source = route.providerSource === 'env'
-    ? 'env'
-    : route.providerSource === 'config'
-      ? 'config'
-      : 'implicit';
-  var parts = ['Pi ' + source, route.provider];
-
-  if (route.model) parts.push(route.model);
-  if (route.authPolicy) parts.push(route.authPolicy);
-
-  return parts.join(' \u00b7 ');
 }
 
 function findCognitionLane(policy, runtime) {
@@ -3050,43 +2875,6 @@ function formatCognitionExecutionSummary(execution) {
   ]);
 }
 
-function formatTier1LocalStatus(snapshot) {
-  var localModels = snapshot && snapshot.localModels ? snapshot.localModels : null;
-
-  if (!localModels) {
-    return 'not inspected';
-  }
-
-  if (!localModels.available) {
-    return joinMeta([
-      'ollama unavailable',
-      localModels.reason || '',
-    ]);
-  }
-
-  if (localModels.configuredModelStatus === 'available') {
-    return 'available locally';
-  }
-
-  if (localModels.configuredModelStatus === 'missing') {
-    return 'configured but not pulled';
-  }
-
-  if (localModels.configuredModelStatus === 'unconfigured') {
-    return 'not configured';
-  }
-
-  return 'unverified';
-}
-
-function formatTier1CloudRoute(label, provider, modelId) {
-  return joinMeta([
-    label || '',
-    provider || '',
-    modelId || '',
-  ]) || 'route unset';
-}
-
 function formatUsageBudgetLabel(budget, totals) {
   if (!budget) {
     return formatCompactInteger(totals ? totals.totalTokens : 0) + ' tk';
@@ -3100,70 +2888,24 @@ function formatUsageBudgetLabel(budget, totals) {
 }
 
 function renderCognitionUsageMeter(label, budget, totals) {
-  var used = totals && totals.totalTokens ? totals.totalTokens : 0;
-  var ratio = budget && budget.tokenLimit ? Math.min(1, used / budget.tokenLimit) : 0;
-  var percent = Math.max(3, Math.round(ratio * 100));
+  var used = budget && budget.usedTokens != null ? budget.usedTokens : (totals && totals.totalTokens ? totals.totalTokens : 0);
+  var hasBudget = budget && budget.tokenLimit;
+  var ratio = hasBudget ? Math.min(1, used / budget.tokenLimit) : 0;
+  var percent = hasBudget ? Math.max(used > 0 ? 2 : 0, Math.round(ratio * 100)) : 0;
   var tone = budget ? budget.status : 'unconfigured';
-  var html = '<div class="cognition-meter">';
+  var tierColor = label === 'T3' ? 'tier3' : (label === 'T2' ? 'tier2' : 'tier1');
+  var html = '<div class="cognition-meter cognition-meter--' + tierColor + '">';
   html += '<div class="cognition-meter-header">';
   html += '<div class="cognition-meter-label">' + escapeHtml(label) + '</div>';
   html += '<div class="cognition-meter-value">' + escapeHtml(formatUsageBudgetLabel(budget, totals)) + '</div>';
   html += '</div>';
-  html += '<div class="cognition-meter-track"><div class="cognition-meter-fill cognition-meter-fill--' + escapeAttr(tone) + '" style="width:' + percent + '%"></div></div>';
-  html += '</div>';
-  return html;
-}
-
-function renderCognitionBodyText(text) {
-  var normalized = sanitizeStewardLikeText(text).replace(/\r\n/g, '\n').trim();
-  if (!normalized) {
-    return '';
+  if (hasBudget) {
+    html += '<div class="cognition-meter-track"><div class="cognition-meter-fill cognition-meter-fill--' + escapeAttr(tone) + ' cognition-meter-fill--' + tierColor + '" style="width:' + percent + '%"></div></div>';
+  } else if (used > 0) {
+    html += '<div class="cognition-meter-track cognition-meter-track--no-budget"><div class="cognition-meter-fill cognition-meter-fill--' + tierColor + '" style="width:100%"></div></div>';
+  } else {
+    html += '<div class="cognition-meter-track cognition-meter-track--empty"></div>';
   }
-
-  var lines = normalized.split('\n');
-  var rendered = [];
-
-  for (var i = 0; i < lines.length; i++) {
-    rendered.push(renderInlineText(lines[i]));
-  }
-
-  return rendered.join('<br>');
-}
-
-function renderCognitionSummaryRows(items, options) {
-  var rows = Array.isArray(items) ? items : [];
-
-  if (rows.length === 0) {
-    return '<div class="rail-empty">' + escapeHtml(
-      options && options.empty ? options.empty : 'No compiled cognition data yet.'
-    ) + '</div>';
-  }
-
-  var html = '<div class="cognition-lane-list">';
-
-  for (var i = 0; i < rows.length; i++) {
-    var item = rows[i];
-    if (!item) continue;
-
-    html += '<div class="cognition-row cognition-row--lane">';
-    html += '<div class="cognition-row-header">';
-    html += '<div class="cognition-row-name">' + escapeHtml(item.label || item.id || 'item') + '</div>';
-    if (item.kicker) {
-      html += '<div class="cognition-row-kicker">' + escapeHtml(item.kicker) + '</div>';
-    }
-    html += '</div>';
-
-    if (item.body) {
-      html += '<div class="cognition-row-body">' + renderCognitionBodyText(item.body) + '</div>';
-    }
-
-    if (item.meta) {
-      html += '<div class="cognition-row-meta">' + escapeHtml(item.meta) + '</div>';
-    }
-
-    html += '</div>';
-  }
-
   html += '</div>';
   return html;
 }
@@ -3171,6 +2913,8 @@ function renderCognitionSummaryRows(items, options) {
 function renderCognition(snapshot) {
   var container = document.getElementById('cognition-panel');
   if (!container) return;
+
+  destroyUsageChart();
 
   var policy = snapshot && snapshot.policy ? snapshot.policy : null;
   updateBudgetChip(snapshot);
@@ -3221,14 +2965,6 @@ function renderCognition(snapshot) {
     activeSessionLabel,
   ])) + '</div>';
 
-  if (compiled) {
-    html += '<div class="cognition-context">' + escapeHtml(joinMeta([
-      compiled.workingSetRevision !== null ? 'working set rev ' + compiled.workingSetRevision : '',
-      compiled.workingSetProducedAt ? 'materialized ' + formatRelativeAge(compiled.workingSetProducedAt) : '',
-      compiled.compilerUpdatedAt ? 'compiler ' + formatRelativeAge(compiled.compilerUpdatedAt) : '',
-    ])) + '</div>';
-  }
-
   if (usage) {
     html += '<div class="cognition-subsection">';
     html += '<div class="cognition-subsection-title">Usage (' + escapeHtml(String(usage.windowHours || 24)) + 'h)</div>';
@@ -3249,6 +2985,7 @@ function renderCognition(snapshot) {
     html += renderCognitionUsageMeter('T2', usage.budgets && usage.budgets.tier2, usage.tiers && usage.tiers.tier2);
     html += renderCognitionUsageMeter('T1', usage.budgets && usage.budgets.tier1, usage.tiers && usage.tiers.tier1);
     html += '</div>';
+    html += '<div id="usage-chart-container" class="cognition-chart"></div>';
     html += '<div class="cognition-row cognition-row--lane">';
     html += '<div class="cognition-row-header">';
     html += '<div class="cognition-row-name">last wake</div>';
@@ -3263,342 +3000,6 @@ function renderCognition(snapshot) {
     html += '</div></div>';
   }
 
-  if (compiled && Array.isArray(compiled.workingSetDigests) && compiled.workingSetDigests.length > 0) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Working Set</div>';
-    html += renderCognitionSummaryRows(compiled.workingSetDigests);
-    html += '</div>';
-  }
-
-  if (compiled) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Idle Compiler</div>';
-    html += renderCognitionSummaryRows(
-      (compiled.idlePackets || []).map(function (packet) {
-        return {
-          id: packet.id,
-          label: packet.label,
-          kicker: packet.kicker,
-          body: packet.body,
-          meta: packet.producedAt ? 'compiled ' + formatRelativeAge(packet.producedAt) : '',
-        };
-      }),
-      { empty: 'No idle compilation packets yet. Let the supervisor go calm long enough to compile them.' }
-    );
-    html += '</div>';
-  }
-
-  if (snapshot && snapshot.tier1) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Tier-1</div>';
-    html += '<div class="cognition-lane-list">';
-    html += '<div class="cognition-row cognition-row--lane">';
-    html += '<div class="cognition-row-header">';
-    html += '<div class="cognition-row-name">local</div>';
-    html += '<div class="cognition-row-kicker">' + escapeHtml(formatTier1LocalStatus(snapshot)) + '</div>';
-    html += '</div>';
-    html += '<div class="cognition-row-body">' + escapeHtml(joinMeta([
-      snapshot.tier1.localModel || '',
-      localModels ? localModels.baseUrl || '' : '',
-    ])) + '</div>';
-    html += '</div>';
-    html += '<div class="cognition-row cognition-row--lane">';
-    html += '<div class="cognition-row-header">';
-    html += '<div class="cognition-row-name">cloud</div>';
-    html += '<div class="cognition-row-kicker">fallback ' + escapeHtml(snapshot.tier1.fallbackModel || '') + '</div>';
-    html += '</div>';
-    html += '<div class="cognition-row-body">' + escapeHtml(formatTier1CloudRoute(
-      snapshot.tier1.cloudModel,
-      snapshot.tier1.cloudProvider,
-      snapshot.tier1.cloudModelId
-    )) + '</div>';
-    html += '</div>';
-    html += '<div class="cognition-row cognition-row--lane">';
-    html += '<div class="cognition-row-header">';
-    html += '<div class="cognition-row-name">fallback</div>';
-    html += '<div class="cognition-row-kicker">cloud backup</div>';
-    html += '</div>';
-    html += '<div class="cognition-row-body">' + escapeHtml(formatTier1CloudRoute(
-      snapshot.tier1.fallbackModel,
-      snapshot.tier1.fallbackProvider,
-      snapshot.tier1.fallbackModelId
-    )) + '</div>';
-    html += '</div>';
-    if (localModels && localModels.reason && !localModels.available) {
-      html += '<div class="cognition-row cognition-row--lane">';
-      html += '<div class="cognition-row-header">';
-      html += '<div class="cognition-row-name">discovery</div>';
-      html += '<div class="cognition-row-kicker">offline</div>';
-      html += '</div>';
-      html += '<div class="cognition-row-body">' + escapeHtml(localModels.reason) + '</div>';
-      html += '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  if (discoveredLocalModels.length > 0) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Local Models</div>';
-    html += '<div class="cognition-lane-list">';
-    for (var m = 0; m < discoveredLocalModels.length; m++) {
-      var model = discoveredLocalModels[m];
-      if (!model) continue;
-      html += '<div class="cognition-row cognition-row--lane">';
-      html += '<div class="cognition-row-header">';
-      html += '<div class="cognition-row-name">' + escapeHtml(model.name || 'model') + '</div>';
-      html += '<div class="cognition-row-kicker">' + escapeHtml(snapshot.tier1 && snapshot.tier1.localModel === model.name ? 'preferred local' : 'discovered') + '</div>';
-      html += '</div>';
-      html += '<div class="cognition-row-body">' + escapeHtml(joinMeta([
-        model.modifiedAt || '',
-        model.digest ? model.digest.slice(0, 12) : '',
-      ])) + '</div>';
-      html += '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  if (Array.isArray(policy.modes) && policy.modes.length > 0) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Modes</div>';
-    html += '<div class="cognition-mode-list">';
-    for (var i = 0; i < policy.modes.length; i++) {
-      var mode = policy.modes[i];
-      if (!mode) continue;
-      html += '<div class="cognition-row cognition-row--mode">';
-      html += '<div class="cognition-row-header">';
-      html += '<div class="cognition-row-name">' + escapeHtml(mode.label || mode.id || 'mode') + '</div>';
-      html += '<div class="cognition-row-kicker">' + escapeHtml(mode.id || '') + '</div>';
-      html += '</div>';
-      html += '<div class="cognition-row-body">' + escapeHtml(mode.useWhen || '') + '</div>';
-      html += '<div class="cognition-row-meta">' + escapeHtml(joinMeta([
-        mode.fanOut || '',
-        mode.parallelism || '',
-      ])) + '</div>';
-      html += '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  if (Array.isArray(policy.runtimeLanes) && policy.runtimeLanes.length > 0) {
-    html += '<div class="cognition-subsection">';
-    html += '<div class="cognition-subsection-title">Runtime Lanes</div>';
-    html += '<div class="cognition-lane-list">';
-    for (var j = 0; j < policy.runtimeLanes.length; j++) {
-      var lane = policy.runtimeLanes[j];
-      if (!lane) continue;
-      html += '<div class="cognition-row cognition-row--lane">';
-      html += '<div class="cognition-row-header">';
-      html += '<div class="cognition-row-name">' + escapeHtml(lane.runtime || 'runtime') + '</div>';
-      html += '<div class="cognition-row-kicker">direct ' + escapeHtml(lane.directAuth || 'unknown') + '</div>';
-      html += '</div>';
-      html += '<div class="cognition-row-body">' + escapeHtml(formatCognitionLaneRoute(lane)) + '</div>';
-      html += '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  container.innerHTML = html;
-}
-
-function getLiveAgentForRun(runId) {
-  var agents = state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : [];
-  for (var i = 0; i < agents.length; i++) {
-    if (agents[i].runId === runId) {
-      return agents[i];
-    }
-  }
-  return null;
-}
-
-function buildProcessLogSelection(snapshot) {
-  var focus = state.processLogsFocus;
-  if (!focus) return null;
-  if (!snapshot || !snapshot.project) return null;
-
-  if (focus === 'supervisor') {
-    if (snapshot && snapshot.supervisor) {
-      return {
-        kind: 'supervisor',
-        title: 'Supervisor live output',
-        subtitle: joinMeta([
-          snapshot.project || '',
-          'status ' + (snapshot.supervisor.status || 'unknown'),
-          snapshot.supervisor.pid ? 'pid ' + snapshot.supervisor.pid : '',
-        ]),
-        note: 'Watching the detached supervisor log for fresh coordination output.',
-        tail: snapshot.supervisor.tail || [],
-      };
-    }
-
-    return {
-      kind: 'missing',
-      title: 'Supervisor live output',
-      subtitle: 'No active supervisor log found for this project.',
-      note: 'The detached supervisor may have stopped or rotated out since you opened the inspector.',
-      tail: [],
-    };
-  }
-
-  var runs = snapshot && Array.isArray(snapshot.runs) ? snapshot.runs : [];
-  for (var i = 0; i < runs.length; i++) {
-    var run = runs[i];
-    if (run.runId !== focus) continue;
-
-    var liveAgent = getLiveAgentForRun(run.runId);
-    var displayName = liveAgent
-      ? (liveAgent.displayName || liveAgent.agentId || run.agentId || 'agent')
-      : (run.agentId || 'agent');
-
-    return {
-      kind: 'run',
-      title: displayName + ' live output',
-      subtitle: joinMeta([
-        liveAgent ? liveAgent.persona || '' : '',
-        run.status || 'active',
-        run.runtime || '',
-        run.model || '',
-        formatMoment(run.started),
-        run.pid ? 'pid ' + run.pid : '',
-      ]),
-      note: 'Watching the latest visible agent output as it streams in.',
-      tail: run.tail || [],
-    };
-  }
-
-  return {
-    kind: 'missing',
-    title: 'Live output unavailable',
-    subtitle: 'Run ' + focus + ' is no longer active.',
-    note: 'This agent may have finished or been replaced since you opened the inspector.',
-    tail: [],
-  };
-}
-
-function renderProcessLogsChrome(selection) {
-  var livePanel = document.getElementById('rail-panel-live');
-  var title = document.getElementById('process-logs-title');
-  var subtitle = document.getElementById('process-logs-subtitle');
-  var backBtn = document.getElementById('process-logs-back');
-  var inspecting = Boolean(selection);
-
-  if (livePanel) {
-    livePanel.classList.toggle('rail-panel--log-focus', inspecting);
-  }
-  if (title) {
-    title.textContent = inspecting ? 'Live Output' : 'Raw Logs';
-  }
-  if (subtitle) {
-    subtitle.hidden = !inspecting;
-    subtitle.textContent = inspecting ? (selection.subtitle || '') : '';
-  }
-  if (backBtn) {
-    backBtn.hidden = !inspecting;
-  }
-}
-
-function renderProcessLogBlock(title, meta, tailLines, runId) {
-  var tail = tailLines && tailLines.length > 0
-    ? escapeHtml(tailLines.join('\n'))
-    : '<span class="process-log-empty-line">(no output yet)</span>';
-  var actions = runId
-    ? '<div class="process-log-block-actions">' + renderRailActionButton(
-      state.processLogsFocus === runId ? 'Watching' : 'Inspect',
-      {
-        'data-rail-action': 'log',
-        'data-rail-run-id': runId,
-      },
-      state.processLogsFocus === runId
-    ) + '</div>'
-    : '';
-
-  return '<div class="process-log-block" data-process-log-run-id="' + escapeAttr(runId || '') + '">' +
-    '<div class="process-log-block-header">' +
-    '<div class="process-log-block-copy">' +
-    '<div class="process-log-title">' + escapeHtml(title) + '</div>' +
-    '<div class="process-log-meta">' + escapeHtml(meta) + '</div>' +
-    '</div>' +
-    actions +
-    '</div>' +
-    '<pre class="process-log-tail">' + tail + '</pre>' +
-    '</div>';
-}
-
-function renderProcessLogInspector(selection) {
-  var tail = selection.tail && selection.tail.length > 0
-    ? escapeHtml(selection.tail.join('\n'))
-    : '<span class="process-log-empty-line">(waiting for visible output)</span>';
-
-  return '<div class="process-log-inspector">' +
-    '<div class="process-log-inspector-header">' +
-    '<div class="process-log-inspector-title">' + escapeHtml(selection.title) + '</div>' +
-    '<div class="process-log-inspector-meta">' + escapeHtml(selection.subtitle || '') + '</div>' +
-    '<div class="process-log-inspector-note">' + escapeHtml(selection.note || '') + '</div>' +
-    '</div>' +
-    '<pre class="process-log-inspector-tail">' + tail + '</pre>' +
-    '</div>';
-}
-
-function renderProcessLogs(snapshot) {
-  var container = document.getElementById('process-logs-content');
-  if (!container) return;
-
-  var selection = buildProcessLogSelection(snapshot);
-  renderProcessLogsChrome(selection);
-
-  if (!snapshot || !snapshot.project) {
-    container.innerHTML = '<div class="process-logs-empty">No project in focus yet. Start a session or switch project focus.</div>';
-    return;
-  }
-
-  if (selection) {
-    container.innerHTML = renderProcessLogInspector(selection);
-    if (state.processLogsStickToBottom) {
-      container.scrollTop = container.scrollHeight;
-    }
-    return;
-  }
-
-  var html = '';
-
-  if (snapshot.supervisor) {
-    html += renderProcessLogBlock(
-      'Supervisor \u00b7 ' + snapshot.project,
-      joinMeta([
-        'status ' + (snapshot.supervisor.status || 'unknown'),
-        snapshot.supervisor.pid ? 'pid ' + snapshot.supervisor.pid : '',
-      ]),
-      snapshot.supervisor.tail || [],
-      'supervisor'
-    );
-  }
-
-  var runs = Array.isArray(snapshot.runs) ? snapshot.runs : [];
-  for (var i = 0; i < runs.length; i++) {
-    var run = runs[i];
-    var liveAgent = getLiveAgentForRun(run.runId || '');
-    var runName = liveAgent
-      ? (liveAgent.displayName || liveAgent.agentId || run.agentId || 'agent')
-      : (run.agentId || 'agent');
-    html += renderProcessLogBlock(
-      runName + ' \u00b7 ' + snapshot.project,
-      joinMeta([
-        liveAgent ? liveAgent.persona || '' : '',
-        run.status || 'active',
-        run.runtime || '',
-        run.model || '',
-        formatMoment(run.started),
-        run.pid ? 'pid ' + run.pid : '',
-      ]),
-      run.tail || [],
-      run.runId || ''
-    );
-  }
-
-  if (!html) {
-    container.innerHTML = '<div class="process-logs-empty">No active supervisor or agent logs for ' + escapeHtml(snapshot.project) + '.</div>';
-    return;
-  }
-
   container.innerHTML = html;
 }
 
@@ -3609,91 +3010,153 @@ function renderQueueCards(containerId, itemsHtml, emptyText) {
 }
 
 function renderQueueSnapshot(snapshot) {
+  var boardContainer = document.getElementById('board-summary');
+  var streamContainer = document.getElementById('event-stream-list');
+
+  // Render board summary
+  if (boardContainer) {
+    if (!snapshot || !snapshot.project) {
+      boardContainer.innerHTML = '<div class="rail-empty">No board state available.</div>';
+    } else {
+      var approvalCount = Array.isArray(snapshot.approvals) ? snapshot.approvals.length : 0;
+      var waitingCount = Array.isArray(snapshot.waitingOnHuman) ? snapshot.waitingOnHuman.length : 0;
+      var incidentCount = Array.isArray(snapshot.incidents) ? snapshot.incidents.length : 0;
+      var total = approvalCount + waitingCount + incidentCount;
+      var boardHtml = '<div class="board-summary-grid">';
+      boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Approvals</div><div class="board-summary-stat-value' + (approvalCount > 0 ? ' board-summary-stat-value--attention' : '') + '">' + approvalCount + '</div></div>';
+      boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Waiting</div><div class="board-summary-stat-value' + (waitingCount > 0 ? ' board-summary-stat-value--attention' : '') + '">' + waitingCount + '</div></div>';
+      boardHtml += '<div class="board-summary-stat"><div class="board-summary-stat-label">Incidents</div><div class="board-summary-stat-value' + (incidentCount > 0 ? ' board-summary-stat-value--error' : '') + '">' + incidentCount + '</div></div>';
+      boardHtml += '</div>';
+      if (total > 0) {
+        var aPct = total > 0 ? Math.round((approvalCount / total) * 100) : 0;
+        var wPct = total > 0 ? Math.round((waitingCount / total) * 100) : 0;
+        var iPct = Math.max(0, 100 - aPct - wPct);
+        boardHtml += '<div class="board-visual-bar">';
+        if (approvalCount > 0) boardHtml += '<div class="board-visual-segment board-visual-segment--approval" style="width:' + Math.max(aPct, 5) + '%"><span>' + approvalCount + '</span></div>';
+        if (waitingCount > 0) boardHtml += '<div class="board-visual-segment board-visual-segment--waiting" style="width:' + Math.max(wPct, 5) + '%"><span>' + waitingCount + '</span></div>';
+        if (incidentCount > 0) boardHtml += '<div class="board-visual-segment board-visual-segment--incident" style="width:' + Math.max(iPct, 5) + '%"><span>' + incidentCount + '</span></div>';
+        boardHtml += '</div>';
+      }
+      boardContainer.innerHTML = boardHtml;
+    }
+  }
+
+  // Build unified event stream
+  if (!streamContainer) return;
+
   if (!snapshot || !snapshot.project) {
-    renderQueueCards('queue-attention', '', 'Nothing needs you right now.');
-    renderQueueCards('queue-approvals', '', 'No pending approvals.');
-    renderQueueCards('queue-waiting-human', '', 'Nothing is waiting on a human reply.');
-    renderQueueCards('queue-incidents', '', 'No active incidents.');
+    streamContainer.innerHTML = '<div class="rail-empty">No events yet.</div>';
     return;
   }
 
-  var approvalsHtml = '';
+  var events = [];
   var approvals = Array.isArray(snapshot.approvals) ? snapshot.approvals : [];
+  var waiting = Array.isArray(snapshot.waitingOnHuman) ? snapshot.waitingOnHuman : [];
+  var incidents = Array.isArray(snapshot.incidents) ? snapshot.incidents : [];
+
   for (var i = 0; i < approvals.length; i++) {
     var approval = approvals[i];
-    approvalsHtml += '<div class="queue-card queue-card--warning">';
-    approvalsHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(approval.summary || approval.kind || 'Approval requested') + '</div>';
-    approvalsHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(approval.created)) + '</div></div>';
-    approvalsHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
-      approval.kind || '',
-      approval.requestedBy ? 'requested by ' + approval.requestedBy : '',
-      approval.project || 'global',
-    ])) + '</div>';
-    if (approval.note) {
-      approvalsHtml += '<div class="queue-card-body">' + escapeHtml(truncateText(approval.note, 180)) + '</div>';
-    }
-    approvalsHtml += '<div class="queue-card-actions">';
-    approvalsHtml += renderRailActionButton('Ask Hive', {
-      'data-rail-action': 'send-prompt',
-      'data-rail-prompt':
-        'We have a pending approval: "' + (approval.summary || approval.kind || 'Approval requested') +
-        '". Give me the context, your recommendation, and the tradeoffs in 3 bullets.',
+    events.push({
+      ts: approval.created || '',
+      category: 'attention',
+      tone: 'warning',
+      title: approval.summary || approval.kind || 'Approval requested',
+      actor: approval.requestedBy || '',
+      meta: joinMeta([approval.kind || '', approval.project || 'global']),
+      body: approval.note || '',
+      promptLabel: 'Ask Hive',
+      prompt: 'We have a pending approval: "' + (approval.summary || approval.kind) + '". Context, recommendation, and tradeoffs in 3 bullets.',
     });
-    approvalsHtml += '</div>';
-    approvalsHtml += '</div>';
   }
-  renderQueueCards('queue-approvals', approvalsHtml, 'No pending approvals.');
 
-  var waitingHtml = '';
-  var waiting = Array.isArray(snapshot.waitingOnHuman) ? snapshot.waitingOnHuman : [];
   for (var j = 0; j < waiting.length; j++) {
-    var item = waiting[j];
-    waitingHtml += '<div class="queue-card queue-card--info">';
-    waitingHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(item.summary || item.type || 'Human input needed') + '</div>';
-    waitingHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(item.ts)) + '</div></div>';
-    waitingHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
-      item.type || 'message',
-      item.from ? 'from ' + item.from : '',
-      item.to ? 'to ' + item.to : '',
-    ])) + '</div>';
-    waitingHtml += '<div class="queue-card-actions">';
-    waitingHtml += renderRailActionButton('Draft Reply', {
-      'data-rail-action': 'send-prompt',
-      'data-rail-prompt':
-        'We are waiting on a human reply for "' + (item.summary || item.type || 'this thread') +
-        '". Draft the reply you recommend and tell me what happens next if I send it.',
+    var waitItem = waiting[j];
+    events.push({
+      ts: waitItem.ts || '',
+      category: 'human',
+      tone: 'info',
+      title: waitItem.summary || waitItem.type || 'Human input needed',
+      actor: waitItem.from || '',
+      direction: waitItem.from && waitItem.to ? waitItem.from + ' \u2192 ' + waitItem.to : '',
+      meta: joinMeta([waitItem.type || 'message']),
+      body: '',
+      promptLabel: 'Draft Reply',
+      prompt: 'We are waiting on a human reply for "' + (waitItem.summary || 'this thread') + '". Draft the reply you recommend.',
     });
-    waitingHtml += '</div>';
-    waitingHtml += '</div>';
   }
-  renderQueueCards('queue-waiting-human', waitingHtml, 'Nothing is waiting on a human reply.');
 
-  var incidentsHtml = '';
-  var incidents = Array.isArray(snapshot.incidents) ? snapshot.incidents : [];
   for (var k = 0; k < incidents.length; k++) {
     var incident = incidents[k];
-    incidentsHtml += '<div class="' + toneClass('queue-card', incident.severity === 'error' ? 'error' : 'warning') + '">';
-    incidentsHtml += '<div class="queue-card-header"><div class="queue-card-title">' + escapeHtml(incident.summary || incident.kind || 'Incident') + '</div>';
-    incidentsHtml += '<div class="queue-card-time">' + escapeHtml(formatMoment(incident.ts)) + '</div></div>';
-    incidentsHtml += '<div class="queue-card-meta">' + escapeHtml(joinMeta([
-      incident.source || '',
-      incident.kind || '',
-      incident.routed ? 'routed' : 'unrouted',
-    ])) + '</div>';
-    if (incident.details && incident.details.length > 0) {
-      incidentsHtml += '<div class="queue-card-body">' + escapeHtml(truncateText(incident.details.join(' \u00b7 '), 220)) + '</div>';
-    }
-    incidentsHtml += '<div class="queue-card-actions">';
-    incidentsHtml += renderRailActionButton('Ask Hive', {
-      'data-rail-action': 'send-prompt',
-      'data-rail-prompt':
-        'I saw this incident: "' + (incident.summary || incident.kind || 'Incident') +
-        '". Give me a crisp brief on what happened, the impact, and whether you need a decision from me.',
+    events.push({
+      ts: incident.ts || '',
+      category: 'attention',
+      tone: incident.severity === 'error' ? 'error' : 'warning',
+      title: incident.summary || incident.kind || 'Incident',
+      actor: incident.source || '',
+      meta: joinMeta([incident.kind || '', incident.routed ? 'routed' : 'unrouted']),
+      body: incident.details ? incident.details.join(' \u00b7 ') : '',
+      promptLabel: 'Ask Hive',
+      prompt: 'I saw this incident: "' + (incident.summary || incident.kind) + '". Brief me on impact and whether you need a decision.',
     });
-    incidentsHtml += '</div>';
-    incidentsHtml += '</div>';
   }
-  renderQueueCards('queue-incidents', incidentsHtml, 'No active incidents.');
+
+  // Add live activity items from the live snapshot
+  var liveActivity = state.liveSnapshot && Array.isArray(state.liveSnapshot.activity)
+    ? state.liveSnapshot.activity : [];
+  for (var m = 0; m < liveActivity.length; m++) {
+    var act = liveActivity[m];
+    events.push({
+      ts: act.ts || '',
+      category: 'messages',
+      tone: act.tone || 'info',
+      title: act.title || act.kind || 'Activity',
+      actor: act.actor || '',
+      meta: joinMeta([act.kind || '', act.source || '']),
+      body: act.detail || '',
+      promptLabel: 'Follow Up',
+      prompt: 'Follow up on this: "' + (act.detail || act.title) + '". What changed, why it matters, and do you need anything from me?',
+    });
+  }
+
+  // Sort by timestamp descending
+  events.sort(function (a, b) { return (b.ts || '').localeCompare(a.ts || ''); });
+
+  // Apply filter
+  var activeFilter = state.eventStreamFilter || 'all';
+  var filtered = activeFilter === 'all' ? events : events.filter(function (ev) {
+    return ev.category === activeFilter;
+  });
+
+  if (filtered.length === 0) {
+    streamContainer.innerHTML = '<div class="rail-empty">No events match this filter.</div>';
+    return;
+  }
+
+  var html = '';
+  for (var n = 0; n < filtered.length && n < 30; n++) {
+    var ev = filtered[n];
+    html += '<div class="' + toneClass('queue-card', ev.tone) + '" data-event-category="' + escapeAttr(ev.category) + '">';
+    html += '<div class="queue-card-header">';
+    html += '<div class="queue-card-title">' + escapeHtml(ev.title) + '</div>';
+    html += '<div class="queue-card-time">' + escapeHtml(formatMoment(ev.ts)) + '</div>';
+    html += '</div>';
+    if (ev.direction) {
+      html += '<div class="queue-card-direction">' + escapeHtml(ev.direction) + '</div>';
+    }
+    html += '<div class="queue-card-meta">' + escapeHtml(joinMeta([ev.actor || '', ev.meta || ''])) + '</div>';
+    if (ev.body) {
+      html += '<div class="queue-card-body">' + escapeHtml(truncateText(ev.body, 200)) + '</div>';
+    }
+    html += '<div class="queue-card-actions">';
+    html += renderRailActionButton(ev.promptLabel || 'Ask Hive', {
+      'data-rail-action': 'send-prompt',
+      'data-rail-prompt': ev.prompt || '',
+    });
+    html += '</div>';
+    html += '</div>';
+  }
+
+  streamContainer.innerHTML = html;
 }
 
 function renderTimeline(items) {
@@ -3799,49 +3262,6 @@ async function refreshTimeline() {
   }
 }
 
-function setupProcessLogs() {
-  var btn = document.getElementById('process-logs-refresh');
-  var backBtn = document.getElementById('process-logs-back');
-  var container = document.getElementById('process-logs-content');
-  if (btn) {
-    btn.addEventListener('click', function () {
-      scheduleProcessLogsRefresh(0);
-    });
-  }
-  if (backBtn) {
-    backBtn.addEventListener('click', function () {
-      clearProcessLogFocus();
-    });
-  }
-  if (container) {
-    container.addEventListener('scroll', function () {
-      if (!state.processLogsFocus) return;
-      var remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
-      state.processLogsStickToBottom = remaining < 48;
-    });
-  }
-}
-
-async function refreshProcessLogs() {
-  var project = getProjectFocus();
-  var params = {};
-
-  if (state.processLogsFocus) {
-    params.run = state.processLogsFocus;
-    params.lines = 400;
-  }
-
-  try {
-    var data = await apiGet(buildApiPath('/process-logs', project, params));
-    state.processLogsSnapshot = data;
-    renderProcessLogs(data);
-  } catch (e) {
-    console.error('Process logs refresh failed:', e);
-    state.processLogsSnapshot = null;
-    renderProcessLogs(null);
-  }
-}
-
 async function refreshCognition() {
   var project = getProjectFocus();
 
@@ -3849,6 +3269,7 @@ async function refreshCognition() {
     var data = await apiGet(buildApiPath('/cognition', project));
     state.cognitionSnapshot = data;
     renderCognition(data);
+    updateUsageChart(data);
   } catch (e) {
     console.error('Cognition refresh failed:', e);
     state.cognitionSnapshot = null;
@@ -3913,6 +3334,10 @@ async function refreshStatus() {
       parsed.supervisor = data.supervisor;
     }
 
+    if (data.hiveName) {
+      state.hiveName = data.hiveName;
+    }
+
     updateTopBar(parsed);
   } catch (e) {
     console.error('Status refresh failed:', e);
@@ -3962,7 +3387,7 @@ function setupConsoleInput() {
   // Auto-resize textarea
   input.addEventListener('input', function () {
     input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
   });
 }
 
@@ -4174,23 +3599,22 @@ function setupLeadershipActions() {
     });
   }
 
-  var pulseToggle = document.getElementById('pulse-panel-toggle');
-  if (pulseToggle) {
-    pulseToggle.addEventListener('click', function () {
-      state.pulsesCollapsed = !state.pulsesCollapsed;
-      renderLeadershipSurface();
+  // Event stream filter chips
+  var filterContainer = document.getElementById('event-stream-filters');
+  if (filterContainer) {
+    filterContainer.addEventListener('click', function (e) {
+      var chip = e.target && e.target.closest ? e.target.closest('[data-event-filter]') : null;
+      if (!chip) return;
+      state.eventStreamFilter = chip.getAttribute('data-event-filter') || 'all';
+      var chips = filterContainer.querySelectorAll('[data-event-filter]');
+      for (var c = 0; c < chips.length; c++) {
+        chips[c].classList.toggle('event-filter-chip--active', chips[c] === chip);
+      }
+      renderQueueSnapshot(state.queueSnapshot);
     });
   }
 
   document.addEventListener('click', function (event) {
-    var toastDismiss = event.target && event.target.closest
-      ? event.target.closest('[data-toast-dismiss]')
-      : null;
-    if (toastDismiss) {
-      dismissToast(toastDismiss.getAttribute('data-toast-dismiss') || '');
-      return;
-    }
-
     var railButton = event.target && event.target.closest
       ? event.target.closest('[data-rail-action]')
       : null;
@@ -4222,11 +3646,6 @@ function setupLeadershipActions() {
         state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : [],
         railButton.getAttribute('data-rail-expanded') === 'true'
       );
-      return;
-    }
-
-    if (action === 'log') {
-      focusProcessLog(railButton.getAttribute('data-rail-run-id') || '');
       return;
     }
 
@@ -4334,6 +3753,181 @@ function setupRestartButton() {
 
 // --- Keyboard Shortcuts ---
 
+// --- Command Palette ---
+
+var paletteCommands = [
+  { id: 'new-session', label: 'New Session', category: 'Session', shortcut: 'Ctrl+N' },
+  { id: 'brief', label: 'Ask for Brief', category: 'Session' },
+  { id: 'stop-all', label: 'Stop All Agents', category: 'Control' },
+  { id: 'restart-supervisor', label: 'Restart Supervisor', category: 'Control' },
+  { id: 'tab-live', label: 'Show Live Panel', category: 'Navigate' },
+  { id: 'tab-queue', label: 'Show Queue / Events', category: 'Navigate' },
+  { id: 'tab-timeline', label: 'Show Timeline', category: 'Navigate' },
+  { id: 'view-conversation', label: 'Conversation View', category: 'View' },
+  { id: 'view-all', label: 'Full Session View', category: 'View' },
+  { id: 'focus-input', label: 'Focus Input', category: 'Navigate', shortcut: '/' },
+];
+
+var paletteSelectedIndex = 0;
+
+function executePaletteCommand(id) {
+  closeCommandPalette();
+  if (id === 'new-session') { createNewSession(); return; }
+  if (id === 'brief') { submitConsoleMessage('Give me a brief leadership update. What have the agents done, what is pending, and what needs my attention?'); return; }
+  if (id === 'stop-all') { stopAllAgents(); return; }
+  if (id === 'restart-supervisor') { restartSupervisor(); return; }
+  if (id === 'tab-live') { setRailTab('live'); return; }
+  if (id === 'tab-queue') { setRailTab('queue'); return; }
+  if (id === 'tab-timeline') { setRailTab('timeline'); return; }
+  if (id === 'view-conversation') { setConsoleView('conversation'); return; }
+  if (id === 'view-all') { setConsoleView('all'); return; }
+  if (id === 'focus-input') { var inp = document.getElementById('console-input'); if (inp) inp.focus(); return; }
+
+  // Dynamic agent stop commands
+  if (id.indexOf('stop-agent-') === 0) {
+    var agentId = id.replace('stop-agent-', '');
+    apiPost('/stop', { target: agentId }).catch(function () {});
+    return;
+  }
+}
+
+function getDynamicCommands() {
+  var cmds = [];
+  var agents = state.liveSnapshot && Array.isArray(state.liveSnapshot.agents) ? state.liveSnapshot.agents : [];
+  for (var i = 0; i < agents.length; i++) {
+    var agent = agents[i];
+    cmds.push({
+      id: 'stop-agent-' + (agent.agentId || agent.runId),
+      label: 'Stop ' + (agent.displayName || agent.agentId || 'agent'),
+      category: 'Agents',
+    });
+  }
+  return cmds;
+}
+
+function fuzzyMatch(query, text) {
+  if (!query) return { score: 1, matched: true };
+  var q = query.toLowerCase();
+  var t = text.toLowerCase();
+  if (t === q) return { score: 100, matched: true };
+  if (t.indexOf(q) === 0) return { score: 80, matched: true };
+  if (t.indexOf(q) > 0) return { score: 60, matched: true };
+
+  // character-by-character fuzzy
+  var qi = 0;
+  for (var ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++;
+  }
+  if (qi === q.length) return { score: 40, matched: true };
+  return { score: 0, matched: false };
+}
+
+function renderPaletteResults(query) {
+  var container = document.getElementById('command-palette-results');
+  if (!container) return;
+
+  var allCommands = paletteCommands.concat(getDynamicCommands());
+  var results = [];
+  for (var i = 0; i < allCommands.length; i++) {
+    var cmd = allCommands[i];
+    var match = fuzzyMatch(query, cmd.label);
+    if (match.matched) {
+      results.push({ cmd: cmd, score: match.score });
+    }
+  }
+  results.sort(function (a, b) { return b.score - a.score; });
+
+  if (results.length === 0) {
+    container.innerHTML = '<div class="command-palette-empty">No matching commands</div>';
+    paletteSelectedIndex = -1;
+    return;
+  }
+
+  paletteSelectedIndex = Math.min(paletteSelectedIndex, results.length - 1);
+  if (paletteSelectedIndex < 0) paletteSelectedIndex = 0;
+
+  var html = '';
+  for (var j = 0; j < results.length; j++) {
+    var r = results[j];
+    var selected = j === paletteSelectedIndex;
+    html += '<div class="command-palette-result' + (selected ? ' command-palette-result--selected' : '') + '" data-command-id="' + escapeAttr(r.cmd.id) + '">';
+    html += '<div class="command-palette-result-label">' + escapeHtml(r.cmd.label) + '</div>';
+    html += '<div class="command-palette-result-meta">';
+    html += '<span class="command-palette-result-category">' + escapeHtml(r.cmd.category) + '</span>';
+    if (r.cmd.shortcut) {
+      html += '<span class="command-palette-result-shortcut">' + escapeHtml(r.cmd.shortcut) + '</span>';
+    }
+    html += '</div>';
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function openCommandPalette() {
+  var palette = document.getElementById('command-palette');
+  var input = document.getElementById('command-palette-input');
+  if (!palette || !input) return;
+  palette.hidden = false;
+  input.value = '';
+  paletteSelectedIndex = 0;
+  renderPaletteResults('');
+  requestAnimationFrame(function () { input.focus(); });
+}
+
+function closeCommandPalette() {
+  var palette = document.getElementById('command-palette');
+  if (palette) palette.hidden = true;
+}
+
+function setupCommandPalette() {
+  var input = document.getElementById('command-palette-input');
+  var backdrop = document.getElementById('command-palette-backdrop');
+  var results = document.getElementById('command-palette-results');
+
+  if (input) {
+    input.addEventListener('input', function () {
+      paletteSelectedIndex = 0;
+      renderPaletteResults(input.value);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      var items = document.querySelectorAll('.command-palette-result');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        paletteSelectedIndex = Math.min(paletteSelectedIndex + 1, items.length - 1);
+        renderPaletteResults(input.value);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        paletteSelectedIndex = Math.max(paletteSelectedIndex - 1, 0);
+        renderPaletteResults(input.value);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        var selected = document.querySelector('.command-palette-result--selected');
+        if (selected) {
+          executePaletteCommand(selected.getAttribute('data-command-id') || '');
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeCommandPalette();
+      }
+    });
+  }
+
+  if (backdrop) {
+    backdrop.addEventListener('click', closeCommandPalette);
+  }
+
+  if (results) {
+    results.addEventListener('click', function (e) {
+      var item = e.target.closest ? e.target.closest('.command-palette-result') : null;
+      if (item) {
+        executePaletteCommand(item.getAttribute('data-command-id') || '');
+      }
+    });
+  }
+}
+
+
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', function (e) {
     // Ctrl+N (or Cmd+N on Mac): new session
@@ -4341,6 +3935,12 @@ function setupKeyboardShortcuts() {
     if (modKey && e.key === 'n') {
       e.preventDefault();
       createNewSession();
+    }
+
+    // Cmd+K / Ctrl+K: open command palette
+    if (modKey && e.key === 'k') {
+      e.preventDefault();
+      openCommandPalette();
     }
   });
 }
@@ -4379,14 +3979,14 @@ async function init() {
   // Set up stop all button
   setupStopAllButton();
 
-  // Set up process logs panel
-  setupProcessLogs();
-
   // Set up console detail modal
   setupConsoleDetailModal();
 
   // Set up keyboard shortcuts
   setupKeyboardShortcuts();
+
+  // Set up command palette
+  setupCommandPalette();
 
   // Close dropdowns on outside click
   setupGlobalClickHandler();
@@ -4400,7 +4000,6 @@ async function init() {
   renderCognition(null);
   renderQueueSnapshot(null);
   renderTimeline([]);
-  renderProcessLogs(null);
   renderLeadershipSurface();
 
   // Load initial data from API (non-blocking, graceful on failure)
@@ -4408,7 +4007,6 @@ async function init() {
   await loadConsoleHistory();
   await Promise.all([
     refreshLiveSnapshot(),
-    refreshProcessLogs(),
     refreshCognition(),
     refreshQueueSnapshot(),
     refreshTimeline(),
@@ -4416,10 +4014,6 @@ async function init() {
 
   setInterval(function () {
     refreshLiveSnapshot();
-  }, 2500);
-
-  setInterval(function () {
-    refreshProcessLogs();
   }, 2500);
 
   setInterval(function () {
