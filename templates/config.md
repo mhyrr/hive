@@ -32,6 +32,10 @@ archive-curation: deferred
 # cognitive-budget-tier3-tokens: 50000
 # cognitive-budget-warn-ratio: 0.9
 
+## Plugins
+# Plugins are disabled by default. Uncomment to enable.
+# hub: enabled                   # Claw Hub — search & install community skills
+
 ## Tier-1 Small Models
 # Start here:
 # tier1-local: qwen3:4b

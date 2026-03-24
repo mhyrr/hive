@@ -27,6 +27,7 @@ import { syncCommand } from "./commands/sync";
 import { thinkCommand } from "./commands/think";
 import { workCommand } from "./commands/work";
 import { UsageError } from "./lib/errors";
+import { routePluginCommand } from "./lib/plugins";
 
 export async function runCli(args: string[]): Promise<string> {
   const [command, ...rest] = args;
@@ -97,7 +98,14 @@ export async function runCli(args: string[]): Promise<string> {
       return dreamCommand(rest);
     case "goal":
       return goalCommand(rest);
-    default:
+    default: {
+      const pluginResult = await routePluginCommand(command ?? "", rest);
+
+      if (pluginResult !== null) {
+        return pluginResult;
+      }
+
       throw new UsageError(`Unknown command: ${command}`);
+    }
   }
 }

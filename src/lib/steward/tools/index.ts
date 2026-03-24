@@ -16,15 +16,22 @@ export type PersistentStewardTool = Tool & {
   ) => Promise<string>;
 };
 
-export function buildPersistentStewardTools(input: {
+export async function buildPersistentStewardTools(input: {
   hiveHome: string;
   repoPath: string;
   msgDir: string;
   projectId: string;
   globalConfig: string;
   hivePaths?: HivePaths;
-}): PersistentStewardTool[] {
+}): Promise<PersistentStewardTool[]> {
   const execution = createStewardExecutionContext(input);
+
+  const { getPluginTools } = await import("../../plugins");
+  const pluginTools = await getPluginTools({
+    hiveHome: input.hiveHome,
+    skillsDir: `${input.hiveHome}/skills`,
+    globalConfig: input.globalConfig,
+  });
 
   return [
     ...createFileTools(execution),
@@ -45,5 +52,6 @@ export function buildPersistentStewardTools(input: {
           projectId: input.projectId,
         })
       : []),
+    ...pluginTools,
   ] as PersistentStewardTool[];
 }

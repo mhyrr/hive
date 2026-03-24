@@ -50,6 +50,12 @@ Usage:
   hive gateway stop                     # Stop the Gateway server
   hive dream [--from <spec>] [--dry-run] [--go] "<goal>"
                                 # Plan and launch an overnight autonomous run
+  hive hub search <query>              # Search Claw Hub for skills
+  hive hub install <skill-id>          # Install a hub skill
+  hive hub list [--installed]          # List available or installed skills
+  hive hub info <skill-id>             # Show skill details
+  hive hub remove <skill-id>           # Remove an installed hub skill
+  hive hub sync                        # Update installed hub skills
   hive archive
   hive sync
   hive help
