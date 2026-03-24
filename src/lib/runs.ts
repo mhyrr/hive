@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter";
 import { ensureDirectory, ProjectPaths } from "./paths";
+import { isProcessAlive } from "./process";
 import { parseScopeRoots } from "./project";
 import { getAdapter, RuntimeName } from "./runtime";
 import { now, toCompactTimestamp, toDateParts, toIsoTimestamp } from "./time";
@@ -105,29 +106,6 @@ type PromptArtifact = {
   promptPath: string;
   runId: string;
 };
-
-function isProcessAlive(pid: number | null): boolean {
-  if (!pid || pid <= 0) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : null;
-
-    if (code === "EPERM") {
-      return true;
-    }
-
-    if (code === "ESRCH") {
-      return false;
-    }
-
-    throw error;
-  }
-}
 
 function toNullableNumber(value: string | undefined): number | null {
   if (!value) {

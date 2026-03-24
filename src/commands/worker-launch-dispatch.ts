@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import { listOpenProjectMessages } from "../lib/messages";
 import { ensureDirectory, getProjectPaths, type HivePaths } from "../lib/paths";
+import { isProcessAlive } from "../lib/process";
 import { listActiveRuns, listAllRuns } from "../lib/runs";
 import { selectWorkerLaunches } from "../lib/supervisor";
 import { toIsoTimestamp } from "../lib/time";
@@ -43,32 +44,6 @@ export type WorkerLaunchDispatchResult = {
 
 const PROJECT_DISPATCH_LOCK_FILE = "worker-launch-dispatch.lock.json";
 const ASSIGNMENT_CLAIMS_DIR = "worker-launch-claims";
-
-function isProcessAlive(pid: number | null): boolean {
-  if (!pid || pid <= 0) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? (error as { code?: string }).code
-        : null;
-
-    if (code === "EPERM") {
-      return true;
-    }
-
-    if (code === "ESRCH") {
-      return false;
-    }
-
-    throw error;
-  }
-}
 
 function projectDispatchLockPath(projectPaths: ReturnType<typeof getProjectPaths>): string {
   return join(projectPaths.supervisorDir, PROJECT_DISPATCH_LOCK_FILE);

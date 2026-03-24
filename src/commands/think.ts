@@ -1,15 +1,7 @@
-import { readFile } from "node:fs/promises";
-
 import { UsageError } from "../lib/errors";
-import { digestBoard, digestRuns } from "../lib/digest";
-import {
-  createEvaluatedWatcherEvents,
-  type DispatcherConfig,
-} from "../lib/evaluation-dispatcher";
-import { OrientationCache } from "../lib/orientation";
+import { reconcileGatewayState } from "../lib/gateway-state";
+import { createProjectOodaWatcher } from "../lib/ooda-watcher";
 import { ensureHiveScaffold, getActiveProject, getProjectPaths } from "../lib/paths";
-import { listActiveRuns } from "../lib/runs";
-import type { ActiveContext } from "../lib/tactical-evaluator";
 import { createWatcher, type WatcherEvents } from "../lib/watcher";
 
 /**
@@ -31,52 +23,30 @@ export async function thinkCommand(_args: string[]): Promise<never> {
     throw new UsageError("No active project. Run `hive work <project>` first.");
   }
 
-  const projectPaths = getProjectPaths(paths, activeProject);
-  const orientationCache = new OrientationCache();
+  const gatewayState = await reconcileGatewayState(paths.home);
 
-  // Context snapshot — rebuilt asynchronously on watcher events.
-  // The dispatcher's getActiveContext is synchronous; we cache and refresh behind it.
-  let cachedContext: ActiveContext = {
-    goalTitle: "none",
-    workerCount: 0,
-    workerSummaries: "none",
-    boardDigest: "",
-    lastStrategicEval: "none",
-  };
-
-  async function refreshContext(): Promise<void> {
-    const [boardText, activeRuns] = await Promise.all([
-      readFile(projectPaths.board, "utf-8").catch(() => ""),
-      listActiveRuns(projectPaths),
-    ]);
-
-    cachedContext = {
-      goalTitle: "active investigation",
-      workerCount: activeRuns.length,
-      workerSummaries: digestRuns(activeRuns) || "none",
-      boardDigest: digestBoard(boardText),
-      lastStrategicEval: "none",
-    };
-
-    // Mechanical orientation patch when context refreshes
-    if (orientationCache.get()) {
-      orientationCache.patch({
-        workers:
-          activeRuns.length === 0
-            ? "none"
-            : activeRuns.map((r) => `${r.agentId} (${r.runId})`).join(", "),
-      });
-    }
+  if (gatewayState?.status === "active" && gatewayState.supervisorProject === activeProject) {
+    throw new UsageError(
+      `Gateway is already running the OODA loop for project '${activeProject}'. Stop \`hive gateway\` before starting \`hive think\`.`,
+    );
   }
 
-  // Prime the context cache before the loop starts
-  await refreshContext();
+  const projectPaths = getProjectPaths(paths, activeProject);
+  const baseEvents: WatcherEvents = {
+    onRunChange: () => {},
+    onBoardChange: () => {},
+    onAssignment: (msgPath) => {
+      console.log(`[think] assignment arrived: ${msgPath}`);
+    },
+    onMessageChange: () => {},
+    onFeedEntry: () => {},
+  };
 
-  const dispatcherConfig: DispatcherConfig = {
-    orientationCache,
-    evalLogPath: projectPaths.evalLog,
+  const oodaWatcher = createProjectOodaWatcher({
+    hivePaths: paths,
     projectId: activeProject,
-    projectRunsActiveDir: projectPaths.runsActiveDir,
+    projectPaths,
+    baseEvents,
     onStrategicTrigger: (evaluation) => {
       // Step 6: strategic loop wiring goes here.
       // For now, log the trigger so it appears in the terminal and eval log.
@@ -84,31 +54,11 @@ export async function thinkCommand(_args: string[]): Promise<never> {
         `[think] strategic trigger — ${evaluation.classification} ${evaluation.urgency}: ${evaluation.reasoning.slice(0, 100)}`,
       );
     },
-    getActiveContext: () => cachedContext,
-  };
+  });
 
-  const baseEvents: WatcherEvents = {
-    onRunChange: () => {
-      void refreshContext();
-    },
-    onBoardChange: () => {
-      void refreshContext();
-    },
-    onAssignment: (msgPath) => {
-      console.log(`[think] assignment arrived: ${msgPath}`);
-      void refreshContext();
-    },
-    onMessageChange: () => {
-      void refreshContext();
-    },
-    onFeedEntry: () => {
-      // Feed entries are low-signal for the tactical loop; refresh context quietly.
-      void refreshContext();
-    },
-  };
+  await oodaWatcher.warm();
 
-  const evaluatedEvents = createEvaluatedWatcherEvents(baseEvents, dispatcherConfig);
-  const watcher = createWatcher(paths, evaluatedEvents);
+  const watcher = createWatcher(paths, oodaWatcher.events);
   watcher.start();
 
   console.log(`[think] OODA tactical loop active — project: ${activeProject}`);

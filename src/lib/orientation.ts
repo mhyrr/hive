@@ -10,6 +10,7 @@ export type OrientationSummary = {
   ignore: string;
 };
 
+const REGEN_MODEL = "claude-haiku-4-5-20251001";
 const REGEN_SYSTEM = `You are HIVE's orientation synthesizer. Given current project context, produce a compressed orientation summary. Be specific and terse — every word must earn its place. This summary is read by a fast tactical evaluator on every signal, so it must be immediately actionable.`;
 
 const REGEN_PROMPT_TEMPLATE = `## Current Context
@@ -34,7 +35,10 @@ POSTURE: <converging | exploring | blocked | idle>
 WATCH_FOR: <what signals matter right now — one sentence>
 IGNORE: <what signals to discard — one sentence>`;
 
-function parseOrientation(text: string, existing: OrientationSummary | null): OrientationSummary {
+function parseOrientation(
+  text: string,
+  existing: OrientationSummary | null,
+): OrientationSummary | null {
   const extract = (key: string): string | null => {
     const match = text.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
     return match?.[1]?.trim() ?? null;
@@ -56,7 +60,7 @@ function parseOrientation(text: string, existing: OrientationSummary | null): Or
       : (existing?.posture ?? "idle");
 
   if (!activeGoal || !state || !workers || !watchFor || !ignore) {
-    return null as unknown as OrientationSummary; // signals parse failure to caller
+    return null;
   }
 
   return {
@@ -106,7 +110,7 @@ export class OrientationCache {
 
     try {
       text = await callAnthropic({
-        model: "claude-sonnet-4-6",
+        model: REGEN_MODEL,
         system: REGEN_SYSTEM,
         messages: [{ role: "user", content: prompt }],
         maxTokens: 300,

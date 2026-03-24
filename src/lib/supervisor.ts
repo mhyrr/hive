@@ -1,6 +1,7 @@
 import { parseBoard, minutesSince } from "./board";
 import { revertWorkerChanges, runVerifyCommand, type VerifyCommandResult } from "./git";
 import { HiveMessage } from "./messages";
+import { isProcessAlive } from "./process";
 import {
   extractProjectConfigValue,
   resolveAgentScopeRoots,
@@ -60,29 +61,7 @@ function formatScope(scope: string[] | null): string {
   return scope?.length ? scope.join(", ") : "*";
 }
 
-export function isProcessAlive(pid: number | null): boolean {
-  if (!pid || pid <= 0) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : null;
-
-    if (code === "EPERM") {
-      return true;
-    }
-
-    if (code === "ESRCH") {
-      return false;
-    }
-
-    throw error;
-  }
-}
-
+export { isProcessAlive } from "./process";
 function getLaunchDefault(projectConfig: string): "auto" | "manual" {
   const value = extractProjectConfigValue(projectConfig, "launch-default")?.toLowerCase();
 

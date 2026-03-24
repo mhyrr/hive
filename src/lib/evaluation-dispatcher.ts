@@ -19,6 +19,8 @@ export type DispatcherConfig = {
   onInterruptRequest?: (workerId: string, evaluation: TacticalEvaluation) => void;
   // Function to get current active context (board digest, workers, etc.)
   getActiveContext: () => ActiveContext;
+  // Best-effort refresh hook to run before evaluation.
+  beforeEvaluate?: (signal: Signal) => Promise<void>;
 };
 
 async function evaluateAndRoute(
@@ -27,6 +29,18 @@ async function evaluateAndRoute(
   callOriginal: () => void,
   patchOnComplete?: boolean,
 ): Promise<void> {
+  if (config.beforeEvaluate) {
+    try {
+      await config.beforeEvaluate(signal);
+    } catch (err) {
+      console.warn(
+        `[evaluation-dispatcher] pre-evaluation refresh failed, falling through: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      callOriginal();
+      return;
+    }
+  }
+
   const orientation = config.orientationCache.get();
 
   // No orientation yet — skip evaluation and pass through
@@ -100,19 +114,122 @@ async function evaluateAndRoute(
   }
 }
 
+type PendingEvaluation = {
+  queueKey: string;
+  signal: Signal;
+  callbacks: Array<() => void>;
+  patchOnComplete: boolean;
+};
+
+class EvaluationQueue {
+  private readonly pending = new Map<string, PendingEvaluation>();
+  private readonly order: string[] = [];
+  private activeKey: string | null = null;
+  private draining = false;
+
+  constructor(private readonly config: DispatcherConfig) {}
+
+  enqueue(
+    queueKey: string,
+    signal: Signal,
+    callback: () => void,
+    patchOnComplete: boolean,
+  ): void {
+    const existing = this.pending.get(queueKey);
+
+    if (existing) {
+      existing.signal = signal;
+      existing.callbacks.push(callback);
+      existing.patchOnComplete ||= patchOnComplete;
+      return;
+    }
+
+    this.pending.set(queueKey, {
+      queueKey,
+      signal,
+      callbacks: [callback],
+      patchOnComplete,
+    });
+
+    if (this.activeKey !== queueKey && !this.order.includes(queueKey)) {
+      this.order.push(queueKey);
+    }
+
+    void this.drain();
+  }
+
+  private async drain(): Promise<void> {
+    if (this.draining) {
+      return;
+    }
+
+    this.draining = true;
+
+    try {
+      while (this.order.length > 0) {
+        const queueKey = this.order.shift();
+
+        if (!queueKey) {
+          continue;
+        }
+
+        const pending = this.pending.get(queueKey);
+
+        if (!pending) {
+          continue;
+        }
+
+        this.pending.delete(queueKey);
+        this.activeKey = queueKey;
+
+        await evaluateAndRoute(
+          pending.signal,
+          this.config,
+          () => {
+            for (const callback of pending.callbacks) {
+              try {
+                callback();
+              } catch (err) {
+                console.warn(
+                  `[evaluation-dispatcher] original handler failed for ${pending.queueKey}: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            }
+          },
+          pending.patchOnComplete,
+        );
+        this.activeKey = null;
+
+        if (this.pending.has(queueKey) && !this.order.includes(queueKey)) {
+          this.order.unshift(queueKey);
+        }
+      }
+    } finally {
+      this.activeKey = null;
+      this.draining = false;
+
+      if (this.order.length > 0) {
+        void this.drain();
+      }
+    }
+  }
+}
+
 /**
  * Wraps WatcherEvents with an evaluation pass inserted before each handler.
  * Returns new WatcherEvents that should be passed to createWatcher() instead of
  * the original events.
  *
- * Callbacks are sync (watcher requirement). Evaluation is async; we use
- * fire-and-forget so the watcher is never blocked.
+ * Callbacks are sync (watcher requirement). Evaluation stays async and is
+ * serialized through a small coalescing queue so watcher bursts do not fan out
+ * into unbounded model calls.
  */
 export function createEvaluatedWatcherEvents(
   original: WatcherEvents,
   config: DispatcherConfig,
 ): WatcherEvents {
   const evaluated: WatcherEvents = {};
+  const queue = new EvaluationQueue(config);
 
   if (original.onAssignment) {
     const handler = original.onAssignment;
@@ -122,7 +239,7 @@ export function createEvaluatedWatcherEvents(
         description: "new assignment message",
         payload: basename(msgPath),
       };
-      void evaluateAndRoute(signal, config, () => handler(msgPath), false);
+      queue.enqueue("assignment", signal, () => handler(msgPath), false);
     };
   }
 
@@ -134,7 +251,7 @@ export function createEvaluatedWatcherEvents(
         description: "run state changed",
         payload: basename(runPath),
       };
-      void evaluateAndRoute(signal, config, () => handler(runPath), true);
+      queue.enqueue("run_change", signal, () => handler(runPath), true);
     };
   }
 
@@ -146,7 +263,7 @@ export function createEvaluatedWatcherEvents(
         description: "board updated",
         payload: undefined,
       };
-      void evaluateAndRoute(signal, config, () => handler(), true);
+      queue.enqueue("board_change", signal, () => handler(), true);
     };
   }
 
@@ -158,7 +275,7 @@ export function createEvaluatedWatcherEvents(
         description: "feed entry added",
         payload: undefined,
       };
-      void evaluateAndRoute(signal, config, () => handler(), false);
+      queue.enqueue("feed_entry", signal, () => handler(), false);
     };
   }
 
@@ -170,7 +287,7 @@ export function createEvaluatedWatcherEvents(
         description: "message changed",
         payload: basename(msgPath),
       };
-      void evaluateAndRoute(signal, config, () => handler(msgPath), false);
+      queue.enqueue("message_change", signal, () => handler(msgPath), false);
     };
   }
 

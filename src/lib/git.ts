@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 type GitStatusSnapshot = Record<string, string>;
 
 type GitDelta = {
@@ -7,7 +11,7 @@ type GitDelta = {
 };
 
 function decode(output?: Uint8Array): string {
-  return new TextDecoder().decode(output ?? new Uint8Array()).trim();
+  return new TextDecoder().decode(output ?? new Uint8Array());
 }
 
 function normalizeStatus(status: string): string {
@@ -97,8 +101,8 @@ export function runVerifyCommand(
     timeout: timeoutMs,
   });
 
-  const stdout = decode(result.stdout);
-  const stderr = decode(result.stderr);
+  const stdout = decode(result.stdout).trim();
+  const stderr = decode(result.stderr).trim();
   const output = [stdout, stderr].filter(Boolean).join("\n");
 
   return {
@@ -139,7 +143,7 @@ export function revertWorkerChanges(
   if (!checkoutOk && !cleanOk) {
     return {
       reverted: false,
-      summary: `both checkout and clean failed for ${scope.join(", ")}: ${decode(checkoutResult.stderr)} / ${decode(cleanResult.stderr)}`,
+      summary: `both checkout and clean failed for ${scope.join(", ")}: ${decode(checkoutResult.stderr).trim()} / ${decode(cleanResult.stderr).trim()}`,
     };
   }
 
@@ -159,49 +163,24 @@ export function revertWorkerChanges(
   };
 }
 
-/**
- * Capture a content fingerprint of all dirty files in the working tree.
- * Returns a map of file path → hash of working tree content.
- * Used alongside status snapshots to detect changes to already-dirty files.
- */
-export function captureGitContentFingerprint(repoPath: string): Record<string, string> {
+export function captureGitContentFingerprint(
+  repoPath: string,
+  snapshot: GitStatusSnapshot | null = captureGitStatusSnapshot(repoPath),
+): Record<string, string> {
   const fingerprint: Record<string, string> = {};
 
-  try {
-    // Get list of modified tracked files
-    const result = Bun.spawnSync({
-      cmd: ["git", "-C", repoPath, "diff", "--name-only"],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (result.exitCode !== 0) return fingerprint;
+  if (!snapshot) {
+    return fingerprint;
+  }
 
-    const files = decode(result.stdout).split("\n").filter(Boolean);
-
-    // Hash each dirty file's content
-    for (const file of files.slice(0, 50)) { // cap at 50 files for performance
-      try {
-        const hashResult = Bun.spawnSync({
-          cmd: ["git", "-C", repoPath, "hash-object", "--stdin-paths"],
-          stdin: new TextEncoder().encode(file),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        // Simpler: just use file mtime as a cheap fingerprint
-        const statResult = Bun.spawnSync({
-          cmd: ["stat", "-f", "%m", `${repoPath}/${file}`],
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        if (statResult.exitCode === 0) {
-          fingerprint[file] = decode(statResult.stdout);
-        }
-      } catch {
-        // skip file
-      }
+  for (const file of Object.keys(snapshot).sort((left, right) => left.localeCompare(right))) {
+    try {
+      fingerprint[file] = createHash("sha1")
+        .update(readFileSync(join(repoPath, file)))
+        .digest("hex");
+    } catch {
+      // The path may no longer exist (delete/rename race) by the time we read it.
     }
-  } catch {
-    // git diff failed
   }
 
   return fingerprint;

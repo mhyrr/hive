@@ -10,15 +10,32 @@ import { resolvePiRuntimeRoute } from "../runtime";
 let cachedClaudeOAuthToken: string | null = null;
 let cachedClaudeOAuthExpiry: number = 0;
 
-// placeholder — token refresh handled by Claude CLI itself; we just re-read after
-async function triggerClaudeCliTokenRefresh(_credPath: string): Promise<string | null> {
-  // Clear cache to force re-read from keychain/file
+async function tryRefreshClaudeCliToken(): Promise<void> {
   cachedClaudeOAuthToken = null;
   cachedClaudeOAuthExpiry = 0;
-  return readClaudeSubscriptionToken();
+
+  const env = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_OAUTH_TOKEN;
+
+  try {
+    const proc = Bun.spawn(["claude", "auth", "status", "--json"], {
+      env,
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: 5_000,
+    });
+    await proc.exited;
+  } catch {
+    // Best-effort probe only. If the CLI cannot refresh non-interactively,
+    // the follow-up credential read will return null and the caller can fail honestly.
+  }
 }
 
-async function readClaudeSubscriptionToken(): Promise<string | null> {
+async function readClaudeSubscriptionToken(
+  options: { allowRefresh?: boolean } = {},
+): Promise<string | null> {
+  const allowRefresh = options.allowRefresh ?? true;
+
   // Return cached token if still valid (with 5min buffer)
   if (cachedClaudeOAuthToken && cachedClaudeOAuthExpiry > Date.now() + 300_000) {
     return cachedClaudeOAuthToken;
@@ -58,23 +75,20 @@ async function readClaudeSubscriptionToken(): Promise<string | null> {
     const refreshToken = oauth.refreshToken;
     const expiresAt = oauth.expiresAt ? new Date(oauth.expiresAt).getTime() : 0;
 
-    // If token is still valid (with 5min buffer), use it
-    if (typeof token === "string" && token.trim() && expiresAt > Date.now() + 300_000) {
+    if (typeof token === "string" && token.trim() && (!expiresAt || expiresAt > Date.now() + 300_000)) {
       cachedClaudeOAuthToken = token.trim();
       cachedClaudeOAuthExpiry = expiresAt;
       return cachedClaudeOAuthToken;
     }
 
-    // Token expired or expiring soon — trigger Claude CLI to refresh it
-    if (typeof refreshToken === "string" && refreshToken.trim()) {
-      console.error("[hive-auth] OAuth token expired, triggering Claude CLI refresh...");
-      const refreshed = await triggerClaudeCliTokenRefresh("");
-      if (refreshed) return refreshed;
+    if (allowRefresh && typeof refreshToken === "string" && refreshToken.trim()) {
+      console.error("[hive-auth] OAuth token expired, probing Claude CLI for a refreshed token...");
+      await tryRefreshClaudeCliToken();
+      return readClaudeSubscriptionToken({ allowRefresh: false });
     }
 
-    // No refresh token, return expired token and let it fail downstream
-    if (typeof token === "string" && token.trim()) {
-      return token.trim();
+    if (typeof token === "string" && token.trim() && expiresAt > 0) {
+      console.error("[hive-auth] Claude CLI token is expired and could not be refreshed non-interactively.");
     }
   } catch (err) {
     console.error(`[hive-auth] failed to read Claude credentials: ${err instanceof Error ? err.message : String(err)}`);

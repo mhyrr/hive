@@ -316,7 +316,7 @@ Command: ${renderLaunchPreview(spec)}`;
           assignmentScope: assignmentMessage?.attributes.scope ?? null,
         });
   const beforeGit = captureGitStatusSnapshot(repoPath);
-  const beforeFingerprint = captureGitContentFingerprint(repoPath);
+  const beforeFingerprint = captureGitContentFingerprint(repoPath, beforeGit);
 
   let run = await createRunDraft({
     projectId: input.activeProject,
@@ -388,7 +388,7 @@ Command: ${renderLaunchPreview(spec)}`;
   });
 
   const afterGit = captureGitStatusSnapshot(repoPath);
-  const afterFingerprint = captureGitContentFingerprint(repoPath);
+  const afterFingerprint = captureGitContentFingerprint(repoPath, afterGit);
   const gitDelta = diffGitStatusSnapshots(beforeGit, afterGit, {
     beforeFingerprint,
     afterFingerprint,
