@@ -1,4 +1,6 @@
 import { archiveCommand } from "./commands/archive";
+import { dreamCommand } from "./commands/dream";
+import { goalCommand } from "./commands/goal";
 import { approvalCommand } from "./commands/approval";
 import { cognitionCommand } from "./commands/cognition";
 import { consoleCommand } from "./commands/console";
@@ -11,7 +13,7 @@ import { initCommand } from "./commands/init";
 import { launchCommand } from "./commands/launch";
 import { logCommand } from "./commands/log";
 import { memoryCommand } from "./commands/memory";
-import { msgCommand, nudgeCommand } from "./commands/msg";
+import { msgCommand } from "./commands/msg";
 import { psCommand } from "./commands/ps";
 import { projectCommand } from "./commands/project";
 import { runtimesCommand } from "./commands/runtimes";
@@ -22,6 +24,7 @@ import { statusCommand } from "./commands/status";
 import { stopCommand } from "./commands/stop";
 import { superviseCommand } from "./commands/supervise";
 import { syncCommand } from "./commands/sync";
+import { thinkCommand } from "./commands/think";
 import { workCommand } from "./commands/work";
 import { UsageError } from "./lib/errors";
 import { routePluginCommand } from "./lib/plugins";
@@ -78,7 +81,7 @@ export async function runCli(args: string[]): Promise<string> {
     case "msg":
       return msgCommand(rest);
     case "nudge":
-      return nudgeCommand(rest);
+      return msgCommand(["nudge", ...rest]);
     case "prompt":
       return promptCommand(rest);
     case "runtimes":
@@ -89,6 +92,12 @@ export async function runCli(args: string[]): Promise<string> {
       return archiveCommand();
     case "sync":
       return syncCommand();
+    case "think":
+      return thinkCommand(rest);
+    case "dream":
+      return dreamCommand(rest);
+    case "goal":
+      return goalCommand(rest);
     default: {
       const pluginResult = await routePluginCommand(command ?? "", rest);
 

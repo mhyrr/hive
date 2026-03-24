@@ -1,0 +1,8 @@
+Routing in `evaluation-dispatcher.ts` is mostly correct: if orientation is missing or evaluation fails, events safely fall through to the original watcher handlers.  
+The action mapping is coherent (`discard` drops, `log`/`tactical`/`wake_strategic` call through, `interrupt` suppresses original handling), and `patchOnComplete` is constrained to board/run signals.  
+The main risk is interrupt duplication: the dispatcher now calls `interruptWorker` directly and then still fires `onInterruptRequest`, while gateway `onInterruptRequest` also calls `interruptWorker`, so one interrupt decision can execute twice concurrently.  
+That creates racey, noisy outcomes (one call succeeds, the other may hit `ESRCH`/`run not found`) and duplicate stop-request writes.  
+Identifier semantics are also fragile: evaluator outputs `workerId`, dispatcher treats it as `runId`, and `think.ts` context often surfaces agent-oriented worker summaries, so interrupt routing can miss active runs.  
+`interrupt-handler.ts` likely writes the interrupt file to the wrong place (`runs/active/<runId>/interrupt.md`), even though active records are `<agentId>.md`; the write is best-effort and failure is swallowed, so the graceful flush signal is probably ineffective today.  
+Inside `interruptWorker`, there is an unavoidable TOCTOU gap between `isProcessAlive` and `process.kill`; `ESRCH` handling keeps it safe, but behavior is still timing-sensitive.  
+Bottom line: good non-blocking/fallback posture overall, but interrupt ownership, identifier contract, and interrupt-file path need tightening before this is reliable under load.

@@ -1,8 +1,11 @@
 import type { Tool } from "@mariozechner/pi-ai";
+import type { HivePaths } from "../../paths";
 
 import { createBashTool } from "./bash";
 import { createDelegationTools } from "./delegate";
+import { createElicitationTools } from "./elicit";
 import { createFileTools, createStewardExecutionContext } from "./files";
+import { createInspectionTools } from "./inspect";
 import { createSearchTools } from "./search";
 
 export type PersistentStewardTool = Tool & {
@@ -19,6 +22,7 @@ export async function buildPersistentStewardTools(input: {
   msgDir: string;
   projectId: string;
   globalConfig: string;
+  hivePaths?: HivePaths;
 }): Promise<PersistentStewardTool[]> {
   const execution = createStewardExecutionContext(input);
 
@@ -38,6 +42,16 @@ export async function buildPersistentStewardTools(input: {
       projectId: input.projectId,
       globalConfig: input.globalConfig,
     }),
+    ...createElicitationTools({
+      msgDir: input.msgDir,
+      projectId: input.projectId,
+    }),
+    ...(input.hivePaths
+      ? createInspectionTools({
+          hivePaths: input.hivePaths,
+          projectId: input.projectId,
+        })
+      : []),
     ...pluginTools,
   ] as PersistentStewardTool[];
 }

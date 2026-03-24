@@ -66,6 +66,7 @@ export type ProjectPaths = {
   stateBoardSummary: string;
   stateOpenMessages: string;
   stateRecentResults: string;
+  stateSeenResults: string;
   stateActiveRuns: string;
   stateHumanInbox: string;
   stateStewardDelta: string;
@@ -87,6 +88,10 @@ export type ProjectPaths = {
   stateCompilerCacheIndex: string;
   stateWorkingSetDir: string;
   stateWorkingSetSteward: string;
+  stateWorkGraph: string;
+  stateReviewsDir: string;
+  evalLog: string;
+  goalsDir: string;
 };
 
 export function resolveHiveHome(): string {
@@ -232,6 +237,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     stateBoardSummary: join(stateDir, "board-summary.json"),
     stateOpenMessages: join(stateDir, "open-messages.json"),
     stateRecentResults: join(stateDir, "recent-results.json"),
+    stateSeenResults: join(stateDir, "seen-results.json"),
     stateActiveRuns: join(stateDir, "active-runs.json"),
     stateHumanInbox: join(stateDir, "human-inbox.json"),
     stateStewardDelta: join(stateDir, "steward-delta.json"),
@@ -253,6 +259,10 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     stateCompilerCacheIndex: join(stateCompilerDir, "cache-index.json"),
     stateWorkingSetDir,
     stateWorkingSetSteward: join(stateWorkingSetDir, "steward.json"),
+    stateWorkGraph: join(stateDir, "work-graph.json"),
+    stateReviewsDir: join(stateDir, "reviews"),
+    evalLog: join(root, "eval-log.jsonl"),
+    goalsDir: join(root, "goals"),
   };
 }
 
@@ -271,6 +281,7 @@ export async function ensureProjectScaffold(
   await mkdir(projectPaths.runsActiveDir, { recursive: true });
   await mkdir(projectPaths.supervisorDir, { recursive: true });
   await mkdir(projectPaths.stateDir, { recursive: true });
+  await mkdir(projectPaths.goalsDir, { recursive: true });
   await writeIfMissing(
     projectPaths.config,
     renderProjectConfigTemplate(input.projectName, input.repoPath),

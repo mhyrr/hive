@@ -42,12 +42,14 @@ Usage:
   hive msg show <message>
   hive msg resolve <message> <actor> <answer>
   hive msg close <message> <actor> [note]
-  hive nudge <message>
+  hive msg nudge <message>                # Human → steward (alias: hive nudge)
   hive prompt <agent-id>
   hive runtimes                        # List available runtimes
   hive gateway [--port <port>] [--open] # Alias for \`hive start\`
   hive gateway status                   # Show Gateway state
   hive gateway stop                     # Stop the Gateway server
+  hive dream [--from <spec>] [--dry-run] [--go] "<goal>"
+                                # Plan and launch an overnight autonomous run
   hive hub search <query>              # Search Claw Hub for skills
   hive hub install <skill-id>          # Install a hub skill
   hive hub list [--installed]          # List available or installed skills

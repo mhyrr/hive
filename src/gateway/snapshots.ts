@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import type { GatewayOptions } from "./server";
 
@@ -22,7 +22,6 @@ import {
 } from "../lib/project";
 import {
   readRunOutputTail,
-  readRunRecord,
   type RunRecord,
   type RunResult,
 } from "../lib/runs";
@@ -721,7 +720,7 @@ export async function buildGatewayLiveSnapshot(input: {
         ...agentContext,
         agentId: run.agentId,
       });
-      const tail = await readRunOutputTail(run, 12);
+      const tail = await readRunOutputTail(run, 50);
 
       return {
         runId: run.runId,
@@ -742,29 +741,26 @@ export async function buildGatewayLiveSnapshot(input: {
     }),
   );
 
-  const recentCompletions = await Promise.all(
-    runtimeState.recentResultsSummary.items.slice(0, 6).map(async (result) => {
-      const run = await readRunRecordForResult(result);
-      const presentation = resolveAgentPresentation({
-        ...agentContext,
-        agentId: result.agentId,
-      });
+  const recentCompletions = runtimeState.recentResultsSummary.items.slice(0, 6).map((result) => {
+    const presentation = resolveAgentPresentation({
+      ...agentContext,
+      agentId: result.agentId,
+    });
 
-      return {
-        runId: result.runId,
-        agentId: result.agentId,
-        displayName: presentation.displayName,
-        persona: presentation.persona,
-        descriptor: presentation.descriptor,
-        status: result.status,
-        ended: result.ended,
-        summary: result.summary || result.status,
-        changedFiles: result.changedFiles,
-        runtime: run?.runtime ?? null,
-        model: run?.model ?? null,
-      };
-    }),
-  );
+    return {
+      runId: result.runId,
+      agentId: result.agentId,
+      displayName: presentation.displayName,
+      persona: presentation.persona,
+      descriptor: presentation.descriptor,
+      status: result.status,
+      ended: result.ended,
+      summary: result.summary || result.status,
+      changedFiles: result.changedFiles,
+      runtime: result.runtime,
+      model: result.model,
+    };
+  });
 
   const deltaActivities = deltaHistory
     .flatMap((packet) =>
@@ -1067,6 +1063,3 @@ export async function buildCurrentActivitySummary(input: {
   };
 }
 
-async function readRunRecordForResult(result: RunResult): Promise<RunRecord | null> {
-  return readRunRecord(join(dirname(result.path), "run.md"));
-}

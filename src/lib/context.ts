@@ -31,6 +31,8 @@ export type BootstrapContextInput = {
   staleMemoryDigest?: string | null;
 };
 
+export const RECENT_RESULTS_DIGEST_LIMIT = 5;
+
 /**
  * Assemble a full text snapshot from project runtime state.
  *
@@ -209,7 +211,7 @@ export function renderRecentResults(
   }
 
   return recentResultsSummary.items
-    .slice(0, 5)
+    .slice(0, RECENT_RESULTS_DIGEST_LIMIT)
     .map((item) => `- ${item.agentId} | ${item.status} | ${item.summary || "no visible output"}`)
     .join("\n");
 }
