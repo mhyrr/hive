@@ -89,6 +89,7 @@ export type ProjectPaths = {
   stateWorkingSetDir: string;
   stateWorkingSetSteward: string;
   stateWorkGraph: string;
+  stateReviewsDir: string;
   evalLog: string;
   goalsDir: string;
 };
@@ -259,6 +260,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     stateWorkingSetDir,
     stateWorkingSetSteward: join(stateWorkingSetDir, "steward.json"),
     stateWorkGraph: join(stateDir, "work-graph.json"),
+    stateReviewsDir: join(stateDir, "reviews"),
     evalLog: join(root, "eval-log.jsonl"),
     goalsDir: join(root, "goals"),
   };
