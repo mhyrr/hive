@@ -59,11 +59,11 @@
   --r: 4px;
 
   /* Glass */
-  --glass-bg: rgba(23, 28, 35, 0.6);
-  --glass-bg-solid: rgba(23, 28, 35, 0.85);
-  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-bg: rgba(20, 15, 8, 0.75);
+  --glass-bg-solid: rgba(20, 15, 8, 0.92);
+  --glass-border: rgba(255, 180, 60, 0.12);
   --glass-blur: 20px;
-  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  --glass-shadow: 0 4px 32px rgba(0, 0, 0, 0.45);
   --amber-surface: rgba(218, 162, 0, 0.04);
 }
 
@@ -84,7 +84,10 @@ body {
   grid-template-rows: var(--topbar-h) 1fr;
   grid-template-columns: 3fr 2fr;
   height: 100vh;
-  background: var(--bg-void);
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(80, 45, 10, 0.3) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 20%, rgba(60, 35, 8, 0.2) 0%, transparent 50%),
+    linear-gradient(180deg, #0a0805 0%, #0d0a06 100%);
   color: var(--text-primary);
   font-family: var(--font);
   font-size: var(--text-base);
@@ -99,10 +102,10 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(ellipse 70% 55% at 8% 92%, rgba(218, 162, 0, 0.24), transparent),
-    radial-gradient(ellipse 55% 65% at 88% 15%, rgba(74, 136, 120, 0.18), transparent),
-    radial-gradient(ellipse 45% 55% at 50% 50%, rgba(88, 136, 176, 0.12), transparent),
-    radial-gradient(ellipse 35% 40% at 75% 75%, rgba(160, 120, 180, 0.10), transparent);
+    radial-gradient(ellipse 70% 55% at 8% 92%, rgba(218, 162, 0, 0.28), transparent),
+    radial-gradient(ellipse 55% 65% at 88% 15%, rgba(160, 90, 15, 0.20), transparent),
+    radial-gradient(ellipse 45% 55% at 50% 50%, rgba(100, 60, 10, 0.15), transparent),
+    radial-gradient(ellipse 35% 40% at 75% 75%, rgba(80, 45, 8, 0.12), transparent);
   pointer-events: none;
   z-index: 0;
   animation: mesh-drift 45s ease-in-out infinite alternate;
@@ -517,7 +520,7 @@ body::after {
   top: calc(100% + var(--s2));
   left: 0;
   min-width: 300px;
-  background: rgba(22, 27, 34, 0.85);
+  background: var(--glass-bg-solid);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
@@ -597,7 +600,7 @@ body::after {
   top: calc(100% + var(--s2));
   left: 0;
   min-width: 280px;
-  background: rgba(22, 27, 34, 0.85);
+  background: var(--glass-bg-solid);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
@@ -838,7 +841,7 @@ body::after {
   flex-direction: column;
   overflow: hidden;
   border-right: 1px solid var(--glass-border);
-  background: rgba(10, 14, 20, 0.55);
+  background: rgba(16, 10, 4, 0.55);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
 }
@@ -954,6 +957,34 @@ body::after {
 .console-welcome-hint {
   color: var(--text-muted) !important;
   font-size: var(--text-xs);
+}
+
+.console-welcome-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s4);
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+
+.console-welcome-prompt {
+  background: rgba(218, 162, 0, 0.06);
+  border: 1px solid rgba(218, 162, 0, 0.2);
+  border-radius: var(--r);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: var(--text-xs);
+  padding: var(--s2) var(--s3);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.console-welcome-prompt:hover {
+  color: var(--amber);
+  border-color: rgba(218, 162, 0, 0.45);
+  background: rgba(218, 162, 0, 0.12);
 }
 
 
@@ -1408,12 +1439,81 @@ body.modal-open {
    CONSOLE INPUT
    ================================================================ */
 
+.console-input-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Slash command autocomplete popover */
+.slash-autocomplete {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: var(--s3);
+  right: var(--s3);
+  background: var(--bg-raised);
+  border: 1px solid var(--amber-dim);
+  border-radius: var(--r);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  z-index: 200;
+}
+
+.slash-autocomplete-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--s1) 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.slash-autocomplete-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.slash-autocomplete-item:hover,
+.slash-autocomplete-item[aria-selected="true"] {
+  background: var(--amber-glow);
+}
+
+.slash-autocomplete-item[aria-selected="true"] .slash-autocomplete-cmd {
+  color: var(--amber);
+}
+
+.slash-autocomplete-cmd {
+  font-family: var(--font);
+  font-size: var(--text-sm);
+  color: var(--text-bright);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.slash-autocomplete-args {
+  font-family: var(--font);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.slash-autocomplete-desc {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .console-input {
   display: flex;
   gap: 0;
   padding: var(--s3);
   border-top: 1px solid var(--glass-border);
-  background: rgba(23, 28, 35, 0.7);
+  background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
   flex-shrink: 0;
@@ -1440,7 +1540,8 @@ body.modal-open {
 
 .console-input textarea:focus {
   border-color: var(--amber);
-  box-shadow: 0 0 0 1px rgba(218, 162, 0, 0.3), 0 0 20px rgba(218, 162, 0, 0.08);
+  outline: 1px solid var(--amber);
+  box-shadow: 0 0 0 3px rgba(255, 180, 60, 0.15);
 }
 
 .console-input textarea::placeholder { color: var(--text-muted); }
@@ -1470,6 +1571,24 @@ body.modal-open {
 
 .console-input button:active { background: var(--border); }
 .console-input button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+
+/* --- Streaming Cursor --- */
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 1em;
+  background: var(--amber);
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+}
 
 
 /* ================================================================
@@ -1525,7 +1644,7 @@ body.modal-open {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: rgba(14, 18, 24, 0.7);
+  background: rgba(18, 12, 5, 0.72);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
   border-left: 1px solid var(--glass-border);
@@ -1536,7 +1655,7 @@ body.modal-open {
   grid-template-columns: repeat(3, 1fr);
   gap: 0;
   border-bottom: 1px solid var(--glass-border);
-  background: rgba(23, 28, 35, 0.5);
+  background: rgba(20, 13, 5, 0.5);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
   flex-shrink: 0;
@@ -1584,7 +1703,7 @@ body.modal-open {
 
 .rail-section {
   border-bottom: 1px solid var(--glass-border);
-  background: rgba(23, 28, 35, 0.4);
+  background: rgba(20, 13, 5, 0.42);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
 }

@@ -16,28 +16,18 @@ import {
   getSessionPrompt,
   getSessionState,
 } from "../sessions";
-import { readStewardDeltaHistory, refreshProjectRuntimeState } from "../state";
+import {
+  markSeenResultRunIds,
+  readSeenResultRunIds,
+  readStewardDeltaHistory,
+  refreshProjectRuntimeState,
+} from "../state";
 
 import {
   type DeltaHistoryEntry,
   renderDeltaHistory,
   renderRecentTurns,
 } from "./sections";
-
-// Session-scoped dedup: track which runIds have already been injected into the
-// prompt for a given session. Keyed by sessionId. Resets when the steward
-// process restarts, which is the correct behavior — a fresh session should see
-// all current results on bootstrap, then suppress repeats on subsequent turns.
-const _seenRunIdsBySession = new Map<string, Set<string>>();
-
-function getSeenRunIds(sessionId: string): Set<string> {
-  let seen = _seenRunIdsBySession.get(sessionId);
-  if (!seen) {
-    seen = new Set();
-    _seenRunIdsBySession.set(sessionId, seen);
-  }
-  return seen;
-}
 
 export type StewardContext = {
   globalConfig: string;
@@ -99,7 +89,7 @@ export async function loadStewardContext(input: {
   recentTurnLimit?: number;
 }): Promise<StewardContext> {
   const projectPaths = getProjectPaths(input.hivePaths, input.projectId);
-  const [globalConfig, projectConfig, sessionMeta, sessionState, sessionPrompt, runtimeState, soul, identity, self, memoryContext, history] =
+  const [globalConfig, projectConfig, sessionMeta, sessionState, sessionPrompt, runtimeState, soul, identity, self, memoryContext, history, seenRunIds] =
     await Promise.all([
       Bun.file(input.hivePaths.config).text().catch(() => ""),
       Bun.file(projectPaths.config).text(),
@@ -116,6 +106,7 @@ export async function loadStewardContext(input: {
       Bun.file(input.hivePaths.self).text().catch(() => ""),
       loadPromptMemoryContext(input.hivePaths, input.projectId),
       getSessionHistory(input.hivePaths.sessionsDir, input.sessionId),
+      readSeenResultRunIds(projectPaths),
     ]);
 
   const repoPath = extractRepoPath(projectConfig);
@@ -161,13 +152,12 @@ export async function loadStewardContext(input: {
     openDecisionsDigest: renderOpenDecisions(runtimeState.boardSummary, runtimeState.humanInboxSummary),
     openMessagesDigest: runtimeState.openMessagesSummary.digest,
     activeRunsDigest: runtimeState.activeRunsSummary.digest,
-    recentResultsDigest: (() => {
-      const seenRunIds = getSeenRunIds(input.sessionId);
+    recentResultsDigest: await (async () => {
       const newItems = runtimeState.recentResultsSummary.items.filter(
         (item) => !seenRunIds.has(item.runId),
       );
-      for (const item of newItems) {
-        seenRunIds.add(item.runId);
+      if (newItems.length > 0) {
+        await markSeenResultRunIds(projectPaths, newItems.map((item) => item.runId));
       }
       return newItems.length > 0
         ? renderRecentResults({ ...runtimeState.recentResultsSummary, items: newItems })
