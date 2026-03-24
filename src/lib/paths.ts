@@ -88,6 +88,7 @@ export type ProjectPaths = {
   stateCompilerCacheIndex: string;
   stateWorkingSetDir: string;
   stateWorkingSetSteward: string;
+  stateWorkGraph: string;
   evalLog: string;
   goalsDir: string;
 };
@@ -257,6 +258,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     stateCompilerCacheIndex: join(stateCompilerDir, "cache-index.json"),
     stateWorkingSetDir,
     stateWorkingSetSteward: join(stateWorkingSetDir, "steward.json"),
+    stateWorkGraph: join(stateDir, "work-graph.json"),
     evalLog: join(root, "eval-log.jsonl"),
     goalsDir: join(root, "goals"),
   };
