@@ -146,7 +146,7 @@ export async function planGoalToGraph(
   const projectId = basename(projectPaths.root);
 
   const responseText = await callAnthropic({
-    model: "claude-sonnet-4-6",
+    model: "claude-3-7-sonnet-20250219",
     system: [
       "You are a task planner. Decompose the goal into 2 to 5 concrete, independently executable tasks.",
       "Respond with a JSON array only — no markdown fences, no prose.",
