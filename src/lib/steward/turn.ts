@@ -377,10 +377,21 @@ async function getMockAuthState(input: {
   provider: string;
   authPolicy: "oauth-only" | "env" | null;
 }): Promise<string> {
+  if (input.provider === "anthropic") {
+    if (process.env.ANTHROPIC_OAUTH_TOKEN?.trim()) {
+      return "oauth";
+    }
+
+    if (input.authPolicy !== "oauth-only" && process.env.ANTHROPIC_API_KEY?.trim()) {
+      return "api";
+    }
+
+    return "none";
+  }
+
   const key = await resolvePiApiKey(input.provider, { authPolicy: input.authPolicy });
   if (key) {
-    if (key.startsWith("sk-ant-oat")) return "oauth";
-    return input.provider === "anthropic" ? "api" : "configured";
+    return "configured";
   }
   return "none";
 }

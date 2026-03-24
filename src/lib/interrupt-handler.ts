@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { isProcessAlive } from "./process";
 import { markRunStopRequested, readRunRecord } from "./runs";
 import type { RunRecord } from "./runs";
 import type { TacticalEvaluation } from "./tactical-evaluator";
@@ -138,35 +139,4 @@ async function findActiveRunById(
   }
 
   return null;
-}
-
-/**
- * Checks whether a process is alive by sending signal 0.
- * Mirrors the unexported isProcessAlive in runs.ts.
- */
-function isProcessAlive(pid: number | null): boolean {
-  if (!pid || pid <= 0) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? (error as { code?: string }).code
-        : null;
-
-    if (code === "EPERM") {
-      // EPERM means the process exists but we lack permission to signal it
-      return true;
-    }
-
-    if (code === "ESRCH") {
-      return false;
-    }
-
-    throw error;
-  }
 }
