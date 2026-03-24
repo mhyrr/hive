@@ -472,6 +472,17 @@ const getRoutes: Record<string, RouteHandler> = {
     }
   },
 
+  "/api/slash-commands": async (_req, _url, _options, _broadcast) => {
+    return jsonOk({
+      commands: [
+        { command: "/help", description: "Show available commands and shortcuts" },
+        { command: "/dream", description: "Launch an overnight goal", args: "<goal>" },
+        { command: "/project", description: "Switch or message a project", args: "[project] [message]" },
+        { command: "/runtime", description: "Switch steward runtime", args: "[runtime] [model]" },
+      ],
+    });
+  },
+
   "/api/cognition": async (_req, url, options, _broadcast) => {
     try {
       const globalConfig = await readGatewayGlobalConfig(options);

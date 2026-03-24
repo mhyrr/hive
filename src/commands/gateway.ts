@@ -121,8 +121,10 @@ function parseGatewayArgs(args: string[]): GatewayCommandOptions {
 function cleanGatewayEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
 
+  // Strip Claude Code's auth token — the gateway doesn't run as a Claude Code
+  // subagent and shouldn't inherit that credential. The Anthropic API key is
+  // kept so the gateway can make direct Anthropic calls (e.g. /dream planning).
   delete env.CLAUDECODE;
-  delete env.ANTHROPIC_API_KEY;
 
   return env;
 }

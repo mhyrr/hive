@@ -1398,14 +1398,19 @@ function renderConsoleItem(item) {
     html += '<div class="turn-content turn-content--streaming">';
     html += '<div class="turn-streaming-bar"></div>';
     if (item.statusText) {
-      html += '<div class="turn-streaming-status">' + escapeHtml(item.statusText) + '</div>';
+      html += '<div class="turn-streaming-status">' + escapeHtml(item.statusText) + ' <span class="streaming-cursor"></span></div>';
     } else {
-      html += '<div class="turn-streaming-status">Thinking...</div>';
+      html += '<div class="turn-streaming-status">Thinking... <span class="streaming-cursor"></span></div>';
     }
     html += '<div class="turn-streaming-elapsed">' + escapeHtml(elapsedStr) + ' elapsed</div>';
     html += '</div>';
   } else {
-    html += '<div class="turn-content">' + renderRichText(preview && !expanded ? preview.previewText : getConsoleItemSourceText(item)) + '</div>';
+    var contentHtml = renderRichText(preview && !expanded ? preview.previewText : getConsoleItemSourceText(item));
+    html += '<div class="turn-content">' + contentHtml;
+    if (item.itemType === 'draft') {
+      html += '<span class="streaming-cursor"></span>';
+    }
+    html += '</div>';
     if (preview) {
       html += '<div class="turn-collapse-meta">';
       html += '<span class="turn-collapse-note">' + escapeHtml(getConsoleCollapseMeta(preview)) + '</span>';
@@ -1485,6 +1490,10 @@ function renderConsoleHistory() {
         '<button class="console-welcome-prompt" type="button" data-welcome-prompt="Review recent agent work. Summarize what each agent accomplished and flag anything that needs review.">' +
         '<span class="console-welcome-prompt-icon">&#x1F50D;</span>' +
         '<span class="console-welcome-prompt-text">Review recent work</span>' +
+        '</button>' +
+        '<button class="console-welcome-prompt" type="button" data-welcome-prompt="/dream improve the hive status output">' +
+        '<span class="console-welcome-prompt-icon">&#x1F319;</span>' +
+        '<span class="console-welcome-prompt-text">Launch a dream</span>' +
         '</button>' +
         '</div>' +
         '</div>';
@@ -3363,6 +3372,136 @@ function setSendingState(sending) {
 }
 
 
+// --- Slash Command Autocomplete ---
+
+var slashCommandsCache = null;
+
+async function fetchSlashCommands() {
+  if (slashCommandsCache) return slashCommandsCache;
+  try {
+    var resp = await fetch('/api/slash-commands');
+    if (!resp.ok) return [];
+    var data = await resp.json();
+    slashCommandsCache = Array.isArray(data.commands) ? data.commands : [];
+    return slashCommandsCache;
+  } catch (_e) {
+    return [];
+  }
+}
+
+var slashAcState = {
+  visible: false,
+  items: [],       // filtered command objects
+  selectedIdx: -1,
+};
+
+function getSlashAcEls() {
+  return {
+    wrap: document.getElementById('slash-autocomplete'),
+    list: document.getElementById('slash-autocomplete-list'),
+  };
+}
+
+function hideSlashAc() {
+  var els = getSlashAcEls();
+  if (els.wrap) els.wrap.hidden = true;
+  slashAcState.visible = false;
+  slashAcState.items = [];
+  slashAcState.selectedIdx = -1;
+}
+
+function renderSlashAc() {
+  var els = getSlashAcEls();
+  if (!els.wrap || !els.list) return;
+
+  var items = slashAcState.items;
+  if (!items.length) { hideSlashAc(); return; }
+
+  var html = '';
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    var selected = i === slashAcState.selectedIdx;
+    html += '<li class="slash-autocomplete-item"' +
+      ' role="option"' +
+      ' aria-selected="' + (selected ? 'true' : 'false') + '"' +
+      ' data-idx="' + i + '">' +
+      '<span class="slash-autocomplete-cmd">' + escapeHtml(item.command) + '</span>' +
+      (item.args ? '<span class="slash-autocomplete-args">' + escapeHtml(item.args) + '</span>' : '') +
+      '<span class="slash-autocomplete-desc">' + escapeHtml(item.description || '') + '</span>' +
+      '</li>';
+  }
+  els.list.innerHTML = html;
+  els.wrap.hidden = false;
+  slashAcState.visible = true;
+}
+
+function slashAcScrollSelected() {
+  var els = getSlashAcEls();
+  if (!els.list) return;
+  var selected = els.list.querySelector('[aria-selected="true"]');
+  if (selected) selected.scrollIntoView({ block: 'nearest' });
+}
+
+function completeSlashCommand(input, item) {
+  // Fill in the command name (and a trailing space for commands that take args)
+  var completion = item.args ? item.command + ' ' : item.command;
+  input.value = completion;
+  // Move cursor to end
+  input.setSelectionRange(completion.length, completion.length);
+  hideSlashAc();
+}
+
+async function updateSlashAc(input) {
+  var val = input.value;
+
+  // Only activate when the entire value is a slash-prefixed token (no spaces yet after a command)
+  if (!val.startsWith('/') || val.includes(' ')) {
+    hideSlashAc();
+    return;
+  }
+
+  var query = val.toLowerCase();
+  var all = await fetchSlashCommands();
+  var filtered = all.filter(function (c) {
+    return c.command.toLowerCase().startsWith(query);
+  });
+
+  if (!filtered.length) { hideSlashAc(); return; }
+
+  // Don't show if the only match is an exact match (command is complete)
+  if (filtered.length === 1 && filtered[0].command.toLowerCase() === query) {
+    hideSlashAc();
+    return;
+  }
+
+  slashAcState.items = filtered;
+  slashAcState.selectedIdx = 0;
+  renderSlashAc();
+}
+
+function setupSlashAutocomplete(input) {
+  // Delegate click on list items
+  var els = getSlashAcEls();
+  if (els.list) {
+    els.list.addEventListener('mousedown', function (e) {
+      // Use mousedown so it fires before blur
+      var li = e.target.closest('.slash-autocomplete-item');
+      if (!li) return;
+      e.preventDefault();
+      var idx = parseInt(li.getAttribute('data-idx'), 10);
+      if (!isNaN(idx) && slashAcState.items[idx]) {
+        completeSlashCommand(input, slashAcState.items[idx]);
+        input.focus();
+      }
+    });
+  }
+
+  input.addEventListener('blur', function () {
+    // Small delay so mousedown on list items fires first
+    setTimeout(hideSlashAc, 150);
+  });
+}
+
 // --- Console Input ---
 
 function setupConsoleInput() {
@@ -3371,23 +3510,63 @@ function setupConsoleInput() {
 
   if (!form || !input) return;
 
+  setupSlashAutocomplete(input);
+
   form.addEventListener('submit', function (e) {
     e.preventDefault();
+    if (slashAcState.visible) {
+      // Confirm selected autocomplete item instead of submitting
+      var item = slashAcState.items[slashAcState.selectedIdx] || slashAcState.items[0];
+      if (item) { completeSlashCommand(input, item); return; }
+    }
     sendConsoleMessage();
   });
 
-  // Enter to send (no shift), Shift+Enter for newline
+  // Enter to send (no shift), Shift+Enter for newline, Cmd/Ctrl+Enter also sends
   input.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (slashAcState.visible) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        slashAcState.selectedIdx = Math.min(slashAcState.selectedIdx + 1, slashAcState.items.length - 1);
+        renderSlashAc();
+        slashAcScrollSelected();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        slashAcState.selectedIdx = Math.max(slashAcState.selectedIdx - 1, 0);
+        renderSlashAc();
+        slashAcScrollSelected();
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        var item = slashAcState.items[slashAcState.selectedIdx] || slashAcState.items[0];
+        if (item) completeSlashCommand(input, item);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideSlashAc();
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        var item = slashAcState.items[slashAcState.selectedIdx] || slashAcState.items[0];
+        if (item) { completeSlashCommand(input, item); return; }
+      }
+    }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
       e.preventDefault();
       sendConsoleMessage();
     }
   });
 
-  // Auto-resize textarea
+  // Trigger autocomplete on input
   input.addEventListener('input', function () {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    updateSlashAc(input);
   });
 }
 

@@ -1,5 +1,6 @@
 import { section } from "../lib/format";
 import { reconcileGatewayState, type GatewayStateRecord } from "../lib/gateway-state";
+import { listActiveGoals } from "../lib/goals";
 import { listOpenProjectMessages } from "../lib/messages";
 import {
   ensureHiveScaffold,
@@ -135,11 +136,23 @@ export async function statusCommand(): Promise<string> {
     projectPaths,
   });
 
+  const activeGoals = await listActiveGoals(projectPaths.goalsDir);
+  const goalSection =
+    activeGoals.length > 0
+      ? section(
+          "Active Goals",
+          activeGoals.map((g) => `- ${g.id} [${g.status}] ${g.description}`).join("\n"),
+        )
+      : null;
+
   return [
     runtimeSection,
     `Project: ${activeProject}`,
     `Repo path: ${repoPath}`,
     section("BOARD.md", state.boardText),
     section("Open Messages", formatMessages(state.openMessages)),
-  ].join("\n\n");
+    goalSection,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
