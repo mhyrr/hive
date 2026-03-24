@@ -55,6 +55,11 @@ import { compileIdleProjectCognition, triageRunDiffsForSteward } from "../lib/co
 import { hasPersistentStewardSession, notifyStewardRunCompleted } from "../lib/persistent-steward";
 import { launchAgentPass } from "./launch";
 import { dispatchWorkerLaunchPass } from "./worker-launch-dispatch";
+import { shouldAutoReview, dispatchAutoReview } from "../lib/auto-review";
+import { checkGoalWaveCompletion, synthesizeWaveResults, dispatchNextWave, writeMorningBrief } from "../lib/goal-loop";
+import { listActiveGoals } from "../lib/goals";
+import { advanceWorkGraph } from "../lib/orchestrator";
+import { readWorkGraph, isGraphComplete } from "../lib/work-graph";
 
 type SuperviseOptions = {
   intervalSeconds: number;
@@ -744,6 +749,20 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     state = await readProjectState({ activeProject, paths });
   }
 
+  // Work graph advance — deterministic, no model calls
+  const workGraph = await readWorkGraph(projectPaths);
+  if (workGraph && !isGraphComplete(workGraph)) {
+    const advance = await advanceWorkGraph({
+      projectId: activeProject,
+      projectPaths,
+      hivePaths: paths,
+      maxParallel: options.maxParallel,
+    });
+    if (advance.dispatched.length > 0) {
+      console.log(`[supervise] work-graph: dispatched ${advance.dispatched.length} tasks`);
+    }
+  }
+
   const initialActiveOrchestratorRun =
     state.activeRuns.find((run) => run.agentId === "steward") ?? null;
   const lastStewardRun =
@@ -951,6 +970,50 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
 
     if (result) {
       verificationResults.push({ agentId: outcome.agentId, summary: result.summary });
+    }
+  }
+
+  // Auto-review dispatch for completed craftsman runs
+  const completedAgentIds = new Set(
+    workerDispatch.outcomes
+      .filter((o) => o.result.status === "fulfilled")
+      .map((o) => o.agentId),
+  );
+
+  if (completedAgentIds.size > 0) {
+    const freshResults = await listRecentRunResults(projectPaths, 20);
+    const completedRuns = freshResults.filter((r) => completedAgentIds.has(r.agentId));
+
+    for (const run of completedRuns) {
+      if (shouldAutoReview(run, state.projectConfig)) {
+        dispatchAutoReview(run, {
+          projectId: activeProject,
+          projectPaths,
+          hivePaths: paths,
+        }).catch((err) => {
+          console.warn(`[supervise] auto-review dispatch failed: ${err}`);
+        });
+      }
+    }
+  }
+
+  // Goal wave completion check
+  const activeGoals = await listActiveGoals(projectPaths.goalsDir).catch(() => []);
+
+  for (const goal of activeGoals.filter((g) => g.waveAgents.length > 0)) {
+    const waveStatus = await checkGoalWaveCompletion(goal.id, projectPaths, paths);
+
+    if (waveStatus.status === "complete") {
+      const synthesis = await synthesizeWaveResults(goal, waveStatus.runIds, projectPaths, paths);
+
+      if (synthesis.achieved || !synthesis.remainingTasks?.length) {
+        await writeMorningBrief(goal, synthesis, goal.waveNumber, projectPaths);
+        console.log(`[supervise] goal ${goal.id} complete — morning brief written`);
+      } else {
+        const waveNumber = goal.waveNumber + 1;
+        await dispatchNextWave(goal.id, synthesis.remainingTasks, waveNumber, projectPaths, paths);
+        console.log(`[supervise] goal ${goal.id} wave ${waveNumber} dispatched`);
+      }
     }
   }
 
