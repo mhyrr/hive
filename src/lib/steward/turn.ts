@@ -539,10 +539,12 @@ async function startPersistentStewardHandle(input: {
   const key = getHandleKey(input.hivePaths.home, input.sessionId);
   const agent = new Agent({
     transport: new ProviderTransport({
-      getApiKey: (provider) =>
-        resolvePiApiKey(provider, {
+      getApiKey: async (provider) => {
+        const resolved = await resolvePiApiKey(provider, {
           authPolicy: input.runtimeConfig.authPolicy,
-        }),
+        });
+        return resolved?.token;
+      },
     }),
   });
 

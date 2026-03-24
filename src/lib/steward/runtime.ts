@@ -97,6 +97,11 @@ async function readClaudeSubscriptionToken(
   return null;
 }
 
+export type ResolvedApiKey = {
+  token: string;
+  isOAuth: boolean;
+};
+
 export type PersistentStewardRuntimeConfig = {
   provider: string;
   modelId: string;
@@ -116,18 +121,18 @@ export async function resolvePiApiKey(
   input: {
     authPolicy: "oauth-only" | "env" | null;
   },
-): Promise<string | undefined> {
+): Promise<ResolvedApiKey | undefined> {
   // 1. Explicit env var for OAuth token
   const oauthToken = process.env.ANTHROPIC_OAUTH_TOKEN?.trim();
   if (provider === "anthropic" && oauthToken) {
-    return oauthToken;
+    return { token: oauthToken, isOAuth: true };
   }
 
   // 2. Standard env var (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
   if (input.authPolicy !== "oauth-only") {
     const apiKey = getEnvApiKey(provider);
     if (typeof apiKey === "string" && apiKey.trim()) {
-      return apiKey;
+      return { token: apiKey, isOAuth: false };
     }
   }
 
@@ -135,7 +140,7 @@ export async function resolvePiApiKey(
   if (provider === "anthropic") {
     const subscriptionToken = await readClaudeSubscriptionToken();
     if (subscriptionToken) {
-      return subscriptionToken;
+      return { token: subscriptionToken, isOAuth: true };
     }
     console.error(`[hive-auth] readClaudeSubscriptionToken returned null for provider=${provider} authPolicy=${input.authPolicy}`);
   } else {

@@ -5,7 +5,7 @@ import { callAnthropic } from "./anthropic-client";
 import type { HivePaths, ProjectPaths } from "./paths";
 
 // Sonnet for planning — needs more reasoning than Haiku tactical passes
-const PLANNER_MODEL = "claude-sonnet-4-6";
+const PLANNER_MODEL = "claude-3-7-sonnet-20250219";
 
 // Rough cost per task: ~50K input + ~10K output tokens at Sonnet pricing,
 // with a 2× safety margin applied in the returned estimate.

@@ -1,3 +1,5 @@
+import { resolvePiApiKey } from "./steward/runtime";
+
 export class AnthropicError extends Error {
   constructor(
     message: string,
@@ -29,13 +31,18 @@ type CallOptions = {
 };
 
 export async function callAnthropic(opts: CallOptions): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Resolve credentials — prefer API key if available, fall back to OAuth
+  const resolved = await resolvePiApiKey("anthropic", { authPolicy: null });
 
-  if (!apiKey) {
+  if (!resolved) {
     throw new AnthropicError(
-      "ANTHROPIC_API_KEY environment variable is not set",
+      "No Anthropic credentials available. Sign in with Claude CLI (claude auth login) or set ANTHROPIC_API_KEY.",
     );
   }
+
+  const authHeaders: Record<string, string> = resolved.isOAuth
+    ? { Authorization: `Bearer ${resolved.token}`, "anthropic-beta": "oauth-2025-04-20" }
+    : { "x-api-key": resolved.token };
 
   const { model, system, messages, maxTokens = 150, timeoutMs = 5000 } = opts;
 
@@ -58,7 +65,7 @@ export async function callAnthropic(opts: CallOptions): Promise<string> {
     response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        "x-api-key": apiKey,
+        ...authHeaders,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
       },

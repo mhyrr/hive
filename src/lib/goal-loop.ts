@@ -138,7 +138,7 @@ If the goal is achieved, set remainingTasks to []. If not, list remaining work a
 
   try {
     responseText = await callAnthropic({
-      model: "claude-sonnet-4-6",
+      model: "claude-3-7-sonnet-20250219",
       messages: [{ role: "user", content: prompt }],
       maxTokens: 1000,
       timeoutMs: 60_000,

@@ -85,10 +85,15 @@
         </div>
       </div>
     </div>
-    <form class="console-input" id="console-form">
-      <textarea id="console-input" placeholder="Talk to HIVE... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
-      <button type="submit" id="console-send-btn">Send</button>
-    </form>
+    <div class="console-input-wrap">
+      <div class="slash-autocomplete" id="slash-autocomplete" hidden>
+        <ul class="slash-autocomplete-list" id="slash-autocomplete-list" role="listbox"></ul>
+      </div>
+      <form class="console-input" id="console-form">
+        <textarea id="console-input" placeholder="Talk to HIVE... (Shift+Enter for newline)" autocomplete="off" autofocus rows="1"></textarea>
+        <button type="submit" id="console-send-btn">Send</button>
+      </form>
+    </div>
   </main>
 
   <!-- Operations rail -->
