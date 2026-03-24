@@ -506,26 +506,38 @@ export async function continueConsoleWorkflow(
   // Gate: when the steward is woken by the supervisor (not by a human),
   // skip the turn entirely if there is nothing new to report.  This
   // prevents the chatty "Nothing new. Same batch." output every ~120s.
+  //
+  // However, if the wake message mentions a worker result or completion,
+  // trust the supervisor's judgment — it already decided this is worthy.
   if (input.origin === "system-wake") {
-    const pendingNotifications = await readPendingRunNotifications(input.hivePaths.home, input.project);
-    const sessionState = await getSessionState(
-      input.hivePaths.sessionsDir,
-      input.sessionId,
-    );
-    const projectSessionState = getProjectSessionState(sessionState, input.project);
-    const projectPaths = getProjectPaths(input.hivePaths, input.project);
-    const runtimeState = await refreshProjectRuntimeState({
-      hivePaths: input.hivePaths,
-      projectId: input.project,
-      projectPaths,
-    });
-    const currentRevision = runtimeState.revision.revision;
-    const lastSeenRevision = projectSessionState.lastRevisionSeen;
-    const hasNewNotifications = pendingNotifications.length > 0;
-    const hasStateChange = currentRevision > lastSeenRevision;
+    const messageHint = (input.message || "").toLowerCase();
+    const isWorkerResult = messageHint.includes("completed") ||
+      messageHint.includes("exited") ||
+      messageHint.includes("result") ||
+      messageHint.includes("finished") ||
+      messageHint.includes("wrapped");
 
-    if (!hasNewNotifications && !hasStateChange) {
-      return;
+    if (!isWorkerResult) {
+      const pendingNotifications = await readPendingRunNotifications(input.hivePaths.home, input.project);
+      const sessionState = await getSessionState(
+        input.hivePaths.sessionsDir,
+        input.sessionId,
+      );
+      const projectSessionState = getProjectSessionState(sessionState, input.project);
+      const projectPaths = getProjectPaths(input.hivePaths, input.project);
+      const runtimeState = await refreshProjectRuntimeState({
+        hivePaths: input.hivePaths,
+        projectId: input.project,
+        projectPaths,
+      });
+      const currentRevision = runtimeState.revision.revision;
+      const lastSeenRevision = projectSessionState.lastRevisionSeen;
+      const hasNewNotifications = pendingNotifications.length > 0;
+      const hasStateChange = currentRevision > lastSeenRevision;
+
+      if (!hasNewNotifications && !hasStateChange) {
+        return;
+      }
     }
 
     // Gate passed — there's content to deliver.  Now persist the

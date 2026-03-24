@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli";
+import { createMessage, listMessages } from "../src/lib/messages";
 import { ensureHiveScaffold, getProjectPaths } from "../src/lib/paths";
+import { parseModelPool } from "../src/lib/project";
 import {
   createRunDraft,
   finalizeRun,
@@ -17,6 +19,7 @@ import {
   reconcileActiveConsoleRun,
   writeRunResult,
 } from "../src/lib/runs";
+import { createDelegationTools } from "../src/lib/steward/tools/delegate";
 
 type TestContext = {
   root: string;
@@ -340,6 +343,172 @@ describe("run state", () => {
     const output = await runCli(["stop", "console"]);
 
     expect(output).toContain("Console session is interactive");
+  });
+
+  test("worker-runtime and worker-model propagate from RunRecord to RunResult", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+
+    const paths = await ensureHiveScaffold();
+    const projectPaths = getProjectPaths(paths, "myproject");
+
+    // Create a run that simulates a codex worker
+    let run = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: "critic-codex-a1b2",
+      runtime: "codex",
+      model: "codex",
+      prompt: "# Review the cog branch",
+      source: "hive launch",
+    });
+    run = await markRunActive(projectPaths, run, 55555);
+    run = await finalizeRun({
+      projectPaths,
+      run,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    // Write result with a cognitive digest that uses haiku (the Tier-1 summarizer)
+    const result = await writeRunResult(run, {
+      changedFiles: [],
+      gitSummaryLines: [],
+      finalVisibleOutput: "Approved with notes.",
+      cognitiveDigest: {
+        provider: "anthropic",
+        model: "claude-haiku-4-5-20251001",
+        summary: "Critic approved the cog branch cleanup.",
+        outcome: "success",
+        keyDecisions: [],
+        filesChanged: [],
+        inputTokens: 50,
+        outputTokens: 20,
+        totalTokens: 70,
+        durationMs: 800,
+      },
+    });
+
+    // The execution model must be codex, NOT the cognitive digest model
+    expect(result.runtime).toBe("codex");
+    expect(result.model).toBe("codex");
+
+    // The cognitive digest model is the Tier-1 summarizer — distinct from the worker
+    expect(result.cognitiveDigest?.model).toBe("claude-haiku-4-5-20251001");
+    expect(result.cognitiveDigest?.provider).toBe("anthropic");
+
+    // Verify persistence: re-read from disk
+    const persisted = (await listRecentRunResults(projectPaths, 1))[0];
+    expect(persisted?.runtime).toBe("codex");
+    expect(persisted?.model).toBe("codex");
+    expect(persisted?.cognitiveDigest?.model).toBe("claude-haiku-4-5-20251001");
+  });
+
+  test("delegate tool writes assignment with model pool runtime and model", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+
+    const paths = await ensureHiveScaffold();
+
+    const globalConfig = `# HIVE Config
+
+## Model Pool
+- opus: claude, claude-opus-4-1-20250805, High-quality reasoning
+- codex: codex, codex, OpenAI Codex CLI
+- haiku: claude, claude-haiku-4-5-20251001, Fast triage
+`;
+
+    const tools = createDelegationTools({
+      msgDir: paths.msgDir,
+      projectId: "myproject",
+      globalConfig,
+    });
+
+    const delegateTool = tools.find((t) => t.name === "delegate")!;
+
+    // Steward delegates a critic with "codex" from the pool
+    const output = await delegateTool.execute("call-1", {
+      model: "codex",
+      persona: "critic",
+      task: "review-cog-branch",
+      scope: "src/lib",
+      brief: "Review the cog branch cleanup for correctness.",
+    });
+
+    // The output should confirm the pool entry was used
+    expect(output).toContain("codex (codex, codex)");
+    expect(output).toContain("persona: critic");
+
+    // Read back the assignment message and verify attributes
+    const messages = await listMessages(paths.msgDir);
+    const assignment = messages.find((m) => m.attributes.type === "assign");
+    expect(assignment).toBeDefined();
+    expect(assignment!.attributes.runtime).toBe("codex");
+    expect(assignment!.attributes.model).toBe("codex");
+    expect(assignment!.attributes.persona).toBe("critic");
+
+    // Now simulate what launch.ts does: read assignment, create run, write result
+    const projectPaths = getProjectPaths(paths, "myproject");
+    let run = await createRunDraft({
+      projectId: "myproject",
+      projectPaths,
+      agentId: assignment!.attributes.to,
+      runtime: assignment!.attributes.runtime as "codex",
+      model: assignment!.attributes.model,
+      prompt: "# Prompt from assignment",
+      source: "hive launch",
+      sourceMessage: assignment!.filename,
+    });
+    run = await markRunActive(projectPaths, run, 44444);
+    run = await finalizeRun({
+      projectPaths,
+      run,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    const result = await writeRunResult(run, {
+      changedFiles: [],
+      gitSummaryLines: [],
+      finalVisibleOutput: "Approved.",
+    });
+
+    // Full chain verified: pool entry → assignment → run → result
+    expect(result.runtime).toBe("codex");
+    expect(result.model).toBe("codex");
+    expect(result.agentId).toContain("critic-codex-");
+  });
+
+  test("delegate tool rejects unknown model pool names", async () => {
+    await runCli(["init"]);
+    await runCli(["project", "add", "MyProject", context.repo]);
+
+    const paths = await ensureHiveScaffold();
+
+    const globalConfig = `# HIVE Config
+
+## Model Pool
+- opus: claude, claude-opus-4-1-20250805, High-quality reasoning
+`;
+
+    const tools = createDelegationTools({
+      msgDir: paths.msgDir,
+      projectId: "myproject",
+      globalConfig,
+    });
+
+    const delegateTool = tools.find((t) => t.name === "delegate")!;
+
+    // Requesting a model not in the pool should throw
+    await expect(
+      delegateTool.execute("call-2", {
+        model: "gpt-9000",
+        persona: "scout",
+        task: "explore",
+        scope: "*",
+        brief: "Look around.",
+      }),
+    ).rejects.toThrow("Unknown model 'gpt-9000'");
   });
 
   test("hive watch renders active agents and their visible output tail", async () => {

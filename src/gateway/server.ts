@@ -31,6 +31,7 @@ import { startGatewayWatcher } from "./watcher";
 export type GatewayOptions = {
   port: number;
   hivePaths: HivePaths;
+  projectId?: string | null;
   manageSupervisorChildren?: boolean;
   supervisorIntervalSeconds?: number;
   supervisorMaxParallel?: number;
@@ -546,6 +547,7 @@ export function startGateway(options: GatewayOptions): GatewayState {
           },
         }
       : undefined,
+    options.projectId ?? null,
   );
 
   const server = Bun.serve({

@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 type GitStatusSnapshot = Record<string, string>;
 
 type GitDelta = {
@@ -7,7 +11,7 @@ type GitDelta = {
 };
 
 function decode(output?: Uint8Array): string {
-  return new TextDecoder().decode(output ?? new Uint8Array()).trim();
+  return new TextDecoder().decode(output ?? new Uint8Array());
 }
 
 function normalizeStatus(status: string): string {
@@ -97,8 +101,8 @@ export function runVerifyCommand(
     timeout: timeoutMs,
   });
 
-  const stdout = decode(result.stdout);
-  const stderr = decode(result.stderr);
+  const stdout = decode(result.stdout).trim();
+  const stderr = decode(result.stderr).trim();
   const output = [stdout, stderr].filter(Boolean).join("\n");
 
   return {
@@ -139,7 +143,7 @@ export function revertWorkerChanges(
   if (!checkoutOk && !cleanOk) {
     return {
       reverted: false,
-      summary: `both checkout and clean failed for ${scope.join(", ")}: ${decode(checkoutResult.stderr)} / ${decode(cleanResult.stderr)}`,
+      summary: `both checkout and clean failed for ${scope.join(", ")}: ${decode(checkoutResult.stderr).trim()} / ${decode(cleanResult.stderr).trim()}`,
     };
   }
 
@@ -159,9 +163,36 @@ export function revertWorkerChanges(
   };
 }
 
+export function captureGitContentFingerprint(
+  repoPath: string,
+  snapshot: GitStatusSnapshot | null = captureGitStatusSnapshot(repoPath),
+): Record<string, string> {
+  const fingerprint: Record<string, string> = {};
+
+  if (!snapshot) {
+    return fingerprint;
+  }
+
+  for (const file of Object.keys(snapshot).sort((left, right) => left.localeCompare(right))) {
+    try {
+      fingerprint[file] = createHash("sha1")
+        .update(readFileSync(join(repoPath, file)))
+        .digest("hex");
+    } catch {
+      // The path may no longer exist (delete/rename race) by the time we read it.
+    }
+  }
+
+  return fingerprint;
+}
+
 export function diffGitStatusSnapshots(
   before: GitStatusSnapshot | null,
   after: GitStatusSnapshot | null,
+  options?: {
+    beforeFingerprint?: Record<string, string>;
+    afterFingerprint?: Record<string, string>;
+  },
 ): GitDelta {
   if (!before || !after) {
     return {
@@ -171,7 +202,25 @@ export function diffGitStatusSnapshots(
     };
   }
 
-  const changedFiles = listChangedFiles(before, after);
+  const statusChanged = listChangedFiles(before, after);
+
+  // Also detect content changes in already-dirty files via fingerprint comparison
+  let contentChanged: string[] = [];
+  if (options?.beforeFingerprint && options?.afterFingerprint) {
+    const allPaths = new Set([
+      ...Object.keys(options.beforeFingerprint),
+      ...Object.keys(options.afterFingerprint),
+    ]);
+    contentChanged = [...allPaths].filter(
+      (path) =>
+        !statusChanged.includes(path) &&
+        options.beforeFingerprint![path] !== options.afterFingerprint![path],
+    );
+  }
+
+  const changedFiles = [...new Set([...statusChanged, ...contentChanged])].sort(
+    (a, b) => a.localeCompare(b),
+  );
 
   if (changedFiles.length === 0) {
     return {

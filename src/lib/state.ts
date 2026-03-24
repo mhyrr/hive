@@ -83,6 +83,8 @@ export type RecentResultSummaryItem = {
   agentId: string;
   status: RunResult["status"];
   exitCode: number | null;
+  runtime: string | null;
+  model: string | null;
   ended: string;
   assignmentMessage: string | null;
   changedFiles: string[];
@@ -236,6 +238,10 @@ export type ProjectRuntimeState = {
   changed: boolean;
 };
 
+type SeenResultsState = {
+  runIds: string[];
+};
+
 function hashJson(value: unknown): string {
   return createHash("sha1").update(JSON.stringify(value)).digest("hex");
 }
@@ -323,6 +329,8 @@ function summarizeRecentResults(
       agentId: result.agentId,
       status: result.status,
       exitCode: result.exitCode,
+      runtime: result.runtime,
+      model: result.model,
       ended: result.ended,
       assignmentMessage: result.assignmentMessage,
       changedFiles: result.changedFiles,
@@ -445,6 +453,41 @@ async function appendJsonLine(path: string, value: unknown): Promise<void> {
 
 async function ensureStateFiles(projectPaths: ProjectPaths): Promise<void> {
   await ensureDirectory(projectPaths.stateDir);
+}
+
+export async function readSeenResultRunIds(
+  projectPaths: ProjectPaths,
+): Promise<Set<string>> {
+  const seen = await readJson<SeenResultsState>(projectPaths.stateSeenResults);
+
+  if (!seen || !Array.isArray(seen.runIds)) {
+    return new Set();
+  }
+
+  return new Set(seen.runIds.filter((runId): runId is string => typeof runId === "string"));
+}
+
+export async function markSeenResultRunIds(
+  projectPaths: ProjectPaths,
+  runIds: string[],
+): Promise<void> {
+  const normalized = runIds
+    .map((runId) => runId.trim())
+    .filter((runId) => runId.length > 0);
+
+  if (normalized.length === 0) {
+    return;
+  }
+
+  const seen = await readSeenResultRunIds(projectPaths);
+
+  for (const runId of normalized) {
+    seen.add(runId);
+  }
+
+  await writeJson(projectPaths.stateSeenResults, {
+    runIds: [...seen],
+  });
 }
 
 export async function readStewardDeltaHistory(input: {
