@@ -10,6 +10,8 @@ when coordination costs matter.
 
 ![Hive Gateway](hive.png)
 
+![Hive at work](hiveatwork.png)
+
 ## Why Hive
 
 **Runtime-agnostic orchestration.** Most agent tools are single-model.
@@ -43,13 +45,18 @@ Human speaks
   -> If work needed: steward writes assignment to msg/
   -> File watcher fires (~200ms) -> worker launches
   -> Worker completes -> watcher fires (~200ms) -> steward notified
+  -> OODA loop evaluates: noise? log? strategic trigger? interrupt?
   -> Steward synthesizes -> responds to human
+  -> Auto-review dispatches critic if craftsman completed
+  -> Goal loop checks wave progress, advances or reports
   -> Loop continues
 ```
 
 Coordination is event-driven through filesystem watchers. Total latency
-per hop is ~200ms. The supervisor's 120s poll is a safety net for zombie
-cleanup, not the primary coordination path.
+per hop is ~200ms. The supervisor's poll is a safety net for zombie
+cleanup, not the primary coordination path. The OODA tactical evaluator
+classifies events and triggers strategic reasoning only when significant
+changes occur.
 
 ## Quick Start
 
@@ -141,13 +148,36 @@ Cognitive orientations, not job titles:
 - **architect** — system design, structure, trade-offs
 - **craftsman** — implementation, code quality
 - **critic** — review, edge cases, testing
-- **scout** — research, exploration, alternatives
+- **steward** — coordination, synthesis, delegation
+
+### The OODA Loop
+
+The supervisor runs a continuous observe-orient-decide-act loop:
+
+- **Observe** — filesystem watchers detect assignment completions,
+  board changes, and goal updates (~200ms latency)
+- **Orient** — a fast Haiku evaluation pass classifies each event
+  (noise, log-worthy, strategic trigger, interrupt)
+- **Decide** — strategic reasoning determines next actions: dispatch
+  new workers, synthesize results, or escalate to human
+- **Act** — write assignments, update the board, advance the work graph
+
+A 60s cooldown prevents burst re-evaluation. Stuck detection escalates
+if events fire repeatedly without progress.
+
+### Goals and Waves
+
+Goals are high-level objectives that decompose into task waves. The
+goal loop detects when a wave completes, synthesizes results, and
+either advances to the next wave or reports back. Auto-review
+automatically dispatches a critic after each craftsman run completes.
 
 ### The Gateway
 
-Live web UI over the hive substrate:
+Live web UI with glassmorphism design over the hive substrate:
 
-- Console sessions with the steward
+- Console sessions with the steward (supports `/dream`, `/goal`, and
+  other slash commands)
 - Active-agent view with persona and model info
 - Process log inspection
 - Cognition panel (routing policy, budget tracking)
@@ -195,6 +225,7 @@ notified.
 ├── feed.md                 # event stream
 ├── personas/               # reusable persona templates
 ├── skills/                 # operational skills
+├── plugins/                # installed hub plugins
 ├── memory/
 │   ├── knowledge.md        # curated cross-project facts
 │   ├── decisions.md        # architecture decisions
@@ -207,6 +238,7 @@ notified.
 │       ├── PLAN.md         # current mission
 │       ├── BOARD.md        # live state (steward-owned)
 │       ├── LOG.md          # session history
+│       ├── goals/          # goal records with wave tracking
 │       ├── runs/           # worker execution records
 │       └── state/          # derived runtime state
 ├── msg/                    # message bus (one file per message)
@@ -232,15 +264,25 @@ notified.
 | `hive init` | Scaffold `~/.hive/` |
 | `hive project add <name> <path>` | Register a project |
 | `hive work [project]` | Show or switch active project |
+| `hive runtimes` | List available runtimes |
 
 ### Workers
 
 | Command | Purpose |
 | --- | --- |
 | `hive launch <agent>` | Run a worker manually |
-| `hive supervise` | Background auto-launch loop |
+| `hive supervise` | Background auto-launch + OODA loop |
 | `hive ps` | Show active and recent runs |
 | `hive stop <agent\|run>` | Stop an active run |
+
+### Autonomous Operations
+
+| Command | Purpose |
+| --- | --- |
+| `hive dream "<goal>"` | Plan and launch an overnight autonomous run |
+| `hive goal add\|list\|show` | Manage project goals |
+| `hive think` | Start the OODA tactical evaluation loop |
+| `hive cognition` | Show cognitive routing policy and budget |
 
 ### Coordination
 
@@ -252,6 +294,8 @@ notified.
 | `hive log <message>` | Append to project log |
 | `hive status` | Board + open-message summary |
 | `hive feed [count]` | Event stream |
+| `hive events [count]` | Internal/external event stream |
+| `hive approval` | Show/manage pending approvals |
 
 ### Memory
 
@@ -259,8 +303,18 @@ notified.
 | --- | --- |
 | `hive memory` | Show project memory |
 | `hive memory fact\|decision <text>` | Append memory |
+| `hive memory extract` | Build journal and derived state |
 | `hive sync` | Copy plan into repo |
 | `hive archive` | Snapshot and roll session |
+
+### Plugins
+
+| Command | Purpose |
+| --- | --- |
+| `hive hub search <query>` | Search Claw Hub for skills |
+| `hive hub install <skill-id>` | Install a hub skill |
+| `hive hub list [--installed]` | List available/installed skills |
+| `hive hub remove <skill-id>` | Remove an installed skill |
 
 ## Configuration
 
@@ -334,4 +388,7 @@ model. Compiles to a single binary.
 - [docs/CORE-LOOP-CONSOLIDATION.md](./docs/CORE-LOOP-CONSOLIDATION.md) — watcher-based coordination
 - [docs/PERSISTENT-STEWARD-DESIGN.md](./docs/PERSISTENT-STEWARD-DESIGN.md) — steward runtime
 - [docs/COGNITIVE-RESOURCE-MANAGEMENT.md](./docs/COGNITIVE-RESOURCE-MANAGEMENT.md) — model routing
+- [docs/OODA-EVALUATION-LOOP.md](./docs/OODA-EVALUATION-LOOP.md) — tactical evaluation and strategic reasoning
+- [docs/AUTONOMOUS-REASONING-LOOP.md](./docs/AUTONOMOUS-REASONING-LOOP.md) — autonomous operation design
+- [docs/OVERNIGHT-LAUNCH.md](./docs/OVERNIGHT-LAUNCH.md) — dream command and overnight runs
 - [docs/FINAL-PRD.md](./docs/FINAL-PRD.md) — complete requirements
