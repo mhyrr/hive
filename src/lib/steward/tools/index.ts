@@ -6,6 +6,7 @@ import { createDelegationTools } from "./delegate";
 import { createElicitationTools } from "./elicit";
 import { createFileTools, createStewardExecutionContext } from "./files";
 import { createInspectionTools } from "./inspect";
+import { createPlanTools } from "./plan";
 import { createSearchTools } from "./search";
 
 export type PersistentStewardTool = Tool & {
@@ -47,10 +48,16 @@ export async function buildPersistentStewardTools(input: {
       projectId: input.projectId,
     }),
     ...(input.hivePaths
-      ? createInspectionTools({
-          hivePaths: input.hivePaths,
-          projectId: input.projectId,
-        })
+      ? [
+          ...createInspectionTools({
+            hivePaths: input.hivePaths,
+            projectId: input.projectId,
+          }),
+          ...createPlanTools({
+            hivePaths: input.hivePaths,
+            projectId: input.projectId,
+          }),
+        ]
       : []),
     ...pluginTools,
   ] as PersistentStewardTool[];
