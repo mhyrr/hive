@@ -1,5 +1,4 @@
-import { createProjectOodaWatcher } from "../lib/ooda-watcher";
-import { getProjectPaths, type HivePaths } from "../lib/paths";
+import { type HivePaths } from "../lib/paths";
 import { createWatcher, type HiveWatcher, type WatcherEvents } from "../lib/watcher";
 
 export type WatcherEvent = {
@@ -28,11 +27,8 @@ export function startGatewayWatcher(
   hivePaths: HivePaths,
   broadcast: BroadcastFn,
   hooks: GatewayWatcherHooks = {},
-  projectId: string | null = null,
 ): () => void {
-  const projectPaths = projectId ? getProjectPaths(hivePaths, projectId) : null;
-
-  const rawEvents: WatcherEvents = {
+  const events: WatcherEvents = {
     onFeedEntry: () => emitBroadcast(broadcast, "feed"),
     onBoardChange: () => {
       emitBroadcast(broadcast, "board-changed");
@@ -52,34 +48,9 @@ export function startGatewayWatcher(
   // status: open, launch != manual, to != steward), so the gateway hook
   // receives only qualifying message paths.
   if (hooks.onAssignment) {
-    rawEvents.onAssignment = (msgPath) => {
+    events.onAssignment = (msgPath) => {
       hooks.onAssignment?.(msgPath);
     };
-  }
-
-  let events = rawEvents;
-
-  if (projectId && projectPaths) {
-    const oodaWatcher = createProjectOodaWatcher({
-      hivePaths,
-      projectId,
-      projectPaths,
-      baseEvents: rawEvents,
-      onStrategicTrigger: (evaluation) => {
-        console.log("[ooda] strategic trigger:", evaluation.routing);
-      },
-      onInterruptRequest: (workerId, evaluation) => {
-        // Notification only — dispatcher already called interruptWorker before this callback.
-        console.log(
-          `[gateway-watcher] interrupt dispatched for ${workerId}: ${evaluation.reasoning}`,
-        );
-      },
-    });
-
-    events = oodaWatcher.events;
-    void oodaWatcher.warm().catch(() => {
-      // Best-effort warmup; dispatcher falls through while orientation is absent.
-    });
   }
 
   const watcher: HiveWatcher = createWatcher(hivePaths, events);

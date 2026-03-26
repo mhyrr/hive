@@ -547,7 +547,6 @@ export function startGateway(options: GatewayOptions): GatewayState {
           },
         }
       : undefined,
-    options.projectId ?? null,
   );
 
   const server = Bun.serve({
