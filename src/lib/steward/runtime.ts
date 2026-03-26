@@ -150,6 +150,12 @@ export async function resolvePiApiKey(
   return undefined;
 }
 
+// The steward is the hive mind — it needs the strongest model available.
+// Default to Opus for Anthropic, fall back to provider's first model otherwise.
+const PREFERRED_STEWARD_MODELS: Record<string, string> = {
+  anthropic: "claude-opus-4-20250514",
+};
+
 export function resolvePersistentStewardModel(input: {
   provider: string;
   configuredModel: string | null;
@@ -163,6 +169,12 @@ export function resolvePersistentStewardModel(input: {
     }
 
     return input.configuredModel;
+  }
+
+  // Prefer Opus for the steward — it's the planner, coordinator, and voice.
+  const preferred = PREFERRED_STEWARD_MODELS[input.provider];
+  if (preferred && isPiModelSupported(input.provider, preferred)) {
+    return preferred;
   }
 
   if (input.sessionModel && isPiModelSupported(input.provider, input.sessionModel)) {
