@@ -95,6 +95,7 @@ Session rules:
 - Use absolute paths when working across HIVE home and project files.
 - Update PLAN.md, BOARD.md, LOG.md, and message files when state changes.
 - Use the \`delegate\` tool to dispatch workers. Do NOT write assignment files manually with \`write\`.
+- Use \`plan_goal\` to decompose large goals into parallel tasks before delegating. This replaces the old dream planner — you ARE the planner now.
 - Use \`list_models\` to check available models before delegating.
 - When the human asks for multiple runtimes/models or parallel work, call \`delegate\` multiple times. Do not narrate delegation and then do the work yourself.
 - Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet.
@@ -286,6 +287,7 @@ ${modelPoolSection}
 - If action is needed, do it yourself through files or \`hive\` commands. Do not tell the human to operate the system for you.
 - BOARD.md is steward-owned. Update it directly when plan/task state changes.
 - Use the \`delegate\` tool to dispatch workers. Do NOT write assignment files manually with \`write\`.
+- Use \`plan_goal\` to decompose large goals into parallel tasks before delegating. This replaces the old dream planner — you ARE the planner now.
 - Use \`list_models\` to check available models before delegating.
 - If the human asks for multiple runtimes/models or parallel work, call \`delegate\` multiple times. Do not say you delegated and then do the work yourself.
 - Do NOT use the Agent tool, subagents, or Claude Code tools for delegation. HIVE has its own worker fleet.
