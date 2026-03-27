@@ -7,6 +7,7 @@ import { createElicitationTools } from "./elicit";
 import { createFileTools, createStewardExecutionContext } from "./files";
 import { createInspectionTools } from "./inspect";
 import { createPlanTools } from "./plan";
+import { createScheduleTools } from "./schedule";
 import { createSearchTools } from "./search";
 
 export type PersistentStewardTool = Tool & {
@@ -54,6 +55,10 @@ export async function buildPersistentStewardTools(input: {
             projectId: input.projectId,
           }),
           ...createPlanTools({
+            hivePaths: input.hivePaths,
+            projectId: input.projectId,
+          }),
+          ...createScheduleTools({
             hivePaths: input.hivePaths,
             projectId: input.projectId,
           }),
