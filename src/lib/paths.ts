@@ -92,6 +92,7 @@ export type ProjectPaths = {
   stateReviewsDir: string;
   evalLog: string;
   goalsDir: string;
+  schedulesDir: string;
 };
 
 export function resolveHiveHome(): string {
@@ -263,6 +264,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     stateReviewsDir: join(stateDir, "reviews"),
     evalLog: join(root, "eval-log.jsonl"),
     goalsDir: join(root, "goals"),
+    schedulesDir: join(root, "schedules"),
   };
 }
 
@@ -282,6 +284,7 @@ export async function ensureProjectScaffold(
   await mkdir(projectPaths.supervisorDir, { recursive: true });
   await mkdir(projectPaths.stateDir, { recursive: true });
   await mkdir(projectPaths.goalsDir, { recursive: true });
+  await mkdir(projectPaths.schedulesDir, { recursive: true });
   await writeIfMissing(
     projectPaths.config,
     renderProjectConfigTemplate(input.projectName, input.repoPath),

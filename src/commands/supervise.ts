@@ -47,6 +47,7 @@ import {
   type VerificationOutcome,
 } from "../lib/supervisor";
 import { extractRepoPath } from "../lib/project";
+import { evaluateSchedules, listSchedules, markScheduleRun, type ScheduleMatch } from "../lib/schedules";
 import { toIsoTimestamp } from "../lib/time";
 import { hasPersistentStewardSession, notifyStewardRunCompleted } from "../lib/persistent-steward";
 import { launchAgentPass } from "./launch";
@@ -452,7 +453,34 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     if (result) verificationResults.push({ agentId: outcome.agentId, summary: result.summary });
   }
 
-  // 4. Wake persistent steward if worker results landed
+  // 4. Fire scheduled goals (cron)
+  const schedules = await listSchedules(projectPaths.schedulesDir);
+  const now = new Date();
+  const firedSchedules = evaluateSchedules(schedules, now);
+
+  for (const fired of firedSchedules) {
+    await createMessage(paths.msgDir, {
+      from: "schedule",
+      to: "steward",
+      type: "nudge",
+      project: activeProject,
+      body: `[Scheduled: ${fired.name}] ${fired.goal}`,
+      attributes: { schedule: fired.name, cron: fired.cron },
+    });
+    await markScheduleRun(fired, now);
+    await appendLogEntry(
+      projectPaths.log,
+      "hive supervise schedule",
+      `Fired schedule "${fired.name}" (${fired.cron}): ${fired.goal.slice(0, 100)}`,
+    );
+    await appendFeedEntry(paths, {
+      project: activeProject,
+      headline: `Schedule "${fired.name}" fired`,
+      details: [fired.goal.slice(0, 200)],
+    });
+  }
+
+  // 5. Wake persistent steward if worker results landed or schedules fired
   let stewardSection = "No steward action this pass.";
   const persistentStewardActive = hasPersistentStewardSession(paths.home);
   const recentResults = await listRecentRunResults(projectPaths, 20);
@@ -465,16 +493,31 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
       endedAfter(result.ended, lastStewardRun?.ended ?? null),
   );
 
-  if (persistentStewardActive && resultsSinceLastSteward.length > 0) {
-    const agentIds = [...new Set(resultsSinceLastSteward.map((r) => r.agentId))].sort();
-    const wakeMessage = [
-      agentIds.length === 1
-        ? `Your delegated worker ${agentIds[0]} has completed.`
-        : `Your delegated workers ${formatNaturalList(agentIds)} have completed.`,
-      "",
-      "Review the new worker run results and report the answer to the human.",
-    ].join("\n");
+  const hasWorkerResults = resultsSinceLastSteward.length > 0;
+  const hasScheduleFires = firedSchedules.length > 0;
 
+  if (persistentStewardActive && (hasWorkerResults || hasScheduleFires)) {
+    const parts: string[] = [];
+
+    if (hasWorkerResults) {
+      const agentIds = [...new Set(resultsSinceLastSteward.map((r) => r.agentId))].sort();
+      parts.push(
+        agentIds.length === 1
+          ? `Your delegated worker ${agentIds[0]} has completed.`
+          : `Your delegated workers ${formatNaturalList(agentIds)} have completed.`,
+      );
+    }
+
+    if (hasScheduleFires) {
+      const names = firedSchedules.map((s) => s.name);
+      parts.push(
+        `Scheduled ${names.length === 1 ? "task" : "tasks"} fired: ${formatNaturalList(names)}. Check open nudge messages for details.`,
+      );
+    }
+
+    parts.push("", "Review any new results and scheduled tasks, then report to the human.");
+
+    const wakeMessage = parts.join("\n");
     const wakeResult = await requestPersistentStewardWake({
       paths,
       projectId: activeProject,
@@ -487,7 +530,7 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     stewardSection = "No persistent steward session.";
   }
 
-  // 5. Health pulse (periodic)
+  // 6. Health pulse (periodic)
   const isPulseTick = supervisorTickCount % DEFAULT_PULSE_INTERVAL_TICKS === 0;
   let pulseSection = "";
 
@@ -519,9 +562,14 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
       ? workerDispatch.skipped.map((reason) => `- ${reason}`).join("\n")
       : "- none";
 
+  const scheduleSection = firedSchedules.length > 0
+    ? firedSchedules.map((s) => `- ${s.name} (${s.cron})`).join("\n")
+    : `${schedules.length} schedule(s), none fired this tick.`;
+
   return [
     `Project: ${activeProject}`,
     section("Recovered Runs", formatRecoveredRuns(recoveredRuns)),
+    section("Schedules", scheduleSection),
     section("Steward", stewardSection),
     section("Worker Launches", workerSection),
     ...(verificationResults.length > 0 ? [section("Verification", formatVerificationResults(verificationResults))] : []),
