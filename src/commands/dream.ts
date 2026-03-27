@@ -87,9 +87,8 @@ async function launchSupervisor(binaryPath: string): Promise<void> {
 /**
  * `hive dream "<goal>"` — send a goal to the steward.
  *
- * The steward uses its plan_goal tool to decompose the goal into tasks,
- * then delegates each task to workers using the delegate tool.
- * No more separate Sonnet planning pipeline.
+ * The steward decomposes the goal into tasks and delegates each one
+ * to workers using the delegate tool.
  */
 export async function dreamCommand(args: string[]): Promise<string> {
   const options = parseOptions(args);
@@ -106,7 +105,7 @@ export async function dreamCommand(args: string[]): Promise<string> {
 
   // Send goal to the steward as a nudge message.
   // The steward will plan_goal → delegate on its next turn.
-  const goalMessage = `Plan and execute this goal:\n\n${goal}\n\nUse plan_goal to decompose it, then delegate each task to workers.`;
+  const goalMessage = `Plan and execute this goal:\n\n${goal}\n\nDecompose it into parallel tasks, then delegate each one to workers.`;
   const filename = await enqueueGoalForOrchestrator(
     paths,
     projectPaths,

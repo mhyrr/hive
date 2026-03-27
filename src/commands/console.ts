@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { appendLogEntry } from "../lib/log";
 import { renderOpenDecisions, renderRecentResults, renderHumanInbox } from "../lib/context";
 import {
-  renderCognitiveRoutingPromptPolicy,
   STEWARD_ESSENTIAL_SKILL_NAMES,
 } from "../lib/cognitive-routing";
 import { listSkills } from "../lib/digest";
@@ -150,13 +149,7 @@ Read your user's preferences: ${input.pathsSelf}
 
 ## How You Operate
 
-## Cognitive Routing Policy
-${renderCognitiveRoutingPromptPolicy({
-    globalConfig: input.globalConfig,
-    skillsDir: input.skillsDir,
-    sessionRuntime: input.sessionRuntime,
-    sessionModel: input.sessionModel,
-  })}
+Routing: Answer directly when you can. Delegate when you need other perspectives or parallel work. Use cheap models for mechanical tasks, expensive models for judgment. Reuse fresh worker output before launching new workers.
 
 ### You Take Initiative
 When the human states a preference → record it: \`hive memory convention "..."\`

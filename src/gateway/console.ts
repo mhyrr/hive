@@ -977,11 +977,11 @@ async function resolveSessionSlashCommand(input: {
       };
     }
 
-    // Route through steward conversation — the steward has plan_goal + delegate tools
+    // Route through steward conversation — the steward decomposes and delegates
     return {
       projectId,
       continueWorkflow: true,
-      message: `Plan and execute this goal:\n\n${goalText}\n\nUse plan_goal to decompose it, then delegate each task to workers.`,
+      message: `Plan and execute this goal:\n\n${goalText}\n\nDecompose it into parallel tasks, then delegate each one to workers.`,
       result: "",
       resultSource: "system",
     };

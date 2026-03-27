@@ -33,7 +33,7 @@ import {
   validateRuntimeInstalled,
 } from "../runtime";
 
-import { loadStewardContext, renderStewardRoutingPolicy } from "./context";
+import { loadStewardContext } from "./context";
 import {
   buildDirectStewardTurnPrompt,
   buildPersistentStewardBootstrapMessage,
@@ -678,12 +678,6 @@ export async function runDirectStewardTurn(input: {
     hivePaths: input.hivePaths,
     projectId: input.projectId,
     sessionId: input.sessionId,
-    cognitiveRoutingPolicy: renderStewardRoutingPolicy({
-      globalConfig: context.globalConfig,
-      skillsDir: input.hivePaths.skillsDir,
-      sessionRuntime: hints.runtime,
-      sessionModel: hints.model,
-    }),
     humanMessage: input.humanMessage,
   });
 
@@ -903,18 +897,11 @@ export async function runPersistentStewardTurn(input: {
       projectId: input.projectId,
       sessionId: input.sessionId,
     });
-    const cognitiveRoutingPolicy = renderStewardRoutingPolicy({
-      globalConfig: context.globalConfig,
-      skillsDir: input.hivePaths.skillsDir,
-      sessionRuntime: context.sessionRuntime,
-      sessionModel: context.sessionModel,
-    });
     const systemPrompt = buildPersistentStewardSystemPrompt({
       sessionPrompt: context.sessionPrompt,
       soul: context.soul,
       identity: context.identity,
       self: context.self,
-      cognitiveRoutingPolicy,
       globalConfig: context.globalConfig,
     });
     const handle = await acquirePersistentStewardHandle({
@@ -986,7 +973,6 @@ export async function runPersistentStewardTurn(input: {
           hivePaths: input.hivePaths,
           projectId: input.projectId,
           humanMessage: fullHumanMessage,
-          cognitiveRoutingPolicy,
         })
       : buildPersistentStewardBootstrapMessage({
           ...context,
@@ -994,7 +980,6 @@ export async function runPersistentStewardTurn(input: {
           projectId: input.projectId,
           sessionId: input.sessionId,
           humanMessage: fullHumanMessage,
-          cognitiveRoutingPolicy,
         });
     await input.onStatus?.(buildPersistentTurnStatus("waiting-for-response"));
     const unsubscribe = handle.agent.subscribe((event) => {
@@ -1211,18 +1196,11 @@ export async function ensurePersistentStewardSessionReady(input: {
     projectId: input.projectId,
     sessionId: input.sessionId,
   });
-  const cognitiveRoutingPolicy = renderStewardRoutingPolicy({
-    globalConfig: context.globalConfig,
-    skillsDir: input.hivePaths.skillsDir,
-    sessionRuntime: context.sessionRuntime,
-    sessionModel: context.sessionModel,
-  });
   const systemPrompt = buildPersistentStewardSystemPrompt({
     sessionPrompt: context.sessionPrompt,
     soul: context.soul,
     identity: context.identity,
     self: context.self,
-    cognitiveRoutingPolicy,
     globalConfig: context.globalConfig,
   });
   const handle = await acquirePersistentStewardHandle({
