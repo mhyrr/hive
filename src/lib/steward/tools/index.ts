@@ -6,6 +6,7 @@ import { createDelegationTools } from "./delegate";
 import { createElicitationTools } from "./elicit";
 import { createFileTools, createStewardExecutionContext } from "./files";
 import { createInspectionTools } from "./inspect";
+import { createCouncilTools } from "./council";
 import { createScheduleTools } from "./schedule";
 import { createSearchTools } from "./search";
 
@@ -41,6 +42,9 @@ export async function buildPersistentStewardTools(input: {
     ...createDelegationTools({
       msgDir: input.msgDir,
       projectId: input.projectId,
+      globalConfig: input.globalConfig,
+    }),
+    ...createCouncilTools({
       globalConfig: input.globalConfig,
     }),
     ...createElicitationTools({
