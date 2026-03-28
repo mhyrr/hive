@@ -3,6 +3,7 @@ import { dreamCommand } from "./commands/dream";
 import { goalCommand } from "./commands/goal";
 import { approvalCommand } from "./commands/approval";
 import { cognitionCommand } from "./commands/cognition";
+import { councilCommand } from "./commands/council";
 import { consoleCommand } from "./commands/console";
 import { eventsCommand } from "./commands/events";
 import { feedCommand, watchCommand } from "./commands/feed";
@@ -94,6 +95,8 @@ export async function runCli(args: string[]): Promise<string> {
       return syncCommand();
     case "think":
       return thinkCommand(rest);
+    case "council":
+      return councilCommand(rest);
     case "dream":
       return dreamCommand(rest);
     case "goal":
