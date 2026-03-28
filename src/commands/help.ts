@@ -48,8 +48,8 @@ Usage:
   hive gateway [--port <port>] [--open] # Alias for \`hive start\`
   hive gateway status                   # Show Gateway state
   hive gateway stop                     # Stop the Gateway server
-  hive dream [--from <spec>] [--dry-run] [--go] "<goal>"
-                                # Plan and launch an overnight autonomous run
+  hive dream [--from <spec>] "<goal>"
+                                # Send a goal to the steward for planning & delegation
   hive hub search <query>              # Search Claw Hub for skills
   hive hub install <skill-id>          # Install a hub skill
   hive hub list [--installed]          # List available or installed skills

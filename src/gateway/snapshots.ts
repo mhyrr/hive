@@ -3,10 +3,6 @@ import { join } from "node:path";
 import type { GatewayOptions } from "./server";
 
 import { listApprovals, type ApprovalRequest } from "../lib/approvals";
-import {
-  getLogRollupPacketPath,
-  getPhaseSummaryPacketPath,
-} from "../lib/cognition";
 import { reconcileDetachedSupervisorState } from "../lib/detached-supervisor";
 import { listRecentEvents, type EventRecord } from "../lib/events";
 import { parseStructuredFeedEntries } from "../lib/feed";
@@ -25,9 +21,25 @@ import {
   type RunRecord,
   type RunResult,
 } from "../lib/runs";
-import type {
-  MaterializedPacket,
-} from "../lib/cognition/packets";
+
+/**
+ * Lightweight stand-in for the removed cognition MaterializedPacket type.
+ * Only used by the dashboard snapshot to render cached packet data.
+ */
+type MaterializedPacket = {
+  kind: string;
+  summary: string;
+  details: Record<string, unknown>;
+  updatedAt: string;
+};
+
+function getLogRollupPacketPath(projectPaths: ProjectPaths): string {
+  return `${projectPaths.stateDir}/log-rollup.json`;
+}
+
+function getPhaseSummaryPacketPath(projectPaths: ProjectPaths): string {
+  return `${projectPaths.stateDir}/phase-summary.json`;
+}
 import {
   readStewardDeltaHistory,
   refreshProjectRuntimeState,

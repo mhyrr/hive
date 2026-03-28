@@ -2,9 +2,6 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { sendGoalToProject } from "../commands/say";
-import { planGoal } from "../lib/dream-planner";
-import { createMessage } from "../lib/messages";
-import { extractRepoPath } from "../lib/project";
 import {
   renderCognitiveExecutionSummary,
   resolveCognitiveExecutionLane,
@@ -968,7 +965,6 @@ async function resolveSessionSlashCommand(input: {
 
   if (dreamMatch) {
     const goalText = dreamMatch[1]!.trim();
-    const hivePaths = input.options.hivePaths;
     const projectId = input.currentProject;
 
     if (!projectId || projectId === "default") {
@@ -981,64 +977,12 @@ async function resolveSessionSlashCommand(input: {
       };
     }
 
-    const projectPaths = getProjectPaths(hivePaths, projectId);
-    const projectConfig = await Bun.file(projectPaths.config).text().catch(() => "");
-    const repoPath = extractRepoPath(projectConfig) ?? undefined;
-
-    const plan = await planGoal(goalText, {
-      hivePaths,
-      projectId,
-      projectPaths,
-      repoPath,
-    });
-
-    // Write goal file
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const goalFilePath = join(projectPaths.goalsDir, `${ts}-dream.md`);
-    await Bun.write(goalFilePath, `# Dream Goal\n\n${goalText.trim()}\n`);
-
-    // Write assignment messages
-    for (const task of plan.tasks) {
-      const scopeAttr = task.scope.length > 0 ? task.scope.join(",") : undefined;
-      await createMessage(hivePaths.msgDir, {
-        from: "steward",
-        to: task.agentId,
-        type: "assign",
-        project: projectId,
-        body: `# ${task.title}\n\n${task.assignment}\n\n## Done Condition\n\n${task.doneCondition}`,
-        attributes: scopeAttr ? { scope: scopeAttr, launch: "auto" } : { launch: "auto" },
-      });
-    }
-
-    // Launch supervisor (best-effort)
-    const hiveBinary = join(import.meta.dir, "..", "..", "hive");
-    if (existsSync(hiveBinary)) {
-      const proc = Bun.spawn([hiveBinary, "supervise", "--detach"], {
-        stdio: ["ignore", "ignore", "ignore"],
-      });
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
-      proc.unref?.();
-    }
-
-    const taskLines = plan.tasks
-      .map((t) => `• ${t.title} → ${t.agentId}${t.scope.length > 0 ? ` [scope: ${t.scope.join(", ")}]` : ""}`)
-      .join("\n");
-
+    // Route through steward conversation — the steward decomposes and delegates
     return {
       projectId,
-      continueWorkflow: false,
-      message: "",
-      result: [
-        `Dream launched: "${goalText}"`,
-        "",
-        `${plan.summary}`,
-        "",
-        `Tasks dispatched (${plan.tasks.length} agent${plan.tasks.length === 1 ? "" : "s"}):`,
-        taskLines,
-        "",
-        `Estimated cost: ~$${plan.costEstimateUsd.toFixed(2)}`,
-        "Workers are running. Check `hive status` or watch the board for progress.",
-      ].join("\n"),
+      continueWorkflow: true,
+      message: `Plan and execute this goal:\n\n${goalText}\n\nDecompose it into parallel tasks, then delegate each one to workers.`,
+      result: "",
       resultSource: "system",
     };
   }

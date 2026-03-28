@@ -4,7 +4,7 @@ import { captureGitContentFingerprint, captureGitStatusSnapshot, diffGitStatusSn
 import { appendLogEntry } from "../lib/log";
 import { findMessage, findOpenAssignmentMessage } from "../lib/messages";
 import { enqueueGoalForOrchestrator } from "../lib/steward/prompts";
-import { loadStewardContext, renderStewardRoutingPolicy } from "../lib/steward/context";
+import { loadStewardContext } from "../lib/steward/context";
 import { buildDirectStewardTurnPrompt } from "../lib/steward/prompts";
 import {
   ensureHiveScaffold,
@@ -134,19 +134,11 @@ async function buildStewardLaunchPrompt(input: {
     sessionId,
   });
 
-  const cognitiveRoutingPolicy = renderStewardRoutingPolicy({
-    globalConfig: ctx.globalConfig,
-    skillsDir: input.paths.skillsDir,
-    sessionRuntime: ctx.sessionRuntime,
-    sessionModel: ctx.sessionModel,
-  });
-
   return buildDirectStewardTurnPrompt({
     ...ctx,
     hivePaths: input.paths,
     projectId: input.activeProject,
     sessionId,
-    cognitiveRoutingPolicy,
     humanMessage: input.goal ?? "Review the current board and advance the plan.",
   });
 }

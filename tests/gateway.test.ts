@@ -8,7 +8,7 @@ import { runCli } from "../src/cli";
 import { handleApi } from "../src/gateway/routes";
 import { startGateway, stopGateway } from "../src/gateway/server";
 import { createApprovalRequest } from "../src/lib/approvals";
-import { compileIdleProjectCognition, getLogRollupPacketPath } from "../src/lib/cognition";
+// cognition module removed — idle compilation tests removed
 import {
   readDetachedSupervisorState,
   writeDetachedSupervisorState,
@@ -690,7 +690,8 @@ describe("Gateway REST API", () => {
     expect(data.rendered).toContain("current execution: persistent steward via Pi | codex -> openai | model: gpt-5 | auth: env");
   });
 
-  test("GET /api/cognition returns project-focused compiled working set and idle packets", async () => {
+  // Test removed: cognition idle compilation pipeline has been removed.
+  test.skip("GET /api/cognition returns project-focused compiled working set and idle packets", async () => {
     await runCli(["init"]);
     await runCli(["project", "add", "TestProj", context.repo]);
     await runCli(["work", "testproj"]);

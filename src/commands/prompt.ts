@@ -5,7 +5,7 @@ import {
   getWorkerBriefPacketPath,
   materializeWorkerBriefPacket,
   type WorkerBriefPacketDetails,
-} from "../lib/cognition";
+} from "../lib/worker-brief";
 import { listSkills } from "../lib/digest";
 import { UsageError } from "../lib/errors";
 import { loadPromptMemoryContext } from "../lib/memory";
