@@ -679,6 +679,7 @@ async function commandExists(cmd: string): Promise<boolean> {
     const proc = Bun.spawn(["which", cmd], {
       stdout: "ignore",
       stderr: "ignore",
+      env: { ...process.env },
     });
     const code = await proc.exited;
 

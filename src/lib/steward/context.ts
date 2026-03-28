@@ -1,4 +1,3 @@
-import { renderCognitiveRoutingPromptPolicy } from "../cognitive-routing";
 import {
   buildBootstrapContext,
   renderOpenDecisions,
@@ -176,20 +175,6 @@ export async function loadStewardContext(input: {
     projectEntitySummaryPath: memoryContext.projectEntitySummaryPath,
     journalPath: memoryContext.journalPath,
   };
-}
-
-export function renderStewardRoutingPolicy(input: {
-  globalConfig: string;
-  skillsDir: string;
-  sessionRuntime?: string | null;
-  sessionModel?: string | null;
-}): string {
-  return renderCognitiveRoutingPromptPolicy({
-    globalConfig: input.globalConfig,
-    skillsDir: input.skillsDir,
-    sessionRuntime: input.sessionRuntime ?? undefined,
-    sessionModel: input.sessionModel ?? undefined,
-  });
 }
 
 export { renderDeltaHistory };

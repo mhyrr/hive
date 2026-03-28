@@ -149,7 +149,7 @@ describe("HIVE CLI", () => {
     expect(status).toContain("Project: none");
   });
 
-  test("console dry run prompt encodes cognitive-depth routing guidance", async () => {
+  test("console dry run prompt encodes routing guidance", async () => {
     await initHive();
     await addProject();
 
@@ -160,10 +160,8 @@ describe("HIVE CLI", () => {
     expect(promptPath).toBeString();
 
     const prompt = await Bun.file(promptPath!).text();
-    expect(prompt).toContain("## Cognitive Routing Policy");
+    expect(prompt).toContain("Answer directly when you can");
     expect(prompt).toContain("cognitive-resource-routing.md");
-    expect(prompt).toContain("current steward lane: claude");
-    expect(prompt).toContain("plural-synthesis");
   });
 
   test("inbox and message lifecycle commands keep open queues clean", async () => {
