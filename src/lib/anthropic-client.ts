@@ -41,7 +41,7 @@ export async function callAnthropic(opts: CallOptions): Promise<string> {
   }
 
   const authHeaders: Record<string, string> = resolved.isOAuth
-    ? { Authorization: `Bearer ${resolved.token}`, "anthropic-beta": "oauth-2025-04-20" }
+    ? { Authorization: `Bearer ${resolved.token}` }
     : { "x-api-key": resolved.token };
 
   const { model, system, messages, maxTokens = 150, timeoutMs = 5000 } = opts;

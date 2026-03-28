@@ -88,7 +88,8 @@ export type ProjectPaths = {
   stateCompilerCacheIndex: string;
   stateWorkingSetDir: string;
   stateWorkingSetSteward: string;
-  stateWorkGraph: string;
+  stateWorkGraph: string;      // legacy: single global graph (kept for compat)
+  stateWorkGraphsDir: string;  // per-goal graphs: stateWorkGraphsDir/<goalId>.json
   stateReviewsDir: string;
   evalLog: string;
   goalsDir: string;
@@ -261,6 +262,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     stateWorkingSetDir,
     stateWorkingSetSteward: join(stateWorkingSetDir, "steward.json"),
     stateWorkGraph: join(stateDir, "work-graph.json"),
+    stateWorkGraphsDir: join(stateDir, "work-graphs"),
     stateReviewsDir: join(stateDir, "reviews"),
     evalLog: join(root, "eval-log.jsonl"),
     goalsDir: join(root, "goals"),
@@ -348,4 +350,13 @@ export async function ensureDirectory(path: string): Promise<void> {
 
 export function resolveRepoPath(inputPath: string): string {
   return resolve(process.cwd(), inputPath);
+}
+
+/**
+ * Returns the per-goal work graph path.
+ * Use this instead of projectPaths.stateWorkGraph for new goals so
+ * multiple concurrent dreams don't overwrite each other.
+ */
+export function goalWorkGraphPath(projectPaths: ProjectPaths, goalId: string): string {
+  return join(projectPaths.stateWorkGraphsDir, `${goalId}.json`);
 }

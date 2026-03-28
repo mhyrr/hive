@@ -1,3 +1,4 @@
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -48,6 +49,10 @@ import {
 } from "../lib/supervisor";
 import { extractRepoPath } from "../lib/project";
 import { evaluateSchedules, listSchedules, markScheduleRun, type ScheduleMatch } from "../lib/schedules";
+import { advanceWorkGraph, reconcileWorkGraphFromRuns } from "../lib/orchestrator";
+import { shouldAutoReview, dispatchAutoReview } from "../lib/auto-review";
+import { checkGoalWaveCompletion, writeMorningBrief } from "../lib/goal-loop";
+import { listActiveGoals } from "../lib/goals";
 import { toIsoTimestamp } from "../lib/time";
 import { hasPersistentStewardSession, notifyStewardRunCompleted } from "../lib/persistent-steward";
 import { launchAgentPass } from "./launch";
@@ -394,13 +399,14 @@ function parseOptions(args: string[]): SuperviseOptions {
 }
 
 // ── Core supervisor pass ────────────────────────────────────────────────────────
-// Pure mechanics: recover zombies, dispatch workers, wake steward, verify results.
-// No LLM calls. No triage. No work graphs. No goal waves.
+// Core supervisor pass: recover zombies, advance work graph, dispatch workers,
+// verify results, run auto-review gates, check goal wave completion.
 
 let supervisorTickCount = 0;
 
 async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
   supervisorTickCount++;
+  const isPulseTick = supervisorTickCount % DEFAULT_PULSE_INTERVAL_TICKS === 0;
   const paths = await ensureHiveScaffold();
   const activeProject = await getActiveProject(paths);
 
@@ -418,7 +424,36 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     await reconcileRecoveredRuns({ paths, activeProject, projectPaths, recovered: recoveredRuns });
   }
 
-  // 2. Dispatch workers from open assignment messages
+  // 1b. Reconcile all per-goal work graphs with completed runs (non-blocking)
+  ;(async () => {
+    await mkdir(projectPaths.stateWorkGraphsDir, { recursive: true }).catch(() => {});
+    const graphFiles = await readdir(projectPaths.stateWorkGraphsDir).catch(() => [] as string[]);
+    for (const file of graphFiles.filter((f) => f.endsWith(".json"))) {
+      await reconcileWorkGraphFromRuns({
+        stateWorkGraph: join(projectPaths.stateWorkGraphsDir, file),
+        projectPaths,
+      }).catch(() => {});
+    }
+  })().catch(() => {});
+
+  // 2. Advance all per-goal work graphs — writes assignment messages for ready tasks
+  // so dispatchWorkerLaunchPass can pick them up in the same tick.
+  await mkdir(projectPaths.stateWorkGraphsDir, { recursive: true }).catch(() => {});
+  const graphFiles = await readdir(projectPaths.stateWorkGraphsDir).catch(() => [] as string[]);
+  const workGraphResults = (await Promise.all(
+    graphFiles
+      .filter((f) => f.endsWith(".json"))
+      .map((file) =>
+        advanceWorkGraph({
+          stateWorkGraph: join(projectPaths.stateWorkGraphsDir, file),
+          msgDir: paths.msgDir,
+          projectId: activeProject,
+        }).catch(() => null),
+      ),
+  )).filter(Boolean);
+  const workGraphResult = workGraphResults.length > 0 ? workGraphResults[0] : null;
+
+  // 2b. Dispatch workers from open assignment messages (including any just queued above)
   const workerDispatch = await dispatchWorkerLaunchPass({
     hivePaths: paths,
     projectId: activeProject,
@@ -451,6 +486,31 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
       scope,
     });
     if (result) verificationResults.push({ agentId: outcome.agentId, summary: result.summary });
+  }
+
+  // 3b. Auto-review: dispatch critic gate for completed craftsman runs
+  const projectConfig = await Bun.file(projectPaths.config).text().catch(() => "");
+  const autoReviewDispatched: string[] = [];
+  const recentResultsForReview = await listRecentRunResults(projectPaths, 20);
+  // Ensure the reviews dir exists so the flood-guard file check works correctly.
+  await mkdir(projectPaths.stateReviewsDir, { recursive: true }).catch(() => {});
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  for (const result of recentResultsForReview) {
+    if (!shouldAutoReview(result, projectConfig)) continue;
+    // Only review recent runs — skip anything older than 24h to avoid flooding on old results.
+    if (new Date(result.ended).getTime() < oneDayAgo) continue;
+    // Only review runs not yet reviewed (file written by critic worker after it runs).
+    const reviewAlreadyExists = await Bun.file(
+      `${projectPaths.stateReviewsDir}/${result.runId}-review.md`
+    ).exists().catch(() => false);
+    if (reviewAlreadyExists) continue;
+    await dispatchAutoReview({
+      result,
+      msgDir: paths.msgDir,
+      projectId: activeProject,
+      stateReviewsDir: projectPaths.stateReviewsDir,
+    }).catch(() => {});
+    autoReviewDispatched.push(result.agentId);
   }
 
   // 4. Fire scheduled goals (cron)
@@ -530,8 +590,26 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     stewardSection = "No persistent steward session.";
   }
 
+  // 5b. Check goal wave completion (non-blocking)
+  try {
+    const activeGoals = await listActiveGoals(projectPaths.goalsDir);
+    const waveGoals = activeGoals.filter((g) => g.waveAgents.length > 0);
+    for (const goal of waveGoals) {
+      await checkGoalWaveCompletion({
+        goal,
+        projectPaths,
+        hivePaths: paths,
+        projectId: activeProject,
+      }).catch(() => {});
+    }
+    if (activeGoals.length > 0 && isPulseTick) {
+      await writeMorningBrief({ goals: activeGoals, projectPaths }).catch(() => {});
+    }
+  } catch {
+    // non-critical, swallow
+  }
+
   // 6. Health pulse (periodic)
-  const isPulseTick = supervisorTickCount % DEFAULT_PULSE_INTERVAL_TICKS === 0;
   let pulseSection = "";
 
   if (isPulseTick) {
@@ -571,8 +649,19 @@ async function runSupervisorPass(options: SuperviseOptions): Promise<string> {
     section("Recovered Runs", formatRecoveredRuns(recoveredRuns)),
     section("Schedules", scheduleSection),
     section("Steward", stewardSection),
+    ...(workGraphResults.length > 0
+      ? [section("Work Graphs", [
+          `graphs: ${workGraphResults.length}`,
+          `dispatched: ${workGraphResults.reduce((n, r) => n + (r?.dispatched.length ?? 0), 0)}`,
+          `blocked: ${workGraphResults.reduce((n, r) => n + (r?.blocked.length ?? 0), 0)}`,
+          `complete: ${workGraphResults.filter((r) => r?.graphComplete).length}/${workGraphResults.length}`,
+        ].join("\n"))]
+      : []),
     section("Worker Launches", workerSection),
     ...(verificationResults.length > 0 ? [section("Verification", formatVerificationResults(verificationResults))] : []),
+    ...(autoReviewDispatched.length > 0
+      ? [section("Auto-Review", autoReviewDispatched.map((a) => `- critic dispatched for ${a}`).join("\n"))]
+      : []),
     section("Skipped Assignments", skippedSection),
     ...(pulseSection ? [pulseSection] : []),
     section(
