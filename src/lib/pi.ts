@@ -54,6 +54,7 @@ export async function completePiText(input: {
   modelId: string;
   systemPrompt: string;
   userContent: string;
+  apiKey?: string;
   signal?: AbortSignal;
 }): Promise<PiTextCompletion> {
   const startedAt = Date.now();
@@ -69,6 +70,7 @@ export async function completePiText(input: {
     ],
   }, {
     signal: input.signal,
+    ...(input.apiKey ? { apiKey: input.apiKey } : {}),
   });
 
   return {

@@ -212,6 +212,7 @@ async function callCouncilMember(
       modelId: member.modelId,
       systemPrompt,
       userContent: question,
+      apiKey: resolved.token,
     });
 
     return {
