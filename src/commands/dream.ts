@@ -2,7 +2,9 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { UsageError } from "../lib/errors";
-import { ensureHiveScaffold, getActiveProject, getProjectPaths } from "../lib/paths";
+import { createGoal, writeGoalRecord } from "../lib/goals";
+import { planGoalToGraph } from "../lib/orchestrator";
+import { ensureHiveScaffold, getActiveProject, getProjectPaths, goalWorkGraphPath } from "../lib/paths";
 import { enqueueGoalForOrchestrator } from "../lib/steward/prompts";
 
 type DreamOptions = {
@@ -85,10 +87,7 @@ async function launchSupervisor(binaryPath: string): Promise<void> {
 }
 
 /**
- * `hive dream "<goal>"` — send a goal to the steward.
- *
- * The steward decomposes the goal into tasks and delegates each one
- * to workers using the delegate tool.
+ * `hive dream "<goal>"` — create an autonomous goal execution graph.
  */
 export async function dreamCommand(args: string[]): Promise<string> {
   const options = parseOptions(args);
@@ -103,21 +102,35 @@ export async function dreamCommand(args: string[]): Promise<string> {
 
   const projectPaths = getProjectPaths(paths, activeProject);
 
-  // Send goal to the steward as a nudge message.
-  // The steward will plan_goal → delegate on its next turn.
-  const goalMessage = `Plan and execute this goal:\n\n${goal}\n\nDecompose it into parallel tasks, then delegate each one to workers.`;
-  const filename = await enqueueGoalForOrchestrator(
-    paths,
-    projectPaths,
-    activeProject,
-    goalMessage,
-  );
+  // Create a goal record
+  const goalRecord = await createGoal(projectPaths.goalsDir, goal);
 
-  // Write goal file if HIVE-019 goals dir exists
-  if (existsSync(projectPaths.goalsDir)) {
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const goalPath = join(projectPaths.goalsDir, `${ts}-dream.md`);
-    await Bun.write(goalPath, `# Dream Goal\n\n${goal.trim()}\n`);
+  // Decompose goal into a work graph via LLM
+  let graphSummary = "";
+  try {
+    const projectConfig = await Bun.file(projectPaths.config).text().catch(() => "");
+    const graph = await planGoalToGraph({
+      goalId: goalRecord.id,
+      goal,
+      stateWorkGraph: goalWorkGraphPath(projectPaths, goalRecord.id),
+      projectConfig,
+    });
+    goalRecord.plan = graph.tasks
+      .map((t, i) => `${i + 1}. [${t.persona}/${t.model}] ${t.title}`)
+      .join("\n");
+    goalRecord.updatedAt = new Date().toISOString();
+    await writeGoalRecord(projectPaths.goalsDir, goalRecord);
+    graphSummary = `\nDecomposed into ${graph.tasks.length} task(s):\n${graph.tasks
+      .map((t, i) => `  ${i + 1}. ${t.title} (${t.persona}/${t.model})`)
+      .join("\n")}`;
+  } catch (err) {
+    graphSummary = `\n(Goal decomposition failed: ${String(err)} — steward will plan manually)`;
+    await enqueueGoalForOrchestrator(
+      paths,
+      projectPaths,
+      activeProject,
+      `Plan and execute this goal:\n\n${goal}\n\nDecompose it into parallel tasks, then delegate each one to workers.`,
+    );
   }
 
   // Start supervisor (detached, idempotent)
@@ -129,9 +142,10 @@ export async function dreamCommand(args: string[]): Promise<string> {
   }
 
   return [
-    `Goal queued for steward (${filename}).`,
-    "The steward will plan and delegate on its next turn.",
+    `Goal created: ${goalRecord.id}`,
+    `Work graph built for autonomous execution.${graphSummary}`,
     !binaryExists ? "Start supervisor: hive supervise --detach" : "",
+    "The supervisor will advance the work graph on its next tick.",
   ]
     .filter(Boolean)
     .join("\n");
