@@ -531,6 +531,7 @@ function renderSlashCommandHelp(input: {
     "",
     "Slash commands",
     "/help",
+    "/council <question>",
     "/dream <goal>",
     "/project",
     "/project <project>",
@@ -957,6 +958,31 @@ async function resolveSessionSlashCommand(input: {
       result: wasAlreadySelected
         ? `This steward session is already set to ${targetLabel}.${activeConsoleRun ? nextTurnNote : ""}`
         : `Switched the steward session to ${targetLabel}.${nextTurnNote}`,
+      resultSource: "system",
+    };
+  }
+
+  const councilMatch = trimmed.match(/^\/council\s+(.+)$/is);
+
+  if (councilMatch) {
+    const questionText = councilMatch[1]!.trim();
+    const projectId = input.currentProject;
+
+    if (!projectId || projectId === "default") {
+      return {
+        projectId,
+        continueWorkflow: false,
+        message: "",
+        result: "No active project. Use /project <name> to set one first.",
+        resultSource: "system",
+      };
+    }
+
+    return {
+      projectId,
+      continueWorkflow: true,
+      message: `Convene a model council on this question:\n\n${questionText}\n\nUse at least 3 diverse models from the pool via convene_council. Synthesize a unified answer as chair, surfacing agreement and disagreement.`,
+      result: "",
       resultSource: "system",
     };
   }

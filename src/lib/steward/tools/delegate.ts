@@ -3,7 +3,7 @@ import { Type } from "@mariozechner/pi-ai";
 import { createMessage } from "../../messages";
 import { type ModelPoolEntry, parseModelPool } from "../../project";
 
-export const DELEGATE_PERSONAS = ["architect", "craftsman", "critic", "scout"] as const;
+export const DELEGATE_PERSONAS = ["architect", "craftsman", "critic", "scout", "analyst"] as const;
 
 type DelegateContext = {
   msgDir: string;
