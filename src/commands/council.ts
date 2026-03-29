@@ -1,87 +1,62 @@
 import { UsageError } from "../lib/errors";
-import { ensureHiveScaffold, getActiveProject, getProjectPaths } from "../lib/paths";
-import { enqueueGoalForOrchestrator } from "../lib/steward/prompts";
+import { ensureHiveScaffold } from "../lib/paths";
+import {
+  conveneCouncil,
+  formatCouncilResultsForSteward,
+  resolveCouncilMembers,
+} from "../lib/council";
+import { parseModelPool } from "../lib/project";
 
-type CouncilOptions = {
-  question: string;
-  models: string[] | null;
-};
+export async function councilCommand(args: string[]): Promise<void> {
+  const usage = 'Usage: hive council [--models opus,sonnet,gpt54] "<question>"';
 
-function parseOptions(args: string[]): CouncilOptions {
-  const usage =
-    'Usage: hive council [--models opus,sonnet,gpt54] "<question>"';
-
-  let models: string[] | null = null;
+  let modelNames: string[] | null = null;
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
+    const arg = args[i]!;
     if (arg === "--models" || arg === "-m") {
-      const value = args[i + 1];
-      i++;
-
-      if (!value) {
-        throw new UsageError(`--models requires a comma-separated list\n${usage}`);
-      }
-
-      models = value.split(",").map((m) => m.trim()).filter(Boolean);
+      const value = args[++i];
+      if (!value) throw new UsageError(`--models requires a comma-separated list\n${usage}`);
+      modelNames = value.split(",").map((m) => m.trim()).filter(Boolean);
       continue;
     }
-
     positional.push(arg);
   }
 
   const question = positional.join(" ").trim();
-
-  if (!question) {
-    throw new UsageError(`No question provided\n${usage}`);
-  }
-
-  return { question, models };
-}
-
-/**
- * `hive council "<question>"` — convene a model council via the steward.
- *
- * Sends a nudge to the steward instructing it to use convene_council
- * for multi-model deliberation on the given question.
- */
-export async function councilCommand(args: string[]): Promise<string> {
-  const options = parseOptions(args);
+  if (!question) throw new UsageError(`No question provided\n${usage}`);
 
   const paths = await ensureHiveScaffold();
-  const activeProject = await getActiveProject(paths);
+  const globalConfig = await Bun.file(paths.config).text().catch(() => "");
 
-  if (!activeProject) {
-    throw new UsageError("No active project. Run `hive work <project>` first.");
+  // Resolve models from pool
+  const pool = parseModelPool(globalConfig);
+  const names = modelNames ?? pool.map((e) => e.name);
+  const { members, errors } = resolveCouncilMembers(globalConfig, names);
+
+  if (members.length < 2) {
+    throw new UsageError(
+      `Need at least 2 council members, got ${members.length}. ${errors.join(" ")} Available: ${pool.map((e) => e.name).join(", ")}`,
+    );
   }
 
-  const projectPaths = getProjectPaths(paths, activeProject);
+  console.log(`Convening council with ${members.length} members: ${members.map((m) => m.modelName).join(", ")}`);
+  console.log();
 
-  const modelClause = options.models
-    ? `Use these models: ${options.models.join(", ")}.`
-    : "Use at least 3 diverse models from the pool.";
+  const result = await conveneCouncil({
+    question,
+    members,
+    globalConfig,
+    persona: null,
+  });
 
-  const goalMessage = [
-    `Convene a model council on this question:`,
-    "",
-    options.question,
-    "",
-    `${modelClause} Use the convene_council tool to get independent positions from each model, then synthesize a unified answer as chair. Surface agreement, disagreement, and why it matters.`,
-  ].join("\n");
+  const output = formatCouncilResultsForSteward(result);
+  console.log(output);
 
-  const filename = await enqueueGoalForOrchestrator(
-    paths,
-    projectPaths,
-    activeProject,
-    goalMessage,
-  );
-
-  return [
-    `Council request queued for steward (${filename}).`,
-    `Question: ${options.question}`,
-    options.models ? `Models: ${options.models.join(", ")}` : "Models: steward will choose from pool",
-    "The steward will convene the council on its next turn.",
-  ].join("\n");
+  const failed = result.positions.filter((p) => p.error);
+  if (failed.length > 0) {
+    console.log();
+    console.log(`Failed: ${failed.map((p) => `${p.modelName}: ${p.error}`).join("; ")}`);
+  }
 }
