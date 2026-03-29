@@ -1,3 +1,4 @@
+import { extractConfigValue } from "../lib/config";
 import { UsageError } from "../lib/errors";
 import { ensureHiveScaffold } from "../lib/paths";
 import {
@@ -30,9 +31,12 @@ export async function councilCommand(args: string[]): Promise<void> {
   const paths = await ensureHiveScaffold();
   const globalConfig = await Bun.file(paths.config).text().catch(() => "");
 
-  // Resolve models from pool
+  // Resolve models — use explicit --models, or council-default config, or full pool
   const pool = parseModelPool(globalConfig);
-  const names = modelNames ?? pool.map((e) => e.name);
+  const defaultModels = extractConfigValue(globalConfig, "council-default");
+  const names = modelNames
+    ?? (defaultModels ? defaultModels.split(",").map((m) => m.trim()).filter(Boolean) : null)
+    ?? pool.map((e) => e.name);
   const { members, errors } = resolveCouncilMembers(globalConfig, names);
 
   if (members.length < 2) {

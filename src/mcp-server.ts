@@ -4,6 +4,8 @@ import { z } from "zod";
 import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
+import { extractConfigValue } from "./lib/config";
+
 import {
   conveneCouncil,
   formatCouncilResultsForSteward,
@@ -68,7 +70,10 @@ server.registerTool("convene_council", {
   const paths = getHivePaths();
   const globalConfig = await Bun.file(paths.config).text().catch(() => "");
   const pool = parseModelPool(globalConfig);
-  const names = modelNames ?? pool.map((e) => e.name);
+  const defaultModels = extractConfigValue(globalConfig, "council-default");
+  const names = modelNames
+    ?? (defaultModels ? defaultModels.split(",").map((m) => m.trim()).filter(Boolean) : null)
+    ?? pool.map((e) => e.name);
 
   const { members, errors } = resolveCouncilMembers(globalConfig, names);
 
