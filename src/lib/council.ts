@@ -10,8 +10,8 @@
 import { extractConfigValue, extractConfigValueAlias } from "./config";
 import { type ModelPoolEntry, parseModelPool } from "./project";
 import { completePiText, isPiProviderSupported, type PiTextCompletion } from "./pi";
-import { resolvePiRuntimeRoute } from "./runtime";
-import { resolvePiApiKey } from "./steward/runtime";
+import { resolvePiRuntimeRoute } from "./runtime-routes";
+import { resolvePiApiKey } from "./auth";
 
 // ---------------------------------------------------------------------------
 // Types
