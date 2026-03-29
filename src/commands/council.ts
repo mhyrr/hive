@@ -41,7 +41,7 @@ export async function councilCommand(args: string[]): Promise<void> {
     );
   }
 
-  console.log(`Convening council with ${members.length} members: ${members.map((m) => m.modelName).join(", ")}`);
+  console.log(`Convening council with ${members.length} members: ${members.map((m) => m.model.name).join(", ")}`);
   console.log();
 
   const result = await conveneCouncil({

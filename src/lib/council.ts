@@ -21,6 +21,7 @@ export type CouncilMember = {
   model: ModelPoolEntry;
   provider: string;
   modelId: string;
+  authPolicy?: "oauth-only" | "env" | null;
 };
 
 export type CouncilPosition = {
@@ -145,6 +146,7 @@ export function resolveCouncilMembers(
         model: entry,
         provider: piRoute.provider,
         modelId: piRoute.model ?? entry.model,
+        authPolicy: piRoute.authPolicy,
       });
     } else {
       errors.push(
@@ -193,8 +195,8 @@ async function callCouncilMember(
       };
     }
 
-    // Pi-supported provider
-    const resolved = await resolvePiApiKey(member.provider, { authPolicy: null });
+    // Pi-supported provider — respect the config's auth policy (e.g. oauth-only for subscriptions)
+    const resolved = await resolvePiApiKey(member.provider, { authPolicy: member.authPolicy ?? null });
 
     if (!resolved) {
       return {
