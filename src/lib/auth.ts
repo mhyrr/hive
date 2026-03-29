@@ -93,6 +93,46 @@ async function readClaudeSubscriptionToken(
   return null;
 }
 
+async function readGeminiCliToken(): Promise<string | null> {
+  try {
+    const authPath = join(homedir(), ".gemini", "oauth_creds.json");
+    const raw = await Bun.file(authPath).text();
+    const auth = JSON.parse(raw);
+    const token = auth?.access_token;
+    const expiry = auth?.expiry_date;
+
+    if (typeof token === "string" && token.trim()) {
+      // Check expiry if available (milliseconds timestamp)
+      if (expiry && typeof expiry === "number" && expiry < Date.now()) {
+        console.error("[hive-auth] Gemini CLI token expired. Run `gemini auth login` to refresh.");
+        return null;
+      }
+      return token.trim();
+    }
+  } catch {
+    // gemini CLI credentials not available
+  }
+
+  return null;
+}
+
+async function readCodexSubscriptionToken(): Promise<string | null> {
+  try {
+    const authPath = join(homedir(), ".codex", "auth.json");
+    const raw = await Bun.file(authPath).text();
+    const auth = JSON.parse(raw);
+    const token = auth?.tokens?.access_token;
+
+    if (typeof token === "string" && token.trim()) {
+      return token.trim();
+    }
+  } catch {
+    // codex credentials not available
+  }
+
+  return null;
+}
+
 export type ResolvedApiKey = {
   token: string;
   isOAuth: boolean;
@@ -124,9 +164,22 @@ export async function resolvePiApiKey(
     if (subscriptionToken) {
       return { token: subscriptionToken, isOAuth: true };
     }
-    console.error(`[hive-auth] readClaudeSubscriptionToken returned null for provider=${provider} authPolicy=${input.authPolicy}`);
-  } else {
-    console.error(`[hive-auth] skipping subscription token read: provider=${provider} !== anthropic`);
+  }
+
+  // 4. Read Codex CLI OAuth token for openai-codex provider
+  if (provider === "openai-codex") {
+    const codexToken = await readCodexSubscriptionToken();
+    if (codexToken) {
+      return { token: codexToken, isOAuth: true };
+    }
+  }
+
+  // 5. Read Gemini CLI OAuth token
+  if (provider === "google-gemini-cli" || provider === "google") {
+    const geminiToken = await readGeminiCliToken();
+    if (geminiToken) {
+      return { token: geminiToken, isOAuth: true };
+    }
   }
 
   return undefined;
