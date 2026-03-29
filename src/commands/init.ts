@@ -45,7 +45,7 @@ export async function initCommand(args: string[]): Promise<void> {
     if (!servers.hive) {
       servers.hive = {
         command: "bun",
-        args: ["run", join(process.cwd(), "src", "mcp-server.ts")],
+        args: [join(process.cwd(), "src", "mcp-server.ts")],
       };
       mcpConfig.mcpServers = servers;
       await Bun.write(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + "\n");
