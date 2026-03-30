@@ -50,15 +50,42 @@ async function installTemplateDir(templateSubdir: string, destDir: string, execu
   return installed;
 }
 
-function installCron(scriptPath: string, schedule: string, logPath: string): boolean {
+async function installSkillDirs(destDir: string): Promise<number> {
+  await ensureDirectory(destDir);
+  const templatesDir = join(dirname(import.meta.dir), "..", "templates", "skills");
+  const entries = await readdir(templatesDir, { withFileTypes: true }).catch(() => []);
+  let installed = 0;
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const destSkillDir = join(destDir, entry.name);
+    if (existsSync(destSkillDir)) continue;
+
+    await ensureDirectory(destSkillDir);
+    const skillFiles = await readdir(join(templatesDir, entry.name));
+    for (const file of skillFiles) {
+      const content = await Bun.file(join(templatesDir, entry.name, file)).text();
+      await Bun.write(join(destSkillDir, file), content);
+    }
+    installed++;
+  }
+
+  return installed;
+}
+
+function installLaunchAgent(plistName: string): boolean {
+  const home = process.env.HOME || "";
+  const launchAgentsDir = join(home, "Library", "LaunchAgents");
+  const dest = join(launchAgentsDir, plistName);
+
+  if (existsSync(dest)) return false;
+
   try {
-    const cronLine = `${schedule} ${scriptPath} >> ${logPath} 2>&1`;
-    const existing = execSync("crontab -l 2>/dev/null || true", { encoding: "utf-8" });
-
-    if (existing.includes(scriptPath)) return false;
-
-    const updated = existing.trimEnd() + "\n" + cronLine + "\n";
-    execSync(`echo ${JSON.stringify(updated)} | crontab -`, { encoding: "utf-8" });
+    const templatesDir = join(dirname(import.meta.dir), "..", "templates", "launchd");
+    const content = require("fs").readFileSync(join(templatesDir, plistName), "utf-8");
+    require("fs").mkdirSync(launchAgentsDir, { recursive: true });
+    require("fs").writeFileSync(dest, content);
+    execSync(`launchctl load ${dest}`, { encoding: "utf-8" });
     return true;
   } catch {
     return false;
@@ -89,11 +116,16 @@ export async function initCommand(args: string[]): Promise<void> {
   await writeIfMissing(paths.trust, "TRUST.md");
   await writeIfMissing(paths.config, "config.md");
 
-  // Install HIVE agents to ~/.claude/agents/
+  // Install HIVE agents and skills to ~/.claude/
   const claudeAgentsDir = join(process.env.HOME || "", ".claude", "agents");
   const agentsInstalled = await installTemplateDir("agents", claudeAgentsDir);
+  const claudeSkillsDir = join(process.env.HOME || "", ".claude", "skills");
+  const skillsInstalled = await installSkillDirs(claudeSkillsDir);
   if (agentsInstalled > 0) {
     console.log(`Installed ${agentsInstalled} HIVE agent(s) to ~/.claude/agents/`);
+  }
+  if (skillsInstalled > 0) {
+    console.log(`Installed ${skillsInstalled} HIVE skill(s) to ~/.claude/skills/`);
   }
 
   // Install HIVE scripts to ~/.hive/scripts/
@@ -106,21 +138,12 @@ export async function initCommand(args: string[]): Promise<void> {
   // Ensure logs directory
   await ensureDirectory(join(paths.home, "logs"));
 
-  // Install cron jobs
-  const nightlyScript = join(scriptsDir, "nightly.sh");
-  const nightlyLog = join(paths.home, "logs", "nightly.log");
-  if (existsSync(nightlyScript)) {
-    if (installCron(nightlyScript, "0 2 * * *", nightlyLog)) {
-      console.log("Installed nightly extraction cron (2am daily)");
-    }
+  // Install launchd agents for scheduled jobs
+  if (installLaunchAgent("com.hive.nightly.plist")) {
+    console.log("Installed nightly extraction (2am daily via launchd)");
   }
-
-  const syncScript = join(scriptsDir, "hive-sync.sh");
-  const syncLog = join(paths.home, "logs", "hive-sync.log");
-  if (existsSync(syncScript)) {
-    if (installCron(syncScript, "30 2 * * *", syncLog)) {
-      console.log("Installed hive-sync cron (2:30am daily)");
-    }
+  if (installLaunchAgent("com.hive.sync.plist")) {
+    console.log("Installed hive-sync (2:30am daily via launchd)");
   }
 
   console.log(`Initialized hive home: ${paths.home}`);

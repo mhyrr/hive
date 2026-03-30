@@ -122480,6 +122480,10 @@ function getHivePaths(home = resolveHiveHome()) {
     projectsDir: join2(home, "projects")
   };
 }
+async function listProjects(projectsDir) {
+  const entries = await readdir(projectsDir, { withFileTypes: true }).catch(() => []);
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+}
 async function ensureDirectory(path4) {
   await mkdir(path4, { recursive: true });
 }
@@ -123215,6 +123219,126 @@ server.registerTool("add_ticket_note", {
     return { content: [{ type: "text", text: `Ticket not found: ${id}` }], isError: true };
   }
   return { content: [{ type: "text", text: `Added note to ${ticket.id}: ${ticket.title}` }] };
+});
+server.registerTool("hive_status", {
+  description: "Full HIVE system status \u2014 identity, projects, tickets, scheduled jobs, recent memory, installed agents. " + "Use as a dashboard to understand the current state of the hive.",
+  inputSchema: {}
+}, async () => {
+  const paths = getHivePaths();
+  const home = process.env.HOME || "";
+  const lines = [];
+  try {
+    const identity = await Bun.file(paths.identity).text();
+    const nameMatch = identity.match(/^-\s*Name:\s*(.+)$/m);
+    const roleMatch = identity.match(/^-\s*Role:\s*(.+)$/m);
+    const emojiMatch = identity.match(/^-\s*Emoji:\s*(.+)$/m);
+    const name = nameMatch?.[1]?.trim() ?? "Unknown";
+    const role = roleMatch?.[1]?.trim() ?? "Unknown";
+    const emoji2 = emojiMatch?.[1]?.trim() ?? "";
+    lines.push(`## Identity`);
+    lines.push(`I'm **${name}**, ${role} ${emoji2}`);
+    const selfFile = await Bun.file(paths.self).text();
+    const serveMatch = selfFile.match(/^##\s*Who I Serve\s*\n(.+)/m);
+    if (serveMatch)
+      lines.push(`Serving: ${serveMatch[1].trim()}`);
+  } catch {
+    lines.push(`## Identity
+Could not read identity files.`);
+  }
+  lines.push("");
+  const projects = await listProjects(paths.projectsDir);
+  lines.push(`## Projects (${projects.length})`);
+  for (const projectId of projects) {
+    const configPath = join5(paths.projectsDir, projectId, "config.md");
+    let projectPath = "unknown";
+    try {
+      const raw = await Bun.file(configPath).text();
+      const parsed = parseFrontmatter(raw);
+      projectPath = parsed.attributes?.path ?? "unknown";
+    } catch {}
+    const tickets = await listTickets(paths, projectId, { status: "open" });
+    const inProgress = await listTickets(paths, projectId, { status: "in_progress" });
+    const ticketInfo = [];
+    if (tickets.length > 0)
+      ticketInfo.push(`${tickets.length} open`);
+    if (inProgress.length > 0)
+      ticketInfo.push(`${inProgress.length} in progress`);
+    const ticketStr = ticketInfo.length > 0 ? ` \u2014 ${ticketInfo.join(", ")}` : "";
+    lines.push(`- **${projectId}** \`${projectPath}\`${ticketStr}`);
+  }
+  lines.push("");
+  const allTickets = [];
+  for (const projectId of projects) {
+    const open2 = await listTickets(paths, projectId, { status: "open" });
+    const inProg = await listTickets(paths, projectId, { status: "in_progress" });
+    for (const t of [...inProg, ...open2]) {
+      allTickets.push({ project: projectId, ticket: t });
+    }
+  }
+  allTickets.sort((a, b) => a.ticket.priority - b.ticket.priority);
+  if (allTickets.length > 0) {
+    lines.push(`## Active Tickets (${allTickets.length})`);
+    for (const { project, ticket } of allTickets.slice(0, 10)) {
+      const status = ticket.status === "in_progress" ? "\uD83D\uDD35" : "\u26AA";
+      lines.push(`${status} ${ticket.id} P${ticket.priority} [${project}] ${ticket.title}`);
+    }
+    if (allTickets.length > 10)
+      lines.push(`  ... and ${allTickets.length - 10} more`);
+    lines.push("");
+  }
+  lines.push(`## Scheduled Jobs`);
+  const launchAgentsDir = join5(home, "Library", "LaunchAgents");
+  const hivePlists = ["com.hive.nightly.plist", "com.hive.sync.plist"];
+  for (const plist of hivePlists) {
+    const installed = existsSync(join5(launchAgentsDir, plist));
+    const label = plist.replace(".plist", "");
+    lines.push(`- **${label}**: ${installed ? "installed" : "not installed"}`);
+  }
+  const nightlyLog = join5(paths.home, "logs", "nightly.log");
+  try {
+    const log2 = await Bun.file(nightlyLog).text();
+    const lastRun = log2.match(/=== HIVE nightly: (\S+ \S+) ===/g);
+    if (lastRun && lastRun.length > 0) {
+      const last = lastRun[lastRun.length - 1];
+      const dateMatch = last.match(/(\S+ \S+)/);
+      lines.push(`- **Last nightly run**: ${dateMatch?.[1] ?? "unknown"}`);
+    } else {
+      lines.push(`- **Last nightly run**: never`);
+    }
+  } catch {
+    lines.push(`- **Last nightly run**: no log found`);
+  }
+  lines.push("");
+  const agentsDir = join5(home, ".claude", "agents");
+  lines.push(`## Agents`);
+  try {
+    const agentFiles = readdirSync(agentsDir).filter((f) => f.startsWith("maya-") && f.endsWith(".md"));
+    for (const file of agentFiles) {
+      const content = await Bun.file(join5(agentsDir, file)).text();
+      const descMatch = content.match(/^description:\s*(.+)$/m);
+      const name = file.replace(".md", "");
+      lines.push(`- **${name}**: ${descMatch?.[1]?.trim() ?? "no description"}`);
+    }
+  } catch {
+    lines.push("- No agents installed");
+  }
+  lines.push("");
+  lines.push(`## Recent Memory`);
+  for (const projectId of projects) {
+    try {
+      const snapshot = await readProjectMemorySnapshot(paths, projectId);
+      const decisions = readProjectMemorySection(snapshot, "decisions");
+      const decisionLines = decisions.split(`
+`).filter((l) => l.startsWith("- ")).slice(-3);
+      if (decisionLines.length > 0) {
+        lines.push(`**${projectId}** (recent decisions):`);
+        for (const d of decisionLines)
+          lines.push(d);
+      }
+    } catch {}
+  }
+  return { content: [{ type: "text", text: lines.join(`
+`) }] };
 });
 var transport = new StdioServerTransport;
 await server.connect(transport);

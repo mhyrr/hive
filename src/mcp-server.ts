@@ -379,6 +379,147 @@ server.registerTool("add_ticket_note", {
   return { content: [{ type: "text" as const, text: `Added note to ${ticket.id}: ${ticket.title}` }] };
 });
 
+// Tool 10: Hive status overview
+server.registerTool("hive_status", {
+  description:
+    "Full HIVE system status — identity, projects, tickets, scheduled jobs, recent memory, installed agents. " +
+    "Use as a dashboard to understand the current state of the hive.",
+  inputSchema: {},
+}, async () => {
+  const paths = getHivePaths();
+  const home = process.env.HOME || "";
+  const lines: string[] = [];
+
+  // Identity
+  try {
+    const identity = await Bun.file(paths.identity).text();
+    const nameMatch = identity.match(/^-\s*Name:\s*(.+)$/m);
+    const roleMatch = identity.match(/^-\s*Role:\s*(.+)$/m);
+    const emojiMatch = identity.match(/^-\s*Emoji:\s*(.+)$/m);
+    const name = nameMatch?.[1]?.trim() ?? "Unknown";
+    const role = roleMatch?.[1]?.trim() ?? "Unknown";
+    const emoji = emojiMatch?.[1]?.trim() ?? "";
+    lines.push(`## Identity`);
+    lines.push(`I'm **${name}**, ${role} ${emoji}`);
+
+    const selfFile = await Bun.file(paths.self).text();
+    const serveMatch = selfFile.match(/^##\s*Who I Serve\s*\n(.+)/m);
+    if (serveMatch) lines.push(`Serving: ${serveMatch[1].trim()}`);
+  } catch {
+    lines.push(`## Identity\nCould not read identity files.`);
+  }
+
+  lines.push("");
+
+  // Projects
+  const projects = await listProjects(paths.projectsDir);
+  lines.push(`## Projects (${projects.length})`);
+
+  for (const projectId of projects) {
+    const configPath = join(paths.projectsDir, projectId, "config.md");
+    let projectPath = "unknown";
+    try {
+      const raw = await Bun.file(configPath).text();
+      const parsed = parseFrontmatter(raw);
+      projectPath = (parsed.attributes?.path as string) ?? "unknown";
+    } catch { /* skip */ }
+
+    // Count open tickets
+    const tickets = await listTickets(paths, projectId, { status: "open" as TicketStatus });
+    const inProgress = await listTickets(paths, projectId, { status: "in_progress" as TicketStatus });
+    const ticketInfo = [];
+    if (tickets.length > 0) ticketInfo.push(`${tickets.length} open`);
+    if (inProgress.length > 0) ticketInfo.push(`${inProgress.length} in progress`);
+    const ticketStr = ticketInfo.length > 0 ? ` — ${ticketInfo.join(", ")}` : "";
+
+    lines.push(`- **${projectId}** \`${projectPath}\`${ticketStr}`);
+  }
+
+  lines.push("");
+
+  // Open tickets across all projects (top 10 by priority)
+  const allTickets: Array<{ project: string; ticket: Awaited<ReturnType<typeof listTickets>>[0] }> = [];
+  for (const projectId of projects) {
+    const open = await listTickets(paths, projectId, { status: "open" as TicketStatus });
+    const inProg = await listTickets(paths, projectId, { status: "in_progress" as TicketStatus });
+    for (const t of [...inProg, ...open]) {
+      allTickets.push({ project: projectId, ticket: t });
+    }
+  }
+  allTickets.sort((a, b) => a.ticket.priority - b.ticket.priority);
+
+  if (allTickets.length > 0) {
+    lines.push(`## Active Tickets (${allTickets.length})`);
+    for (const { project, ticket } of allTickets.slice(0, 10)) {
+      const status = ticket.status === "in_progress" ? "🔵" : "⚪";
+      lines.push(`${status} ${ticket.id} P${ticket.priority} [${project}] ${ticket.title}`);
+    }
+    if (allTickets.length > 10) lines.push(`  ... and ${allTickets.length - 10} more`);
+    lines.push("");
+  }
+
+  // Scheduled jobs
+  lines.push(`## Scheduled Jobs`);
+  const launchAgentsDir = join(home, "Library", "LaunchAgents");
+  const hivePlists = ["com.hive.nightly.plist", "com.hive.sync.plist"];
+  for (const plist of hivePlists) {
+    const installed = existsSync(join(launchAgentsDir, plist));
+    const label = plist.replace(".plist", "");
+    lines.push(`- **${label}**: ${installed ? "installed" : "not installed"}`);
+  }
+
+  // Last nightly run
+  const nightlyLog = join(paths.home, "logs", "nightly.log");
+  try {
+    const log = await Bun.file(nightlyLog).text();
+    const lastRun = log.match(/=== HIVE nightly: (\S+ \S+) ===/g);
+    if (lastRun && lastRun.length > 0) {
+      const last = lastRun[lastRun.length - 1]!;
+      const dateMatch = last.match(/(\S+ \S+)/);
+      lines.push(`- **Last nightly run**: ${dateMatch?.[1] ?? "unknown"}`);
+    } else {
+      lines.push(`- **Last nightly run**: never`);
+    }
+  } catch {
+    lines.push(`- **Last nightly run**: no log found`);
+  }
+
+  lines.push("");
+
+  // Agents
+  const agentsDir = join(home, ".claude", "agents");
+  lines.push(`## Agents`);
+  try {
+    const agentFiles = readdirSync(agentsDir).filter((f) => f.startsWith("maya-") && f.endsWith(".md"));
+    for (const file of agentFiles) {
+      const content = await Bun.file(join(agentsDir, file)).text();
+      const descMatch = content.match(/^description:\s*(.+)$/m);
+      const name = file.replace(".md", "");
+      lines.push(`- **${name}**: ${descMatch?.[1]?.trim() ?? "no description"}`);
+    }
+  } catch {
+    lines.push("- No agents installed");
+  }
+
+  lines.push("");
+
+  // Recent memory (last 5 decisions across all projects)
+  lines.push(`## Recent Memory`);
+  for (const projectId of projects) {
+    try {
+      const snapshot = await readProjectMemorySnapshot(paths, projectId);
+      const decisions = readProjectMemorySection(snapshot, "decisions");
+      const decisionLines = decisions.split("\n").filter((l) => l.startsWith("- ")).slice(-3);
+      if (decisionLines.length > 0) {
+        lines.push(`**${projectId}** (recent decisions):`);
+        for (const d of decisionLines) lines.push(d);
+      }
+    } catch { /* skip */ }
+  }
+
+  return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+});
+
 // Start the server
 const transport = new StdioServerTransport();
 await server.connect(transport);
