@@ -241,7 +241,7 @@ async function callCouncilMember(
 // Council system prompt
 // ---------------------------------------------------------------------------
 
-function buildCouncilMemberPrompt(persona: string | null): string {
+export function buildCouncilMemberPrompt(persona: string | null): string {
   const base = [
     "You are a council member asked to give your independent analysis of a question.",
     "Your response will be compared with other models' responses to surface agreement and disagreement.",
@@ -331,9 +331,13 @@ export function formatCouncilResultsForSteward(result: CouncilResult): string {
   }
 
   lines.push(
-    "**You are the chair.** Synthesize a unified answer from the positions above.",
-    "Surface where models agreed, where they disagreed, and why the disagreements matter.",
-    "Do not simply list the positions — produce a coherent synthesis.",
+    "**You are the chair.** Synthesize a unified answer:",
+    "",
+    "**Consensus:** What the council agreed on (be specific)",
+    "**Divergence:** Where they disagreed and why it matters",
+    "**Recommendation:** Your synthesized position, informed by the above",
+    "",
+    "Do not simply list positions — produce a coherent synthesis.",
   );
 
   return lines.join("\n");

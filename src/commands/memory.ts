@@ -21,6 +21,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory convention <text>            Add a convention
   hive memory decision <text>              Add a decision
   hive memory question <text>              Add an open question
+  hive memory reflect                      Batch-write learnings from stdin (JSON)
   hive memory --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
@@ -53,6 +54,36 @@ export async function memoryCommand(args: string[]): Promise<void> {
     return;
   }
 
+  if (subcommand === "reflect") {
+    const stdin = await Bun.stdin.text();
+    let learnings: Array<{ type: string; content: string }>;
+    try {
+      learnings = JSON.parse(stdin.trim());
+    } catch {
+      throw new UsageError("Invalid JSON on stdin. Expected: [{\"type\":\"fact\",\"content\":\"...\"},...]");
+    }
+    if (!Array.isArray(learnings) || learnings.length === 0) {
+      throw new UsageError("Expected a non-empty JSON array of learnings.");
+    }
+
+    const validTypes = ["fact", "convention", "decision", "question"];
+    let recorded = 0;
+    for (const item of learnings) {
+      if (!validTypes.includes(item.type)) {
+        console.error(`Skipping invalid type: ${item.type}`);
+        continue;
+      }
+      try {
+        await appendProjectMemory(paths, projectId, item.type as MemorySection, item.content);
+        recorded++;
+      } catch (err) {
+        console.error(`Skipping ${item.type}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    console.log(`Recorded ${recorded} learning(s) in ${projectId} memory.`);
+    return;
+  }
+
   const validSections: MemorySection[] = ["fact", "convention", "decision", "question"];
   if (!validSections.includes(subcommand as MemorySection)) {
     throw new UsageError(`Unknown subcommand: ${subcommand}\n\n${usage}`);
@@ -63,6 +94,10 @@ export async function memoryCommand(args: string[]): Promise<void> {
     throw new UsageError(`No text provided.\n\n${usage}`);
   }
 
-  await appendProjectMemory(paths, projectId, subcommand as MemorySection, text);
+  try {
+    await appendProjectMemory(paths, projectId, subcommand as MemorySection, text);
+  } catch (err) {
+    throw new UsageError(err instanceof Error ? err.message : String(err));
+  }
   console.log(`Added ${subcommand} to ${projectId} memory.`);
 }

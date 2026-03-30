@@ -32,6 +32,83 @@ const sectionToHeader: Record<MemorySection, string> = {
   question: sectionHeaders.questions,
 };
 
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+const MAX_ENTRY_LENGTH = 1000;
+
+const expectedSectionOrder = [
+  sectionHeaders.facts,
+  sectionHeaders.conventions,
+  sectionHeaders.decisions,
+  sectionHeaders.questions,
+] as const;
+
+export function validateMemoryEntry(text: string): string {
+  let cleaned = text.trim();
+  if (!cleaned) throw new Error("Memory entry cannot be empty.");
+
+  // Strip leading bullet if the caller included it
+  if (cleaned.startsWith("- ")) cleaned = cleaned.slice(2).trim();
+
+  // Reject section header injection
+  if (cleaned.includes("## ")) {
+    throw new Error("Memory entry cannot contain markdown headers (## ).");
+  }
+
+  // Reject runaway output
+  if (cleaned.length > MAX_ENTRY_LENGTH) {
+    throw new Error(`Memory entry exceeds ${MAX_ENTRY_LENGTH} characters (got ${cleaned.length}).`);
+  }
+
+  // Collapse internal newlines — multi-line entries break bullet parsing
+  cleaned = cleaned.replace(/\n+/g, " ").trim();
+
+  return cleaned;
+}
+
+export function validateMemoryStructure(content: string): { valid: boolean; error?: string } {
+  if (!content.startsWith("# Project Memory:")) {
+    return { valid: false, error: "File must start with '# Project Memory:'" };
+  }
+
+  const positions: number[] = [];
+  for (const header of expectedSectionOrder) {
+    const idx = content.indexOf(header);
+    if (idx === -1) {
+      return { valid: false, error: `Missing section: ${header}` };
+    }
+    // Check for duplicate headers
+    if (content.indexOf(header, idx + header.length) !== -1) {
+      return { valid: false, error: `Duplicate section: ${header}` };
+    }
+    positions.push(idx);
+  }
+
+  // Check order
+  for (let i = 1; i < positions.length; i++) {
+    if (positions[i]! <= positions[i - 1]!) {
+      return { valid: false, error: "Sections are out of expected order." };
+    }
+  }
+
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
+// Write queue — serializes concurrent writes per file path
+// ---------------------------------------------------------------------------
+
+const writeQueue = new Map<string, Promise<void>>();
+
+function enqueue(path: string, fn: () => Promise<void>): Promise<void> {
+  const prev = writeQueue.get(path) ?? Promise.resolve();
+  const next = prev.then(fn, fn); // run even if previous rejected
+  writeQueue.set(path, next);
+  return next;
+}
+
 function extractSectionBody(content: string, header: string): string {
   const idx = content.indexOf(header);
   if (idx === -1) return "";
@@ -115,16 +192,26 @@ export async function appendProjectMemory(
   section: MemorySection,
   text: string,
 ): Promise<void> {
-  const path = await ensureProjectMemoryFile(paths, projectId);
-  const content = await Bun.file(path).text();
-  const header = sectionToHeader[section];
+  const cleaned = validateMemoryEntry(text);
+  const filePath = await ensureProjectMemoryFile(paths, projectId);
 
-  const entry = section === "decision"
-    ? `- [${toIsoTimestamp().slice(0, 10)}] ${text}`
-    : `- ${text}`;
+  return enqueue(filePath, async () => {
+    const content = await Bun.file(filePath).text();
+    const header = sectionToHeader[section];
 
-  const updated = appendToSection(content, header, entry);
-  await Bun.write(path, updated);
+    const entry = section === "decision"
+      ? `- [${toIsoTimestamp().slice(0, 10)}] ${cleaned}`
+      : `- ${cleaned}`;
+
+    const updated = appendToSection(content, header, entry);
+
+    const check = validateMemoryStructure(updated);
+    if (!check.valid) {
+      throw new Error(`Memory write would corrupt file: ${check.error}`);
+    }
+
+    await Bun.write(filePath, updated);
+  });
 }
 
 export function readProjectMemorySection(
