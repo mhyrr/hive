@@ -89,9 +89,10 @@ These are available to Claude Code when the HIVE MCP server is running:
 
 | Tool | Purpose |
 | --- | --- |
-| `convene_council` | Send a question to multiple models in parallel. Returns independent positions for you to synthesize. |
+| `convene_council` | Send a question to multiple models in parallel. Supports `persona: "analyst"` for structured analytical framing. Returns independent positions for you to synthesize. |
 | `read_hive_memory` | Read accumulated project intelligence — facts, conventions, decisions, open questions. |
-| `write_hive_memory` | Record a new fact, convention, decision, or question. |
+| `write_hive_memory` | Record a new fact, convention, decision, or question. Input is validated against corruption. |
+| `reflect_session` | Batch-write session learnings. Use at end of a substantive session to record multiple facts, conventions, decisions, or questions in one call. |
 
 ## CLI Commands
 
@@ -100,15 +101,27 @@ These are available to Claude Code when the HIVE MCP server is running:
 | `hive init` | Create `~/.hive/` scaffold, register MCP server |
 | `hive project add <name> <path>` | Register project, create memory, wire CLAUDE.md |
 | `hive council "<question>"` | Multi-model council from terminal |
+| `hive council --persona analyst "<question>"` | Council with analytical framing |
+| `hive council --format json "<question>"` | Machine-readable council output |
 | `hive memory` | View project memory |
 | `hive memory fact <text>` | Add a durable fact |
 | `hive memory convention <text>` | Add a convention |
 | `hive memory decision <text>` | Add a decision |
 | `hive memory question <text>` | Add an open question |
+| `hive memory reflect` | Batch-write learnings from stdin (JSON) |
 
 ## How Identity Works
 
-Identity lives in `~/.hive/`. Projects reference it in their CLAUDE.md:
+Identity lives in `~/.hive/` and is injected automatically via a
+**SessionStart hook**. When Claude Code starts a session, the hook
+(`.claude/hooks/load-identity.sh`) runs and injects:
+
+1. The full identity stack: SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md
+2. The current project's memory (resolved by matching `$PWD` against registered project paths)
+3. A session reflection protocol prompting the agent to record learnings before ending
+
+Projects also reference the identity in their CLAUDE.md so the agent
+knows about the MCP tools:
 
 ```md
 # HIVE
@@ -127,10 +140,24 @@ You have HIVE MCP tools:
 - `convene_council` — Multi-model analysis.
 - `read_hive_memory` — Read accumulated project intelligence.
 - `write_hive_memory` — Record new facts, conventions, or decisions.
+- `reflect_session` — Batch-write session learnings.
 ```
 
 No compression, no duplication. Claude Code reads the files directly.
 Single source of truth.
+
+## Memory Validation
+
+Every memory write is validated before it lands:
+
+- **Input validation** — rejects empty entries, section header injection,
+  over-length content, and collapses multi-line entries
+- **Structural validation** — verifies all four sections exist in correct
+  order with no duplicates before writing
+- **Write queue** — serializes concurrent MCP tool calls to prevent
+  lost-update bugs
+
+`~/.hive/` is a git repo, so all memory changes are tracked in history.
 
 ## File Layout
 
@@ -155,8 +182,9 @@ Single source of truth.
 - macOS or Linux
 
 For multi-model council:
-- `ANTHROPIC_API_KEY` or Claude CLI OAuth for Claude models
-- `OPENAI_API_KEY` for GPT models
+- Claude CLI subscription OAuth (macOS keychain) or `ANTHROPIC_API_KEY`
+- Codex CLI subscription OAuth or `OPENAI_API_KEY` for GPT models
+- Gemini CLI OAuth for Google models
 - `ollama` running locally for local models
 
 ## Development
@@ -164,6 +192,7 @@ For multi-model council:
 ```bash
 bun build src/cli.ts --target bun --outfile hive
 bun build src/mcp-server.ts --target bun --outfile hive-mcp
+bun test
 ```
 
 ## Design Values
