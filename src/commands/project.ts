@@ -1,62 +1,76 @@
-import { stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { resolve, join } from "node:path";
 
 import { UsageError } from "../lib/errors";
-import { appendFeedEntry } from "../lib/feed";
-import {
-  ensureHiveScaffold,
-  ensureProjectScaffold,
-  resolveRepoPath,
-  setActiveProject,
-} from "../lib/paths";
+import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
 import { normalizeProjectName } from "../lib/project";
+import { ensureProjectMemoryFile } from "../lib/memory";
 
-async function addProjectCommand(args: string[]): Promise<string> {
-  const [projectName, repoInput] = args;
+const HIVE_CLAUDE_MD_BLOCK = (projectId: string) => `
+# HIVE
 
-  if (!projectName || !repoInput) {
-    throw new UsageError("Usage: hive project add <project> <path>");
+Read and internalize these files at the start of every session:
+- ~/.hive/SOUL.md — your values and craft standards
+- ~/.hive/IDENTITY.md — who you are
+- ~/.hive/SELF.md — who you're working with
+- ~/.hive/TRUST.md — action classification and approval rules
+- ~/.hive/AGENTS.md — operational doctrine
+
+Read your project memory:
+- ~/.hive/memory/projects/${projectId}.md — accumulated facts, conventions, decisions
+
+You have HIVE MCP tools:
+- \`convene_council\` — Multi-model analysis. Sends a question to multiple AI models in parallel. You act as chair — synthesize agreement and disagreement.
+- \`read_hive_memory\` — Read accumulated project intelligence.
+- \`write_hive_memory\` — Record new facts, conventions, or decisions.
+`.trim();
+
+export async function projectCommand(args: string[]): Promise<void> {
+  const usage = "Usage: hive project add <name> <path>";
+
+  if (args[0] !== "add" || args.length < 3) {
+    throw new UsageError(usage);
   }
 
-  const repoPath = resolveRepoPath(repoInput);
+  const rawName = args[1]!;
+  const rawPath = args[2]!;
+  const projectId = normalizeProjectName(rawName);
+  const repoPath = resolve(rawPath);
 
-  try {
-    const info = await stat(repoPath);
-
-    if (!info.isDirectory()) {
-      throw new Error("Not a directory");
-    }
-  } catch {
-    throw new UsageError(`Repo path does not exist or is not a directory: ${repoPath}`);
+  if (!existsSync(repoPath)) {
+    throw new UsageError(`Path does not exist: ${repoPath}`);
   }
 
   const paths = await ensureHiveScaffold();
-  const projectId = normalizeProjectName(projectName);
-  const projectPaths = await ensureProjectScaffold(paths, {
-    projectId,
-    projectName,
-    repoPath,
-  });
 
-  await setActiveProject(paths, projectId);
-  await appendFeedEntry(paths, {
-    project: projectId,
-    headline: `Registered project ${projectId}`,
-    details: [`repo: ${repoPath}`],
-  });
+  // Create project directory and config
+  const projectDir = join(paths.projectsDir, projectId);
+  await ensureDirectory(projectDir);
+  await Bun.write(
+    join(projectDir, "config.md"),
+    `---\nname: ${projectId}\npath: ${repoPath}\n---\n`,
+  );
 
-  return `Registered project ${projectId}
-Hive home: ${paths.home}
-Project dir: ${projectPaths.root}
-Repo path: ${repoPath}`;
-}
+  // Create memory file
+  await ensureProjectMemoryFile(paths, projectId);
 
-export async function projectCommand(args: string[]): Promise<string> {
-  const [subcommand, ...rest] = args;
+  // Append HIVE reference to project's CLAUDE.md
+  const claudeMdPath = join(repoPath, "CLAUDE.md");
+  const block = HIVE_CLAUDE_MD_BLOCK(projectId);
 
-  switch (subcommand) {
-    case "add":
-      return addProjectCommand(rest);
-    default:
-      throw new UsageError("Usage: hive project add <project> <path>");
+  if (existsSync(claudeMdPath)) {
+    const existing = await Bun.file(claudeMdPath).text();
+    if (!existing.includes("# HIVE")) {
+      await Bun.write(claudeMdPath, `${existing.trimEnd()}\n\n${block}\n`);
+      console.log(`Appended HIVE reference to ${claudeMdPath}`);
+    } else {
+      console.log(`HIVE reference already present in ${claudeMdPath}`);
+    }
+  } else {
+    await Bun.write(claudeMdPath, `${block}\n`);
+    console.log(`Created ${claudeMdPath} with HIVE reference`);
   }
+
+  console.log(`Project '${projectId}' registered at ${repoPath}`);
+  console.log(`Memory: ~/.hive/memory/projects/${projectId}.md`);
 }

@@ -1,131 +1,103 @@
 import { UsageError } from "../lib/errors";
-import { appendEvent } from "../lib/events";
-import { appendFeedEntry } from "../lib/feed";
+import { ensureHiveScaffold, listProjects } from "../lib/paths";
 import {
-  appendToSection,
-  ensureProjectMemoryFile,
-  extractMemory,
-  readEntityMemory,
-  updateEntityMemory,
+  appendProjectMemory,
+  readProjectMemorySnapshot,
+  readProjectMemorySection,
+  type MemorySection,
 } from "../lib/memory";
-import { ensureHiveScaffold, getActiveProject } from "../lib/paths";
-import { toIsoTimestamp } from "../lib/time";
 
-const sectionMap: Record<string, string> = {
-  fact: "## Durable Facts",
-  convention: "## Conventions",
-  decision: "## Decisions",
-  question: "## Open Questions",
-};
+function resolveProjectFromCwd(projects: string[]): string | null {
+  const cwd = process.cwd();
+  // Simple heuristic: find a project whose name appears in the cwd path
+  return projects.find((p) => cwd.toLowerCase().includes(p.toLowerCase())) ?? projects[0] ?? null;
+}
 
-export async function memoryCommand(args: string[]): Promise<string> {
+export async function memoryCommand(args: string[]): Promise<void> {
+  const usage = `Usage:
+  hive memory                              View all project memory
+  hive memory view [facts|conventions|decisions|questions]
+  hive memory fact <text>                  Add a durable fact
+  hive memory convention <text>            Add a convention
+  hive memory decision <text>              Add a decision
+  hive memory question <text>              Add an open question
+  hive memory reflect                      Batch-write learnings from stdin (JSON)
+  hive memory --project <name> ...         Specify project`;
+
   const paths = await ensureHiveScaffold();
-  const [action, ...rest] = args;
 
-  if (!action) {
-    const activeProject = await getActiveProject(paths);
-
-    if (!activeProject) {
-      throw new UsageError("No active project. Run `hive work <project>` first.");
+  // Parse --project flag
+  let projectOverride: string | null = null;
+  const filtered: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--project" || args[i] === "-p") {
+      projectOverride = args[++i] ?? null;
+      continue;
     }
-
-    const memoryPath = await ensureProjectMemoryFile(paths, activeProject);
-    return Bun.file(memoryPath).text();
+    filtered.push(args[i]!);
   }
 
-  if (action === "extract") {
-    const extracted = await extractMemory({ paths });
+  const projects = await listProjects(paths.projectsDir);
+  const projectId = projectOverride ?? resolveProjectFromCwd(projects);
 
-    return `Extracted memory
-Journal: ${extracted.journalPath}
-Summary: ${extracted.memorySummaryPath}
-Heat: ${extracted.memoryHeatPath}
-Recent decisions: ${extracted.recentDecisionsPath}`;
+  if (!projectId) {
+    throw new UsageError("No project found. Register one with: hive project add <name> <path>");
   }
 
-  if (action === "entity") {
-    const [entityType, entityId, entityAction, ...textParts] = rest;
+  const subcommand = filtered[0];
 
-    if (!entityType || !entityId) {
-      throw new UsageError(
-        "Usage: hive memory entity <person|company> <id> [summary|fact|note <text>]",
-      );
-    }
-
-    if (entityType !== "person" && entityType !== "company") {
-      throw new UsageError("Entity type must be `person` or `company`.");
-    }
-
-    if (!entityAction) {
-      return readEntityMemory(paths, entityType, entityId);
-    }
-
-    if (entityAction !== "summary" && entityAction !== "fact" && entityAction !== "note") {
-      throw new UsageError("Entity action must be `summary`, `fact`, or `note`.");
-    }
-
-    const text = textParts.join(" ").trim();
-
-    if (!text) {
-      throw new UsageError(
-        "Usage: hive memory entity <person|company> <id> [summary|fact|note <text>]",
-      );
-    }
-
-    return updateEntityMemory({
-      paths,
-      type: entityType,
-      id: entityId,
-      action: entityAction,
-      text,
-    });
+  if (!subcommand || subcommand === "view") {
+    const section = (filtered[1] ?? "all") as "all" | "facts" | "conventions" | "decisions" | "questions";
+    const snapshot = await readProjectMemorySnapshot(paths, projectId);
+    console.log(`Project: ${projectId}\n`);
+    console.log(readProjectMemorySection(snapshot, section));
+    return;
   }
 
-  const activeProject = await getActiveProject(paths);
+  if (subcommand === "reflect") {
+    const stdin = await Bun.stdin.text();
+    let learnings: Array<{ type: string; content: string }>;
+    try {
+      learnings = JSON.parse(stdin.trim());
+    } catch {
+      throw new UsageError("Invalid JSON on stdin. Expected: [{\"type\":\"fact\",\"content\":\"...\"},...]");
+    }
+    if (!Array.isArray(learnings) || learnings.length === 0) {
+      throw new UsageError("Expected a non-empty JSON array of learnings.");
+    }
 
-  if (!activeProject) {
-    throw new UsageError("No active project. Run `hive work <project>` first.");
+    const validTypes = ["fact", "convention", "decision", "question"];
+    let recorded = 0;
+    for (const item of learnings) {
+      if (!validTypes.includes(item.type)) {
+        console.error(`Skipping invalid type: ${item.type}`);
+        continue;
+      }
+      try {
+        await appendProjectMemory(paths, projectId, item.type as MemorySection, item.content);
+        recorded++;
+      } catch (err) {
+        console.error(`Skipping ${item.type}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    console.log(`Recorded ${recorded} learning(s) in ${projectId} memory.`);
+    return;
   }
 
-  const memoryPath = await ensureProjectMemoryFile(paths, activeProject);
-  const file = Bun.file(memoryPath);
+  const validSections: MemorySection[] = ["fact", "convention", "decision", "question"];
+  if (!validSections.includes(subcommand as MemorySection)) {
+    throw new UsageError(`Unknown subcommand: ${subcommand}\n\n${usage}`);
+  }
 
-  const text = rest.join(" ").trim();
+  const text = filtered.slice(1).join(" ").trim();
   if (!text) {
-    throw new UsageError(`Usage: hive memory ${action} <text>`);
+    throw new UsageError(`No text provided.\n\n${usage}`);
   }
 
-  const sectionHeader = sectionMap[action];
-  if (!sectionHeader) {
-    throw new UsageError(
-      `Unknown memory section: ${action}. Use: fact, convention, decision, question`,
-    );
+  try {
+    await appendProjectMemory(paths, projectId, subcommand as MemorySection, text);
+  } catch (err) {
+    throw new UsageError(err instanceof Error ? err.message : String(err));
   }
-
-  const content = await file.text();
-  const entry =
-    action === "decision" ? `- [${toIsoTimestamp()}] ${text}` : `- ${text}`;
-
-  const updated = appendToSection(content, sectionHeader, entry);
-  await Bun.write(memoryPath, updated);
-
-  // Log to feed for visibility
-  await appendFeedEntry(paths, {
-    project: activeProject,
-    headline: `Memory updated: ${action}`,
-    details: [text],
-  });
-  await appendEvent({
-    paths,
-    kind: "memory.project.updated",
-    source: "memory",
-    project: activeProject,
-    summary: text,
-    details: [`section: ${action}`],
-    data: {
-      section: action,
-    },
-  });
-
-  return `Recorded ${action}: ${text}`;
+  console.log(`Added ${subcommand} to ${projectId} memory.`);
 }

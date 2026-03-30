@@ -10,8 +10,8 @@
 import { extractConfigValue, extractConfigValueAlias } from "./config";
 import { type ModelPoolEntry, parseModelPool } from "./project";
 import { completePiText, isPiProviderSupported, type PiTextCompletion } from "./pi";
-import { resolvePiRuntimeRoute } from "./runtime";
-import { resolvePiApiKey } from "./steward/runtime";
+import { resolvePiRuntimeRoute } from "./runtime-routes";
+import { resolvePiApiKey } from "./auth";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,6 +21,7 @@ export type CouncilMember = {
   model: ModelPoolEntry;
   provider: string;
   modelId: string;
+  authPolicy?: "oauth-only" | "env" | null;
 };
 
 export type CouncilPosition = {
@@ -145,6 +146,7 @@ export function resolveCouncilMembers(
         model: entry,
         provider: piRoute.provider,
         modelId: piRoute.model ?? entry.model,
+        authPolicy: piRoute.authPolicy,
       });
     } else {
       errors.push(
@@ -193,8 +195,8 @@ async function callCouncilMember(
       };
     }
 
-    // Pi-supported provider
-    const resolved = await resolvePiApiKey(member.provider, { authPolicy: null });
+    // Pi-supported provider — respect the config's auth policy (e.g. oauth-only for subscriptions)
+    const resolved = await resolvePiApiKey(member.provider, { authPolicy: member.authPolicy ?? null });
 
     if (!resolved) {
       return {
@@ -239,7 +241,7 @@ async function callCouncilMember(
 // Council system prompt
 // ---------------------------------------------------------------------------
 
-function buildCouncilMemberPrompt(persona: string | null): string {
+export function buildCouncilMemberPrompt(persona: string | null): string {
   const base = [
     "You are a council member asked to give your independent analysis of a question.",
     "Your response will be compared with other models' responses to surface agreement and disagreement.",
@@ -329,9 +331,13 @@ export function formatCouncilResultsForSteward(result: CouncilResult): string {
   }
 
   lines.push(
-    "**You are the chair.** Synthesize a unified answer from the positions above.",
-    "Surface where models agreed, where they disagreed, and why the disagreements matter.",
-    "Do not simply list the positions — produce a coherent synthesis.",
+    "**You are the chair.** Synthesize a unified answer:",
+    "",
+    "**Consensus:** What the council agreed on (be specific)",
+    "**Divergence:** Where they disagreed and why it matters",
+    "**Recommendation:** Your synthesized position, informed by the above",
+    "",
+    "Do not simply list positions — produce a coherent synthesis.",
   );
 
   return lines.join("\n");

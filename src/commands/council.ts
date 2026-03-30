@@ -1,87 +1,82 @@
+import { extractConfigValue } from "../lib/config";
 import { UsageError } from "../lib/errors";
-import { ensureHiveScaffold, getActiveProject, getProjectPaths } from "../lib/paths";
-import { enqueueGoalForOrchestrator } from "../lib/steward/prompts";
+import { ensureHiveScaffold } from "../lib/paths";
+import {
+  conveneCouncil,
+  formatCouncilResultsForSteward,
+  resolveCouncilMembers,
+} from "../lib/council";
+import { parseModelPool } from "../lib/project";
 
-type CouncilOptions = {
-  question: string;
-  models: string[] | null;
-};
+export async function councilCommand(args: string[]): Promise<void> {
+  const usage = 'Usage: hive council [--models opus,sonnet,gpt54] [--persona analyst] [--format json] "<question>"';
 
-function parseOptions(args: string[]): CouncilOptions {
-  const usage =
-    'Usage: hive council [--models opus,sonnet,gpt54] "<question>"';
-
-  let models: string[] | null = null;
+  let modelNames: string[] | null = null;
+  let persona: string | null = null;
+  let format: "markdown" | "json" = "markdown";
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
+    const arg = args[i]!;
     if (arg === "--models" || arg === "-m") {
-      const value = args[i + 1];
-      i++;
-
-      if (!value) {
-        throw new UsageError(`--models requires a comma-separated list\n${usage}`);
-      }
-
-      models = value.split(",").map((m) => m.trim()).filter(Boolean);
+      const value = args[++i];
+      if (!value) throw new UsageError(`--models requires a comma-separated list\n${usage}`);
+      modelNames = value.split(",").map((m) => m.trim()).filter(Boolean);
       continue;
     }
-
+    if (arg === "--persona") {
+      persona = args[++i] ?? null;
+      continue;
+    }
+    if (arg === "--format") {
+      const value = args[++i];
+      if (value === "json") format = "json";
+      continue;
+    }
     positional.push(arg);
   }
 
   const question = positional.join(" ").trim();
-
-  if (!question) {
-    throw new UsageError(`No question provided\n${usage}`);
-  }
-
-  return { question, models };
-}
-
-/**
- * `hive council "<question>"` — convene a model council via the steward.
- *
- * Sends a nudge to the steward instructing it to use convene_council
- * for multi-model deliberation on the given question.
- */
-export async function councilCommand(args: string[]): Promise<string> {
-  const options = parseOptions(args);
+  if (!question) throw new UsageError(`No question provided\n${usage}`);
 
   const paths = await ensureHiveScaffold();
-  const activeProject = await getActiveProject(paths);
+  const globalConfig = await Bun.file(paths.config).text().catch(() => "");
 
-  if (!activeProject) {
-    throw new UsageError("No active project. Run `hive work <project>` first.");
+  // Resolve models — use explicit --models, or council-default config, or full pool
+  const pool = parseModelPool(globalConfig);
+  const defaultModels = extractConfigValue(globalConfig, "council-default");
+  const names = modelNames
+    ?? (defaultModels ? defaultModels.split(",").map((m) => m.trim()).filter(Boolean) : null)
+    ?? pool.map((e) => e.name);
+  const { members, errors } = resolveCouncilMembers(globalConfig, names);
+
+  if (members.length < 2) {
+    throw new UsageError(
+      `Need at least 2 council members, got ${members.length}. ${errors.join(" ")} Available: ${pool.map((e) => e.name).join(", ")}`,
+    );
   }
 
-  const projectPaths = getProjectPaths(paths, activeProject);
+  console.log(`Convening council with ${members.length} members: ${members.map((m) => m.model.name).join(", ")}`);
+  console.log();
 
-  const modelClause = options.models
-    ? `Use these models: ${options.models.join(", ")}.`
-    : "Use at least 3 diverse models from the pool.";
+  const result = await conveneCouncil({
+    question,
+    members,
+    globalConfig,
+    persona,
+  });
 
-  const goalMessage = [
-    `Convene a model council on this question:`,
-    "",
-    options.question,
-    "",
-    `${modelClause} Use the convene_council tool to get independent positions from each model, then synthesize a unified answer as chair. Surface agreement, disagreement, and why it matters.`,
-  ].join("\n");
+  if (format === "json") {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
 
-  const filename = await enqueueGoalForOrchestrator(
-    paths,
-    projectPaths,
-    activeProject,
-    goalMessage,
-  );
+  const output = formatCouncilResultsForSteward(result);
+  console.log(output);
 
-  return [
-    `Council request queued for steward (${filename}).`,
-    `Question: ${options.question}`,
-    options.models ? `Models: ${options.models.join(", ")}` : "Models: steward will choose from pool",
-    "The steward will convene the council on its next turn.",
-  ].join("\n");
+  const failed = result.positions.filter((p) => p.error);
+  if (failed.length > 0) {
+    console.log();
+    console.log(`Failed: ${failed.map((p) => `${p.modelName}: ${p.error}`).join("; ")}`);
+  }
 }
