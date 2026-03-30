@@ -1,13 +1,13 @@
 # Hive
 
-Identity, memory, and multi-model council for Claude Code.
+Identity, memory, council, and tickets for Claude Code.
 
 Hive is not an orchestration engine. Claude Code already handles that —
 subagents, tools, loops, file I/O. Hive provides what Claude Code
 doesn't have: **persistent identity** that carries across sessions,
-**accumulated project intelligence** that survives forever, and a
+**accumulated project intelligence** that survives forever, a
 **multi-model council** that gives you multiple perspectives on any
-question.
+question, and **per-project ticket tracking** for managing active work.
 
 ## What Hive Does
 
@@ -27,42 +27,46 @@ position. Claude Code acts as chair and synthesizes agreement and
 disagreement. Use for architecture decisions, tradeoff analysis, or any
 question where multiple perspectives matter.
 
+**Ticket tracking.** Per-project tickets stored as markdown files with
+YAML frontmatter at `~/.hive/projects/<name>/tickets/`. Create bugs,
+features, tasks, epics, and chores with priorities, tags, dependencies,
+and timestamped notes. Exposed as both CLI commands and MCP tools so
+the AI agent can track its own work.
+
 ## Quick Start
 
-### 1. Install
-
 ```bash
+# Install
 bun install
-```
 
-### 2. Initialize
-
-```bash
+# Initialize — creates ~/.hive/ with identity templates,
+# registers the MCP server in ~/.claude/.mcp.json,
+# and asks for your name to personalize templates
 bun run src/cli.ts init
-```
 
-This creates `~/.hive/` with identity templates and registers the HIVE
-MCP server in `~/.claude/.mcp.json`.
-
-### 3. Edit your identity
-
-- `~/.hive/SOUL.md` — shared values and craft standards
-- `~/.hive/IDENTITY.md` — who the AI is
-- `~/.hive/SELF.md` — who you are and how you work
-
-### 4. Register a project
-
-```bash
+# Register a project — creates memory file, wires CLAUDE.md
 bun run src/cli.ts project add myapp ~/work/myapp
+
+# Start Claude Code — it picks up identity and MCP tools automatically
+cd ~/work/myapp
+claude
 ```
 
-This creates a memory file and adds a HIVE reference block to your
-project's CLAUDE.md. The block tells Claude Code to read the identity
-files and describes the available MCP tools.
+After init, you'll have these files to customize:
 
-### 5. Configure models
+| File | What to put there |
+| --- | --- |
+| `~/.hive/SELF.md` | Who you are — role, stack preferences, communication style, working patterns |
+| `~/.hive/IDENTITY.md` | Who the AI is — personality, name, how it thinks |
+| `~/.hive/SOUL.md` | Shared values and craft standards |
+| `~/.hive/config.md` | Model pool for multi-model council |
 
-Edit `~/.hive/config.md`:
+`SELF.md` is the most important one. The more the AI knows about how
+you work, the less you have to repeat yourself.
+
+### Configure models (optional)
+
+Edit `~/.hive/config.md` to set up the council:
 
 ```md
 ## Model Pool
@@ -73,15 +77,42 @@ Edit `~/.hive/config.md`:
 - qwen: ollama, qwen3:4b, local fast triage
 ```
 
-### 6. Use
+## Add Hive to an Existing Project
 
-Start Claude Code in your project. It reads the CLAUDE.md, loads the
-identity from `~/.hive/`, and has access to the MCP tools.
+If you've already run `hive init` and just want to wire up a new project,
+add this to your project's `CLAUDE.md`:
+
+```md
+# HIVE
+
+Read and internalize these files at the start of every session:
+- ~/.hive/SOUL.md — your values and craft standards
+- ~/.hive/IDENTITY.md — who you are
+- ~/.hive/SELF.md — who you're working with
+- ~/.hive/TRUST.md — action classification and approval rules
+- ~/.hive/AGENTS.md — operational doctrine
+
+Read your project memory:
+- ~/.hive/memory/projects/YOURPROJECT.md — accumulated facts, conventions, decisions
+
+You have HIVE MCP tools:
+- `convene_council` — Multi-model analysis. Sends a question to multiple AI models in parallel. You act as chair — synthesize agreement and disagreement.
+- `read_hive_memory` — Read accumulated project intelligence.
+- `write_hive_memory` — Record new facts, conventions, or decisions.
+- `create_ticket` — Create a ticket (bug, feature, task, epic, chore) with priority, tags, and dependencies.
+- `list_tickets` — List and filter project tickets by status, type, or tags.
+- `show_ticket` — Show full ticket details including notes.
+- `update_ticket` — Update ticket status, priority, tags, or other fields.
+- `add_ticket_note` — Add a timestamped note to a ticket.
+```
+
+Then register the project so memory and tickets work:
 
 ```bash
-cd ~/work/myapp
-claude
+bun run src/cli.ts project add yourproject ~/work/yourproject
 ```
+
+Or skip the manual CLAUDE.md edit — `project add` does it for you.
 
 ## MCP Tools
 
@@ -93,6 +124,11 @@ These are available to Claude Code when the HIVE MCP server is running:
 | `read_hive_memory` | Read accumulated project intelligence — facts, conventions, decisions, open questions. |
 | `write_hive_memory` | Record a new fact, convention, decision, or question. Input is validated against corruption. |
 | `reflect_session` | Batch-write session learnings. Use at end of a substantive session to record multiple facts, conventions, decisions, or questions in one call. |
+| `create_ticket` | Create a ticket with type, priority (P0–P3), tags, dependencies, and optional body. |
+| `list_tickets` | List and filter tickets by status, type, or tags. |
+| `show_ticket` | Show full ticket details including timestamped notes. Supports partial ID matching. |
+| `update_ticket` | Update ticket status, priority, tags, dependencies, or other fields. |
+| `add_ticket_note` | Add a timestamped note with optional actor attribution. |
 
 ## CLI Commands
 
@@ -109,6 +145,15 @@ These are available to Claude Code when the HIVE MCP server is running:
 | `hive memory decision <text>` | Add a decision |
 | `hive memory question <text>` | Add an open question |
 | `hive memory reflect` | Batch-write learnings from stdin (JSON) |
+| `hive ticket create <title>` | Create a ticket (`--type`, `--priority`, `--tags`, `--depends`) |
+| `hive ticket list` | List tickets (`--status`, `--type`, `--tags`) |
+| `hive ticket show <id>` | Show ticket details (partial IDs work: `1` → `TK-001`) |
+| `hive ticket start <id>` | Set ticket to `in_progress` |
+| `hive ticket close <id>` | Close ticket (records `closed` timestamp) |
+| `hive ticket reopen <id>` | Reopen a closed ticket |
+| `hive ticket note <id> <text>` | Add a timestamped note |
+| `hive ticket ready` | Show unblocked open tickets |
+| `hive ticket blocked` | Show dependency-blocked tickets |
 
 ## How Identity Works
 
@@ -140,7 +185,11 @@ You have HIVE MCP tools:
 - `convene_council` — Multi-model analysis.
 - `read_hive_memory` — Read accumulated project intelligence.
 - `write_hive_memory` — Record new facts, conventions, or decisions.
-- `reflect_session` — Batch-write session learnings.
+- `create_ticket` — Create a ticket with priority, tags, and dependencies.
+- `list_tickets` — List and filter project tickets.
+- `show_ticket` — Show full ticket details including notes.
+- `update_ticket` — Update ticket status, priority, or other fields.
+- `add_ticket_note` — Add a timestamped note to a ticket.
 ```
 
 No compression, no duplication. Claude Code reads the files directly.
@@ -173,7 +222,9 @@ Every memory write is validated before it lands:
 │   └── projects/        # per-project intelligence
 └── projects/
     └── <name>/
-        └── config.md    # project path
+        ├── config.md    # project path
+        └── tickets/     # per-project tickets
+            └── TK-001.md
 ```
 
 ## Requirements

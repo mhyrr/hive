@@ -23,6 +23,11 @@ You have HIVE MCP tools:
 - \`convene_council\` — Multi-model analysis. Sends a question to multiple AI models in parallel. You act as chair — synthesize agreement and disagreement.
 - \`read_hive_memory\` — Read accumulated project intelligence.
 - \`write_hive_memory\` — Record new facts, conventions, or decisions.
+- \`create_ticket\` — Create a ticket (bug, feature, task, epic, chore) with priority, tags, and dependencies.
+- \`list_tickets\` — List and filter project tickets by status, type, or tags.
+- \`show_ticket\` — Show full ticket details including notes.
+- \`update_ticket\` — Update ticket status, priority, tags, or other fields.
+- \`add_ticket_note\` — Add a timestamped note to a ticket.
 `.trim();
 
 export async function projectCommand(args: string[]): Promise<void> {
