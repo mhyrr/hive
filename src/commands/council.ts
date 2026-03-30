@@ -9,9 +9,11 @@ import {
 import { parseModelPool } from "../lib/project";
 
 export async function councilCommand(args: string[]): Promise<void> {
-  const usage = 'Usage: hive council [--models opus,sonnet,gpt54] "<question>"';
+  const usage = 'Usage: hive council [--models opus,sonnet,gpt54] [--persona analyst] [--format json] "<question>"';
 
   let modelNames: string[] | null = null;
+  let persona: string | null = null;
+  let format: "markdown" | "json" = "markdown";
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -20,6 +22,15 @@ export async function councilCommand(args: string[]): Promise<void> {
       const value = args[++i];
       if (!value) throw new UsageError(`--models requires a comma-separated list\n${usage}`);
       modelNames = value.split(",").map((m) => m.trim()).filter(Boolean);
+      continue;
+    }
+    if (arg === "--persona") {
+      persona = args[++i] ?? null;
+      continue;
+    }
+    if (arg === "--format") {
+      const value = args[++i];
+      if (value === "json") format = "json";
       continue;
     }
     positional.push(arg);
@@ -52,8 +63,13 @@ export async function councilCommand(args: string[]): Promise<void> {
     question,
     members,
     globalConfig,
-    persona: null,
+    persona,
   });
+
+  if (format === "json") {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
 
   const output = formatCouncilResultsForSteward(result);
   console.log(output);

@@ -3,6 +3,9 @@
   "version": "2.0.0",
   "private": true,
   "description": "Identity, memory, and multi-model council layer for Claude Code",
+  "scripts": {
+    "test": "bun test"
+  },
   "bin": {
     "hive": "./src/cli.ts"
   },
