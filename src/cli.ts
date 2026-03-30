@@ -2,6 +2,7 @@ import { councilCommand } from "./commands/council";
 import { initCommand } from "./commands/init";
 import { memoryCommand } from "./commands/memory";
 import { projectCommand } from "./commands/project";
+import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
 
 const commands: Record<string, (args: string[]) => Promise<void>> = {
@@ -9,6 +10,7 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   project: projectCommand,
   council: councilCommand,
   memory: memoryCommand,
+  ticket: ticketCommand,
 };
 
 const usage = `Usage: hive <command> [args]
@@ -18,7 +20,9 @@ Commands:
   project add <name> <path>  Register a project
   council "<question>"       Multi-model council deliberation
   memory [view|fact|convention|decision|question] [text]
-                             View or add project memory`;
+                             View or add project memory
+  ticket [create|list|show|start|close|reopen|note|ready|blocked]
+                             Project ticket tracker`;
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);

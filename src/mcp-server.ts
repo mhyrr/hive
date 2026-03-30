@@ -20,6 +20,18 @@ import {
   type MemorySection,
 } from "./lib/memory";
 import { parseFrontmatter } from "./lib/frontmatter";
+import {
+  createTicket,
+  readTicket,
+  updateTicket,
+  addTicketNote,
+  listTickets,
+  formatTicketSummary,
+  formatTicketDetail,
+  type TicketStatus,
+  type TicketType,
+  type TicketPriority,
+} from "./lib/ticket";
 
 function resolveProjectFromCwd(paths: ReturnType<typeof getHivePaths>): string | null {
   const cwd = process.cwd();
@@ -51,7 +63,7 @@ function resolveProjectFromCwd(paths: ReturnType<typeof getHivePaths>): string |
 const server = new McpServer(
   { name: "hive", version: "2.0.0" },
   {
-    instructions: "HIVE provides persistent identity, project memory, and multi-model council capabilities. Use convene_council for important decisions. Use read/write_hive_memory to accumulate project intelligence.",
+    instructions: "HIVE provides persistent identity, project memory, multi-model council, and per-project ticket tracking. Use convene_council for important decisions. Use read/write_hive_memory to accumulate project intelligence. Use create_ticket/list_tickets/show_ticket/update_ticket/add_ticket_note for task tracking.",
   },
 );
 
@@ -192,6 +204,179 @@ server.registerTool("reflect_session", {
   }
 
   return { content: [{ type: "text" as const, text }] };
+});
+
+// Tool 5: Create a ticket
+server.registerTool("create_ticket", {
+  description:
+    "Create a new ticket in the project's ticket tracker. " +
+    "Use for tracking bugs, features, tasks, epics, or chores. " +
+    "Tickets are stored as markdown files and support dependencies.",
+  inputSchema: {
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    title: z.string().describe("Ticket title — concise, imperative form."),
+    body: z.string().optional().describe("Ticket description or details."),
+    type: z.enum(["bug", "feature", "task", "epic", "chore"]).optional().describe("Ticket type. Defaults to 'task'."),
+    priority: z.number().min(0).max(3).optional().describe("Priority 0-3 (0=critical, 3=low). Defaults to 2."),
+    tags: z.array(z.string()).optional().describe("Tags for categorization."),
+    ref: z.string().optional().describe("External reference (GitHub issue URL, etc.)."),
+    depends: z.array(z.string()).optional().describe("Ticket IDs this depends on (e.g. ['TK-001']). Must exist."),
+  },
+}, async ({ project, title, body, type, priority, tags, ref, depends }) => {
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd(paths);
+
+  if (!projectId) {
+    return {
+      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
+      isError: true,
+    };
+  }
+
+  const ticket = await createTicket(paths, projectId, {
+    title,
+    body: body ?? undefined,
+    type: (type as TicketType) ?? undefined,
+    priority: priority !== undefined ? (priority as TicketPriority) : undefined,
+    tags: tags ?? undefined,
+    ref: ref ?? undefined,
+    depends: depends ?? undefined,
+  });
+
+  return { content: [{ type: "text" as const, text: `Created ${ticket.id}: ${ticket.title}\n\n${formatTicketDetail(ticket)}` }] };
+});
+
+// Tool 6: List tickets
+server.registerTool("list_tickets", {
+  description:
+    "List tickets in the project, optionally filtered by status, type, or tags.",
+  inputSchema: {
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    status: z.enum(["open", "in_progress", "closed"]).optional().describe("Filter by status."),
+    type: z.enum(["bug", "feature", "task", "epic", "chore"]).optional().describe("Filter by type."),
+    tags: z.array(z.string()).optional().describe("Filter by tags (matches any)."),
+  },
+}, async ({ project, status, type, tags }) => {
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd(paths);
+
+  if (!projectId) {
+    return {
+      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
+      isError: true,
+    };
+  }
+
+  const tickets = await listTickets(paths, projectId, {
+    status: (status as TicketStatus) ?? undefined,
+    type: (type as TicketType) ?? undefined,
+    tags: tags ?? undefined,
+  });
+
+  if (tickets.length === 0) {
+    return { content: [{ type: "text" as const, text: "No tickets found." }] };
+  }
+
+  const output = tickets.map(formatTicketSummary).join("\n");
+  return { content: [{ type: "text" as const, text: `${tickets.length} ticket(s):\n\n${output}` }] };
+});
+
+// Tool 7: Show ticket detail
+server.registerTool("show_ticket", {
+  description: "Show full details of a ticket including notes. Supports partial ID matching (e.g. '1' matches 'TK-001').",
+  inputSchema: {
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    id: z.string().describe("Ticket ID (e.g. 'TK-001' or just '1')."),
+  },
+}, async ({ project, id }) => {
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd(paths);
+
+  if (!projectId) {
+    return {
+      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
+      isError: true,
+    };
+  }
+
+  const ticket = await readTicket(paths, projectId, id);
+  if (!ticket) {
+    return { content: [{ type: "text" as const, text: `Ticket not found: ${id}` }], isError: true };
+  }
+
+  return { content: [{ type: "text" as const, text: formatTicketDetail(ticket) }] };
+});
+
+// Tool 8: Update ticket
+server.registerTool("update_ticket", {
+  description:
+    "Update a ticket's status, title, type, priority, tags, or dependencies. " +
+    "Use for starting work (in_progress), closing, reopening, or modifying ticket metadata.",
+  inputSchema: {
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    id: z.string().describe("Ticket ID (e.g. 'TK-001' or just '1')."),
+    status: z.enum(["open", "in_progress", "closed"]).optional().describe("New status."),
+    title: z.string().optional().describe("New title."),
+    type: z.enum(["bug", "feature", "task", "epic", "chore"]).optional().describe("New type."),
+    priority: z.number().min(0).max(3).optional().describe("New priority (0-3)."),
+    tags: z.array(z.string()).optional().describe("Replace tags."),
+    ref: z.string().optional().describe("Update external reference."),
+    depends: z.array(z.string()).optional().describe("Replace dependency list."),
+  },
+}, async ({ project, id, status, title, type, priority, tags, ref, depends }) => {
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd(paths);
+
+  if (!projectId) {
+    return {
+      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
+      isError: true,
+    };
+  }
+
+  const ticket = await updateTicket(paths, projectId, id, {
+    status: (status as TicketStatus) ?? undefined,
+    title: title ?? undefined,
+    type: (type as TicketType) ?? undefined,
+    priority: priority !== undefined ? (priority as TicketPriority) : undefined,
+    tags: tags ?? undefined,
+    ref: ref ?? undefined,
+    depends: depends ?? undefined,
+  });
+
+  if (!ticket) {
+    return { content: [{ type: "text" as const, text: `Ticket not found: ${id}` }], isError: true };
+  }
+
+  return { content: [{ type: "text" as const, text: `Updated ${ticket.id}: ${ticket.title}\n\n${formatTicketDetail(ticket)}` }] };
+});
+
+// Tool 9: Add note to ticket
+server.registerTool("add_ticket_note", {
+  description: "Add a timestamped note to an existing ticket. Use for progress updates, findings, or context.",
+  inputSchema: {
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    id: z.string().describe("Ticket ID (e.g. 'TK-001' or just '1')."),
+    note: z.string().describe("The note text to add."),
+    actor: z.string().optional().describe("Who is adding the note (e.g. 'maya', 'greg'). Shown in the note heading."),
+  },
+}, async ({ project, id, note, actor }) => {
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd(paths);
+
+  if (!projectId) {
+    return {
+      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
+      isError: true,
+    };
+  }
+
+  const ticket = await addTicketNote(paths, projectId, id, note, actor ?? undefined);
+  if (!ticket) {
+    return { content: [{ type: "text" as const, text: `Ticket not found: ${id}` }], isError: true };
+  }
+
+  return { content: [{ type: "text" as const, text: `Added note to ${ticket.id}: ${ticket.title}` }] };
 });
 
 // Start the server
