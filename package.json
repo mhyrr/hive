@@ -1,8 +1,17 @@
 {
   "name": "hive",
+  "version": "2.0.0",
   "private": true,
+  "description": "Identity, memory, and multi-model council layer for Claude Code",
+  "scripts": {
+    "test": "bun test"
+  },
+  "bin": {
+    "hive": "./src/cli.ts"
+  },
   "dependencies": {
-    "@mariozechner/pi-agent": "^0.9.0",
-    "@mariozechner/pi-ai": "^0.58.4"
+    "@mariozechner/pi-ai": "^0.58.4",
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "zod": "^3.24.0"
   }
 }

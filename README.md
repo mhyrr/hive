@@ -1,96 +1,64 @@
 # Hive
 
-Lightweight, multi-model, crash-resilient agent orchestration.
+Identity, memory, and multi-model council for Claude Code.
 
-Hive is an orchestrator for AI coding agents. It belongs to the same
-family as OpenHands, Claude Code, and Aider. Its contribution is not a
-new paradigm — it is a set of architectural bets about how orchestration
-should work when you have access to many models, when processes die, and
-when coordination costs matter.
+Hive is not an orchestration engine. Claude Code already handles that —
+subagents, tools, loops, file I/O. Hive provides what Claude Code
+doesn't have: **persistent identity** that carries across sessions,
+**accumulated project intelligence** that survives forever, and a
+**multi-model council** that gives you multiple perspectives on any
+question.
 
-![Hive Gateway](hive.png)
+## What Hive Does
 
-![Hive at work](hiveatwork.png)
+**Persistent identity.** SOUL.md, IDENTITY.md, and SELF.md live in
+`~/.hive/` and define who your AI is, what it values, and how it works
+with you. Every Claude Code session picks this up through a CLAUDE.md
+reference. The identity persists across projects and sessions.
 
-## Why Hive
+**Project memory.** Facts, conventions, decisions, and open questions
+accumulate in `~/.hive/memory/projects/<name>.md`. Claude Code reads
+and writes this through MCP tools. Knowledge compounds over time
+instead of starting fresh every session.
 
-**Runtime-agnostic orchestration.** Most agent tools are single-model.
-Claude Code runs Claude. Codex runs GPT. Hive dispatches to Claude, GPT,
-Gemini, DeepSeek, and local Ollama models through a common adapter
-interface. The coordinator picks runtime and model per task. You are not
-locked to one provider's pricing, capabilities, or uptime.
-
-**Token arbitrage.** Route cheap work to cheap models, expensive work to
-expensive models. A local qwen3:4b handles diff triage in 200ms for
-free. Haiku classifies messages for fractions of a cent. Opus gets called
-for the hard problems. The system tracks token usage and cost per run.
-
-**File-native state.** All durable state lives in markdown files under
-`~/.hive/`. No database, no in-memory queues, no process-bound state. If
-every process dies, the hive is still there on disk. Restart and resume.
-For long-running autonomous operations, durability beats performance.
-
-**Coordination separated from execution.** The steward coordinates.
-Workers execute. The steward never writes code — it reads the board,
-talks to the human, picks a model and persona, writes an assignment, and
-waits for results. Workers are ephemeral processes that receive a scoped
-task, do the work, report back, and exit. Failure is contained. Context
-stays clean.
-
-## The Core Loop
-
-```
-Human speaks
-  -> Steward responds immediately (warm persistent session)
-  -> If work needed: steward writes assignment to msg/
-  -> File watcher fires (~200ms) -> worker launches
-  -> Worker completes -> watcher fires (~200ms) -> steward notified
-  -> OODA loop evaluates: noise? log? strategic trigger? interrupt?
-  -> Steward synthesizes -> responds to human
-  -> Auto-review dispatches critic if craftsman completed
-  -> Goal loop checks wave progress, advances or reports
-  -> Loop continues
-```
-
-Coordination is event-driven through filesystem watchers. Total latency
-per hop is ~200ms. The supervisor's poll is a safety net for zombie
-cleanup, not the primary coordination path. The OODA tactical evaluator
-classifies events and triggers strategic reasoning only when significant
-changes occur.
+**Multi-model council.** Send the same question to Claude, GPT, Gemini,
+and local models simultaneously. Each model gives an independent
+position. Claude Code acts as chair and synthesizes agreement and
+disagreement. Use for architecture decisions, tradeoff analysis, or any
+question where multiple perspectives matter.
 
 ## Quick Start
 
-### 1. Build
+### 1. Install
 
 ```bash
-bun build --compile ./bin/hive.ts --outfile hive
-./hive help
+bun install
 ```
 
-Or run directly: `bun run bin/hive.ts help`
-
-### 2. Bootstrap
+### 2. Initialize
 
 ```bash
-hive init
+bun run src/cli.ts init
 ```
 
-Scaffolds `~/.hive/` with identity files, default personas, skills,
-memory directories, and config.
+This creates `~/.hive/` with identity templates and registers the HIVE
+MCP server in `~/.claude/.mcp.json`.
 
-### 3. Configure
+### 3. Edit your identity
 
-Edit these first:
-
-- `~/.hive/SOUL.md` — shared values every agent carries
+- `~/.hive/SOUL.md` — shared values and craft standards
+- `~/.hive/IDENTITY.md` — who the AI is
 - `~/.hive/SELF.md` — who you are and how you work
-- `~/.hive/config.md` — model pool and runtime defaults
 
 ### 4. Register a project
 
 ```bash
-hive project add myapp /absolute/path/to/myapp
+bun run src/cli.ts project add myapp ~/work/myapp
 ```
+
+This creates a memory file and adds a HIVE reference block to your
+project's CLAUDE.md. The block tells Claude Code to read the identity
+files and describes the available MCP tools.
 
 ### 5. Configure models
 
@@ -105,243 +73,107 @@ Edit `~/.hive/config.md`:
 - qwen: ollama, qwen3:4b, local fast triage
 ```
 
-The steward sees this pool and picks model + persona per task.
+### 6. Use
 
-### 6. Start
-
-```bash
-hive start --open
-```
-
-Starts the gateway (web UI), supervisor, and file watchers. Or from
-the terminal:
+Start Claude Code in your project. It reads the CLAUDE.md, loads the
+identity from `~/.hive/`, and has access to the MCP tools.
 
 ```bash
-hive say "build the auth system"
-hive console
+cd ~/work/myapp
+claude
 ```
 
-## Architecture
+## MCP Tools
 
-### The Hive
+These are available to Claude Code when the HIVE MCP server is running:
 
-The durable substrate at `~/.hive/`. Identity, memory, configuration,
-and state that persists across sessions, projects, and process restarts.
+| Tool | Purpose |
+| --- | --- |
+| `convene_council` | Send a question to multiple models in parallel. Supports `persona: "analyst"` for structured analytical framing. Returns independent positions for you to synthesize. |
+| `read_hive_memory` | Read accumulated project intelligence — facts, conventions, decisions, open questions. |
+| `write_hive_memory` | Record a new fact, convention, decision, or question. Input is validated against corruption. |
+| `reflect_session` | Batch-write session learnings. Use at end of a substantive session to record multiple facts, conventions, decisions, or questions in one call. |
 
-### The Steward
+## CLI Commands
 
-A persistent coordinator session. Talks to the human. Maintains context
-across a conversation. Picks models and personas for each task. Delegates
-through assignment messages. Synthesizes worker results. Never executes
-code itself.
+| Command | Purpose |
+| --- | --- |
+| `hive init` | Create `~/.hive/` scaffold, register MCP server |
+| `hive project add <name> <path>` | Register project, create memory, wire CLAUDE.md |
+| `hive council "<question>"` | Multi-model council from terminal |
+| `hive council --persona analyst "<question>"` | Council with analytical framing |
+| `hive council --format json "<question>"` | Machine-readable council output |
+| `hive memory` | View project memory |
+| `hive memory fact <text>` | Add a durable fact |
+| `hive memory convention <text>` | Add a convention |
+| `hive memory decision <text>` | Add a decision |
+| `hive memory question <text>` | Add an open question |
+| `hive memory reflect` | Batch-write learnings from stdin (JSON) |
 
-### Workers
+## How Identity Works
 
-Ephemeral processes with scoped assignments. Spawned from the model pool
-with a persona. Read the substrate, do their work, report back, exit.
-Any runtime: Claude, Codex, Gemini, Ollama.
+Identity lives in `~/.hive/` and is injected automatically via a
+**SessionStart hook**. When Claude Code starts a session, the hook
+(`.claude/hooks/load-identity.sh`) runs and injects:
 
-### Personas
+1. The full identity stack: SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md
+2. The current project's memory (resolved by matching `$PWD` against registered project paths)
+3. A session reflection protocol prompting the agent to record learnings before ending
 
-Cognitive orientations, not job titles:
-
-- **architect** — system design, structure, trade-offs
-- **craftsman** — implementation, code quality
-- **critic** — review, edge cases, testing
-- **steward** — coordination, synthesis, delegation
-
-### The OODA Loop
-
-The supervisor runs a continuous observe-orient-decide-act loop:
-
-- **Observe** — filesystem watchers detect assignment completions,
-  board changes, and goal updates (~200ms latency)
-- **Orient** — a fast Haiku evaluation pass classifies each event
-  (noise, log-worthy, strategic trigger, interrupt)
-- **Decide** — strategic reasoning determines next actions: dispatch
-  new workers, synthesize results, or escalate to human
-- **Act** — write assignments, update the board, advance the work graph
-
-A 60s cooldown prevents burst re-evaluation. Stuck detection escalates
-if events fire repeatedly without progress.
-
-### Goals and Waves
-
-Goals are high-level objectives that decompose into task waves. The
-goal loop detects when a wave completes, synthesizes results, and
-either advances to the next wave or reports back. Auto-review
-automatically dispatches a critic after each craftsman run completes.
-
-### The Gateway
-
-Live web UI with glassmorphism design over the hive substrate:
-
-- Console sessions with the steward (supports `/dream`, `/goal`, and
-  other slash commands)
-- Active-agent view with persona and model info
-- Process log inspection
-- Cognition panel (routing policy, budget tracking)
-
-![Console session](hive1.png)
-
-![Process logs](hive2.png)
-
-![Multiple agents](hive_multi.png)
-
-## Workers in Detail
-
-The steward writes an assignment file:
+Projects also reference the identity in their CLAUDE.md so the agent
+knows about the MCP tools:
 
 ```md
----
-from: steward
-to: craftsman-opus-001
-type: assign
-project: myapp
-task: AUTH-001
-persona: craftsman
-runtime: claude
-model: claude-opus-4-6
-scope: src/auth/
-launch: auto
----
+# HIVE
 
-Implement POST /api/auth/login with JWT tokens.
+Read and internalize these files at the start of every session:
+- ~/.hive/SOUL.md — your values and craft standards
+- ~/.hive/IDENTITY.md — who you are
+- ~/.hive/SELF.md — who you're working with
+- ~/.hive/TRUST.md — action classification and approval rules
+- ~/.hive/AGENTS.md — operational doctrine
+
+Read your project memory:
+- ~/.hive/memory/projects/myapp.md — accumulated facts, conventions, decisions
+
+You have HIVE MCP tools:
+- `convene_council` — Multi-model analysis.
+- `read_hive_memory` — Read accumulated project intelligence.
+- `write_hive_memory` — Record new facts, conventions, or decisions.
+- `reflect_session` — Batch-write session learnings.
 ```
 
-The watcher detects it, the supervisor launches the worker, the worker
-runs with the craftsman persona on Opus, completes, and the steward gets
-notified.
+No compression, no duplication. Claude Code reads the files directly.
+Single source of truth.
+
+## Memory Validation
+
+Every memory write is validated before it lands:
+
+- **Input validation** — rejects empty entries, section header injection,
+  over-length content, and collapses multi-line entries
+- **Structural validation** — verifies all four sections exist in correct
+  order with no duplicates before writing
+- **Write queue** — serializes concurrent MCP tool calls to prevent
+  lost-update bugs
+
+`~/.hive/` is a git repo, so all memory changes are tracked in history.
 
 ## File Layout
 
-```text
+```
 ~/.hive/
-├── SOUL.md                 # shared culture
-├── IDENTITY.md             # what the hive is
-├── SELF.md                 # user preferences
-├── AGENTS.md               # operational protocols
-├── config.md               # model pool, runtime config
-├── feed.md                 # event stream
-├── personas/               # reusable persona templates
-├── skills/                 # operational skills
-├── plugins/                # installed hub plugins
+├── SOUL.md              # shared values
+├── IDENTITY.md          # AI identity
+├── SELF.md              # user preferences
+├── AGENTS.md            # operational doctrine
+├── TRUST.md             # action classification
+├── config.md            # model pool
 ├── memory/
-│   ├── knowledge.md        # curated cross-project facts
-│   ├── decisions.md        # architecture decisions
-│   ├── projects/           # per-project learnings
-│   ├── journal/            # daily logs
-│   └── state/              # derived state
-├── projects/
-│   └── <project>/
-│       ├── config.md       # repo path, rules, stack
-│       ├── PLAN.md         # current mission
-│       ├── BOARD.md        # live state (steward-owned)
-│       ├── LOG.md          # session history
-│       ├── goals/          # goal records with wave tracking
-│       ├── runs/           # worker execution records
-│       └── state/          # derived runtime state
-├── msg/                    # message bus (one file per message)
-├── sessions/               # session metadata
-└── archive/                # past sessions
-```
-
-## Commands
-
-### Human Interface
-
-| Command | Purpose |
-| --- | --- |
-| `hive start [--open]` | Start gateway + supervisor |
-| `hive console` | Interactive steward session |
-| `hive say <message>` | One-shot steward turn |
-| `hive watch [count]` | Live operator console |
-
-### Setup
-
-| Command | Purpose |
-| --- | --- |
-| `hive init` | Scaffold `~/.hive/` |
-| `hive project add <name> <path>` | Register a project |
-| `hive work [project]` | Show or switch active project |
-| `hive runtimes` | List available runtimes |
-
-### Workers
-
-| Command | Purpose |
-| --- | --- |
-| `hive launch <agent>` | Run a worker manually |
-| `hive supervise` | Background auto-launch + OODA loop |
-| `hive ps` | Show active and recent runs |
-| `hive stop <agent\|run>` | Stop an active run |
-
-### Autonomous Operations
-
-| Command | Purpose |
-| --- | --- |
-| `hive dream "<goal>"` | Plan and launch an overnight autonomous run |
-| `hive goal add\|list\|show` | Manage project goals |
-| `hive think` | Start the OODA tactical evaluation loop |
-| `hive cognition` | Show cognitive routing policy and budget |
-
-### Coordination
-
-| Command | Purpose |
-| --- | --- |
-| `hive msg <from> <to> <body>` | Create a message |
-| `hive nudge <message>` | Human priority signal |
-| `hive inbox [agent]` | Show open messages |
-| `hive log <message>` | Append to project log |
-| `hive status` | Board + open-message summary |
-| `hive feed [count]` | Event stream |
-| `hive events [count]` | Internal/external event stream |
-| `hive approval` | Show/manage pending approvals |
-
-### Memory
-
-| Command | Purpose |
-| --- | --- |
-| `hive memory` | Show project memory |
-| `hive memory fact\|decision <text>` | Append memory |
-| `hive memory extract` | Build journal and derived state |
-| `hive sync` | Copy plan into repo |
-| `hive archive` | Snapshot and roll session |
-
-### Plugins
-
-| Command | Purpose |
-| --- | --- |
-| `hive hub search <query>` | Search Claw Hub for skills |
-| `hive hub install <skill-id>` | Install a hub skill |
-| `hive hub list [--installed]` | List available/installed skills |
-| `hive hub remove <skill-id>` | Remove an installed skill |
-
-## Configuration
-
-### Global: `~/.hive/config.md`
-
-```md
-runtime: claude
-model: claude-sonnet-4-6
-
-pi-provider-claude: anthropic
-pi-model-claude: claude-sonnet-4-6
-pi-auth-anthropic: oauth-only
-
-cognitive-bias: balanced
-cognitive-max-parallel: 3
-tier1_local: qwen3:4b
-ollama-base-url: http://127.0.0.1:11434
-```
-
-### Project: `~/.hive/projects/<project>/config.md`
-
-```md
-path: /absolute/path/to/repo
-
-## Rules
-- All database changes require a migration file.
-- Tests must pass before any task is marked done.
+│   └── projects/        # per-project intelligence
+└── projects/
+    └── <name>/
+        └── config.md    # project path
 ```
 
 ## Requirements
@@ -349,46 +181,28 @@ path: /absolute/path/to/repo
 - [Bun](https://bun.sh/) 1.3+
 - macOS or Linux
 
-Optional, depending on your model pool:
-
-- `claude` CLI for Claude models
-- `codex` CLI for OpenAI models
-- `gemini` CLI for Gemini models
-- `ollama` for local models
+For multi-model council:
+- Claude CLI subscription OAuth (macOS keychain) or `ANTHROPIC_API_KEY`
+- Codex CLI subscription OAuth or `OPENAI_API_KEY` for GPT models
+- Gemini CLI OAuth for Google models
+- `ollama` running locally for local models
 
 ## Development
 
 ```bash
+bun build src/cli.ts --target bun --outfile hive
+bun build src/mcp-server.ts --target bun --outfile hive-mcp
 bun test
-bun build --compile ./bin/hive.ts --outfile hive
 ```
-
-Environment variables:
-
-- `HIVE_HOME`: override `~/.hive/`
-- `HIVE_FIXED_NOW`: deterministic timestamps in tests
 
 ## Design Values
 
-**Inspectability over abstraction.** `cat BOARD.md` tells you what is
-happening. No query language, no dashboard required.
+**Identity over infrastructure.** The interesting part of AI
+coordination is not the plumbing — it's who the AI is, what it
+remembers, and who else it can ask.
 
-**Durability over performance.** Files survive crashes, are trivially
-backed up, and can be versioned with git.
+**Files over databases.** `cat ~/.hive/SOUL.md` tells you who your AI
+is. No dashboard required.
 
-**Policy over infrastructure.** Routing decisions are configuration, not
-a distributed scheduler.
-
-**Simplicity over features.** Zero npm dependencies. Markdown is the data
-model. Compiles to a single binary.
-
-## Further Reading
-
-- [docs/PHILOSOPHY.md](./docs/PHILOSOPHY.md) — architectural bets and honest positioning
-- [docs/CORE-LOOP-CONSOLIDATION.md](./docs/CORE-LOOP-CONSOLIDATION.md) — watcher-based coordination
-- [docs/PERSISTENT-STEWARD-DESIGN.md](./docs/PERSISTENT-STEWARD-DESIGN.md) — steward runtime
-- [docs/COGNITIVE-RESOURCE-MANAGEMENT.md](./docs/COGNITIVE-RESOURCE-MANAGEMENT.md) — model routing
-- [docs/OODA-EVALUATION-LOOP.md](./docs/OODA-EVALUATION-LOOP.md) — tactical evaluation and strategic reasoning
-- [docs/AUTONOMOUS-REASONING-LOOP.md](./docs/AUTONOMOUS-REASONING-LOOP.md) — autonomous operation design
-- [docs/OVERNIGHT-LAUNCH.md](./docs/OVERNIGHT-LAUNCH.md) — dream command and overnight runs
-- [docs/FINAL-PRD.md](./docs/FINAL-PRD.md) — complete requirements
+**Ride the platform.** Claude Code does orchestration. Don't fight it.
+Add what it's missing.

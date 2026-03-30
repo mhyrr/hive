@@ -1,3 +1,0 @@
-# HIVE Feed
-
-(none yet)
