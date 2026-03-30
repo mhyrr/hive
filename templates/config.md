@@ -14,32 +14,23 @@ steward: steward
 message-check-seconds: 30
 archive-curation: deferred
 
-## Runtime Access
-# Most installs only need the Claude Pi lane.
-# pi-provider-claude: anthropic
-# pi-model-claude: claude-sonnet-4-6
-# pi-auth-anthropic: oauth-only
-# Advanced runtime/Pi routing stays in the README.
+## Model Pool
+- opus: claude, claude-opus-4-6, frontier deep work
+- sonnet: claude, claude-sonnet-4-6, general workhorse
+- haiku: claude, claude-haiku-4-5-20251001, fast triage
+- gpt54: codex, gpt-5.4, OpenAI frontier
+- gpt53: codex, gpt-5.3, OpenAI general
+- gemini: gemini-cli, gemini-2.5-pro, Google frontier
+- gemini-flash: gemini-cli, gemini-2.5-flash, Google fast
+# - qwen: ollama, qwen3:4b, local fast triage
 
-## Cognitive Routing
-# How aggressively the steward should escalate beyond a direct answer.
-# cognitive-bias: balanced        # latency | balanced | quality
-# cognitive-max-fanout: 2         # cap for plural synthesis perspectives
-# cognitive-max-parallel: 2       # concurrent worker cap for disjoint scopes
-# cognitive-window-hours: 24      # rolling usage window for cognition budgets
-# cognitive-budget-tier1-tokens: 50000
-# cognitive-budget-tier2-tokens: 200000
-# cognitive-budget-tier3-tokens: 50000
-# cognitive-budget-warn-ratio: 0.9
+## Provider Auth
+pi-provider-claude: anthropic
+pi-auth-anthropic: oauth-only
+pi-provider-codex: openai-codex
+pi-auth-openai-codex: oauth-only
+pi-provider-gemini: google-gemini-cli
+pi-auth-google-gemini-cli: oauth-only
 
-## Plugins
-# Plugins are disabled by default. Uncomment to enable.
-# hub: enabled                   # Claw Hub — search & install community skills
-
-## Tier-1 Small Models
-# Start here:
-# tier1-local: qwen3:4b
-# tier1-cloud: haiku
-# tier1-fallback: haiku
-# ollama-base-url: http://127.0.0.1:11434
-# Explicit provider/model overrides exist for advanced setups; see the README.
+steward-model: opus
+council-default: opus, gpt54, gemini

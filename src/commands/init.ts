@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
+import { chmod, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { execSync } from "node:child_process";
 
-import { ensureHiveScaffold } from "../lib/paths";
+import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
 
 async function readTemplate(templatePath: string): Promise<string> {
   return Bun.file(join(dirname(import.meta.dir), "..", "templates", templatePath)).text();
@@ -28,6 +30,41 @@ function prompt(question: string): string {
   return buf.toString("utf-8", 0, n).trim();
 }
 
+async function installTemplateDir(templateSubdir: string, destDir: string, executable = false): Promise<number> {
+  await ensureDirectory(destDir);
+
+  const templatesDir = join(dirname(import.meta.dir), "..", "templates", templateSubdir);
+  const entries = await readdir(templatesDir).catch(() => []);
+  let installed = 0;
+
+  for (const entry of entries) {
+    const dest = join(destDir, entry);
+    if (!existsSync(dest)) {
+      const content = await Bun.file(join(templatesDir, entry)).text();
+      await Bun.write(dest, content);
+      if (executable) await chmod(dest, 0o755);
+      installed++;
+    }
+  }
+
+  return installed;
+}
+
+function installCron(scriptPath: string, schedule: string, logPath: string): boolean {
+  try {
+    const cronLine = `${schedule} ${scriptPath} >> ${logPath} 2>&1`;
+    const existing = execSync("crontab -l 2>/dev/null || true", { encoding: "utf-8" });
+
+    if (existing.includes(scriptPath)) return false;
+
+    const updated = existing.trimEnd() + "\n" + cronLine + "\n";
+    execSync(`echo ${JSON.stringify(updated)} | crontab -`, { encoding: "utf-8" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function initCommand(args: string[]): Promise<void> {
   const paths = await ensureHiveScaffold();
 
@@ -51,6 +88,40 @@ export async function initCommand(args: string[]): Promise<void> {
   await writeIfMissing(paths.agents, "AGENTS.md");
   await writeIfMissing(paths.trust, "TRUST.md");
   await writeIfMissing(paths.config, "config.md");
+
+  // Install HIVE agents to ~/.claude/agents/
+  const claudeAgentsDir = join(process.env.HOME || "", ".claude", "agents");
+  const agentsInstalled = await installTemplateDir("agents", claudeAgentsDir);
+  if (agentsInstalled > 0) {
+    console.log(`Installed ${agentsInstalled} HIVE agent(s) to ~/.claude/agents/`);
+  }
+
+  // Install HIVE scripts to ~/.hive/scripts/
+  const scriptsDir = join(paths.home, "scripts");
+  const scriptsInstalled = await installTemplateDir("scripts", scriptsDir, true);
+  if (scriptsInstalled > 0) {
+    console.log(`Installed ${scriptsInstalled} HIVE script(s) to ~/.hive/scripts/`);
+  }
+
+  // Ensure logs directory
+  await ensureDirectory(join(paths.home, "logs"));
+
+  // Install cron jobs
+  const nightlyScript = join(scriptsDir, "nightly.sh");
+  const nightlyLog = join(paths.home, "logs", "nightly.log");
+  if (existsSync(nightlyScript)) {
+    if (installCron(nightlyScript, "0 2 * * *", nightlyLog)) {
+      console.log("Installed nightly extraction cron (2am daily)");
+    }
+  }
+
+  const syncScript = join(scriptsDir, "hive-sync.sh");
+  const syncLog = join(paths.home, "logs", "hive-sync.log");
+  if (existsSync(syncScript)) {
+    if (installCron(syncScript, "30 2 * * *", syncLog)) {
+      console.log("Installed hive-sync cron (2:30am daily)");
+    }
+  }
 
   console.log(`Initialized hive home: ${paths.home}`);
   console.log();

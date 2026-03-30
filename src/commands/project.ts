@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 
 import { UsageError } from "../lib/errors";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
@@ -30,6 +30,51 @@ You have HIVE MCP tools:
 - \`add_ticket_note\` — Add a timestamped note to a ticket.
 `.trim();
 
+const HOOK_SETTINGS = {
+  hooks: {
+    SessionStart: [
+      {
+        matcher: "",
+        hooks: [
+          {
+            type: "command",
+            command: ".claude/hooks/load-identity.sh",
+          },
+        ],
+      },
+    ],
+  },
+};
+
+async function installProjectHook(repoPath: string): Promise<void> {
+  const hooksDir = join(repoPath, ".claude", "hooks");
+  const hookDest = join(hooksDir, "load-identity.sh");
+  const settingsDest = join(repoPath, ".claude", "settings.json");
+
+  await ensureDirectory(hooksDir);
+
+  // Copy hook script from templates
+  const templatePath = join(dirname(import.meta.dir), "..", "templates", "hooks", "load-identity.sh");
+  if (existsSync(templatePath)) {
+    const content = await Bun.file(templatePath).text();
+    await Bun.write(hookDest, content);
+    // Make executable
+    const { chmod } = await import("node:fs/promises");
+    await chmod(hookDest, 0o755);
+  }
+
+  // Write or merge hook settings
+  if (!existsSync(settingsDest)) {
+    await Bun.write(settingsDest, JSON.stringify(HOOK_SETTINGS, null, 2) + "\n");
+  } else {
+    const existing = JSON.parse(await Bun.file(settingsDest).text());
+    if (!existing.hooks?.SessionStart) {
+      existing.hooks = { ...existing.hooks, ...HOOK_SETTINGS.hooks };
+      await Bun.write(settingsDest, JSON.stringify(existing, null, 2) + "\n");
+    }
+  }
+}
+
 export async function projectCommand(args: string[]): Promise<void> {
   const usage = "Usage: hive project add <name> <path>";
 
@@ -58,6 +103,10 @@ export async function projectCommand(args: string[]): Promise<void> {
 
   // Create memory file
   await ensureProjectMemoryFile(paths, projectId);
+
+  // Install SessionStart hook into the project
+  await installProjectHook(repoPath);
+  console.log(`Installed HIVE hooks in ${repoPath}/.claude/`);
 
   // Append HIVE reference to project's CLAUDE.md
   const claudeMdPath = join(repoPath, "CLAUDE.md");
