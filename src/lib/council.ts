@@ -42,6 +42,41 @@ export type CouncilResult = {
 };
 
 // ---------------------------------------------------------------------------
+// Dialectic types
+// ---------------------------------------------------------------------------
+
+export type Camp = {
+  name: string;
+  position: string;
+  brief?: string;
+};
+
+export type DialecticAssignment = {
+  member: CouncilMember;
+  role: "advocate" | "skeptic";
+  camp?: Camp;
+};
+
+export type DialecticPosition = CouncilPosition & {
+  role: "advocate" | "skeptic";
+  campName?: string;
+  roundNumber: number;
+};
+
+export type DialecticRound = {
+  roundNumber: number;
+  positions: DialecticPosition[];
+  durationMs: number;
+};
+
+export type DialecticResult = {
+  question: string;
+  camps: Camp[];
+  rounds: DialecticRound[];
+  totalDurationMs: number;
+};
+
+// ---------------------------------------------------------------------------
 // Ollama direct call (for local models not in pi-ai)
 // ---------------------------------------------------------------------------
 
@@ -270,6 +305,125 @@ export function buildCouncilMemberPrompt(persona: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
+// Dialectic: camp assignment
+// ---------------------------------------------------------------------------
+
+export function assignCamps(
+  members: CouncilMember[],
+  camps: Camp[],
+): DialecticAssignment[] {
+  const assignments: DialecticAssignment[] = [];
+
+  for (let i = 0; i < members.length; i++) {
+    if (i < camps.length) {
+      // First N members get one camp each
+      assignments.push({ member: members[i]!, role: "advocate", camp: camps[i]! });
+    } else if (camps.length > 0 && members.length > camps.length) {
+      // Extra members beyond camp count: first extra becomes skeptic,
+      // rest round-robin back to camps
+      const extraIndex = i - camps.length;
+      if (extraIndex === 0) {
+        assignments.push({ member: members[i]!, role: "skeptic" });
+      } else {
+        const campIndex = (extraIndex - 1) % camps.length;
+        assignments.push({ member: members[i]!, role: "advocate", camp: camps[campIndex]! });
+      }
+    }
+  }
+
+  return assignments;
+}
+
+// ---------------------------------------------------------------------------
+// Dialectic: prompt generation
+// ---------------------------------------------------------------------------
+
+function formatPreviousRoundPositions(positions: DialecticPosition[]): string {
+  const lines: string[] = [];
+
+  for (const pos of positions) {
+    if (pos.error) continue;
+    const label = pos.role === "skeptic"
+      ? `${pos.modelName} (skeptic)`
+      : `${pos.modelName} (arguing for: ${pos.campName})`;
+    lines.push(`### ${label}`);
+    lines.push(pos.text);
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+export function buildDialecticPrompt(
+  assignment: DialecticAssignment,
+  roundNumber: number,
+  previousRounds: DialecticRound[],
+  camps: Camp[],
+): string {
+  const prevPositions = previousRounds.length > 0
+    ? previousRounds[previousRounds.length - 1]!.positions
+    : [];
+  const prevFormatted = formatPreviousRoundPositions(prevPositions);
+
+  if (assignment.role === "skeptic") {
+    if (roundNumber === 1) {
+      return [
+        "You are the skeptic in a structured dialectic. You do not advocate for any position. You pressure-test each one.",
+        "",
+        "For each position being argued, identify:",
+        "- The strongest counterargument they haven't addressed",
+        "- The assumption most likely to be wrong",
+        "- The failure mode they're underweighting",
+        "",
+        `Positions being argued: ${camps.map((c) => `"${c.name}" — ${c.position}`).join("; ")}`,
+      ].join("\n");
+    }
+
+    return [
+      `You are the skeptic in round ${roundNumber} of a structured dialectic.`,
+      "",
+      "Here is what was argued in the previous round:",
+      "",
+      prevFormatted,
+      "Update your analysis. Which positions got stronger? Which got weaker? What are they still not addressing?",
+    ].join("\n");
+  }
+
+  // Advocate
+  const camp = assignment.camp!;
+
+  if (roundNumber === 1) {
+    return [
+      "You are arguing for the following position in a structured dialectic:",
+      "",
+      `Position: ${camp.position}`,
+      camp.brief ? `\nContext for your position: ${camp.brief}` : "",
+      "",
+      "Make the STRONGEST possible case. This is not about balance — it is about rigor.",
+      "Find every supporting argument. Anticipate counterarguments and preempt them.",
+      "",
+      "You are not performing a character. You are doing the intellectual work of finding",
+      "the best version of this argument. If the position has genuine weaknesses,",
+      "acknowledge them briefly and explain why the position is still the best option despite them.",
+    ].join("\n");
+  }
+
+  return [
+    `You are in round ${roundNumber} of a dialectic arguing for: ${camp.position}`,
+    "",
+    "Here is what was argued in the previous round:",
+    "",
+    prevFormatted,
+    "Refine your position. Address the strongest points made against you.",
+    "Concede where denial would undermine your credibility. Sharpen where the other side was weak.",
+    "",
+    roundNumber >= 3
+      ? "This is the final round. Make your strongest case, incorporating everything you've learned from the debate. Where has your position genuinely improved? Where has the other side made points you can't dismiss?"
+      : "Do not repeat your previous arguments verbatim. Evolve them.",
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point: convene the council
 // ---------------------------------------------------------------------------
 
@@ -294,6 +448,138 @@ export async function conveneCouncil(input: {
     positions: results,
     durationMs: Date.now() - startedAt,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point: convene a dialectic
+// ---------------------------------------------------------------------------
+
+const DEFAULT_DIALECTIC_ROUNDS = 3;
+const MIN_DIALECTIC_ROUNDS = 1;
+const MAX_DIALECTIC_ROUNDS = 5;
+
+export function clampRounds(rounds: number | undefined | null): number {
+  const n = rounds ?? DEFAULT_DIALECTIC_ROUNDS;
+  return Math.max(MIN_DIALECTIC_ROUNDS, Math.min(MAX_DIALECTIC_ROUNDS, n));
+}
+
+export async function conveneDialectic(input: {
+  question: string;
+  camps: Camp[];
+  members: CouncilMember[];
+  globalConfig: string;
+  rounds?: number;
+}): Promise<DialecticResult> {
+  const totalStart = Date.now();
+  const numRounds = clampRounds(input.rounds);
+  const assignments = assignCamps(input.members, input.camps);
+  const completedRounds: DialecticRound[] = [];
+
+  for (let round = 1; round <= numRounds; round++) {
+    const roundStart = Date.now();
+
+    // All members argue in parallel within each round
+    const positions = await Promise.all(
+      assignments.map(async (assignment): Promise<DialecticPosition> => {
+        const systemPrompt = buildDialecticPrompt(
+          assignment,
+          round,
+          completedRounds,
+          input.camps,
+        );
+
+        const pos = await callCouncilMember(
+          assignment.member,
+          systemPrompt,
+          input.question,
+          input.globalConfig,
+        );
+
+        return {
+          ...pos,
+          role: assignment.role,
+          campName: assignment.camp?.name,
+          roundNumber: round,
+        };
+      }),
+    );
+
+    completedRounds.push({
+      roundNumber: round,
+      positions,
+      durationMs: Date.now() - roundStart,
+    });
+  }
+
+  return {
+    question: input.question,
+    camps: input.camps,
+    rounds: completedRounds,
+    totalDurationMs: Date.now() - totalStart,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Format dialectic results for steward consumption
+// ---------------------------------------------------------------------------
+
+export function formatDialecticResultsForSteward(result: DialecticResult): string {
+  const lines: string[] = [
+    `## Dialectic Deliberation`,
+    `**Question:** ${result.question}`,
+    `**Camps:** ${result.camps.map((c) => `${c.name} ("${c.position}")`).join(" vs. ")}`,
+    `**Rounds:** ${result.rounds.length} | **Total time:** ${(result.totalDurationMs / 1000).toFixed(1)}s`,
+    "",
+  ];
+
+  for (const round of result.rounds) {
+    lines.push(`### Round ${round.roundNumber} (${(round.durationMs / 1000).toFixed(1)}s)`);
+    lines.push("");
+
+    for (const pos of round.positions) {
+      const roleLabel = pos.role === "skeptic"
+        ? "SKEPTIC"
+        : `ADVOCATE: ${pos.campName}`;
+      const timing = pos.durationMs ? `${(pos.durationMs / 1000).toFixed(1)}s` : "n/a";
+      const tokens =
+        pos.inputTokens || pos.outputTokens
+          ? ` | ${pos.inputTokens ?? "?"}→${pos.outputTokens ?? "?"} tokens`
+          : "";
+
+      lines.push(`#### ${pos.modelName} [${roleLabel}]`);
+      lines.push(`*${timing}${tokens}*`);
+      lines.push("");
+
+      if (pos.error) {
+        lines.push(`**Error:** ${pos.error}`);
+      } else {
+        lines.push(pos.text);
+      }
+
+      lines.push("");
+    }
+
+    lines.push("---");
+    lines.push("");
+  }
+
+  lines.push(
+    "**You are the chair.** You just oversaw a multi-round dialectic. Synthesize:",
+    "",
+    "**Evolution:** How did positions change across rounds? What was conceded? What hardened?",
+    "",
+    "**Strongest surviving argument from each camp:** After multiple rounds of pressure, what still stands?",
+    "",
+    "**Exposed weaknesses:** Where did a position fail to hold up even with its own advocate refining it?",
+    "",
+    "**Emerged insights:** What surfaced that wasn't in the original framing?",
+    "",
+    "**Your judgment:** Given the strongest battle-tested versions of all arguments, what do you recommend — and why?",
+    "",
+    "Do not split the difference. Take a position.",
+  );
+
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
