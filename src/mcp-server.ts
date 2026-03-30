@@ -8,8 +8,11 @@ import { extractConfigValue } from "./lib/config";
 
 import {
   conveneCouncil,
+  conveneDialectic,
   formatCouncilResultsForSteward,
+  formatDialecticResultsForSteward,
   resolveCouncilMembers,
+  clampRounds,
 } from "./lib/council";
 import { parseModelPool } from "./lib/project";
 import { getHivePaths, listProjects, resolveHiveHome } from "./lib/paths";
@@ -60,14 +63,22 @@ server.registerTool("convene_council", {
   description:
     "Send a question to multiple AI models in parallel and collect their independent positions. " +
     "Use for architecture decisions, tradeoff analysis, risk assessment, or any question where " +
-    "multiple perspectives add value. You act as chair — synthesize the results.",
+    "multiple perspectives add value. You act as chair — synthesize the results. " +
+    "Mode 'dialectic' assigns models to argue specific camps across multiple rounds.",
   inputSchema: {
     question: z.string().describe("The question to ask all council members. Be specific and give enough context."),
     models: z.array(z.string()).optional().describe("Model pool names to consult (e.g. ['opus', 'sonnet', 'gpt54']). Defaults to all configured models."),
     context: z.string().optional().describe("Additional context to include in the prompt to each model."),
-    persona: z.enum(["default", "analyst"]).optional().describe("Council member persona. 'analyst' adds structured analytical framing."),
+    persona: z.enum(["default", "analyst"]).optional().describe("Council member persona for standard mode. 'analyst' adds structured analytical framing."),
+    mode: z.enum(["standard", "analyst", "dialectic"]).optional().describe("Council mode. 'standard' for independent analysis, 'analyst' for structured analysis, 'dialectic' for adversarial multi-round debate."),
+    camps: z.array(z.object({
+      name: z.string().describe("Short name for this camp (e.g. 'rewrite', 'refactor')."),
+      position: z.string().describe("The position this camp argues for."),
+      brief: z.string().optional().describe("Optional additional context for this camp's advocate."),
+    })).optional().describe("Required for dialectic mode. The positions to argue. Each model is assigned a camp."),
+    rounds: z.number().optional().describe("Number of dialectic rounds (default 3, min 1, max 5). Models see each other's arguments between rounds."),
   },
-}, async ({ question, models: modelNames, context, persona }) => {
+}, async ({ question, models: modelNames, context, persona, mode, camps, rounds }) => {
   const paths = getHivePaths();
   const globalConfig = await Bun.file(paths.config).text().catch(() => "");
   const pool = parseModelPool(globalConfig);
@@ -86,7 +97,36 @@ server.registerTool("convene_council", {
   }
 
   const fullQuestion = context ? `${context}\n\n${question}` : question;
-  const resolvedPersona = persona === "analyst" ? "analyst" : null;
+
+  // Dialectic mode
+  if (mode === "dialectic") {
+    if (!camps || camps.length < 2) {
+      return {
+        content: [{ type: "text" as const, text: "Dialectic mode requires at least 2 camps." }],
+        isError: true,
+      };
+    }
+
+    const result = await conveneDialectic({
+      question: fullQuestion,
+      camps,
+      members,
+      globalConfig,
+      rounds: clampRounds(rounds),
+    });
+
+    let output = formatDialecticResultsForSteward(result);
+    const allPositions = result.rounds.flatMap((r) => r.positions);
+    const failed = allPositions.filter((p) => p.error);
+    if (failed.length > 0) {
+      output += `\n\n**Failed members:** ${failed.map((p) => `${p.modelName} (round ${p.roundNumber}): ${p.error}`).join("; ")}`;
+    }
+
+    return { content: [{ type: "text" as const, text: output }] };
+  }
+
+  // Standard or analyst mode
+  const resolvedPersona = (mode === "analyst" || persona === "analyst") ? "analyst" : null;
   const result = await conveneCouncil({ question: fullQuestion, members, globalConfig, persona: resolvedPersona });
 
   let output = formatCouncilResultsForSteward(result);
