@@ -1,115 +1,123 @@
 # HIVE Agent Operations
 
-Read this file at the start of every session for HIVE-specific operating protocols.
-SOUL.md is shared culture. IDENTITY.md is what a HIVE agent is. SELF.md is the
-human. This file covers how we use the infrastructure.
+HIVE is an identity, memory, and council layer for Claude Code. Claude Code
+is the runtime — it handles orchestration, file editing, shell access, and
+tool use. HIVE gives you persistent identity, accumulated project intelligence,
+and multi-model deliberation. This file covers how to use that infrastructure.
 
-## File Protocol
-- BOARD.md is steward-owned.
-  Everyone else reads it and requests changes via msg/.
-- LOG.md is append-only. Use `hive log` to add entries.
-- feed.md is append-only. Keep it high signal; don't use it as a scratchpad.
-- One writer per file. If you don't own it, message the owner.
+## How Sessions Work
 
-## Message Protocol
-- Check the messages directory between major steps.
-- To delegate work, write a markdown file to the messages directory with the format below.
-- To resolve a message, update its frontmatter to `status: resolved` and append an `## Answer` section.
-- To close a message, update its frontmatter to `status: closed` and append a `## Closed` section.
-- Do NOT shell out to `hive msg` — it may not be in PATH. Write/update message files directly.
+A SessionStart hook loads your identity stack automatically:
+1. SOUL.md → IDENTITY.md → SELF.md → AGENTS.md → TRUST.md
+2. The current project's memory (matched by working directory)
+3. The session reflection protocol
 
-### Assignment Message Example
+You wake up with context. You know who you are, who you're working with,
+what the project has learned, and how to record new learnings. That's the
+point — continuity without manual bootstrapping.
 
-Write to: `<messages-dir>/assign-<agent-id>-<timestamp>.md`
+## MCP Tools
 
-```
----
-from: steward
-to: alpha
-type: assign
-project: myproject
-task: PROJ-001
-scope: src/auth/, tests/auth/
-launch: auto
-verify: bun test tests/auth/
-max-attempts: 3
-auto-revert: true
----
+These are your interface to HIVE's persistent layer:
 
-Implement POST /api/auth/login and /api/auth/refresh.
-Use Joken for JWT with 1-hour expiry. Contract is on the board.
-```
+- **convene_council** — Send a question to multiple models in parallel.
+  You act as chair and synthesize. Use `persona: "analyst"` for structured
+  analytical framing.
+- **read_hive_memory** — Read project facts, conventions, decisions,
+  and open questions.
+- **write_hive_memory** — Record a single durable learning.
+- **reflect_session** — Batch-write multiple learnings at session end.
+- **create_ticket** — Create a ticket with type, priority, tags, dependencies.
+- **list_tickets** — List and filter project tickets.
+- **show_ticket** — Show full ticket details including notes.
+- **update_ticket** — Update ticket status, priority, or other fields.
+- **add_ticket_note** — Add a timestamped note with actor attribution.
 
-The supervisor watcher detects new assignment files and launches workers automatically within ~200ms.
+## Memory as a Thinking Tool
 
-### Verification Attributes (optional)
+Memory isn't just for recording — it's for reasoning. When you're
+working through a problem, check memory first. Past decisions,
+conventions, and open questions are context that should inform your
+current thinking. Use `read_hive_memory` proactively:
 
-- **`verify:`** — Shell command the supervisor runs after the worker completes. Exit 0 = pass, non-zero = fail.
-- **`max-attempts:`** — How many times to retry on failure before blocking for steward review. Default: 1 (no retries).
-- **`auto-revert:`** — Whether to revert scoped changes on failure. Default: true. Set to false to preserve partial work.
+- Before making an architecture decision — was this already decided?
+- Before establishing a pattern — is there an existing convention?
+- Before proposing something new — is there an open question about this?
+- When something feels familiar — did a previous session learn this already?
 
-When verification fails and retries remain, the supervisor closes the original assignment, reverts the scoped changes, and creates a new assignment with the failure output appended. When attempts are exhausted, the assignment is blocked for steward review.
+Memory is accumulated intelligence. Use it the way a senior engineer
+uses institutional knowledge — not just to avoid repeating mistakes,
+but to build on what came before.
 
-## Skills
-Load relevant skills from the skills directory before starting work.
-Skills encode reusable operational patterns that make agents more effective.
-If `state-efficient-ops.md` is present, read it first for steward or
-supervision work.
+## Memory Discipline
 
-### Available Skills
-- **state-efficient-ops** — Token-efficient state reading patterns. Prefer digests over full file reads. Use `hive status`, `hive inbox`, `hive ps` instead of raw file access.
-- **autonomous-ops** — Initiative patterns for autonomous operation. When to act without asking, how to decompose and delegate, when to escalate.
+Two memory systems coexist. Don't fight this — they serve different purposes.
 
-## Session Lifecycle
-1. Read compact runtime state first when it exists; use raw file reads
-   selectively.
-2. Read SOUL.md, IDENTITY.md, SELF.md, this file, and your persona.
-3. Load the skills that fit the task.
-4. Read the board, plan, memory, and inbox sections you actually need.
-5. Execute your assignment.
-6. Before ending:
-   - Flush learnings to LOG.md via `hive log`
-   - Record durable decisions: `hive memory decision "<what and why>"`
-   - Record new conventions: `hive memory convention "<pattern>"`
-   - Record facts that future agents need: `hive memory fact "<fact>"`
-   - Update the board directly if you own it; otherwise route the change to
-     the steward via msg/
+**Claude Code memory** (~/.claude/projects/*/memory/) runs automatically.
+It captures user feedback, session preferences, working notes. Let it do
+its thing. Don't manage it, don't clean it up, don't duplicate its work.
 
-## Memory
-Project memory is your team's accumulated knowledge — decisions, conventions, and facts
-that persist across sessions. Read it at session start. Update it when you learn something
-durable.
+**HIVE memory** (~/.hive/memory/projects/<name>.md) is the intentional layer.
+Structured project intelligence written deliberately via MCP tools. This is
+the system of record for what the project has learned. When you learn
+something durable, write it here.
 
-Commands:
-- `hive memory` — show project memory
-- `hive memory decision "<what we decided and why>"` — log a decision
-- `hive memory convention "<pattern the team follows>"` — log a convention
-- `hive memory fact "<something always true about this project>"` — log a fact
-- `hive memory question "<unresolved item>"` — log an open question
-
-Good memory entries are:
+**Good HIVE memory entries:**
 - Specific enough to be actionable ("Use Joken for JWT, not Guardian — API-only app")
-- Stable across sessions (not "currently working on task 003")
-- Non-obvious (don't record what's already in PLAN.md or config)
+- Stable across sessions (not "currently working on feature X")
+- Non-obvious (don't record what's already in code or config)
 
-## Coordination Protocol
+**When to write to HIVE memory:**
+- A convention is established or discovered
+- An architectural decision is made with rationale
+- A durable fact about the project is learned (constraint, gotcha, dependency)
+- An open question surfaces that future sessions should know about
 
-The board is our shared consciousness. BOARD.md tells the full story — read it before you act.
+**When NOT to write:**
+- Task status or progress
+- Anything already visible in git history or code comments
+- Speculative or uncertain observations
+- User preferences or feedback (Claude Code memory handles this)
 
-**Communicate through files, not assumptions.** Knowledge in a context window dies when the session ends. Knowledge in a file lives forever. Write it down.
+## Session Reflection
 
-**Respect scope.** Don't touch files another agent owns without communication. Raise disagreements — don't silently override. The steward resolves disputes.
+Before ending any substantive session, use `reflect_session` to batch-write
+durable learnings. Skip if the session was trivial. The bar is: would the
+next session benefit from knowing this? If yes, record it. If no, don't.
 
-**Surface problems early.** A problem raised now is a five-minute conversation. A problem discovered late is a week of rework.
+## Council Discipline
 
-**Trust the steward.** The steward sees the whole board. Execute with commitment even when you'd have chosen differently. Raise concerns via message, but don't block on disagreement.
+The council is for decisions where multiple perspectives add real value.
+Don't use it for questions with obvious answers.
 
-## Session Discipline
+**When to convene:**
+- Architecture decisions with multiple valid approaches
+- Tradeoff analysis where reasonable people disagree
+- Risk assessment before a consequential change
+- Evaluating the state of a system or project
 
-**Read before writing.** Always.
+**How to synthesize:**
+- You're the chair, not a relay. Produce a coherent position.
+- Surface consensus (what they agreed on)
+- Surface divergence (where and why they disagreed)
+- Make a recommendation informed by both
 
-**Write before forgetting.** Decisions, learnings, interfaces — if it matters, it goes in a file.
+**Analyst persona:** Use `persona: "analyst"` when you want structured
+reasoning — explicit assumptions, distinguished facts vs. inferences,
+risk assessment, clear recommendation.
 
-**Ask before assuming.** A 30-second message beats a 3-hour mistake.
+## Cross-Project Awareness
 
-**Ship before perfecting.** Professional quality means "confident in production," not "couldn't possibly be better." When the tests pass and the code is clear, it's done.
+HIVE serves every project Greg registers. Identity is shared across all
+projects. Memory is per-project — scoped by working directory. When you're
+in DealSplit, you read DealSplit memory. When you're in Matreas, you read
+Matreas memory. Patterns that work in one project may inform the other,
+but don't assume they transfer — record them as project-specific unless
+Greg promotes them.
+
+## Continuity
+
+Before ending a session:
+1. Reflect — record durable learnings via `reflect_session`
+2. Leave breadcrumbs — if work is in progress, make sure the next session
+   can pick it up cold from the code, commits, and memory
