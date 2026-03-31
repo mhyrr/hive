@@ -149,6 +149,20 @@ export async function initCommand(args: string[]): Promise<void> {
     console.log("Installed morning briefing (7am daily via launchd)");
   }
 
+  // Symlink hive binary to ~/.local/bin/
+  const localBin = join(process.env.HOME || "", ".local", "bin");
+  const hiveBin = join(localBin, "hive");
+  const hiveSource = join(process.cwd(), "hive-bin");
+  if (existsSync(hiveSource) && !existsSync(hiveBin)) {
+    try {
+      await ensureDirectory(localBin);
+      require("fs").symlinkSync(hiveSource, hiveBin);
+      console.log(`Linked hive to ${hiveBin}`);
+    } catch {
+      console.log(`Note: Could not link hive to ${hiveBin}. Add manually to PATH.`);
+    }
+  }
+
   console.log(`Initialized hive home: ${paths.home}`);
   console.log();
   console.log("Next:");
@@ -156,6 +170,7 @@ export async function initCommand(args: string[]): Promise<void> {
   console.log(`  2. Edit ${paths.identity} — shape who the AI is`);
   console.log(`  3. Configure models in ${paths.config}`);
   console.log(`  4. Register a project: hive project add <name> <path>`);
+  console.log(`  5. Run \`hive\` from anywhere to start a Maya session`);
 
   // Register MCP server in Claude Code config
   const claudeDir = join(process.env.HOME || "", ".claude");

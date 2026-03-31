@@ -5,16 +5,14 @@
 set -euo pipefail
 
 LOG_DIR="$HOME/.hive/logs"
-BRIEFING_DIR="$HOME/.hive/briefings"
-mkdir -p "$LOG_DIR" "$BRIEFING_DIR"
+mkdir -p "$LOG_DIR"
 
 DATE=$(date +%Y-%m-%d)
 echo "=== HIVE morning: $DATE $(date +%H:%M:%S) ==="
 
-CLAUDE="${CLAUDE_BIN:-$(which claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
+HIVE="${HIVE_BIN:-$(which hive 2>/dev/null || echo "$HOME/.local/bin/hive")}"
 
-"$CLAUDE" --agent maya-morning \
-  --print \
+"$HIVE" --agent maya-morning \
   --max-turns 30 \
   "Generate morning briefing for $DATE." \
   2>&1
