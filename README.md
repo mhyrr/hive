@@ -2,12 +2,14 @@
 
 Identity, memory, council, and tickets for Claude Code.
 
-Hive is not an orchestration engine. Claude Code already handles that —
-subagents, tools, loops, file I/O. Hive provides what Claude Code
-doesn't have: **persistent identity** that carries across sessions,
-**accumulated project intelligence** that survives forever, a
-**multi-model council** that gives you multiple perspectives on any
-question, and **per-project ticket tracking** for managing active work.
+Claude Code already handles orchestation with subagents, tools, loops, 
+file I/O. Hive provides what Claude Code doesn't have: 
+
+- **persistent identity** that carries across sessions
+- **accumulated project intelligence** that survives forever
+- **a multi-model council** that gives you multiple perspectives on
+questions
+- **per-project ticket tracking** for managing active work.
 
 ## What Hive Does
 
