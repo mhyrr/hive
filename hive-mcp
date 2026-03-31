@@ -122477,7 +122477,8 @@ function getHivePaths(home = resolveHiveHome()) {
     memoryDir: join2(home, "memory"),
     memoryProjectsDir: join2(home, "memory", "projects"),
     memoryDailyDir: join2(home, "memory", "daily"),
-    projectsDir: join2(home, "projects")
+    projectsDir: join2(home, "projects"),
+    runsDir: join2(home, "runs")
   };
 }
 async function listProjects(projectsDir) {
@@ -123288,12 +123289,40 @@ Could not read identity files.`);
   }
   lines.push(`## Scheduled Jobs`);
   const launchAgentsDir = join5(home, "Library", "LaunchAgents");
-  const hivePlists = ["com.hive.nightly.plist", "com.hive.sync.plist"];
+  const hivePlists = ["com.hive.morning.plist", "com.hive.nightly.plist", "com.hive.sync.plist"];
   for (const plist of hivePlists) {
     const installed = existsSync(join5(launchAgentsDir, plist));
     const label = plist.replace(".plist", "");
     lines.push(`- **${label}**: ${installed ? "installed" : "not installed"}`);
   }
+  const runsDir = join5(paths.home, "runs");
+  try {
+    const runEntries = readdirSync(runsDir, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name.startsWith("RUN-")).map((e) => e.name).sort().reverse().slice(0, 5);
+    const activeRuns = [];
+    for (const runId of runEntries) {
+      try {
+        const status = await Bun.file(join5(runsDir, runId, "status")).text().then((s) => s.trim());
+        const goalRaw = await Bun.file(join5(runsDir, runId, "goal.md")).text();
+        const goalLine = goalRaw.split(`
+`).find((l) => l.trim() && !l.startsWith("#") && !l.startsWith("---"))?.trim().slice(0, 60) ?? "";
+        const icon = status === "running" ? "\uD83D\uDD35" : status === "complete" ? "\u2705" : status === "failed" ? "\u274C" : status === "blocked" ? "\uD83D\uDFE1" : "\u26AA";
+        activeRuns.push(`${icon} ${runId} ${status} \u2014 ${goalLine}`);
+      } catch {}
+    }
+    if (activeRuns.length > 0) {
+      lines.push(`## Dispatch Runs`);
+      for (const r of activeRuns)
+        lines.push(`- ${r}`);
+      lines.push("");
+    }
+  } catch {}
+  const briefingsDir = join5(paths.home, "briefings");
+  try {
+    const briefings = readdirSync(briefingsDir).filter((f) => f.endsWith(".md")).sort();
+    if (briefings.length > 0) {
+      lines.push(`- **Latest briefing**: ${briefings[briefings.length - 1].replace(".md", "")}`);
+    }
+  } catch {}
   const nightlyLog = join5(paths.home, "logs", "nightly.log");
   try {
     const log2 = await Bun.file(nightlyLog).text();
