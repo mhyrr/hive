@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import { UsageError } from "../lib/errors";
 import { ensureDirectory, getHivePaths } from "../lib/paths";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { readTicket, formatTicketDetail } from "../lib/ticket";
+import { assembleIdentity } from "../lib/identity";
 
 async function nextRunId(runsDir: string): Promise<string> {
   const entries = await readdir(runsDir).catch(() => []);
@@ -42,7 +43,7 @@ function resolveProjectFromCwd(paths: ReturnType<typeof getHivePaths>): string |
 
 function findClaude(): string {
   try {
-    return execSync("which claude", { encoding: "utf-8" }).trim();
+    return require("child_process").execSync("which claude", { encoding: "utf-8" }).trim();
   } catch {
     const fallback = join(process.env.HOME || "", ".local", "bin", "claude");
     if (existsSync(fallback)) return fallback;
@@ -123,15 +124,19 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   await Bun.write(join(runDir, "goal.md"), `# Goal\n\n${goalText}\n\n---\nProject: ${projectId}\nDispatched: ${new Date().toISOString()}\n`);
   await Bun.write(join(runDir, "status"), "running");
 
-  // Find claude
+  // Find claude and assemble identity
   const claude = findClaude();
+  const identity = await assembleIdentity();
+  const identityPath = join(runDir, "identity.md");
+  await Bun.write(identityPath, identity);
 
   // Build the message for the executor
   const message = `Your run directory is: ${runDir}\nWrite your plan to: ${runDir}/plan.md\nProject: ${projectId}\n\nGoal:\n${goalText}`;
 
-  // Write a wrapper script that runs claude, then handles cleanup
+  // Write a wrapper script that runs claude with identity, then handles cleanup
   const wrapperPath = join(runDir, "run.sh");
   const logPath = join(runDir, "output.log");
+  const hiveHome = join(process.env.HOME || "", ".hive");
   await Bun.write(wrapperPath, `#!/bin/bash
 set -euo pipefail
 
@@ -141,6 +146,8 @@ unset ANTHROPIC_API_KEY
 cd "${projectPath}"
 
 "${claude}" \\
+  --append-system-prompt-file "${identityPath}" \\
+  --add-dir "${hiveHome}" \\
   --agent maya-executor \\
   --permission-mode bypassPermissions \\
   --worktree \\
