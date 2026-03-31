@@ -129,36 +129,80 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   // Build the message for the executor
   const message = `Your run directory is: ${runDir}\nWrite your plan to: ${runDir}/plan.md\nProject: ${projectId}\n\nGoal:\n${goalText}`;
 
-  // Launch in background
+  // Write a wrapper script that runs claude, then handles cleanup
+  const wrapperPath = join(runDir, "run.sh");
   const logPath = join(runDir, "output.log");
-  const logFd = require("fs").openSync(logPath, "w");
+  await Bun.write(wrapperPath, `#!/bin/bash
+set -euo pipefail
 
-  const child = spawn(claude, [
-    "-p", message,
-    "--agent", "maya-executor",
-    "--max-turns", "100",
-    "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep,mcp__hive__read_hive_memory,mcp__hive__write_hive_memory,mcp__hive__list_tickets,mcp__hive__show_ticket,mcp__hive__update_ticket,mcp__hive__add_ticket_note,mcp__hive__convene_council",
-  ], {
+# Unset API key to force subscription OAuth
+unset ANTHROPIC_API_KEY
+
+cd "${projectPath}"
+
+"${claude}" \\
+  --agent maya-executor \\
+  --permission-mode bypassPermissions \\
+  --worktree \\
+  --name "${runId}" \\
+  "${message.replace(/"/g, '\\"').replace(/\n/g, '\\n')}" \\
+  > "${logPath}" 2>&1
+
+EXIT_CODE=$?
+
+# Determine status from plan file
+if [ -f "${runDir}/plan.md" ]; then
+  UNCHECKED=$(grep -c '\\- \\[ \\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
+  if [ "$UNCHECKED" = "0" ] && [ "$EXIT_CODE" = "0" ]; then
+    echo "complete" > "${runDir}/status"
+  elif grep -q "blocked" "${runDir}/plan.md" 2>/dev/null; then
+    echo "blocked" > "${runDir}/status"
+  else
+    echo "failed" > "${runDir}/status"
+  fi
+else
+  if [ "$EXIT_CODE" = "0" ]; then
+    echo "complete" > "${runDir}/status"
+  else
+    echo "failed" > "${runDir}/status"
+  fi
+fi
+
+# Clean up worktree if claude left one behind
+cd "${projectPath}"
+for wt in .claude/worktrees/*/; do
+  if [ -d "$wt" ]; then
+    # Check if worktree has unmerged changes
+    BRANCH=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ -n "$BRANCH" ]; then
+      DIFF=$(git -C "$wt" diff --stat HEAD 2>/dev/null || echo "")
+      AHEAD=$(git log "main..$BRANCH" --oneline 2>/dev/null | wc -l | tr -d ' ')
+      if [ "$AHEAD" = "0" ] && [ -z "$DIFF" ]; then
+        # No changes — safe to remove
+        git worktree remove "$wt" 2>/dev/null || true
+      fi
+      # If there are commits, leave the worktree for review
+    fi
+  fi
+done
+
+# Notify
+STATUS=$(cat "${runDir}/status")
+osascript -e "display notification \\"Run ${runId} \$STATUS\\" with title \\"HIVE\\" sound name \\"Glass\\"" 2>/dev/null || true
+`);
+  const { chmod } = await import("node:fs/promises");
+  await chmod(wrapperPath, 0o755);
+
+  // Launch the wrapper in background
+  const child = spawn("/bin/bash", [wrapperPath], {
     cwd: projectPath,
     detached: true,
-    stdio: ["ignore", logFd, logFd],
-    env: { ...process.env },
+    stdio: "ignore",
+    env: { ...process.env, ANTHROPIC_API_KEY: undefined },
   });
 
   child.unref();
   await Bun.write(join(runDir, "pid"), String(child.pid));
-
-  // Set up completion handler
-  child.on("exit", async (code) => {
-    require("fs").closeSync(logFd);
-    const status = code === 0 ? "complete" : "failed";
-    require("fs").writeFileSync(join(runDir, "status"), status);
-
-    // macOS notification
-    try {
-      execSync(`osascript -e 'display notification "Run ${runId} ${status}" with title "HIVE" sound name "Glass"'`);
-    } catch { /* notification is best-effort */ }
-  });
 
   console.log(`Dispatched ${runId} (${projectId})`);
   console.log(`  Goal: ${goalText.split("\n")[0]!.slice(0, 80)}`);
