@@ -1,90 +1,10 @@
 import { existsSync } from "node:fs";
-import { resolve, join, dirname } from "node:path";
+import { resolve, join } from "node:path";
 
 import { UsageError } from "../lib/errors";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
 import { normalizeProjectName } from "../lib/project";
 import { ensureProjectMemoryFile } from "../lib/memory";
-
-const HIVE_CLAUDE_MD_BLOCK = (projectId: string) => `
-# HIVE
-
-Read and internalize these files at the start of every session:
-- ~/.hive/SOUL.md — your values and craft standards
-- ~/.hive/IDENTITY.md — who you are
-- ~/.hive/SELF.md — who you're working with
-- ~/.hive/TRUST.md — action classification and approval rules
-- ~/.hive/AGENTS.md — operational doctrine
-
-Read your project memory:
-- ~/.hive/memory/projects/${projectId}.md — accumulated facts, conventions, decisions
-
-You have HIVE MCP tools:
-- \`convene_council\` — Multi-model analysis. Sends a question to multiple AI models in parallel. You act as chair — synthesize agreement and disagreement.
-- \`read_hive_memory\` — Read accumulated project intelligence.
-- \`write_hive_memory\` — Record new facts, conventions, or decisions.
-- \`create_ticket\` — Create a ticket (bug, feature, task, epic, chore) with priority, tags, and dependencies.
-- \`list_tickets\` — List and filter project tickets by status, type, or tags.
-- \`show_ticket\` — Show full ticket details including notes.
-- \`update_ticket\` — Update ticket status, priority, tags, or other fields.
-- \`add_ticket_note\` — Add a timestamped note to a ticket.
-`.trim();
-
-const HOOK_SETTINGS = {
-  hooks: {
-    SessionStart: [
-      {
-        matcher: "",
-        hooks: [
-          {
-            type: "command",
-            command: ".claude/hooks/load-identity.sh",
-          },
-        ],
-      },
-    ],
-    PostCompact: [
-      {
-        matcher: "",
-        hooks: [
-          {
-            type: "command",
-            command: ".claude/hooks/load-identity.sh",
-          },
-        ],
-      },
-    ],
-  },
-};
-
-async function installProjectHook(repoPath: string): Promise<void> {
-  const hooksDir = join(repoPath, ".claude", "hooks");
-  const hookDest = join(hooksDir, "load-identity.sh");
-  const settingsDest = join(repoPath, ".claude", "settings.json");
-
-  await ensureDirectory(hooksDir);
-
-  // Copy hook script from templates
-  const templatePath = join(dirname(import.meta.dir), "..", "templates", "hooks", "load-identity.sh");
-  if (existsSync(templatePath)) {
-    const content = await Bun.file(templatePath).text();
-    await Bun.write(hookDest, content);
-    // Make executable
-    const { chmod } = await import("node:fs/promises");
-    await chmod(hookDest, 0o755);
-  }
-
-  // Write or merge hook settings
-  if (!existsSync(settingsDest)) {
-    await Bun.write(settingsDest, JSON.stringify(HOOK_SETTINGS, null, 2) + "\n");
-  } else {
-    const existing = JSON.parse(await Bun.file(settingsDest).text());
-    if (!existing.hooks?.SessionStart) {
-      existing.hooks = { ...existing.hooks, ...HOOK_SETTINGS.hooks };
-      await Bun.write(settingsDest, JSON.stringify(existing, null, 2) + "\n");
-    }
-  }
-}
 
 export async function projectCommand(args: string[]): Promise<void> {
   const usage = "Usage: hive project add <name> <path>";
@@ -115,27 +35,8 @@ export async function projectCommand(args: string[]): Promise<void> {
   // Create memory file
   await ensureProjectMemoryFile(paths, projectId);
 
-  // Install SessionStart hook into the project
-  await installProjectHook(repoPath);
-  console.log(`Installed HIVE hooks in ${repoPath}/.claude/`);
-
-  // Append HIVE reference to project's CLAUDE.md
-  const claudeMdPath = join(repoPath, "CLAUDE.md");
-  const block = HIVE_CLAUDE_MD_BLOCK(projectId);
-
-  if (existsSync(claudeMdPath)) {
-    const existing = await Bun.file(claudeMdPath).text();
-    if (!existing.includes("# HIVE")) {
-      await Bun.write(claudeMdPath, `${existing.trimEnd()}\n\n${block}\n`);
-      console.log(`Appended HIVE reference to ${claudeMdPath}`);
-    } else {
-      console.log(`HIVE reference already present in ${claudeMdPath}`);
-    }
-  } else {
-    await Bun.write(claudeMdPath, `${block}\n`);
-    console.log(`Created ${claudeMdPath} with HIVE reference`);
-  }
-
   console.log(`Project '${projectId}' registered at ${repoPath}`);
   console.log(`Memory: ~/.hive/memory/projects/${projectId}.md`);
+  console.log();
+  console.log(`Use \`hive\` from ${repoPath} to start a Maya session with project context.`);
 }

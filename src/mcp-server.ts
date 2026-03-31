@@ -379,7 +379,44 @@ server.registerTool("add_ticket_note", {
   return { content: [{ type: "text" as const, text: `Added note to ${ticket.id}: ${ticket.title}` }] };
 });
 
-// Tool 10: Hive status overview
+// Tool 10: Add project
+server.registerTool("add_project", {
+  description:
+    "Register a project with HIVE. Creates project config and memory file in ~/.hive/. " +
+    "After this, the project is included in nightly scans, morning briefings, and memory is scoped to it. " +
+    "Use the current working directory if no path is provided.",
+  inputSchema: {
+    name: z.string().describe("Project name (lowercase, alphanumeric + hyphens)."),
+    path: z.string().optional().describe("Absolute path to the project. Defaults to current working directory."),
+  },
+}, async ({ name, path: projectPath }) => {
+  const { normalizeProjectName } = await import("./lib/project");
+  const { ensureProjectMemoryFile } = await import("./lib/memory");
+
+  const paths = getHivePaths();
+  const projectId = normalizeProjectName(name);
+  const repoPath = projectPath ?? process.cwd();
+
+  if (!existsSync(repoPath)) {
+    return { content: [{ type: "text" as const, text: `Path does not exist: ${repoPath}` }], isError: true };
+  }
+
+  const { ensureDirectory } = await import("./lib/paths");
+  const projectDir = join(paths.projectsDir, projectId);
+  await ensureDirectory(projectDir);
+  await Bun.write(
+    join(projectDir, "config.md"),
+    `---\nname: ${projectId}\npath: ${repoPath}\n---\n`,
+  );
+
+  await ensureProjectMemoryFile(paths, projectId);
+
+  return {
+    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}.md\n\nUse \`hive\` from ${repoPath} to start a Maya session with project context.` }],
+  };
+});
+
+// Tool 11: Hive status overview
 server.registerTool("hive_status", {
   description:
     "Full HIVE system status — identity, projects, tickets, scheduled jobs, recent memory, installed agents. " +

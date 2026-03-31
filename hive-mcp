@@ -25,6 +25,7 @@ var __export = (target, all) => {
       set: (newValue) => all[name] = () => newValue
     });
 };
+var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 var __require = import.meta.require;
 
 // node_modules/ajv/dist/compile/codegen/code.js
@@ -6497,6 +6498,74 @@ var require_dist = __commonJS((exports, module) => {
   module.exports = exports = formatsPlugin;
   Object.defineProperty(exports, "__esModule", { value: true });
   exports.default = formatsPlugin;
+});
+
+// src/lib/errors.ts
+var UsageError;
+var init_errors = __esm(() => {
+  UsageError = class UsageError extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "UsageError";
+    }
+  };
+});
+
+// src/lib/project.ts
+var exports_project = {};
+__export(exports_project, {
+  parseModelPool: () => parseModelPool,
+  normalizeProjectName: () => normalizeProjectName,
+  findModelPoolEntry: () => findModelPoolEntry,
+  extractRepoPath: () => extractRepoPath
+});
+function normalizeProjectName(input) {
+  const normalized = input.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!normalized) {
+    throw new UsageError("Project name must contain letters or numbers.");
+  }
+  return normalized;
+}
+function extractRepoPath(projectConfig) {
+  const match = projectConfig.match(/^path:\s*(.+)$/m);
+  return match ? match[1].trim() : null;
+}
+function parseModelPool(config2) {
+  const normalized = config2.replace(/\r\n/g, `
+`);
+  const sectionHeading = normalized.match(/^## (?:Models|Model Pool)\s*$/m);
+  if (!sectionHeading || sectionHeading.index === undefined) {
+    return [];
+  }
+  const sectionStart = sectionHeading.index + sectionHeading[0].length + 1;
+  const remainder = normalized.slice(sectionStart);
+  const nextHeadingIndex = remainder.search(/^##\s+/m);
+  const section = nextHeadingIndex === -1 ? remainder.trim() : remainder.slice(0, nextHeadingIndex).trim();
+  return section.split(`
+`).map((line) => line.trim()).filter((line) => line.startsWith("- ") && !line.startsWith("- #")).map((line) => line.slice(2)).map((line) => {
+    const colonIndex = line.indexOf(":");
+    if (colonIndex === -1) {
+      return null;
+    }
+    const name = line.slice(0, colonIndex).trim();
+    const rest = line.slice(colonIndex + 1).trim();
+    const parts = rest.split(",").map((part) => part.trim());
+    if (parts.length < 2) {
+      return null;
+    }
+    return {
+      name,
+      runtime: parts[0],
+      model: parts[1],
+      description: parts.slice(2).join(",").trim() || name
+    };
+  }).filter((entry) => Boolean(entry));
+}
+function findModelPoolEntry(config2, modelName) {
+  return parseModelPool(config2).find((entry) => entry.name === modelName) ?? null;
+}
+var init_project = __esm(() => {
+  init_errors();
 });
 
 // node_modules/partial-json/dist/options.js
@@ -59656,6 +59725,260 @@ var require_mistralai = __commonJS((exports) => {
   __exportStar(require_sdk(), exports);
 });
 
+// src/lib/paths.ts
+var exports_paths = {};
+__export(exports_paths, {
+  resolveHiveHome: () => resolveHiveHome,
+  listProjects: () => listProjects,
+  getProjectPaths: () => getProjectPaths,
+  getHivePaths: () => getHivePaths,
+  ensureHiveScaffold: () => ensureHiveScaffold,
+  ensureDirectory: () => ensureDirectory
+});
+import { mkdir, readdir } from "fs/promises";
+import { homedir as homedir2 } from "os";
+import { join as join2 } from "path";
+function resolveHiveHome() {
+  return process.env.HIVE_HOME || join2(homedir2(), ".hive");
+}
+function getHivePaths(home = resolveHiveHome()) {
+  return {
+    home,
+    soul: join2(home, "SOUL.md"),
+    identity: join2(home, "IDENTITY.md"),
+    self: join2(home, "SELF.md"),
+    agents: join2(home, "AGENTS.md"),
+    trust: join2(home, "TRUST.md"),
+    config: join2(home, "config.md"),
+    memoryDir: join2(home, "memory"),
+    memoryProjectsDir: join2(home, "memory", "projects"),
+    memoryDailyDir: join2(home, "memory", "daily"),
+    projectsDir: join2(home, "projects"),
+    runsDir: join2(home, "runs")
+  };
+}
+function getProjectPaths(paths, projectId) {
+  const root = join2(paths.projectsDir, projectId);
+  return {
+    root,
+    config: join2(root, "config.md")
+  };
+}
+async function listProjects(projectsDir) {
+  const entries = await readdir(projectsDir, { withFileTypes: true }).catch(() => []);
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+}
+async function ensureHiveScaffold(home = resolveHiveHome()) {
+  const paths = getHivePaths(home);
+  await mkdir(paths.memoryProjectsDir, { recursive: true });
+  await mkdir(paths.memoryDailyDir, { recursive: true });
+  await mkdir(paths.projectsDir, { recursive: true });
+  await mkdir(paths.runsDir, { recursive: true });
+  return paths;
+}
+async function ensureDirectory(path4) {
+  await mkdir(path4, { recursive: true });
+}
+var init_paths = () => {};
+
+// src/lib/time.ts
+function resolveNow() {
+  const fixedNow = process.env.HIVE_FIXED_NOW;
+  if (!fixedNow) {
+    return new Date;
+  }
+  const date4 = new Date(fixedNow);
+  if (Number.isNaN(date4.getTime())) {
+    throw new Error(`Invalid HIVE_FIXED_NOW value: ${fixedNow}`);
+  }
+  return date4;
+}
+function now() {
+  return resolveNow();
+}
+function toIsoTimestamp(date4 = now()) {
+  return date4.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+// src/lib/memory.ts
+var exports_memory = {};
+__export(exports_memory, {
+  validateMemoryStructure: () => validateMemoryStructure,
+  validateMemoryEntry: () => validateMemoryEntry,
+  readProjectMemorySnapshot: () => readProjectMemorySnapshot,
+  readProjectMemorySection: () => readProjectMemorySection,
+  memoryFilePath: () => memoryFilePath,
+  ensureProjectMemoryFile: () => ensureProjectMemoryFile,
+  appendToSection: () => appendToSection,
+  appendProjectMemory: () => appendProjectMemory
+});
+import { join as join3 } from "path";
+function validateMemoryEntry(text) {
+  let cleaned = text.trim();
+  if (!cleaned)
+    throw new Error("Memory entry cannot be empty.");
+  if (cleaned.startsWith("- "))
+    cleaned = cleaned.slice(2).trim();
+  if (cleaned.includes("## ")) {
+    throw new Error("Memory entry cannot contain markdown headers (## ).");
+  }
+  if (cleaned.length > MAX_ENTRY_LENGTH) {
+    throw new Error(`Memory entry exceeds ${MAX_ENTRY_LENGTH} characters (got ${cleaned.length}).`);
+  }
+  cleaned = cleaned.replace(/\n+/g, " ").trim();
+  return cleaned;
+}
+function validateMemoryStructure(content) {
+  if (!content.startsWith("# Project Memory:")) {
+    return { valid: false, error: "File must start with '# Project Memory:'" };
+  }
+  const positions = [];
+  for (const header of expectedSectionOrder) {
+    const idx = content.indexOf(header);
+    if (idx === -1) {
+      return { valid: false, error: `Missing section: ${header}` };
+    }
+    if (content.indexOf(header, idx + header.length) !== -1) {
+      return { valid: false, error: `Duplicate section: ${header}` };
+    }
+    positions.push(idx);
+  }
+  for (let i = 1;i < positions.length; i++) {
+    if (positions[i] <= positions[i - 1]) {
+      return { valid: false, error: "Sections are out of expected order." };
+    }
+  }
+  return { valid: true };
+}
+function enqueue(path4, fn) {
+  const prev = writeQueue.get(path4) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  writeQueue.set(path4, next);
+  return next;
+}
+function extractSectionBody(content, header) {
+  const idx = content.indexOf(header);
+  if (idx === -1)
+    return "";
+  const after = idx + header.length;
+  const next = content.slice(after).search(/\n## /);
+  return content.slice(after, next === -1 ? content.length : after + next).trim();
+}
+function extractBullets(content, header) {
+  const body = extractSectionBody(content, header);
+  if (!body || body.includes("(none yet)"))
+    return [];
+  return body.split(`
+`).map((l) => l.trim()).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim()).filter(Boolean);
+}
+function extractDecisions(content) {
+  return extractBullets(content, sectionHeaders.decisions).map((entry) => {
+    const m = entry.match(/^\[([^\]]+)\]\s+(.*)$/);
+    return { ts: m?.[1]?.trim() ?? null, text: m?.[2]?.trim() ?? entry };
+  });
+}
+function appendToSection(content, header, entry) {
+  const idx = content.indexOf(header);
+  if (idx === -1)
+    return `${content.trimEnd()}
+
+${header}
+${entry}
+`;
+  const after = idx + header.length;
+  const next = content.slice(after).search(/\n## /);
+  const end = next === -1 ? content.length : after + next;
+  const body = content.slice(after, end);
+  const updated = body.includes("(none yet)") ? body.replace("(none yet)", entry) : `${body.trimEnd()}
+${entry}`;
+  return `${content.slice(0, after)}${updated.trimEnd()}
+${content.slice(end)}`;
+}
+function memoryFilePath(paths, projectId) {
+  return join3(paths.memoryProjectsDir, `${projectId}.md`);
+}
+async function ensureProjectMemoryFile(paths, projectId) {
+  const path4 = memoryFilePath(paths, projectId);
+  const file = Bun.file(path4);
+  if (!await file.exists()) {
+    await ensureDirectory(paths.memoryProjectsDir);
+    await Bun.write(path4, `# Project Memory: ${projectId}
+
+${sectionHeaders.facts}
+(none yet)
+
+${sectionHeaders.conventions}
+(none yet)
+
+${sectionHeaders.decisions}
+(none yet)
+
+${sectionHeaders.questions}
+(none yet)
+`);
+  }
+  return path4;
+}
+async function readProjectMemorySnapshot(paths, projectId) {
+  const path4 = await ensureProjectMemoryFile(paths, projectId);
+  const raw = await Bun.file(path4).text();
+  return {
+    raw,
+    facts: extractBullets(raw, sectionHeaders.facts),
+    conventions: extractBullets(raw, sectionHeaders.conventions),
+    decisions: extractDecisions(raw),
+    questions: extractBullets(raw, sectionHeaders.questions)
+  };
+}
+async function appendProjectMemory(paths, projectId, section, text) {
+  const cleaned = validateMemoryEntry(text);
+  const filePath = await ensureProjectMemoryFile(paths, projectId);
+  return enqueue(filePath, async () => {
+    const content = await Bun.file(filePath).text();
+    const header = sectionToHeader[section];
+    const entry = section === "decision" ? `- [${toIsoTimestamp().slice(0, 10)}] ${cleaned}` : `- ${cleaned}`;
+    const updated = appendToSection(content, header, entry);
+    const check = validateMemoryStructure(updated);
+    if (!check.valid) {
+      throw new Error(`Memory write would corrupt file: ${check.error}`);
+    }
+    await Bun.write(filePath, updated);
+  });
+}
+function readProjectMemorySection(snapshot, section) {
+  if (section === "all")
+    return snapshot.raw;
+  if (section === "decisions") {
+    return snapshot.decisions.map((d) => `- ${d.ts ? `[${d.ts}] ` : ""}${d.text}`).join(`
+`) || "(none yet)";
+  }
+  return snapshot[section].map((e) => `- ${e}`).join(`
+`) || "(none yet)";
+}
+var sectionHeaders, sectionToHeader, MAX_ENTRY_LENGTH = 1000, expectedSectionOrder, writeQueue;
+var init_memory = __esm(() => {
+  init_paths();
+  sectionHeaders = {
+    facts: "## Durable Facts",
+    conventions: "## Conventions",
+    decisions: "## Decisions",
+    questions: "## Open Questions"
+  };
+  sectionToHeader = {
+    fact: sectionHeaders.facts,
+    convention: sectionHeaders.conventions,
+    decision: sectionHeaders.decisions,
+    question: sectionHeaders.questions
+  };
+  expectedSectionOrder = [
+    sectionHeaders.facts,
+    sectionHeaders.conventions,
+    sectionHeaders.decisions,
+    sectionHeaders.questions
+  ];
+  writeQueue = new Map;
+});
+
 // node_modules/@modelcontextprotocol/sdk/node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
@@ -77014,38 +77337,8 @@ function extractConfigValueAlias(input, keys) {
   return null;
 }
 
-// src/lib/project.ts
-function parseModelPool(config2) {
-  const normalized = config2.replace(/\r\n/g, `
-`);
-  const sectionHeading = normalized.match(/^## (?:Models|Model Pool)\s*$/m);
-  if (!sectionHeading || sectionHeading.index === undefined) {
-    return [];
-  }
-  const sectionStart = sectionHeading.index + sectionHeading[0].length + 1;
-  const remainder = normalized.slice(sectionStart);
-  const nextHeadingIndex = remainder.search(/^##\s+/m);
-  const section = nextHeadingIndex === -1 ? remainder.trim() : remainder.slice(0, nextHeadingIndex).trim();
-  return section.split(`
-`).map((line) => line.trim()).filter((line) => line.startsWith("- ") && !line.startsWith("- #")).map((line) => line.slice(2)).map((line) => {
-    const colonIndex = line.indexOf(":");
-    if (colonIndex === -1) {
-      return null;
-    }
-    const name = line.slice(0, colonIndex).trim();
-    const rest = line.slice(colonIndex + 1).trim();
-    const parts = rest.split(",").map((part) => part.trim());
-    if (parts.length < 2) {
-      return null;
-    }
-    return {
-      name,
-      runtime: parts[0],
-      model: parts[1],
-      description: parts.slice(2).join(",").trim() || name
-    };
-  }).filter((entry) => Boolean(entry));
-}
+// src/lib/council.ts
+init_project();
 
 // node_modules/@mariozechner/pi-ai/dist/api-registry.js
 var apiProviderRegistry = new Map;
@@ -122458,222 +122751,10 @@ function formatCouncilResultsForSteward(result) {
 `);
 }
 
-// src/lib/paths.ts
-import { mkdir, readdir } from "fs/promises";
-import { homedir as homedir2 } from "os";
-import { join as join2 } from "path";
-function resolveHiveHome() {
-  return process.env.HIVE_HOME || join2(homedir2(), ".hive");
-}
-function getHivePaths(home = resolveHiveHome()) {
-  return {
-    home,
-    soul: join2(home, "SOUL.md"),
-    identity: join2(home, "IDENTITY.md"),
-    self: join2(home, "SELF.md"),
-    agents: join2(home, "AGENTS.md"),
-    trust: join2(home, "TRUST.md"),
-    config: join2(home, "config.md"),
-    memoryDir: join2(home, "memory"),
-    memoryProjectsDir: join2(home, "memory", "projects"),
-    memoryDailyDir: join2(home, "memory", "daily"),
-    projectsDir: join2(home, "projects"),
-    runsDir: join2(home, "runs")
-  };
-}
-async function listProjects(projectsDir) {
-  const entries = await readdir(projectsDir, { withFileTypes: true }).catch(() => []);
-  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
-}
-async function ensureDirectory(path4) {
-  await mkdir(path4, { recursive: true });
-}
-
-// src/lib/memory.ts
-import { join as join3 } from "path";
-
-// src/lib/time.ts
-function resolveNow() {
-  const fixedNow = process.env.HIVE_FIXED_NOW;
-  if (!fixedNow) {
-    return new Date;
-  }
-  const date4 = new Date(fixedNow);
-  if (Number.isNaN(date4.getTime())) {
-    throw new Error(`Invalid HIVE_FIXED_NOW value: ${fixedNow}`);
-  }
-  return date4;
-}
-function now() {
-  return resolveNow();
-}
-function toIsoTimestamp(date4 = now()) {
-  return date4.toISOString().replace(/\.\d{3}Z$/, "Z");
-}
-
-// src/lib/memory.ts
-var sectionHeaders = {
-  facts: "## Durable Facts",
-  conventions: "## Conventions",
-  decisions: "## Decisions",
-  questions: "## Open Questions"
-};
-var sectionToHeader = {
-  fact: sectionHeaders.facts,
-  convention: sectionHeaders.conventions,
-  decision: sectionHeaders.decisions,
-  question: sectionHeaders.questions
-};
-var MAX_ENTRY_LENGTH = 1000;
-var expectedSectionOrder = [
-  sectionHeaders.facts,
-  sectionHeaders.conventions,
-  sectionHeaders.decisions,
-  sectionHeaders.questions
-];
-function validateMemoryEntry(text) {
-  let cleaned = text.trim();
-  if (!cleaned)
-    throw new Error("Memory entry cannot be empty.");
-  if (cleaned.startsWith("- "))
-    cleaned = cleaned.slice(2).trim();
-  if (cleaned.includes("## ")) {
-    throw new Error("Memory entry cannot contain markdown headers (## ).");
-  }
-  if (cleaned.length > MAX_ENTRY_LENGTH) {
-    throw new Error(`Memory entry exceeds ${MAX_ENTRY_LENGTH} characters (got ${cleaned.length}).`);
-  }
-  cleaned = cleaned.replace(/\n+/g, " ").trim();
-  return cleaned;
-}
-function validateMemoryStructure(content) {
-  if (!content.startsWith("# Project Memory:")) {
-    return { valid: false, error: "File must start with '# Project Memory:'" };
-  }
-  const positions = [];
-  for (const header of expectedSectionOrder) {
-    const idx = content.indexOf(header);
-    if (idx === -1) {
-      return { valid: false, error: `Missing section: ${header}` };
-    }
-    if (content.indexOf(header, idx + header.length) !== -1) {
-      return { valid: false, error: `Duplicate section: ${header}` };
-    }
-    positions.push(idx);
-  }
-  for (let i = 1;i < positions.length; i++) {
-    if (positions[i] <= positions[i - 1]) {
-      return { valid: false, error: "Sections are out of expected order." };
-    }
-  }
-  return { valid: true };
-}
-var writeQueue = new Map;
-function enqueue(path4, fn) {
-  const prev = writeQueue.get(path4) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  writeQueue.set(path4, next);
-  return next;
-}
-function extractSectionBody(content, header) {
-  const idx = content.indexOf(header);
-  if (idx === -1)
-    return "";
-  const after = idx + header.length;
-  const next = content.slice(after).search(/\n## /);
-  return content.slice(after, next === -1 ? content.length : after + next).trim();
-}
-function extractBullets(content, header) {
-  const body = extractSectionBody(content, header);
-  if (!body || body.includes("(none yet)"))
-    return [];
-  return body.split(`
-`).map((l) => l.trim()).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim()).filter(Boolean);
-}
-function extractDecisions(content) {
-  return extractBullets(content, sectionHeaders.decisions).map((entry) => {
-    const m = entry.match(/^\[([^\]]+)\]\s+(.*)$/);
-    return { ts: m?.[1]?.trim() ?? null, text: m?.[2]?.trim() ?? entry };
-  });
-}
-function appendToSection(content, header, entry) {
-  const idx = content.indexOf(header);
-  if (idx === -1)
-    return `${content.trimEnd()}
-
-${header}
-${entry}
-`;
-  const after = idx + header.length;
-  const next = content.slice(after).search(/\n## /);
-  const end = next === -1 ? content.length : after + next;
-  const body = content.slice(after, end);
-  const updated = body.includes("(none yet)") ? body.replace("(none yet)", entry) : `${body.trimEnd()}
-${entry}`;
-  return `${content.slice(0, after)}${updated.trimEnd()}
-${content.slice(end)}`;
-}
-function memoryFilePath(paths, projectId) {
-  return join3(paths.memoryProjectsDir, `${projectId}.md`);
-}
-async function ensureProjectMemoryFile(paths, projectId) {
-  const path4 = memoryFilePath(paths, projectId);
-  const file = Bun.file(path4);
-  if (!await file.exists()) {
-    await ensureDirectory(paths.memoryProjectsDir);
-    await Bun.write(path4, `# Project Memory: ${projectId}
-
-${sectionHeaders.facts}
-(none yet)
-
-${sectionHeaders.conventions}
-(none yet)
-
-${sectionHeaders.decisions}
-(none yet)
-
-${sectionHeaders.questions}
-(none yet)
-`);
-  }
-  return path4;
-}
-async function readProjectMemorySnapshot(paths, projectId) {
-  const path4 = await ensureProjectMemoryFile(paths, projectId);
-  const raw = await Bun.file(path4).text();
-  return {
-    raw,
-    facts: extractBullets(raw, sectionHeaders.facts),
-    conventions: extractBullets(raw, sectionHeaders.conventions),
-    decisions: extractDecisions(raw),
-    questions: extractBullets(raw, sectionHeaders.questions)
-  };
-}
-async function appendProjectMemory(paths, projectId, section, text) {
-  const cleaned = validateMemoryEntry(text);
-  const filePath = await ensureProjectMemoryFile(paths, projectId);
-  return enqueue(filePath, async () => {
-    const content = await Bun.file(filePath).text();
-    const header = sectionToHeader[section];
-    const entry = section === "decision" ? `- [${toIsoTimestamp().slice(0, 10)}] ${cleaned}` : `- ${cleaned}`;
-    const updated = appendToSection(content, header, entry);
-    const check = validateMemoryStructure(updated);
-    if (!check.valid) {
-      throw new Error(`Memory write would corrupt file: ${check.error}`);
-    }
-    await Bun.write(filePath, updated);
-  });
-}
-function readProjectMemorySection(snapshot, section) {
-  if (section === "all")
-    return snapshot.raw;
-  if (section === "decisions") {
-    return snapshot.decisions.map((d) => `- ${d.ts ? `[${d.ts}] ` : ""}${d.text}`).join(`
-`) || "(none yet)";
-  }
-  return snapshot[section].map((e) => `- ${e}`).join(`
-`) || "(none yet)";
-}
+// src/mcp-server.ts
+init_project();
+init_paths();
+init_memory();
 
 // src/lib/frontmatter.ts
 function parseFrontmatter(input) {
@@ -123220,6 +123301,37 @@ server.registerTool("add_ticket_note", {
     return { content: [{ type: "text", text: `Ticket not found: ${id}` }], isError: true };
   }
   return { content: [{ type: "text", text: `Added note to ${ticket.id}: ${ticket.title}` }] };
+});
+server.registerTool("add_project", {
+  description: "Register a project with HIVE. Creates project config and memory file in ~/.hive/. " + "After this, the project is included in nightly scans, morning briefings, and memory is scoped to it. " + "Use the current working directory if no path is provided.",
+  inputSchema: {
+    name: exports_external.string().describe("Project name (lowercase, alphanumeric + hyphens)."),
+    path: exports_external.string().optional().describe("Absolute path to the project. Defaults to current working directory.")
+  }
+}, async ({ name, path: projectPath }) => {
+  const { normalizeProjectName: normalizeProjectName2 } = await Promise.resolve().then(() => (init_project(), exports_project));
+  const { ensureProjectMemoryFile: ensureProjectMemoryFile2 } = await Promise.resolve().then(() => (init_memory(), exports_memory));
+  const paths = getHivePaths();
+  const projectId = normalizeProjectName2(name);
+  const repoPath = projectPath ?? process.cwd();
+  if (!existsSync(repoPath)) {
+    return { content: [{ type: "text", text: `Path does not exist: ${repoPath}` }], isError: true };
+  }
+  const { ensureDirectory: ensureDirectory2 } = await Promise.resolve().then(() => (init_paths(), exports_paths));
+  const projectDir = join5(paths.projectsDir, projectId);
+  await ensureDirectory2(projectDir);
+  await Bun.write(join5(projectDir, "config.md"), `---
+name: ${projectId}
+path: ${repoPath}
+---
+`);
+  await ensureProjectMemoryFile2(paths, projectId);
+  return {
+    content: [{ type: "text", text: `Registered project '${projectId}' at ${repoPath}
+Memory: ~/.hive/memory/projects/${projectId}.md
+
+Use \`hive\` from ${repoPath} to start a Maya session with project context.` }]
+  };
 });
 server.registerTool("hive_status", {
   description: "Full HIVE system status \u2014 identity, projects, tickets, scheduled jobs, recent memory, installed agents. " + "Use as a dashboard to understand the current state of the hive.",
