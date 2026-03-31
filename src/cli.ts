@@ -1,7 +1,9 @@
 import { councilCommand } from "./commands/council";
+import { dispatchCommand } from "./commands/dispatch";
 import { initCommand } from "./commands/init";
 import { memoryCommand } from "./commands/memory";
 import { projectCommand } from "./commands/project";
+import { psCommand } from "./commands/ps";
 import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
 
@@ -11,6 +13,8 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   council: councilCommand,
   memory: memoryCommand,
   ticket: ticketCommand,
+  dispatch: dispatchCommand,
+  ps: psCommand,
 };
 
 const usage = `Usage: hive <command> [args]
@@ -22,7 +26,10 @@ Commands:
   memory [view|fact|convention|decision|question] [text]
                              View or add project memory
   ticket [create|list|show|start|close|reopen|note|ready|blocked]
-                             Project ticket tracker`;
+                             Project ticket tracker
+  dispatch "<goal>" [--project <name>] [--ticket <id>] [--plan <path>]
+                             Dispatch autonomous goal execution
+  ps                         Show active and recent dispatch runs`;
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);

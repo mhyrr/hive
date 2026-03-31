@@ -461,12 +461,49 @@ server.registerTool("hive_status", {
   // Scheduled jobs
   lines.push(`## Scheduled Jobs`);
   const launchAgentsDir = join(home, "Library", "LaunchAgents");
-  const hivePlists = ["com.hive.nightly.plist", "com.hive.sync.plist"];
+  const hivePlists = ["com.hive.morning.plist", "com.hive.nightly.plist", "com.hive.sync.plist"];
   for (const plist of hivePlists) {
     const installed = existsSync(join(launchAgentsDir, plist));
     const label = plist.replace(".plist", "");
     lines.push(`- **${label}**: ${installed ? "installed" : "not installed"}`);
   }
+
+  // Active runs
+  const runsDir = join(paths.home, "runs");
+  try {
+    const runEntries = readdirSync(runsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith("RUN-"))
+      .map((e) => e.name)
+      .sort()
+      .reverse()
+      .slice(0, 5);
+
+    const activeRuns: string[] = [];
+    for (const runId of runEntries) {
+      try {
+        const status = await Bun.file(join(runsDir, runId, "status")).text().then((s) => s.trim());
+        const goalRaw = await Bun.file(join(runsDir, runId, "goal.md")).text();
+        const goalLine = goalRaw.split("\n").find((l) => l.trim() && !l.startsWith("#") && !l.startsWith("---"))?.trim().slice(0, 60) ?? "";
+        const icon = status === "running" ? "🔵" : status === "complete" ? "✅" : status === "failed" ? "❌" : status === "blocked" ? "🟡" : "⚪";
+        activeRuns.push(`${icon} ${runId} ${status} — ${goalLine}`);
+      } catch { /* skip */ }
+    }
+
+    if (activeRuns.length > 0) {
+      lines.push(`## Dispatch Runs`);
+      for (const r of activeRuns) lines.push(`- ${r}`);
+      lines.push("");
+    }
+  } catch { /* no runs dir yet */ }
+
+  // Latest briefing
+  const briefingsDir = join(paths.home, "briefings");
+  try {
+    const briefings = readdirSync(briefingsDir).filter((f) => f.endsWith(".md")).sort();
+    if (briefings.length > 0) {
+      lines.push(`- **Latest briefing**: ${briefings[briefings.length - 1]!.replace(".md", "")}`);
+    }
+  } catch { /* no briefings yet */ }
 
   // Last nightly run
   const nightlyLog = join(paths.home, "logs", "nightly.log");

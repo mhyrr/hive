@@ -145,6 +145,9 @@ export async function initCommand(args: string[]): Promise<void> {
   if (installLaunchAgent("com.hive.sync.plist")) {
     console.log("Installed hive-sync (2:30am daily via launchd)");
   }
+  if (installLaunchAgent("com.hive.morning.plist")) {
+    console.log("Installed morning briefing (7am daily via launchd)");
+  }
 
   console.log(`Initialized hive home: ${paths.home}`);
   console.log();

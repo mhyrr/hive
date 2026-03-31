@@ -43,6 +43,17 @@ const HOOK_SETTINGS = {
         ],
       },
     ],
+    PostCompact: [
+      {
+        matcher: "",
+        hooks: [
+          {
+            type: "command",
+            command: ".claude/hooks/load-identity.sh",
+          },
+        ],
+      },
+    ],
   },
 };
 

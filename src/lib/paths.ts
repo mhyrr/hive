@@ -14,6 +14,7 @@ export type HivePaths = {
   memoryProjectsDir: string;
   memoryDailyDir: string;
   projectsDir: string;
+  runsDir: string;
 };
 
 export type ProjectPaths = {
@@ -38,6 +39,7 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     memoryProjectsDir: join(home, "memory", "projects"),
     memoryDailyDir: join(home, "memory", "daily"),
     projectsDir: join(home, "projects"),
+    runsDir: join(home, "runs"),
   };
 }
 
@@ -64,6 +66,7 @@ export async function ensureHiveScaffold(
   await mkdir(paths.memoryProjectsDir, { recursive: true });
   await mkdir(paths.memoryDailyDir, { recursive: true });
   await mkdir(paths.projectsDir, { recursive: true });
+  await mkdir(paths.runsDir, { recursive: true });
 
   return paths;
 }

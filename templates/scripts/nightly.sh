@@ -15,7 +15,7 @@ CLAUDE="${CLAUDE_BIN:-$(which claude 2>/dev/null || echo "$HOME/.local/bin/claud
 "$CLAUDE" --agent maya-nightly \
   --print \
   --max-turns 40 \
-  --message "Run nightly extraction for $DATE." \
+  "Run nightly extraction for $DATE." \
   2>&1
 
 echo "=== HIVE nightly complete: $(date +%H:%M:%S) ==="
