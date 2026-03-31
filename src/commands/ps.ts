@@ -51,8 +51,28 @@ function readRunInfo(runsDir: string, runId: string): RunInfo | null {
       alive = isProcessAlive(pid);
     }
 
-    // If status says running but process is dead, it crashed
-    const effectiveStatus = status === "running" && !alive ? "crashed" : status;
+    // If status says running but process is dead, figure out what happened
+    let effectiveStatus = status;
+    if (status === "running" && !alive) {
+      // Check plan for completion
+      const planPath = join(runDir, "plan.md");
+      if (existsSync(planPath)) {
+        const plan = readFileSync(planPath, "utf-8");
+        const unchecked = (plan.match(/\[ \]/g) || []).length;
+        const checked = (plan.match(/\[x\]/gi) || []).length;
+        if (checked > 0 && unchecked === 0) {
+          effectiveStatus = "complete";
+        } else if (plan.toLowerCase().includes("blocked")) {
+          effectiveStatus = "blocked";
+        } else {
+          effectiveStatus = "crashed";
+        }
+      } else {
+        effectiveStatus = "crashed";
+      }
+      // Fix the status file for next time
+      require("fs").writeFileSync(join(runDir, "status"), effectiveStatus);
+    }
 
     return { id: runId, status: effectiveStatus, goal, project, dispatched, pid, alive };
   } catch {

@@ -13,4 +13,10 @@ Write your plan to the run directory path given in the goal message. Keep it upd
 
 Use the council (convene_council) when you face a real fork in the road, not for validation. Use HIVE memory for context and to record what you learn. Update tickets if the goal references them.
 
-Know when to stop. All steps done and verified = done. Blocked on something you can't resolve (credentials, human decision, fundamental ambiguity) = write what's wrong in the plan and stop. Don't loop on the same failure twice.
+Work isn't done until it lands on main. You're in a worktree — your commits are on a branch. Before you mark the plan complete:
+- Merge your branch into main: `git checkout main && git merge <your-branch>`
+- If merge conflicts, try to resolve them. If you can't, note it in the plan and stop.
+- Remove the worktree: `git worktree remove <worktree-path>`
+- If the work is risky or you're unsure, leave the branch and note "needs human review" in the plan instead of merging.
+
+Know when to stop. All steps done, merged, and verified = done. Blocked on something you can't resolve (credentials, human decision, merge conflict, fundamental ambiguity) = write what's wrong in the plan and stop. Don't loop on the same failure twice.
