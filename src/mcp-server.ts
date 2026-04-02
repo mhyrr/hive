@@ -24,6 +24,11 @@ import {
 } from "./lib/memory";
 import { parseFrontmatter } from "./lib/frontmatter";
 import {
+  readHeartbeatConfig,
+  writeHeartbeatConfig,
+  defaultConfig,
+} from "./lib/heartbeat";
+import {
   createTicket,
   readTicket,
   updateTicket,
@@ -633,6 +638,76 @@ server.registerTool("hive_status", {
 
   return { content: [{ type: "text" as const, text: lines.join("\n") }] };
 });
+
+// Heartbeat management
+server.tool(
+  "manage_heartbeat",
+  "Enable or disable the periodic heartbeat for a project. The heartbeat wakes up every N minutes, checks project health (git status, tickets, dispatch runs), and surfaces anything that needs attention.",
+  {
+    action: z.enum(["enable", "disable", "status"]).describe("Enable, disable, or check heartbeat status"),
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    interval_minutes: z.number().optional().describe("Heartbeat interval in minutes (default 30, min 5). Only used with 'enable'."),
+  },
+  async ({ action, project, interval_minutes }) => {
+    const paths = getHivePaths();
+    const projectId = project || resolveProjectFromCwd(paths);
+    if (!projectId) {
+      return { content: [{ type: "text" as const, text: "No project found. Specify a project name." }] };
+    }
+
+    const projectDir = join(paths.projectsDir, projectId);
+    if (!existsSync(projectDir)) {
+      return { content: [{ type: "text" as const, text: `Project not found: ${projectId}` }] };
+    }
+
+    if (action === "status") {
+      const config = readHeartbeatConfig(projectDir);
+      if (!config) {
+        return { content: [{ type: "text" as const, text: `No heartbeat configured for ${projectId}. Use action "enable" to set one up.` }] };
+      }
+      const enabled = config.enabled ? "enabled" : "disabled";
+      const lastTick = config.lastTick
+        ? `${Math.round((Date.now() - new Date(config.lastTick).getTime()) / 60000)}m ago`
+        : "never";
+      const session = config.sessionId ? `${config.sessionId.slice(0, 8)}...` : "none";
+      return { content: [{ type: "text" as const, text: `Heartbeat for ${projectId}: ${enabled}, interval ${config.intervalMinutes}m, session ${session}, last tick ${lastTick}, ${config.tickCount} ticks, ${config.consecutiveFailures} failures, last result: ${config.lastResult || "n/a"}` }] };
+    }
+
+    if (action === "enable") {
+      const interval = (interval_minutes && interval_minutes >= 5) ? interval_minutes : 30;
+      const existing = readHeartbeatConfig(projectDir);
+      const config = existing ?? defaultConfig(interval);
+      config.enabled = true;
+      config.intervalMinutes = interval;
+      await writeHeartbeatConfig(projectDir, config);
+
+      // Write HEARTBEAT.md template if missing
+      const ordersPath = join(projectDir, "HEARTBEAT.md");
+      if (!existsSync(ordersPath)) {
+        const templateDir = join(import.meta.dir, "..", "templates", "heartbeat");
+        try {
+          let template = await Bun.file(join(templateDir, "HEARTBEAT.md")).text();
+          template = template.replaceAll("{{projectName}}", projectId);
+          await Bun.write(ordersPath, template);
+        } catch { /* template missing — user can create manually */ }
+      }
+
+      return { content: [{ type: "text" as const, text: `Heartbeat enabled for ${projectId} (every ${interval}m). Standing orders at ~/.hive/projects/${projectId}/HEARTBEAT.md. Run \`hive heartbeat tick\` to test or wait for launchd.` }] };
+    }
+
+    if (action === "disable") {
+      const config = readHeartbeatConfig(projectDir);
+      if (!config) {
+        return { content: [{ type: "text" as const, text: `No heartbeat configured for ${projectId}.` }] };
+      }
+      config.enabled = false;
+      await writeHeartbeatConfig(projectDir, config);
+      return { content: [{ type: "text" as const, text: `Heartbeat disabled for ${projectId}.` }] };
+    }
+
+    return { content: [{ type: "text" as const, text: `Unknown action: ${action}` }] };
+  }
+);
 
 // Start the server
 const transport = new StdioServerTransport();

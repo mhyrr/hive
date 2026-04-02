@@ -20,6 +20,9 @@ export type HivePaths = {
 export type ProjectPaths = {
   root: string;
   config: string;
+  heartbeatConfig: string;
+  heartbeatOrders: string;
+  inbox: string;
 };
 
 export function resolveHiveHome(): string {
@@ -49,6 +52,9 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
   return {
     root,
     config: join(root, "config.md"),
+    heartbeatConfig: join(root, "heartbeat.json"),
+    heartbeatOrders: join(root, "HEARTBEAT.md"),
+    inbox: join(root, "inbox.md"),
   };
 }
 
