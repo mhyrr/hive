@@ -148,6 +148,9 @@ export async function initCommand(args: string[]): Promise<void> {
   if (installLaunchAgent("com.hive.morning.plist")) {
     console.log("Installed morning briefing (7am daily via launchd)");
   }
+  if (installLaunchAgent("com.hive.heartbeat.plist")) {
+    console.log("Installed heartbeat (every 30m via launchd)");
+  }
 
   // Symlink hive binary to ~/.local/bin/
   const localBin = join(process.env.HOME || "", ".local", "bin");
