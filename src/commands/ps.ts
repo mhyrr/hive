@@ -117,11 +117,27 @@ export async function psCommand(_args: string[]): Promise<void> {
     failed: "❌",
     blocked: "🟡",
     crashed: "💀",
+    killed: "🛑",
+    timed_out: "⏰",
   };
+
+  const failureStatuses = new Set(["failed", "crashed", "timed_out", "killed"]);
 
   for (const run of display) {
     const icon = statusIcon[run.status] ?? "⚪";
     const time = run.dispatched ? formatRelativeTime(new Date(run.dispatched)) : "";
-    console.log(`${icon} ${run.id}  ${run.status.padEnd(8)}  ${run.project.padEnd(12)}  "${run.goal}"  ${time}`);
+    console.log(`${icon} ${run.id}  ${run.status.padEnd(10)}  ${run.project.padEnd(12)}  "${run.goal}"  ${time}`);
+
+    if (failureStatuses.has(run.status)) {
+      const logPath = join(paths.runsDir, run.id, "output.log");
+      if (existsSync(logPath)) {
+        const log = readFileSync(logPath, "utf-8").trimEnd();
+        const lines = log.split("\n").filter((l) => l.trim());
+        const tail = lines.slice(-3);
+        for (const line of tail) {
+          console.log(`     ${line.slice(0, 100)}`);
+        }
+      }
+    }
   }
 }

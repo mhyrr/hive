@@ -11,6 +11,7 @@
 *.bun-build
 .*.bun-build
 /hive
+/hive-bin
 /hive.exe
 coverage/
 node_modules/
