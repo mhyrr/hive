@@ -6,6 +6,7 @@ import {
   readProjectMemorySection,
   type MemorySection,
 } from "../lib/memory";
+import { writeDailySessions } from "../lib/sessions";
 
 function resolveProjectFromCwd(projects: string[]): string | null {
   const cwd = process.cwd();
@@ -45,6 +46,12 @@ export async function memoryCommand(args: string[]): Promise<void> {
   }
 
   const subcommand = filtered[0];
+
+  if (subcommand === "extract-sessions") {
+    const outputPath = await writeDailySessions();
+    console.log(`Sessions extracted to: ${outputPath}`);
+    return;
+  }
 
   if (!subcommand || subcommand === "view") {
     const section = (filtered[1] ?? "all") as "all" | "facts" | "conventions" | "decisions" | "questions";

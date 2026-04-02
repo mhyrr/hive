@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { councilCommand } from "./commands/council";
 import { dispatchCommand } from "./commands/dispatch";
 import { initCommand } from "./commands/init";
+import { killCommand } from "./commands/kill";
 import { memoryCommand } from "./commands/memory";
 import { projectCommand } from "./commands/project";
 import { psCommand } from "./commands/ps";
@@ -19,6 +20,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   memory: memoryCommand,
   ticket: ticketCommand,
   dispatch: dispatchCommand,
+  kill: killCommand,
   ps: psCommand,
 };
 
@@ -34,6 +36,7 @@ HIVE Commands:
   memory [view|fact|...]     View or add project memory
   ticket [create|list|...]   Project ticket tracker
   dispatch "<goal>" [opts]   Dispatch autonomous goal execution
+  kill <run-id>              Kill a running dispatch
   ps                         Show active and recent dispatch runs
 
 Maya (Claude with identity):

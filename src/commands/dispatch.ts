@@ -65,6 +65,7 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   let projectId = "";
   let ticketId = "";
   let planPath = "";
+  let timeoutMin = 30;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--project" && args[i + 1]) {
@@ -73,6 +74,9 @@ export async function dispatchCommand(args: string[]): Promise<void> {
       ticketId = args[++i]!;
     } else if (args[i] === "--plan" && args[i + 1]) {
       planPath = resolve(args[++i]!);
+    } else if (args[i] === "--timeout" && args[i + 1]) {
+      timeoutMin = parseInt(args[++i]!, 10);
+      if (isNaN(timeoutMin) || timeoutMin < 1) timeoutMin = 30;
     } else if (!args[i]!.startsWith("--")) {
       goal = args[i]!;
     }
@@ -145,7 +149,7 @@ unset ANTHROPIC_API_KEY
 
 cd "${projectPath}"
 
-"${claude}" \\
+timeout ${timeoutMin * 60} "${claude}" \\
   --append-system-prompt-file "${identityPath}" \\
   --add-dir "${hiveHome}" \\
   --agent maya-executor \\
@@ -156,6 +160,13 @@ cd "${projectPath}"
   > "${logPath}" 2>&1
 
 EXIT_CODE=$?
+
+# timeout exits 124 when the command times out
+if [ "$EXIT_CODE" = "124" ]; then
+  echo "timed_out" > "${runDir}/status"
+  osascript -e "display notification \\"Run ${runId} timed out after ${timeoutMin}m\\" with title \\"HIVE\\" sound name \\"Glass\\"" 2>/dev/null || true
+  exit 0
+fi
 
 # Determine status from plan file
 if [ -f "${runDir}/plan.md" ]; then
