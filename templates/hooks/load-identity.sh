@@ -27,11 +27,16 @@ if [ -d "$HIVE_DIR/projects" ]; then
   done
 fi
 
-# Load only the matched project's memory
+# Load the matched project's memory index (lightweight summary)
 if [ -n "$MATCHED_PROJECT" ]; then
-  memfile="$HIVE_DIR/memory/projects/$MATCHED_PROJECT.md"
-  if [ -f "$memfile" ]; then
-    cat "$memfile"
+  indexfile="$HIVE_DIR/memory/projects/$MATCHED_PROJECT/_index.md"
+  knowledgefile="$HIVE_DIR/memory/projects/$MATCHED_PROJECT/knowledge.md"
+  # Prefer index (lightweight); fall back to full knowledge
+  if [ -f "$indexfile" ]; then
+    cat "$indexfile"
+    echo ""
+  elif [ -f "$knowledgefile" ]; then
+    cat "$knowledgefile"
     echo ""
   fi
 fi
