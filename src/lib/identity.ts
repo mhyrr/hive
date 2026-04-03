@@ -53,10 +53,12 @@ export async function assembleIdentity(): Promise<string> {
     }
   }
 
-  // Detect and load project memory
+  // Detect and load project memory (prefer index, fall back to knowledge)
   const projectId = detectProject(paths);
   if (projectId) {
-    const memPath = join(paths.memoryProjectsDir, `${projectId}.md`);
+    const indexFile = join(paths.memoryProjectsDir, projectId, "_index.md");
+    const knowledgeFile = join(paths.memoryProjectsDir, projectId, "knowledge.md");
+    const memPath = existsSync(indexFile) ? indexFile : knowledgeFile;
     if (existsSync(memPath)) {
       const content = await Bun.file(memPath).text();
       parts.push(content.trim());
