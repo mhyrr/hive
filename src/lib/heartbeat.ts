@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { getHivePaths, getProjectPaths, listProjects } from "./paths";
 import { parseFrontmatter } from "./frontmatter";
 import { assembleIdentity } from "./identity";
+import { rebuildIndex } from "./memory";
 
 export interface HeartbeatConfig {
   sessionId: string;
@@ -140,6 +141,13 @@ export async function runTick(projectId: string): Promise<TickResult> {
   // Determine result
   const isOk = output.includes("HEARTBEAT_OK");
   const result: TickResult["result"] = exitCode !== 0 ? "ERROR" : isOk ? "HEARTBEAT_OK" : "ACTION_TAKEN";
+
+  // Rebuild memory index — cheap, runs every tick to keep it current
+  try {
+    await rebuildIndex(paths, projectId);
+  } catch {
+    // Non-fatal — index rebuild failure shouldn't break heartbeat
+  }
 
   // Update config
   config.lastTick = timestamp;
