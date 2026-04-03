@@ -156,10 +156,21 @@ export async function runTick(projectId: string): Promise<TickResult> {
 
   await writeHeartbeatConfig(projectDir, config);
 
-  // macOS notification on significant actions
-  if (result === "ACTION_TAKEN") {
+  // Write to inbox.md when there's something to report
+  if (result === "ACTION_TAKEN" && output) {
+    const inboxPath = join(projectDir, "inbox.md");
+    const header = `## ${timestamp} — Heartbeat\n`;
+    const entry = `${header}\n${output}\n\n---\n\n`;
+    const existing = existsSync(inboxPath) ? readFileSync(inboxPath, "utf-8") : `# Inbox: ${projectId}\n\n`;
+    await Bun.write(inboxPath, existing + entry);
+  }
+
+  // macOS notification with first meaningful line of output
+  if (result === "ACTION_TAKEN" && output) {
+    const firstLine = output.split("\n").find((l) => l.trim() && !l.startsWith("#"))?.trim().slice(0, 120) || "Heartbeat found something";
     try {
-      execSync(`osascript -e 'display notification "Heartbeat found something in ${projectId}" with title "HIVE" sound name "Glass"'`);
+      const escaped = firstLine.replace(/"/g, '\\"').replace(/'/g, "'");
+      execSync(`osascript -e 'display notification "${escaped}" with title "HIVE: ${projectId}" sound name "Glass"'`);
     } catch {}
   }
 
