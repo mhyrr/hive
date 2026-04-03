@@ -9,6 +9,16 @@ import {
   appendToSection,
   appendProjectMemory,
   readProjectMemorySnapshot,
+  parseTags,
+  formatTags,
+  appendToLog,
+  readLog,
+  searchMemory,
+  formatSearchResults,
+  rebuildIndex,
+  supersedeEntry,
+  knowledgePath,
+  indexPath,
 } from "../lib/memory";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 
@@ -113,6 +123,40 @@ describe("validateMemoryStructure", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tags
+// ---------------------------------------------------------------------------
+
+describe("parseTags", () => {
+  test("parses inline tags", () => {
+    expect(parseTags("some fact [auth, security]")).toEqual({
+      text: "some fact",
+      tags: ["auth", "security"],
+    });
+  });
+
+  test("handles no tags", () => {
+    expect(parseTags("plain text")).toEqual({ text: "plain text", tags: [] });
+  });
+
+  test("normalizes to lowercase", () => {
+    expect(parseTags("thing [Auth, API]")).toEqual({
+      text: "thing",
+      tags: ["auth", "api"],
+    });
+  });
+});
+
+describe("formatTags", () => {
+  test("formats tag array", () => {
+    expect(formatTags(["auth", "api"])).toBe(" [auth, api]");
+  });
+
+  test("empty array returns empty string", () => {
+    expect(formatTags([])).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // appendToSection
 // ---------------------------------------------------------------------------
 
@@ -171,7 +215,15 @@ describe("appendProjectMemory + readProjectMemorySnapshot", () => {
   test("write and read back a fact", async () => {
     await appendProjectMemory(paths, "test-project", "fact", "TypeScript is used");
     const snapshot = await readProjectMemorySnapshot(paths, "test-project");
-    expect(snapshot.facts).toContain("TypeScript is used");
+    expect(snapshot.facts.some((f) => f.text === "TypeScript is used")).toBe(true);
+  });
+
+  test("write with tags and read back", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "Uses Bun runtime", ["runtime", "infrastructure"]);
+    const snapshot = await readProjectMemorySnapshot(paths, "test-project");
+    const entry = snapshot.facts.find((f) => f.text === "Uses Bun runtime");
+    expect(entry).toBeTruthy();
+    expect(entry!.tags).toEqual(["runtime", "infrastructure"]);
   });
 
   test("write and read back a decision", async () => {
@@ -187,7 +239,7 @@ describe("appendProjectMemory + readProjectMemorySnapshot", () => {
     await appendProjectMemory(paths, "test-project", "fact", "fact two");
     await appendProjectMemory(paths, "test-project", "fact", "fact three");
     const snapshot = await readProjectMemorySnapshot(paths, "test-project");
-    expect(snapshot.facts).toEqual(["fact one", "fact two", "fact three"]);
+    expect(snapshot.facts.map((f) => f.text)).toEqual(["fact one", "fact two", "fact three"]);
   });
 
   test("concurrent writes both land", async () => {
@@ -195,12 +247,181 @@ describe("appendProjectMemory + readProjectMemorySnapshot", () => {
     const p2 = appendProjectMemory(paths, "test-project", "fact", "concurrent two");
     await Promise.all([p1, p2]);
     const snapshot = await readProjectMemorySnapshot(paths, "test-project");
-    expect(snapshot.facts).toContain("concurrent one");
-    expect(snapshot.facts).toContain("concurrent two");
+    const texts = snapshot.facts.map((f) => f.text);
+    expect(texts).toContain("concurrent one");
+    expect(texts).toContain("concurrent two");
   });
 
   test("validation rejects bad input in full path", async () => {
     expect(appendProjectMemory(paths, "test-project", "fact", "")).rejects.toThrow("cannot be empty");
     expect(appendProjectMemory(paths, "test-project", "fact", "## header")).rejects.toThrow("markdown headers");
+  });
+
+  test("knowledge file lives in project directory", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "a fact");
+    const kPath = knowledgePath(paths, "test-project");
+    expect(kPath).toContain("test-project/knowledge.md");
+    const file = Bun.file(kPath);
+    expect(await file.exists()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Supersession
+// ---------------------------------------------------------------------------
+
+describe("supersedeEntry", () => {
+  let tempDir: string;
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "hive-test-"));
+    paths = await ensureHiveScaffold(tempDir);
+  });
+
+  test("supersede marks old entry and adds new one", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "Uses express-session", ["auth"]);
+    await supersedeEntry(paths, "test-project", "fact", "Uses express-session", "Uses stateless JWT", ["auth"]);
+    const snapshot = await readProjectMemorySnapshot(paths, "test-project");
+    expect(snapshot.facts.length).toBe(2);
+    expect(snapshot.facts[0]!.superseded).toBe(true);
+    expect(snapshot.facts[1]!.text).toBe("Uses stateless JWT");
+    expect(snapshot.facts[1]!.superseded).toBeFalsy();
+  });
+
+  test("supersede throws if old entry not found", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "some fact");
+    expect(
+      supersedeEntry(paths, "test-project", "fact", "nonexistent entry", "new entry")
+    ).rejects.toThrow("Could not find active entry");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session Log
+// ---------------------------------------------------------------------------
+
+describe("session log", () => {
+  let tempDir: string;
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "hive-test-"));
+    paths = await ensureHiveScaffold(tempDir);
+  });
+
+  test("appendToLog creates daily log file", async () => {
+    const filePath = await appendToLog(paths, "test-project", [
+      { type: "fact", content: "discovered something" },
+      { type: "decision", content: "chose approach A" },
+    ]);
+    expect(filePath).toContain("/log/");
+    expect(filePath).toMatch(/\d{4}-\d{2}-\d{2}\.md$/);
+    const content = await Bun.file(filePath).text();
+    expect(content).toContain("fact | discovered something");
+    expect(content).toContain("decision | chose approach A");
+  });
+
+  test("readLog returns parsed entries", async () => {
+    await appendToLog(paths, "test-project", [
+      { type: "fact", content: "test entry" },
+    ]);
+    const entries = await readLog(paths, "test-project", 7);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.type).toBe("fact");
+    expect(entries[0]!.text).toBe("test entry");
+  });
+
+  test("multiple appends to same day accumulate", async () => {
+    await appendToLog(paths, "test-project", [{ type: "fact", content: "first" }]);
+    await appendToLog(paths, "test-project", [{ type: "fact", content: "second" }]);
+    const entries = await readLog(paths, "test-project", 7);
+    expect(entries.length).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+describe("searchMemory", () => {
+  let tempDir: string;
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "hive-test-"));
+    paths = await ensureHiveScaffold(tempDir);
+  });
+
+  test("finds entries in knowledge by text", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "Auth uses JWT tokens", ["auth"]);
+    await appendProjectMemory(paths, "test-project", "fact", "Database is Postgres", ["database"]);
+    const results = await searchMemory(paths, "test-project", "auth");
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.some((r) => r.entry.includes("JWT"))).toBe(true);
+  });
+
+  test("finds entries by tag", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "some auth fact", ["auth"]);
+    await appendProjectMemory(paths, "test-project", "fact", "some db fact", ["database"]);
+    const results = await searchMemory(paths, "test-project", "fact", { tag: "auth" });
+    expect(results.every((r) => r.tags.includes("auth") || r.source !== "knowledge")).toBe(true);
+  });
+
+  test("finds entries in log", async () => {
+    await appendToLog(paths, "test-project", [{ type: "fact", content: "discovered JWT issue" }]);
+    const results = await searchMemory(paths, "test-project", "JWT");
+    expect(results.some((r) => r.source === "log")).toBe(true);
+  });
+
+  test("excludes superseded entries by default", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "Uses express-session", ["auth"]);
+    await supersedeEntry(paths, "test-project", "fact", "Uses express-session", "Uses JWT", ["auth"]);
+    const results = await searchMemory(paths, "test-project", "auth");
+    const knowledgeResults = results.filter((r) => r.source === "knowledge");
+    // Should only find the active entry
+    expect(knowledgeResults.some((r) => r.entry.includes("JWT"))).toBe(true);
+    expect(knowledgeResults.some((r) => r.entry.includes("express-session"))).toBe(false);
+  });
+
+  test("formatSearchResults produces readable output", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "Uses Bun runtime", ["runtime"]);
+    const results = await searchMemory(paths, "test-project", "Bun");
+    const output = formatSearchResults(results, "Bun");
+    expect(output).toContain("Knowledge (compiled)");
+    expect(output).toContain("Bun runtime");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Index
+// ---------------------------------------------------------------------------
+
+describe("rebuildIndex", () => {
+  let tempDir: string;
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "hive-test-"));
+    paths = await ensureHiveScaffold(tempDir);
+  });
+
+  test("generates index with summary", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "Uses TypeScript", ["language"]);
+    await appendProjectMemory(paths, "test-project", "decision", "Chose Bun over Node", ["runtime"]);
+    const output = await rebuildIndex(paths, "test-project");
+    expect(output).toContain("# Index: test-project");
+    expect(output).toContain("1 facts");
+    expect(output).toContain("1 decisions");
+    expect(output).toContain("language");
+    expect(output).toContain("runtime");
+  });
+
+  test("index file is written to disk", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "a fact");
+    await rebuildIndex(paths, "test-project");
+    const iPath = indexPath(paths, "test-project");
+    const content = await Bun.file(iPath).text();
+    expect(content).toContain("# Index: test-project");
   });
 });

@@ -20,6 +20,11 @@ import {
   readProjectMemorySnapshot,
   readProjectMemorySection,
   appendProjectMemory,
+  appendToLog,
+  searchMemory,
+  formatSearchResults,
+  rebuildIndex,
+  supersedeEntry,
   type MemorySection,
 } from "./lib/memory";
 import { parseFrontmatter } from "./lib/frontmatter";
@@ -157,12 +162,17 @@ server.registerTool("convene_council", {
 
 // Tool 2: Read project memory
 server.registerTool("read_hive_memory", {
-  description: "Read accumulated project intelligence — facts, conventions, decisions, and open questions.",
+  description:
+    "Read accumulated project intelligence — facts, conventions, decisions, and open questions. " +
+    "For targeted lookups, prefer search_memory instead. " +
+    "Set source to 'index' for a lightweight summary (loaded at session start).",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     section: z.enum(["all", "facts", "conventions", "decisions", "questions"]).optional().describe("Which section to read. Defaults to 'all'."),
+    source: z.enum(["knowledge", "index"]).optional().describe("Read from full knowledge file or lightweight index. Default 'knowledge'."),
+    include_superseded: z.boolean().optional().describe("Include superseded (replaced) entries. Default true."),
   },
-}, async ({ project, section }) => {
+}, async ({ project, section, source, include_superseded }) => {
   const paths = getHivePaths();
   const projectId = project ?? resolveProjectFromCwd(paths);
 
@@ -173,21 +183,36 @@ server.registerTool("read_hive_memory", {
     };
   }
 
+  if (source === "index") {
+    const { indexPath: getIndexPath } = await import("./lib/memory");
+    const iPath = getIndexPath(paths, projectId);
+    try {
+      const content = await Bun.file(iPath).text();
+      return { content: [{ type: "text" as const, text: content }] };
+    } catch {
+      // No index yet — rebuild it
+      const content = await rebuildIndex(paths, projectId);
+      return { content: [{ type: "text" as const, text: content }] };
+    }
+  }
+
   const snapshot = await readProjectMemorySnapshot(paths, projectId);
-  const output = readProjectMemorySection(snapshot, section ?? "all");
+  const output = readProjectMemorySection(snapshot, section ?? "all", include_superseded ?? true);
 
   return { content: [{ type: "text" as const, text: `# Project Memory: ${projectId}\n\n${output}` }] };
 });
 
 // Tool 3: Write project memory
 server.registerTool("write_hive_memory", {
-  description: "Record a new fact, convention, decision, or open question in project memory. Use proactively when you learn something durable about the project.",
+  description: "Record a new fact, convention, decision, or open question in project memory. Use proactively when you learn something durable about the project. Tags help with search — use them to categorize entries by topic.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     type: z.enum(["fact", "convention", "decision", "question"]).describe("What kind of memory to record."),
     content: z.string().describe("The text to record."),
+    tags: z.array(z.string()).optional().describe("Topic tags for this entry (e.g. ['auth', 'security']). Lowercase, short."),
+    supersedes: z.string().optional().describe("If this replaces an existing entry, provide the text of the old entry. The old entry will be marked as superseded."),
   },
-}, async ({ project, type, content }) => {
+}, async ({ project, type, content, tags, supersedes }) => {
   const paths = getHivePaths();
   const projectId = project ?? resolveProjectFromCwd(paths);
 
@@ -198,7 +223,11 @@ server.registerTool("write_hive_memory", {
     };
   }
 
-  await appendProjectMemory(paths, projectId, type as MemorySection, content);
+  if (supersedes) {
+    await supersedeEntry(paths, projectId, type as MemorySection, supersedes, content, tags ?? []);
+  } else {
+    await appendProjectMemory(paths, projectId, type as MemorySection, content, tags ?? []);
+  }
 
   return { content: [{ type: "text" as const, text: `Recorded ${type} in ${projectId} memory.` }] };
 });
@@ -206,13 +235,15 @@ server.registerTool("write_hive_memory", {
 // Tool 4: Batch reflect session learnings
 server.registerTool("reflect_session", {
   description:
-    "Batch-write session learnings to project memory. Use at end of a substantive session " +
-    "to record durable facts, conventions, decisions, or open questions discovered during the session.",
+    "Batch-write session learnings to project memory. Writes to both the session log (raw capture) " +
+    "and knowledge file (compiled intelligence). Rebuilds the index afterward. " +
+    "Use at end of a substantive session to record durable facts, conventions, decisions, or open questions.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     learnings: z.array(z.object({
       type: z.enum(["fact", "convention", "decision", "question"]).describe("What kind of memory to record."),
       content: z.string().describe("The text to record."),
+      tags: z.array(z.string()).optional().describe("Topic tags (e.g. ['auth', 'api']). Lowercase."),
     })).describe("Array of learnings to record."),
   },
 }, async ({ project, learnings }) => {
@@ -233,17 +264,32 @@ server.registerTool("reflect_session", {
   const counts: Record<string, number> = {};
   const errors: string[] = [];
 
+  // Write to session log (raw capture)
+  try {
+    await appendToLog(paths, projectId, learnings.map((l) => ({ type: l.type as MemorySection, content: l.content })));
+  } catch (err) {
+    errors.push(`log: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Write to knowledge (compiled)
   for (const item of learnings) {
     try {
-      await appendProjectMemory(paths, projectId, item.type as MemorySection, item.content);
+      await appendProjectMemory(paths, projectId, item.type as MemorySection, item.content, item.tags ?? []);
       counts[item.type] = (counts[item.type] ?? 0) + 1;
     } catch (err) {
       errors.push(`${item.type}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
+  // Rebuild index
+  try {
+    await rebuildIndex(paths, projectId);
+  } catch (err) {
+    errors.push(`index: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}(s)`).join(", ");
-  let text = `Recorded ${summary} in ${projectId} memory.`;
+  let text = `Recorded ${summary} in ${projectId} memory (knowledge + log). Index rebuilt.`;
   if (errors.length > 0) {
     text += `\n\nSkipped ${errors.length} invalid entries:\n${errors.map(e => `- ${e}`).join("\n")}`;
   }
@@ -251,7 +297,44 @@ server.registerTool("reflect_session", {
   return { content: [{ type: "text" as const, text }] };
 });
 
-// Tool 5: Create a ticket
+// Tool 5: Search project memory
+server.registerTool("search_memory", {
+  description:
+    "Search across all layers of project memory — knowledge (compiled facts, conventions, decisions), " +
+    "session logs (raw daily capture), and the index. Results are ranked: knowledge first, then log. " +
+    "Use this to answer questions like 'what do we know about auth?' or 'what decisions have we made about the API?'. " +
+    "Prefer this over read_hive_memory when looking for something specific.",
+  inputSchema: {
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    query: z.string().describe("Search query — matches against entry text and tags."),
+    tag: z.string().optional().describe("Filter to entries with this tag."),
+    section: z.enum(["fact", "convention", "decision", "question"]).optional().describe("Limit search to this section of knowledge."),
+    include_superseded: z.boolean().optional().describe("Include superseded (replaced) entries. Default false."),
+    log_days: z.number().optional().describe("How many days of log history to search. Default 14."),
+  },
+}, async ({ project, query, tag, section, include_superseded, log_days }) => {
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd(paths);
+
+  if (!projectId) {
+    return {
+      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
+      isError: true,
+    };
+  }
+
+  const results = await searchMemory(paths, projectId, query, {
+    tag: tag ?? undefined,
+    section: (section as MemorySection) ?? undefined,
+    includeSuperseded: include_superseded ?? false,
+    logDays: log_days ?? 14,
+  });
+
+  const formatted = formatSearchResults(results, query);
+  return { content: [{ type: "text" as const, text: formatted }] };
+});
+
+// Tool 6: Create a ticket
 server.registerTool("create_ticket", {
   description:
     "Create a new ticket in the project's ticket tracker. " +
@@ -436,7 +519,7 @@ server.registerTool("add_project", {
   },
 }, async ({ name, path: projectPath }) => {
   const { normalizeProjectName } = await import("./lib/project");
-  const { ensureProjectMemoryFile } = await import("./lib/memory");
+  const { ensureProjectMemoryDir } = await import("./lib/memory");
 
   const paths = getHivePaths();
   const projectId = normalizeProjectName(name);
@@ -454,10 +537,10 @@ server.registerTool("add_project", {
     `---\nname: ${projectId}\npath: ${repoPath}\n---\n`,
   );
 
-  await ensureProjectMemoryFile(paths, projectId);
+  await ensureProjectMemoryDir(paths, projectId);
 
   return {
-    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}.md\n\nUse \`hive\` from ${repoPath} to start a Maya session with project context.` }],
+    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}/\n\nUse \`hive\` from ${repoPath} to start a Maya session with project context.` }],
   };
 });
 
@@ -627,7 +710,7 @@ server.registerTool("hive_status", {
   for (const projectId of projects) {
     try {
       const snapshot = await readProjectMemorySnapshot(paths, projectId);
-      const decisions = readProjectMemorySection(snapshot, "decisions");
+      const decisions = readProjectMemorySection(snapshot, "decisions", false);
       const decisionLines = decisions.split("\n").filter((l) => l.startsWith("- ")).slice(-3);
       if (decisionLines.length > 0) {
         lines.push(`**${projectId}** (recent decisions):`);
