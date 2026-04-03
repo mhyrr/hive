@@ -14,6 +14,14 @@
 - Any running dispatches? How long have they been going?
 - Any failed/crashed dispatches since last tick?
 
+### Memory Consolidation
+- Read recent session log entries (last 7 days) via `read_hive_memory`
+- For each log entry not yet in knowledge:
+  - If it's durable and non-obvious, promote it to knowledge with `write_hive_memory` (include tags)
+  - If it contradicts an existing knowledge entry, use `write_hive_memory` with `supersedes` to replace it
+  - If it's transient or session-specific, skip it
+- Check for stale open questions — any that have been answered by recent decisions?
+
 ## Standing Instructions
 <!-- Add project-specific instructions below -->
 <!-- Examples: -->
