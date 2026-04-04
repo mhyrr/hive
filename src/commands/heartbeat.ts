@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join, dirname } from "node:path";
 
 import { UsageError } from "../lib/errors";
 import { getHivePaths, getProjectPaths, listProjects } from "../lib/paths";
 import { parseFrontmatter } from "../lib/frontmatter";
+import { writeIdentityTempFile, cleanupIdentityTempFile } from "../lib/identity";
 import {
   readHeartbeatConfig,
   writeHeartbeatConfig,
@@ -187,6 +189,58 @@ async function heartbeatReset(projectId: string): Promise<void> {
   console.log(`Heartbeat session reset for ${projectId}. Next tick will create a new session.`);
 }
 
+async function heartbeatChat(projectId: string, initialMessage?: string): Promise<void> {
+  const paths = getHivePaths();
+  const projectDir = join(paths.projectsDir, projectId);
+  const config = readHeartbeatConfig(projectDir);
+
+  if (!config) {
+    throw new UsageError(`No heartbeat configured for ${projectId}. Run \`hive heartbeat start\` first.`);
+  }
+
+  if (!config.sessionId) {
+    throw new UsageError(`No heartbeat session exists. Run \`hive heartbeat tick\` first to create one.`);
+  }
+
+  // Get project path for cwd
+  const projectConfig = parseFrontmatter(readFileSync(join(projectDir, "config.md"), "utf-8"));
+  const projectPath = (projectConfig.attributes?.path as string) || process.cwd();
+
+  const identityFile = await writeIdentityTempFile();
+  process.on("exit", cleanupIdentityTempFile);
+  process.on("SIGINT", () => { cleanupIdentityTempFile(); process.exit(130); });
+  process.on("SIGTERM", () => { cleanupIdentityTempFile(); process.exit(143); });
+
+  const claude = (() => {
+    try {
+      return execSync("which claude", { encoding: "utf-8" }).trim();
+    } catch {
+      const fallback = join(process.env.HOME || "", ".local", "bin", "claude");
+      if (existsSync(fallback)) return fallback;
+      throw new Error("Could not find claude CLI.");
+    }
+  })();
+
+  const message = initialMessage || "Interactive heartbeat session.";
+  const claudeArgs = [
+    "--resume", config.sessionId,
+    "--append-system-prompt-file", identityFile,
+    "--add-dir", join(process.env.HOME || "", ".hive"),
+    "--", message,
+  ];
+
+  const result = Bun.spawnSync([claude, ...claudeArgs], {
+    cwd: projectPath,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    env: { ...process.env, ANTHROPIC_API_KEY: undefined },
+  });
+
+  cleanupIdentityTempFile();
+  process.exit(result.exitCode ?? 0);
+}
+
 // Used by heartbeat.sh to check if a project should tick now
 async function heartbeatCheckInterval(projectId: string): Promise<void> {
   const paths = getHivePaths();
@@ -208,6 +262,7 @@ Subcommands:
   stop                      Disable heartbeat for a project
   status                    Show heartbeat status for all projects
   tick                      Run one heartbeat tick manually
+  chat                      Interactive session with the heartbeat agent
   reset                     Reset session (creates fresh on next tick)
   check-interval            Internal: prints "tick" or "skip" for shell script`;
 
@@ -233,6 +288,10 @@ Subcommands:
     case "tick":
       if (!projectId) throw new UsageError("No project found.");
       await heartbeatTickCmd(projectId);
+      break;
+    case "chat":
+      if (!projectId) throw new UsageError("No project found.");
+      await heartbeatChat(projectId, remaining.slice(1).join(" ").trim() || undefined);
       break;
     case "reset":
       if (!projectId) throw new UsageError("No project found.");
