@@ -1,20 +1,17 @@
 # Heartbeat Standing Orders: {{projectName}}
 
-## Checks
-
-### Git Status
+## Health Checks
 - Any uncommitted changes in the working directory?
-- Any new commits on main since last tick?
+- Any failed/crashed dispatch runs since last tick?
+- Any running dispatches that have been going too long?
 
-### Tickets
-- Any P1 tickets open with no recent activity (>24h)?
-- Any tickets tagged "blocked"?
+## Proactive Awareness
+- List open tickets (use list_tickets). What's the highest priority unfinished work?
+- Has anything been in "open" status with no activity for more than 2 days? Flag it.
+- Check recent git log — what was the last thing worked on? Is there obvious follow-up?
+- Are there any open questions in project memory that could be resolved now?
 
-### Dispatch Runs
-- Any running dispatches? How long have they been going?
-- Any failed/crashed dispatches since last tick?
-
-### Memory Consolidation
+## Memory Consolidation
 - Read recent session log entries (last 7 days) via `read_hive_memory`
 - For each log entry not yet in knowledge:
   - If it's durable and non-obvious, promote it to knowledge with `write_hive_memory` (include tags)
@@ -22,12 +19,12 @@
   - If it's transient or session-specific, skip it
 - Check for stale open questions — any that have been answered by recent decisions?
 
-## Standing Instructions
-<!-- Add project-specific instructions below -->
-<!-- Examples: -->
-<!-- - If tests fail on main, write to inbox.md -->
-<!-- - Watch for changes in src/lib/ and note any new patterns -->
+## Initiative
+- If you see work that could be dispatched autonomously (standalone tasks, documentation, cleanup), say so. Don't dispatch it yourself — suggest it.
+- If a ticket looks stale or irrelevant based on what's actually happened, note that too.
+- Think about what the user would want to know when they sit down to work. Surface that.
 
 ## Escalation
-- Failed dispatch or test failure on main → write to inbox.md
-- Everything else → log silently, morning briefing picks it up
+- Failed dispatch or broken build → write to inbox.md
+- Suggested action items → include in your response
+- Routine status → keep it brief
