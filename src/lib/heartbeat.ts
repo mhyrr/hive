@@ -10,6 +10,14 @@ import { readLog, readProjectMemorySnapshot, readProjectMemorySection, indexPath
 import { listTickets, type Ticket } from "./ticket";
 import { rebuildIndex } from "./memory";
 
+export interface HeartbeatDispatch {
+  runId: string;
+  ticketId?: string;
+  goal: string;
+  timestamp: string;
+  reason: string;
+}
+
 export interface HeartbeatConfig {
   sessionId: string;
   createdAt: string;
@@ -19,6 +27,7 @@ export interface HeartbeatConfig {
   enabled: boolean;
   intervalMinutes: number;
   consecutiveFailures: number;
+  recentDispatches?: HeartbeatDispatch[];
 }
 
 export function readHeartbeatConfig(projectDir: string): HeartbeatConfig | null {
@@ -191,7 +200,7 @@ export async function runTick(projectId: string): Promise<TickResult> {
       "--append-system-prompt-file", identityPath,
       "--add-dir", hiveHome,
       "--permission-mode", "bypassPermissions",
-      "--max-turns", "15",
+      "--max-turns", "20",
       "--print",
       `HEARTBEAT_TICK ${timestamp}${contextBrief}`,
     ];
@@ -206,9 +215,9 @@ export async function runTick(projectId: string): Promise<TickResult> {
       "--agent", "maya-heartbeat",
       "--add-dir", hiveHome,
       "--permission-mode", "bypassPermissions",
-      "--max-turns", "15",
+      "--max-turns", "20",
       "--print",
-      `HEARTBEAT_INIT for project ${projectId} at ${projectPath}. Read ~/.hive/projects/${projectId}/HEARTBEAT.md for your standing orders.${contextBrief}`,
+      `HEARTBEAT_INIT for project ${projectId} at ${projectPath}. Read ~/.hive/projects/${projectId}/HEARTBEAT.md for your standing orders — especially the Authorized Actions section. You have authority to dispatch work and close tickets. Use it.${contextBrief}`,
     ];
   }
 
