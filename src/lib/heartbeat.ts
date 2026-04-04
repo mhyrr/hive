@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { getHivePaths, getProjectPaths, listProjects } from "./paths";
 import { parseFrontmatter } from "./frontmatter";
 import { assembleIdentity } from "./identity";
+import { readLog, readProjectMemorySnapshot, readProjectMemorySection, indexPath } from "./memory";
+import { listTickets, type Ticket } from "./ticket";
 import { rebuildIndex } from "./memory";
 
 export interface HeartbeatConfig {
@@ -68,6 +70,96 @@ export interface TickResult {
   result: "HEARTBEAT_OK" | "ACTION_TAKEN" | "SESSION_DEAD" | "ERROR";
 }
 
+/**
+ * Assemble a context brief from memory and tickets.
+ * This gives the heartbeat agent current project state without
+ * spending tool calls to discover it.
+ */
+async function buildContextBrief(projectId: string): Promise<string> {
+  const paths = getHivePaths();
+  const sections: string[] = [];
+
+  // Open tickets
+  try {
+    const open = await listTickets(paths, projectId, { status: "open" as any });
+    const inProgress = await listTickets(paths, projectId, { status: "in_progress" as any });
+    const all = [...inProgress, ...open];
+    if (all.length > 0) {
+      sections.push("**Tickets:**");
+      for (const t of all) {
+        sections.push(`- ${t.id} (${t.status}, P${t.priority}) ${t.title}`);
+      }
+    }
+  } catch { /* no tickets */ }
+
+  // Memory index (lightweight summary)
+  try {
+    const idxPath = indexPath(paths, projectId);
+    if (existsSync(idxPath)) {
+      const idx = readFileSync(idxPath, "utf-8");
+      // Extract just the summary, open questions, and recent activity
+      const summaryMatch = idx.match(/## Summary\n([\s\S]*?)(?=\n##|$)/);
+      const questionsMatch = idx.match(/## Open Questions\n([\s\S]*?)(?=\n##|$)/);
+      const activityMatch = idx.match(/## Recent Activity\n([\s\S]*?)(?=\n##|$)/);
+
+      if (summaryMatch) sections.push(`**Memory:** ${summaryMatch[1]!.trim()}`);
+      if (questionsMatch) {
+        const qs = questionsMatch[1]!.trim().split("\n").slice(0, 5);
+        if (qs.length > 0) {
+          sections.push(`**Open questions:**`);
+          for (const q of qs) sections.push(q);
+        }
+      }
+      if (activityMatch) {
+        const acts = activityMatch[1]!.trim().split("\n").slice(0, 5);
+        if (acts.length > 0) {
+          sections.push(`**Recent memory activity:**`);
+          for (const a of acts) sections.push(a);
+        }
+      }
+    }
+  } catch { /* no index */ }
+
+  // Recent git (last 5 commits, cheap shell call)
+  try {
+    const projectDir = join(paths.projectsDir, projectId);
+    const projectPath = getProjectPath(projectDir);
+    const log = execSync("git log --oneline -5 2>/dev/null", { cwd: projectPath, encoding: "utf-8" }).trim();
+    if (log) {
+      sections.push(`**Recent commits:**`);
+      sections.push(log);
+    }
+  } catch { /* not a git repo or no commits */ }
+
+  // Dispatch runs
+  try {
+    const runsDir = join(paths.home, "runs");
+    if (existsSync(runsDir)) {
+      const entries = require("fs").readdirSync(runsDir, { withFileTypes: true })
+        .filter((e: any) => e.isDirectory() && e.name.startsWith("RUN-"))
+        .map((e: any) => e.name)
+        .sort()
+        .reverse()
+        .slice(0, 3);
+
+      const runSummaries: string[] = [];
+      for (const runId of entries) {
+        const status = readFileSync(join(runsDir, runId, "status"), "utf-8").trim();
+        const goalRaw = readFileSync(join(runsDir, runId, "goal.md"), "utf-8");
+        const goalLine = goalRaw.split("\n").find((l: string) => l.trim() && !l.startsWith("#") && !l.startsWith("---"))?.trim().slice(0, 60) || "unknown";
+        runSummaries.push(`- ${runId}: ${status} — ${goalLine}`);
+      }
+      if (runSummaries.length > 0) {
+        sections.push(`**Dispatch runs:**`);
+        sections.push(runSummaries.join("\n"));
+      }
+    }
+  } catch { /* no runs */ }
+
+  if (sections.length === 0) return "";
+  return "\n---\nContext brief (pre-assembled from memory, tickets, git):\n\n" + sections.join("\n") + "\n---";
+}
+
 export async function runTick(projectId: string): Promise<TickResult> {
   const paths = getHivePaths();
   const projectDir = join(paths.projectsDir, projectId);
@@ -87,6 +179,9 @@ export async function runTick(projectId: string): Promise<TickResult> {
   const identityPath = join(tmpdir(), `hive-heartbeat-${process.pid}.md`);
   await Bun.write(identityPath, identity);
 
+  // Build context brief from memory, tickets, git
+  const contextBrief = await buildContextBrief(projectId);
+
   let args: string[];
 
   if (config.sessionId) {
@@ -98,7 +193,7 @@ export async function runTick(projectId: string): Promise<TickResult> {
       "--permission-mode", "bypassPermissions",
       "--max-turns", "15",
       "--print",
-      `HEARTBEAT_TICK ${timestamp}`,
+      `HEARTBEAT_TICK ${timestamp}${contextBrief}`,
     ];
   } else {
     // Create new session
@@ -113,7 +208,7 @@ export async function runTick(projectId: string): Promise<TickResult> {
       "--permission-mode", "bypassPermissions",
       "--max-turns", "15",
       "--print",
-      `HEARTBEAT_INIT for project ${projectId} at ${projectPath}. Read ~/.hive/projects/${projectId}/HEARTBEAT.md for your standing orders.`,
+      `HEARTBEAT_INIT for project ${projectId} at ${projectPath}. Read ~/.hive/projects/${projectId}/HEARTBEAT.md for your standing orders.${contextBrief}`,
     ];
   }
 
