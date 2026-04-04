@@ -2,12 +2,11 @@
 
 Identity, memory, council, and autonomous agency for Claude Code.
 
-> **Not a third-party harness.** HIVE wraps Claude Code; every
-> operation invokes the `claude` CLI directly. It benefits from Claude
-> Code's prompt caching, session management, and tool framework.
-> Third-party harnesses like OpenClaw run their own agent runtime and
-> are affected by Anthropic's April 2026 subscription policy. HIVE is
-> not. Your Claude subscription covers it fully.
+> **Runs on Claude Code directly.** Every HIVE operation invokes the
+> `claude` CLI, so it benefits from Claude Code's prompt caching,
+> session management, and tool framework. Anthropic's April 2026
+> subscription policy applies to third-party agent runtimes like
+> OpenClaw; HIVE is unaffected. Your Claude subscription covers it.
 
 Claude Code handles orchestration, subagents, tools, loops, and
 file I/O. Hive adds what Claude Code doesn't ship with:
