@@ -1,15 +1,23 @@
 # Hive
 
-Identity, memory, council, and tickets for Claude Code.
+Identity, memory, council, and autonomous agency for Claude Code.
 
-Claude Code already handles orchestation with subagents, tools, loops, 
-file I/O. Hive provides what Claude Code doesn't have: 
+> **Not a third-party harness.** HIVE wraps Claude Code — every
+> operation invokes the `claude` CLI directly. It benefits from Claude
+> Code's prompt caching, session management, and tool framework. Unlike
+> third-party harnesses (OpenClaw, etc.), HIVE is unaffected by
+> Anthropic's April 2026 policy limiting subscription use for external
+> agent runtimes. Your Claude subscription covers HIVE fully.
+
+Claude Code handles orchestration with subagents, tools, loops,
+file I/O. Hive provides what Claude Code doesn't have:
 
 - **persistent identity** that carries across sessions
-- **accumulated project intelligence** that survives forever
-- **a multi-model council** that gives you multiple perspectives on
-questions
-- **per-project ticket tracking** for managing active work.
+- **accumulated project intelligence** (three-layer memory: log, knowledge, index)
+- **a multi-model council** with standard and adversarial dialectic modes
+- **per-project ticket tracking** for managing active work
+- **a heartbeat system** — a persistent agent that wakes up every 30 minutes, checks project state, and autonomously dispatches work within defined trust boundaries
+- **autonomous dispatch** — fire-and-forget goal execution with timeout, kill, and status tracking
 
 ## What Hive Does
 
@@ -34,6 +42,21 @@ YAML frontmatter at `~/.hive/projects/<name>/tickets/`. Create bugs,
 features, tasks, epics, and chores with priorities, tags, dependencies,
 and timestamped notes. Exposed as both CLI commands and MCP tools so
 the AI agent can track its own work.
+
+**Heartbeat.** A persistent Claude session per project, resumed every
+30 minutes via launchd. The heartbeat agent reads standing orders
+(`HEARTBEAT.md`), checks git status, tickets, memory, and dispatch
+runs — then acts. It can autonomously dispatch standalone tasks (docs,
+chores), close completed tickets, consolidate memory, and surface
+recommendations. Trust boundaries are defined per project. Interactive
+via `hive heartbeat chat` — same session, same context.
+
+**Autonomous dispatch.** `hive dispatch "<goal>"` spawns a background
+Claude session with the maya-executor agent in a git worktree. The
+executor plans, builds, tests, and merges. Configurable timeout
+(default 30m), `hive kill` to stop, `hive ps` for status with failure
+details. The heartbeat can trigger dispatches autonomously for
+authorized work.
 
 ## Quick Start
 
@@ -147,6 +170,16 @@ These are available to Claude Code when the HIVE MCP server is running:
 | `hive memory decision <text>` | Add a decision |
 | `hive memory question <text>` | Add an open question |
 | `hive memory reflect` | Batch-write learnings from stdin (JSON) |
+| `hive memory extract-sessions` | Condense last 24h session transcripts for nightly |
+| `hive dispatch "<goal>"` | Dispatch autonomous goal execution (`--ticket`, `--plan`, `--timeout`) |
+| `hive ps` | Show active and recent dispatch runs with failure details |
+| `hive kill <run-id>` | Kill a running dispatch |
+| `hive heartbeat start` | Enable heartbeat for current project (`--interval <min>`) |
+| `hive heartbeat stop` | Disable heartbeat for current project |
+| `hive heartbeat status` | Show heartbeat state for all projects |
+| `hive heartbeat tick` | Run one heartbeat tick manually |
+| `hive heartbeat chat` | Interactive session with the heartbeat agent |
+| `hive heartbeat reset` | Reset heartbeat session (fresh on next tick) |
 | `hive ticket create <title>` | Create a ticket (`--type`, `--priority`, `--tags`, `--depends`) |
 | `hive ticket list` | List tickets (`--status`, `--type`, `--tags`) |
 | `hive ticket show <id>` | Show ticket details (partial IDs work: `1` → `TK-001`) |
@@ -218,15 +251,30 @@ Every memory write is validated before it lands:
 ├── IDENTITY.md          # AI identity
 ├── SELF.md              # user preferences
 ├── AGENTS.md            # operational doctrine
-├── TRUST.md             # action classification
+├── TRUST.md             # action classification + heartbeat authority
 ├── config.md            # model pool
 ├── memory/
-│   └── projects/        # per-project intelligence
-└── projects/
-    └── <name>/
-        ├── config.md    # project path
-        └── tickets/     # per-project tickets
-            └── TK-001.md
+│   ├── projects/        # per-project intelligence
+│   │   └── <name>/
+│   │       ├── knowledge.md  # compiled facts, conventions, decisions
+│   │       ├── _index.md     # auto-generated summary (loaded at session start)
+│   │       └── log/          # daily session log entries
+│   └── daily/           # condensed session transcripts
+├── reflections/         # nightly self-reflection proposals
+├── briefings/           # morning briefings
+├── runs/                # dispatch run state
+│   └── RUN-001/
+│       ├── goal.md, status, plan.md, output.log, pid
+├── projects/
+│   └── <name>/
+│       ├── config.md    # project path
+│       ├── HEARTBEAT.md # standing orders + authorized actions
+│       ├── heartbeat.json # session state
+│       ├── inbox.md     # heartbeat findings
+│       └── tickets/
+│           └── TK-001.md
+├── scripts/             # launchd entry points
+└── logs/                # nightly, morning, heartbeat logs
 ```
 
 ## Requirements
