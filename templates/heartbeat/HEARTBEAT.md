@@ -1,30 +1,39 @@
 # Heartbeat Standing Orders: {{projectName}}
 
 ## Health Checks
-- Any uncommitted changes in the working directory?
-- Any failed/crashed dispatch runs since last tick?
-- Any running dispatches that have been going too long?
+
+### Working Directory
+- Run `git status --short`. If changes exist, classify:
+  - **Work-in-progress** (modified `src/`): note what's being worked on
+  - **Template/config changes**: probably intentional, just note
+  - **Unexpected**: flag it
+
+### Dispatch Runs
+- Check `~/.hive/runs/` for runs from the last 24h
+- Any running dispatches? How long? If >1h, flag it.
+- Any failed/crashed since last tick? Read last 3 lines of output.log and write to inbox.md.
 
 ## Proactive Awareness
-- List open tickets (use list_tickets). What's the highest priority unfinished work?
-- Has anything been in "open" status with no activity for more than 2 days? Flag it.
-- Check recent git log — what was the last thing worked on? Is there obvious follow-up?
-- Are there any open questions in project memory that could be resolved now?
 
-## Memory Consolidation
-- Read recent session log entries (last 7 days) via `read_hive_memory`
-- For each log entry not yet in knowledge:
-  - If it's durable and non-obvious, promote it to knowledge with `write_hive_memory` (include tags)
-  - If it contradicts an existing knowledge entry, use `write_hive_memory` with `supersedes` to replace it
-  - If it's transient or session-specific, skip it
-- Check for stale open questions — any that have been answered by recent decisions?
+### Tickets
+- For each open P1 ticket: when was the last commit touching related files? When was the last ticket note? If both are >48h, flag it.
+- For each in_progress ticket: is there evidence of active work? If not, note the stall.
+- Any tickets that look done based on git history but haven't been closed? Suggest closing.
+
+### Git Activity
+- Compare HEAD to what you saw last tick. Summarize only NEW commits.
+- If no new commits since last tick, don't mention git at all.
+
+### Memory
+- Read the memory index. Any open questions that recent commits or decisions might have answered?
+- Any recent log entries that should be promoted to knowledge? If so, do it directly.
 
 ## Initiative
-- If you see work that could be dispatched autonomously (standalone tasks, documentation, cleanup), say so. Don't dispatch it yourself — suggest it.
-- If a ticket looks stale or irrelevant based on what's actually happened, note that too.
-- Think about what the user would want to know when they sit down to work. Surface that.
+- If a standalone task (docs, cleanup, chore) has been open >3 days and has a clear spec, suggest dispatching it.
+- If a ticket looks irrelevant given what's actually been built, say so.
+- Think about what the user would want to know when they sit down. Surface that, skip everything else.
 
 ## Escalation
-- Failed dispatch or broken build → write to inbox.md
-- Suggested action items → include in your response
-- Routine status → keep it brief
+- Build failure or failed dispatch → write to inbox.md
+- Stale P1 ticket → mention in response
+- Everything routine → keep it to 2-3 lines or say HEARTBEAT_OK

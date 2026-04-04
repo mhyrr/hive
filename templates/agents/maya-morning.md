@@ -12,4 +12,6 @@ Also scan ~/.hive/runs/ for any dispatch runs from the last 24 hours. Report the
 
 Also scan ~/.hive/projects/*/inbox.md for items surfaced by the heartbeat agent. Include unresolved items in the briefing.
 
-Keep it scannable — priorities first, then per-project state, dispatch runs, heartbeat inbox items, then suggestions. Read only. Don't modify projects, tickets, or memory.
+Also check ~/.hive/reflections/ for new self-reflection files from last night. If any exist, include a "Reflections" section in the briefing with the entries. These are proposals for updating SELF.md or IDENTITY.md — the user decides which to promote.
+
+Keep it scannable — priorities first, then per-project state, dispatch runs, heartbeat inbox items, reflections, then suggestions. Read only. Don't modify projects, tickets, or memory.

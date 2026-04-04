@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -64,6 +64,31 @@ export async function assembleIdentity(): Promise<string> {
       parts.push(content.trim());
       parts.push("\n");
     }
+  }
+
+  // Load recent reflections (last 3 days) if any exist
+  if (existsSync(paths.reflectionsDir)) {
+    try {
+      const files = readdirSync(paths.reflectionsDir)
+        .filter((f) => f.endsWith(".md"))
+        .sort()
+        .reverse()
+        .slice(0, 3);
+
+      if (files.length > 0) {
+        const reflectionParts: string[] = [];
+        for (const file of files) {
+          const content = await Bun.file(join(paths.reflectionsDir, file)).text();
+          if (content.trim()) reflectionParts.push(content.trim());
+        }
+        if (reflectionParts.length > 0) {
+          parts.push("## Recent Self-Reflections\n");
+          parts.push("> Extracted by nightly review. Pending promotion to identity files.\n");
+          parts.push(reflectionParts.join("\n\n"));
+          parts.push("\n---\n");
+        }
+      }
+    } catch { /* no reflections yet */ }
   }
 
   // Append reflection protocol
