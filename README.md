@@ -189,6 +189,7 @@ Available to Claude Code when the HIVE MCP server is running:
 | `hive ticket close <id>` | Close ticket |
 | `hive ticket reopen <id>` | Reopen a closed ticket |
 | `hive ticket note <id> <text>` | Add a timestamped note |
+| `hive ticket dispatch <id>` | Tag ticket for heartbeat auto-dispatch |
 | `hive ticket ready` | Show unblocked open tickets |
 | `hive ticket blocked` | Show dependency-blocked tickets |
 
@@ -219,6 +220,24 @@ correct order. A write queue serializes concurrent MCP calls to prevent
 lost updates.
 
 `~/.hive/` is a git repo, so all memory changes are tracked in history.
+
+## Automation: Auto-dispatch
+
+Tickets tagged `auto-dispatch` are picked up by the heartbeat agent for
+autonomous execution. The workflow:
+
+1. **Tag a ticket:** `hive ticket dispatch TK-005` adds the `auto-dispatch` tag
+2. **Heartbeat picks it up:** The context brief highlights auto-dispatch tickets with dependency status
+3. **Dependency gating:** If a ticket has unresolved `depends`, the heartbeat skips it and notes why
+4. **Dispatch:** The heartbeat runs `hive dispatch "<goal>" --ticket <id>` for ready tickets
+
+This is controlled by the standing orders in each project's `HEARTBEAT.md`.
+Only tickets that are open, tagged `auto-dispatch`, and have all dependencies
+resolved will be dispatched. The heartbeat logs every dispatch to `inbox.md`.
+
+Use `auto-dispatch` for work that's well-specified and safe for autonomous
+execution: documentation tasks, chores, standalone features with clear specs.
+Don't tag anything that needs human judgment on approach.
 
 ## File Layout
 

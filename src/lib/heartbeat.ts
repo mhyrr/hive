@@ -99,6 +99,26 @@ async function buildContextBrief(projectId: string): Promise<string> {
         sections.push(`- ${t.id} (${t.status}, P${t.priority}) ${t.title}`);
       }
     }
+
+    // Auto-dispatch tickets — highlighted for heartbeat agent
+    const autoDispatch = all.filter((t) => t.tags.includes("auto-dispatch") && t.status === "open");
+    if (autoDispatch.length > 0) {
+      const closedIds = new Set(
+        (await listTickets(paths, projectId, { status: "closed" as any })).map((t) => t.id),
+      );
+      const allIds = new Set(all.map((t) => t.id));
+
+      sections.push("");
+      sections.push("**Auto-dispatch queue** (tagged for autonomous execution):");
+      for (const t of autoDispatch) {
+        const unresolvedDeps = t.depends.filter((d) => !closedIds.has(d));
+        if (unresolvedDeps.length > 0) {
+          sections.push(`- ${t.id} (P${t.priority}) ${t.title} — ⛔ BLOCKED by: ${unresolvedDeps.join(", ")}`);
+        } else {
+          sections.push(`- ${t.id} (P${t.priority}) ${t.title} — ✅ READY to dispatch`);
+        }
+      }
+    }
   } catch { /* no tickets */ }
 
   // Memory index (lightweight summary)

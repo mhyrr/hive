@@ -11,6 +11,11 @@
 When dispatching: `hive dispatch "<goal>" --ticket <id> --project {{projectName}}`
 Log to inbox.md: what was dispatched, the run ID, and why.
 
+**Dependency check:** Before dispatching any `auto-dispatch` ticket, verify its
+dependencies are resolved (all `depends` tickets are closed). The context brief
+marks blocked tickets — skip them and note why in inbox.md. Only dispatch tickets
+marked ✅ READY.
+
 ### Auto-act (just do it)
 - Memory consolidation (promote log entries to knowledge)
 - Close tickets that are clearly done based on git history

@@ -52,6 +52,7 @@ export async function ticketCommand(args: string[]): Promise<void> {
   hive ticket close <id>
   hive ticket reopen <id>
   hive ticket note <id> <text>
+  hive ticket dispatch <id>                Tag ticket for auto-dispatch
   hive ticket ready                        Show unblocked tickets
   hive ticket blocked                      Show dependency-blocked tickets
   hive ticket --project <name> ...         Specify project`;
@@ -169,6 +170,24 @@ export async function ticketCommand(args: string[]): Promise<void> {
       const ticket = await addTicketNote(paths, projectId, id, text);
       if (!ticket) throw new UsageError(`Ticket not found: ${id}`);
       console.log(`Added note to ${ticket.id}`);
+      break;
+    }
+
+    case "dispatch": {
+      const id = positional[0];
+      if (!id) throw new UsageError("Ticket ID required.");
+      const ticket = await readTicket(paths, projectId, id);
+      if (!ticket) throw new UsageError(`Ticket not found: ${id}`);
+
+      if (ticket.tags.includes("auto-dispatch")) {
+        console.log(`${ticket.id} already tagged auto-dispatch`);
+      } else {
+        const updated = await updateTicket(paths, projectId, id, {
+          tags: [...ticket.tags, "auto-dispatch"],
+        });
+        if (!updated) throw new UsageError(`Failed to update ticket: ${id}`);
+        console.log(`Tagged ${updated.id} for auto-dispatch: ${updated.title}`);
+      }
       break;
     }
 
