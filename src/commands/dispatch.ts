@@ -168,18 +168,24 @@ if [ "$EXIT_CODE" = "124" ]; then
   exit 0
 fi
 
-# Determine status from plan file
+# Determine status from evidence of work, not exit code
+# Claude can exit non-zero even when all work completed (context exhaustion, etc.)
 if [ -f "${runDir}/plan.md" ]; then
+  CHECKED=$(grep -c '\\- \\[x\\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
   UNCHECKED=$(grep -c '\\- \\[ \\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
-  if [ "$UNCHECKED" = "0" ] && [ "$EXIT_CODE" = "0" ]; then
+  if [ "$UNCHECKED" = "0" ] && [ "$CHECKED" -gt "0" ]; then
     echo "complete" > "${runDir}/status"
   elif grep -q "blocked" "${runDir}/plan.md" 2>/dev/null; then
     echo "blocked" > "${runDir}/status"
+  elif [ "$CHECKED" -gt "0" ]; then
+    echo "partial" > "${runDir}/status"
   else
     echo "failed" > "${runDir}/status"
   fi
 else
-  if [ "$EXIT_CODE" = "0" ]; then
+  # No plan file — check if there are commits on the worktree branch
+  COMMITS=$(git log main..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$COMMITS" -gt "0" ] || [ "$EXIT_CODE" = "0" ]; then
     echo "complete" > "${runDir}/status"
   else
     echo "failed" > "${runDir}/status"

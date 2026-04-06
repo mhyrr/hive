@@ -64,6 +64,8 @@ function readRunInfo(runsDir: string, runId: string): RunInfo | null {
           effectiveStatus = "complete";
         } else if (plan.toLowerCase().includes("blocked")) {
           effectiveStatus = "blocked";
+        } else if (checked > 0) {
+          effectiveStatus = "partial";
         } else {
           effectiveStatus = "crashed";
         }
@@ -114,6 +116,7 @@ export async function psCommand(_args: string[]): Promise<void> {
   const statusIcon: Record<string, string> = {
     running: "🔵",
     complete: "✅",
+    partial: "🟠",
     failed: "❌",
     blocked: "🟡",
     crashed: "💀",

@@ -59,6 +59,23 @@ async function nextTicketId(dir: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Priority parsing — handles numeric (0-3), string names, and legacy NaN
+// ---------------------------------------------------------------------------
+
+const priorityNames: Record<string, TicketPriority> = {
+  critical: 0, high: 1, medium: 2, low: 3,
+  "p0": 0, "p1": 1, "p2": 2, "p3": 3,
+};
+
+function parsePriority(raw: unknown): TicketPriority {
+  if (raw == null || raw === "NaN") return 2;
+  const n = Number(raw);
+  if (!Number.isNaN(n) && n >= 0 && n <= 3) return n as TicketPriority;
+  const key = String(raw).toLowerCase().trim();
+  return priorityNames[key] ?? 2;
+}
+
+// ---------------------------------------------------------------------------
 // Parse / serialize
 // ---------------------------------------------------------------------------
 
@@ -70,7 +87,7 @@ function parseTicketFile(raw: string, id: string): TicketWithBody {
     title: attributes.title ?? "Untitled",
     status: (attributes.status as TicketStatus) ?? "open",
     type: (attributes.type as TicketType) ?? "task",
-    priority: (Number(attributes.priority) ?? 2) as TicketPriority,
+    priority: parsePriority(attributes.priority),
     tags: attributes.tags ? attributes.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
     created: attributes.created ?? toIsoTimestamp(),
     updated: attributes.updated ?? toIsoTimestamp(),
@@ -328,7 +345,8 @@ const priorityLabels: Record<TicketPriority, string> = {
 export function formatTicketSummary(t: Ticket): string {
   const tags = t.tags.length > 0 ? ` [${t.tags.join(", ")}]` : "";
   const deps = t.depends.length > 0 ? ` (blocked by: ${t.depends.join(", ")})` : "";
-  return `${t.id}  ${t.status.padEnd(11)}  ${priorityLabels[t.priority].padEnd(12)}  ${t.type.padEnd(7)}  ${t.title}${tags}${deps}`;
+  const pLabel = priorityLabels[t.priority] ?? `P?-unknown`;
+  return `${t.id}  ${t.status.padEnd(11)}  ${pLabel.padEnd(12)}  ${t.type.padEnd(7)}  ${t.title}${tags}${deps}`;
 }
 
 export function formatTicketDetail(t: TicketWithBody): string {
@@ -337,7 +355,7 @@ export function formatTicketDetail(t: TicketWithBody): string {
     "",
     `**Status:** ${t.status}`,
     `**Type:** ${t.type}`,
-    `**Priority:** ${priorityLabels[t.priority]}`,
+    `**Priority:** ${priorityLabels[t.priority] ?? "unknown"}`,
     `**Tags:** ${t.tags.length > 0 ? t.tags.join(", ") : "none"}`,
     `**Created:** ${t.created}`,
     `**Updated:** ${t.updated}`,
