@@ -31,9 +31,13 @@ describe("defaultConfig", () => {
     const config = defaultConfig();
     expect(config.enabled).toBe(true);
     expect(config.intervalMinutes).toBe(30);
-    expect(config.sessionId).toBe("");
     expect(config.tickCount).toBe(0);
     expect(config.consecutiveFailures).toBe(0);
+    // sessionId is no longer part of defaults — heartbeat is stateless (TK-024).
+    // Existing configs on disk may still have sessionId/createdAt; the field is
+    // optional in HeartbeatConfig so old files parse cleanly but we don't write
+    // them on new configs.
+    expect(config.sessionId).toBeUndefined();
   });
 
   test("accepts custom interval", () => {

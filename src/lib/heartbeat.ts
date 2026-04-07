@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 
 import { getHivePaths, getProjectPaths, listProjects } from "./paths";
 import { parseFrontmatter } from "./frontmatter";
-import { assembleIdentity } from "./identity";
+import { assembleHeartbeatIdentity } from "./identity";
 import { readLog, readProjectMemorySnapshot, readProjectMemorySection, indexPath } from "./memory";
 import { listTickets, type Ticket } from "./ticket";
 import { rebuildIndex } from "./memory";
@@ -19,8 +19,19 @@ export interface HeartbeatDispatch {
 }
 
 export interface HeartbeatConfig {
-  sessionId: string;
-  createdAt: string;
+  /**
+   * Vestigial: prior to TK-024, heartbeat used `--resume` against a long-lived
+   * Claude Code session. That model invalidated prompt caching every tick (the
+   * system prompt mutated between ticks, the conversation grew unbounded, and
+   * cold-cache cost dominated). Heartbeat is now stateless — each tick is a
+   * fresh `--print` invocation. The field is kept here only so existing
+   * heartbeat.json files on disk parse without modification.
+   */
+  sessionId?: string;
+  /**
+   * Vestigial alongside `sessionId`. See note above.
+   */
+  createdAt?: string;
   lastTick: string;
   tickCount: number;
   lastResult: string;
@@ -203,70 +214,63 @@ export async function runTick(projectId: string): Promise<TickResult> {
   const timestamp = new Date().toISOString();
   const hiveHome = join(process.env.HOME || "", ".hive");
 
-  // Write fresh identity to temp file
-  const identity = await assembleIdentity();
-  const identityPath = join(tmpdir(), `hive-heartbeat-${process.pid}.md`);
+  // Write deterministic heartbeat identity to a stable temp path. The path is
+  // keyed by project (not pid) so subsequent ticks land on the same filename,
+  // and the *content* is byte-stable across ticks unless the user edits an
+  // identity file. (TK-024)
+  const identity = await assembleHeartbeatIdentity();
+  const identityPath = join(tmpdir(), `hive-heartbeat-${projectId}.md`);
   await Bun.write(identityPath, identity);
 
-  // Build context brief from memory, tickets, git
+  // Write the per-tick variable payload (timestamp + context brief) to a file
+  // the agent reads on entry. Why a file instead of inlining in the user
+  // message: empirically (verified in jsonl from the first stateless ticks),
+  // Claude Code's prompt cache breakpoint sits after the user message, so any
+  // variable content in the user message — even a 7-token timestamp delta —
+  // invalidates the entire 35K cached prefix. By stabilizing both the system
+  // prompt AND the user message across ticks, the second tick within the 1h
+  // TTL window can finally hit the cache. The file path is keyed by project
+  // so each project's heartbeat has its own brief.
   const contextBrief = await buildContextBrief(projectId);
+  const briefPath = join(paths.home, "projects", projectId, ".tick-brief.md");
+  const briefContent = `# Heartbeat tick brief: ${projectId}\n\nGenerated: ${timestamp}\nProject path: ${projectPath}\n${contextBrief}\n`;
+  await Bun.write(briefPath, briefContent);
 
-  let args: string[];
-
-  if (config.sessionId) {
-    // Resume existing session
-    args = [
-      "--resume", config.sessionId,
-      "--append-system-prompt-file", identityPath,
-      "--add-dir", hiveHome,
-      "--permission-mode", "bypassPermissions",
-      "--max-turns", "20",
-      "--print",
-      `HEARTBEAT_TICK ${timestamp}${contextBrief}`,
-    ];
-  } else {
-    // Create new session
-    const sessionId = crypto.randomUUID();
-    config.sessionId = sessionId;
-    config.createdAt = timestamp;
-    args = [
-      "--session-id", sessionId,
-      "--append-system-prompt-file", identityPath,
-      "--agent", "maya-heartbeat",
-      "--add-dir", hiveHome,
-      "--permission-mode", "bypassPermissions",
-      "--max-turns", "20",
-      "--print",
-      `HEARTBEAT_INIT for project ${projectId} at ${projectPath}. Read ~/.hive/projects/${projectId}/HEARTBEAT.md for your standing orders — especially the Authorized Actions section. You have authority to dispatch work and close tickets. Use it.${contextBrief}`,
-    ];
-  }
+  // Stateless tick: fresh `--print` invocation every time. No `--resume`,
+  // no `--session-id`. State that previously lived in conversation history
+  // (what the agent did last tick) now comes from inbox.md, git, tickets,
+  // and dispatch run records — all surfaced via the brief file the agent
+  // reads on its first turn.
+  //
+  // The user message below is byte-stable across ticks for one project. Both
+  // the system prompt (via assembleHeartbeatIdentity) and the user message
+  // are invariant, so the prompt cache prefix matches between ticks within
+  // the 1h TTL window.
+  const args = [
+    "--append-system-prompt-file", identityPath,
+    "--agent", "maya-heartbeat",
+    "--add-dir", hiveHome,
+    "--permission-mode", "bypassPermissions",
+    "--max-turns", "20",
+    "--print",
+    `HEARTBEAT_TICK for project ${projectId}. Read ~/.hive/projects/${projectId}/.tick-brief.md for the current state and timestamp, then read ~/.hive/projects/${projectId}/HEARTBEAT.md for your standing orders. Act per your authorized actions.`,
+  ];
 
   const proc = Bun.spawnSync([claude, ...args], {
     cwd: projectPath,
     env: { ...process.env, ANTHROPIC_API_KEY: undefined },
   });
 
-  // Clean up identity temp file
-  try { require("fs").unlinkSync(identityPath); } catch {}
-
   const output = proc.stdout.toString().trim();
   const exitCode = proc.exitCode ?? 1;
-
-  // Detect session death
-  if (exitCode !== 0 && (output.includes("session not found") || output.includes("Session not found"))) {
-    config.sessionId = "";
-    config.lastResult = "SESSION_DEAD";
-    config.consecutiveFailures++;
-    config.lastTick = timestamp;
-    await writeHeartbeatConfig(projectDir, config);
-    return { output, exitCode, result: "SESSION_DEAD" };
-  }
 
   // Determine result
   const isOk = output.includes("HEARTBEAT_OK");
   const result: TickResult["result"] = exitCode !== 0 ? "ERROR" : isOk ? "HEARTBEAT_OK" : "ACTION_TAKEN";
 
-  // Rebuild memory index — cheap, runs every tick to keep it current
+  // Rebuild memory index — cheap, runs every tick to keep it current.
+  // Note: index content does NOT feed back into the next tick's identity
+  // prefix (heartbeat identity is deterministic), so this is safe for cache.
   try {
     await rebuildIndex(paths, projectId);
   } catch {
@@ -278,13 +282,6 @@ export async function runTick(projectId: string): Promise<TickResult> {
   config.tickCount++;
   config.lastResult = result;
   config.consecutiveFailures = exitCode === 0 ? 0 : config.consecutiveFailures + 1;
-
-  // Check session age — recreate if > 7 days
-  const ageMs = Date.now() - new Date(config.createdAt).getTime();
-  const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
-  if (ageMs > maxAgeMs) {
-    config.sessionId = ""; // Will create new on next tick
-  }
 
   await writeHeartbeatConfig(projectDir, config);
 
@@ -311,8 +308,6 @@ export async function runTick(projectId: string): Promise<TickResult> {
 
 export function defaultConfig(intervalMinutes: number = 30): HeartbeatConfig {
   return {
-    sessionId: "",
-    createdAt: "",
     lastTick: "",
     tickCount: 0,
     lastResult: "",

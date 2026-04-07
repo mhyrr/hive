@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -66,32 +66,37 @@ export async function assembleIdentity(): Promise<string> {
     }
   }
 
-  // Load recent reflections (last 3 days) if any exist
-  if (existsSync(paths.reflectionsDir)) {
-    try {
-      const files = readdirSync(paths.reflectionsDir)
-        .filter((f) => f.endsWith(".md"))
-        .sort()
-        .reverse()
-        .slice(0, 3);
+  // Append reflection protocol
+  parts.push(REFLECTION_PROTOCOL);
 
-      if (files.length > 0) {
-        const reflectionParts: string[] = [];
-        for (const file of files) {
-          const content = await Bun.file(join(paths.reflectionsDir, file)).text();
-          if (content.trim()) reflectionParts.push(content.trim());
-        }
-        if (reflectionParts.length > 0) {
-          parts.push("## Recent Self-Reflections\n");
-          parts.push("> Extracted by nightly review. Pending promotion to identity files.\n");
-          parts.push(reflectionParts.join("\n\n"));
-          parts.push("\n---\n");
-        }
-      }
-    } catch { /* no reflections yet */ }
+  return parts.join("\n");
+}
+
+/**
+ * Assemble a deterministic identity prefix for the heartbeat agent.
+ *
+ * Unlike `assembleIdentity()`, this is byte-stable across ticks: it loads
+ * only the static identity stack (SOUL/IDENTITY/SELF/AGENTS/TRUST) plus the
+ * reflection protocol. No project memory index, no reflections — those
+ * mutate between ticks and would invalidate the prompt cache.
+ *
+ * Project-specific state (memory index, tickets, git, dispatch runs) is
+ * delivered via the per-tick context brief in the user message, which sits
+ * below the cached system prompt and doesn't break the cache.
+ */
+export async function assembleHeartbeatIdentity(): Promise<string> {
+  const paths = getHivePaths();
+  const parts: string[] = [];
+
+  for (const file of IDENTITY_FILES) {
+    const filePath = join(paths.home, file);
+    if (existsSync(filePath)) {
+      const content = await Bun.file(filePath).text();
+      parts.push(content.trim());
+      parts.push("\n---\n");
+    }
   }
 
-  // Append reflection protocol
   parts.push(REFLECTION_PROTOCOL);
 
   return parts.join("\n");

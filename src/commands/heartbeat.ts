@@ -129,9 +129,6 @@ async function heartbeatStatus(projectId?: string): Promise<void> {
     found = true;
 
     const enabled = config.enabled ? "✅ enabled" : "⏸️  disabled";
-    const age = config.createdAt
-      ? `${Math.round((Date.now() - new Date(config.createdAt).getTime()) / 3600000)}h`
-      : "no session";
     const lastTick = config.lastTick
       ? `${Math.round((Date.now() - new Date(config.lastTick).getTime()) / 60000)}m ago`
       : "never";
@@ -139,7 +136,6 @@ async function heartbeatStatus(projectId?: string): Promise<void> {
     console.log(`${pid}:`);
     console.log(`  Status:     ${enabled}`);
     console.log(`  Interval:   ${config.intervalMinutes}m`);
-    console.log(`  Session:    ${config.sessionId ? config.sessionId.slice(0, 8) + "..." : "none"} (age: ${age})`);
     console.log(`  Last tick:  ${lastTick}`);
     console.log(`  Last result: ${config.lastResult || "n/a"}`);
     console.log(`  Ticks:      ${config.tickCount}`);
@@ -180,65 +176,32 @@ async function heartbeatReset(projectId: string): Promise<void> {
     throw new UsageError(`No heartbeat configured for ${projectId}.`);
   }
 
-  config.sessionId = "";
-  config.createdAt = "";
+  // Clear vestigial session fields if present (pre-TK-024 configs may have them).
+  delete config.sessionId;
+  delete config.createdAt;
   config.tickCount = 0;
   config.consecutiveFailures = 0;
   config.lastResult = "";
   await writeHeartbeatConfig(projectDir, config);
-  console.log(`Heartbeat session reset for ${projectId}. Next tick will create a new session.`);
+  console.log(`Heartbeat counters reset for ${projectId}.`);
 }
 
-async function heartbeatChat(projectId: string, initialMessage?: string): Promise<void> {
-  const paths = getHivePaths();
-  const projectDir = join(paths.projectsDir, projectId);
-  const config = readHeartbeatConfig(projectDir);
-
-  if (!config) {
-    throw new UsageError(`No heartbeat configured for ${projectId}. Run \`hive heartbeat start\` first.`);
-  }
-
-  if (!config.sessionId) {
-    throw new UsageError(`No heartbeat session exists. Run \`hive heartbeat tick\` first to create one.`);
-  }
-
-  // Get project path for cwd
-  const projectConfig = parseFrontmatter(readFileSync(join(projectDir, "config.md"), "utf-8"));
-  const projectPath = (projectConfig.attributes?.path as string) || process.cwd();
-
-  const identityFile = await writeIdentityTempFile();
-  process.on("exit", cleanupIdentityTempFile);
-  process.on("SIGINT", () => { cleanupIdentityTempFile(); process.exit(130); });
-  process.on("SIGTERM", () => { cleanupIdentityTempFile(); process.exit(143); });
-
-  const claude = (() => {
-    try {
-      return execSync("which claude", { encoding: "utf-8" }).trim();
-    } catch {
-      const fallback = join(process.env.HOME || "", ".local", "bin", "claude");
-      if (existsSync(fallback)) return fallback;
-      throw new Error("Could not find claude CLI.");
-    }
-  })();
-
-  const message = initialMessage || "Interactive heartbeat session.";
-  const claudeArgs = [
-    "--resume", config.sessionId,
-    "--append-system-prompt-file", identityFile,
-    "--add-dir", join(process.env.HOME || "", ".hive"),
-    "--", message,
-  ];
-
-  const result = Bun.spawnSync([claude, ...claudeArgs], {
-    cwd: projectPath,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-    env: { ...process.env, ANTHROPIC_API_KEY: undefined },
-  });
-
-  cleanupIdentityTempFile();
-  process.exit(result.exitCode ?? 0);
+async function heartbeatChat(_projectId: string, _initialMessage?: string): Promise<void> {
+  // The pre-TK-024 chat workflow attached an interactive Claude session to the
+  // long-lived heartbeat session via `--resume <sessionId>`. Heartbeat is now
+  // stateless — there is no persistent session to resume. See TK-028 for the
+  // replacement design (interactive session that reads/writes the same project
+  // state as ticks via inbox.md and tickets, instead of via conversation history).
+  throw new UsageError(
+    `\`hive heartbeat chat\` is unavailable after the TK-024 stateless-tick refactor.\n` +
+    `\n` +
+    `Heartbeat ticks no longer share a Claude Code session, so there is nothing\n` +
+    `to resume. For now, use \`hive\` directly for an interactive session, or file\n` +
+    `goals as tickets / write them to the project's inbox.md — the next tick will\n` +
+    `pick them up.\n` +
+    `\n` +
+    `Replacement design tracked in TK-028.`
+  );
 }
 
 // Used by heartbeat.sh to check if a project should tick now
