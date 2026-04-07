@@ -9,6 +9,7 @@ import { assembleHeartbeatIdentity } from "./identity";
 import { readLog, readProjectMemorySnapshot, readProjectMemorySection, indexPath } from "./memory";
 import { listTickets, type Ticket } from "./ticket";
 import { rebuildIndex } from "./memory";
+import { shouldInvokeHeartbeat } from "./heartbeat-trigger";
 
 export interface HeartbeatDispatch {
   runId: string;
@@ -214,6 +215,30 @@ export async function runTick(projectId: string): Promise<TickResult> {
   const timestamp = new Date().toISOString();
   const hiveHome = join(process.env.HOME || "", ".hive");
 
+  // TK-025: Deterministic trigger gate. Ask the rules engine whether anything
+  // meaningful has changed since lastTick. If not, short-circuit to
+  // HEARTBEAT_OK without any LLM invocation. This is the ~90% no-op path.
+  const trigger = await shouldInvokeHeartbeat({
+    projectId,
+    projectPath,
+    lastTick: config.lastTick,
+    paths,
+  });
+
+  if (!trigger.invoke) {
+    // Nothing to do. Update counters and exit without touching the LLM.
+    config.lastTick = timestamp;
+    config.tickCount++;
+    config.lastResult = "HEARTBEAT_OK";
+    config.consecutiveFailures = 0;
+    await writeHeartbeatConfig(projectDir, config);
+    return {
+      output: "HEARTBEAT_OK (gated — no signals since last tick)",
+      exitCode: 0,
+      result: "HEARTBEAT_OK",
+    };
+  }
+
   // Write deterministic heartbeat identity to a stable temp path. The path is
   // keyed by project (not pid) so subsequent ticks land on the same filename,
   // and the *content* is byte-stable across ticks unless the user edits an
@@ -233,7 +258,13 @@ export async function runTick(projectId: string): Promise<TickResult> {
   // so each project's heartbeat has its own brief.
   const contextBrief = await buildContextBrief(projectId);
   const briefPath = join(paths.home, "projects", projectId, ".tick-brief.md");
-  const briefContent = `# Heartbeat tick brief: ${projectId}\n\nGenerated: ${timestamp}\nProject path: ${projectPath}\n${contextBrief}\n`;
+  // Lead the brief with the trigger reasons so the LLM knows *why* it was woken
+  // up. This is cheaper than having it rediscover the signals, and reduces the
+  // risk of drift between the rules engine's view and the agent's view.
+  const reasonsBlock = trigger.reasons.length > 0
+    ? `\nTrigger reasons (why this tick fired instead of skipping):\n${trigger.reasons.map((r) => `- ${r}`).join("\n")}\n`
+    : "";
+  const briefContent = `# Heartbeat tick brief: ${projectId}\n\nGenerated: ${timestamp}\nProject path: ${projectPath}\n${reasonsBlock}${contextBrief}\n`;
   await Bun.write(briefPath, briefContent);
 
   // Stateless tick: fresh `--print` invocation every time. No `--resume`,
