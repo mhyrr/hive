@@ -226,17 +226,17 @@ For multi-model council (optional):
 
 ```bash
 cd ~/work/hive   # or wherever you cloned this repo
-bun install
-bun run src/cli.ts init
+./install.sh
 ```
 
-This creates:
+This builds the binaries and creates:
 - `~/.hive/` with identity templates (SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md)
 - `~/.hive/config.md` with model pool configuration
 - `~/.hive/scripts/` with nightly, morning, and sync scripts
 - `~/.claude/agents/` with HIVE agent definitions (maya-planner, maya-coder, maya-reviewer, maya-nightly)
-- Cron jobs for nightly extraction and state sync
-- MCP server registration in `~/.claude/.mcp.json`
+- Launchd jobs for heartbeat, nightly extraction, morning briefing, and state sync
+- MCP server registration in `~/.claude.json`
+- `hive` and `hive-mcp` binaries symlinked to `~/.local/bin/`
 
 ### Step 2: Customize Your Identity
 
@@ -468,8 +468,8 @@ multi-model deliberation.
 ├── logs/                # Script execution logs
 └── briefings/           # Morning briefing output
 
+~/.claude.json               # MCP server registration (includes HIVE)
 ~/.claude/
-├── .mcp.json            # MCP server registration (includes HIVE)
 ├── agents/
 │   ├── maya-planner.md  # Architecture and planning agent
 │   ├── maya-coder.md    # Implementation agent (worktree-isolated)
@@ -484,8 +484,8 @@ multi-model deliberation.
 
 | Task | Command |
 |------|---------|
-| Initialize HIVE | `bun run src/cli.ts init` |
-| Register a project | `bun run src/cli.ts project add <name> <path>` |
+| Initialize HIVE | `./install.sh` |
+| Register a project | `hive project add <name> <path>` |
 | View project memory | `hive memory` |
 | Add a fact | `hive memory fact "Uses Joken for JWT"` |
 | Convene council | `hive council "Should we use X or Y?"` |

@@ -23,14 +23,14 @@ You have HIVE MCP tools:
 ## Development
 
 - Runtime: Bun + TypeScript
-- Build: `bun build src/cli.ts --target bun --outfile hive`
+- Build: `bun build src/cli.ts --target bun --outfile hive-bin`
 - MCP server: `bun build src/mcp-server.ts --target bun --outfile hive-mcp`
 - Run CLI directly: `bun run src/cli.ts <command>`
 - Test MCP server: `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}' | bun src/mcp-server.ts`
 
 ## Architecture
 
-17 source files, ~1,667 lines. Two entry points:
+29 source files, ~6,700 lines. Two entry points:
 - `src/cli.ts` — CLI (init, project, council, memory)
 - `src/mcp-server.ts` — MCP server (convene_council, read_hive_memory, write_hive_memory)
 

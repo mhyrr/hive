@@ -152,17 +152,29 @@ export async function initCommand(args: string[]): Promise<void> {
     console.log("Installed heartbeat (every 30m via launchd)");
   }
 
-  // Symlink hive binary to ~/.local/bin/
+  // Symlink binaries to ~/.local/bin/
   const localBin = join(process.env.HOME || "", ".local", "bin");
-  const hiveBin = join(localBin, "hive");
-  const hiveSource = join(process.cwd(), "hive-bin");
-  if (existsSync(hiveSource) && !existsSync(hiveBin)) {
+  await ensureDirectory(localBin);
+
+  const hiveCliSource = join(process.cwd(), "hive-bin");
+  const hiveCliBin = join(localBin, "hive");
+  if (existsSync(hiveCliSource) && !existsSync(hiveCliBin)) {
     try {
-      await ensureDirectory(localBin);
-      require("fs").symlinkSync(hiveSource, hiveBin);
-      console.log(`Linked hive to ${hiveBin}`);
+      require("fs").symlinkSync(hiveCliSource, hiveCliBin);
+      console.log(`Linked hive to ${hiveCliBin}`);
     } catch {
-      console.log(`Note: Could not link hive to ${hiveBin}. Add manually to PATH.`);
+      console.log(`Note: Could not link hive to ${hiveCliBin}. Add manually to PATH.`);
+    }
+  }
+
+  const hiveMcpSource = join(process.cwd(), "hive-mcp");
+  const hiveMcpBin = join(localBin, "hive-mcp");
+  if (existsSync(hiveMcpSource)) {
+    try {
+      if (existsSync(hiveMcpBin)) require("fs").unlinkSync(hiveMcpBin);
+      require("fs").symlinkSync(hiveMcpSource, hiveMcpBin);
+    } catch {
+      // non-fatal
     }
   }
 
@@ -175,9 +187,8 @@ export async function initCommand(args: string[]): Promise<void> {
   console.log(`  4. Register a project: hive project add <name> <path>`);
   console.log(`  5. Run \`hive\` from anywhere to start a Maya session`);
 
-  // Register MCP server in Claude Code config
-  const claudeDir = join(process.env.HOME || "", ".claude");
-  const mcpConfigPath = join(claudeDir, ".mcp.json");
+  // Register MCP server in Claude Code config (~/.claude.json is canonical)
+  const mcpConfigPath = join(process.env.HOME || "", ".claude.json");
 
   try {
     let mcpConfig: Record<string, unknown> = {};
@@ -187,10 +198,11 @@ export async function initCommand(args: string[]): Promise<void> {
     }
 
     const servers = (mcpConfig.mcpServers ?? {}) as Record<string, unknown>;
+    const mcpBin = join(localBin, "hive-mcp");
     if (!servers.hive) {
       servers.hive = {
-        command: "bun",
-        args: [join(process.cwd(), "src", "mcp-server.ts")],
+        command: mcpBin,
+        args: [],
       };
       mcpConfig.mcpServers = servers;
       await Bun.write(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + "\n");

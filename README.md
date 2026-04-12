@@ -66,18 +66,20 @@ architecture decisions and tradeoff analysis.
 ## Quick Start
 
 ```bash
-# Install
-bun install
+git clone <repo-url> ~/work/hive
+cd ~/work/hive
+./install.sh
+```
 
-# Initialize: creates ~/.hive/ with identity templates,
-# registers the MCP server in ~/.claude/.mcp.json,
-# and asks for your name to personalize templates
-bun run src/cli.ts init
+This builds the binaries, creates `~/.hive/` with identity templates,
+installs agents and scripts, registers the MCP server, and sets up
+launchd jobs. It will prompt for your name to personalize templates
+(or pass `--name="Your Name"`).
 
-# Register a project: creates memory file, wires CLAUDE.md
-bun run src/cli.ts project add myapp ~/work/myapp
+Then register a project and start working:
 
-# Start Claude Code (picks up identity and MCP tools automatically)
+```bash
+hive project add myapp ~/work/myapp
 cd ~/work/myapp
 claude
 ```
@@ -139,7 +141,7 @@ You have HIVE MCP tools:
 Then register the project so memory and tickets work:
 
 ```bash
-bun run src/cli.ts project add yourproject ~/work/yourproject
+hive project add yourproject ~/work/yourproject
 ```
 
 Or skip the manual CLAUDE.md edit; `project add` does it for you.
@@ -292,7 +294,7 @@ For multi-model council:
 ## Development
 
 ```bash
-bun build src/cli.ts --target bun --outfile hive
+bun build src/cli.ts --target bun --outfile hive-bin
 bun build src/mcp-server.ts --target bun --outfile hive-mcp
 bun test
 ```
