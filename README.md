@@ -1,40 +1,12 @@
 # Hive
 
-The AI agent ecosystem has claws, hippos, and filing cabinets. Most
-of them want to own your stack — databases, embedding servers, hook
-frameworks, the works. HIVE takes the best ideas from all of them
+HIVE is a thin wrapper around Claude Code with some of the best ideas from heavyweight agent systems.
+
+The AI agent ecosystem has claws, hippos, and filing cabinets. They want to own your stack with databases and local embedding servers. HIVE takes the best ideas from all of them
 and re-implements in a lightweight shell around Claude Code. No
 databases. No vector stores. No dependencies worth mentioning.
 Everything is markdown files in `~/.hive/`, tracked by git,
 readable by humans.
-
-**From [Hippo](https://github.com/kitfunso/hippo-memory):** memory
-decay and retrieval strengthening — entries you actually use get
-stronger, everything else fades. Biological memory dynamics without
-the SQLite.
-
-**From [ClawMem](https://github.com/yoloshii/ClawMem):** BM25 ranked
-search as the base retrieval layer. No embeddings needed at this scale.
-
-**From [claude-mem](https://github.com/thedotmack/claude-mem):**
-progressive disclosure — lightweight index at session start, details
-on demand.
-
-**From [OpenClaw](https://openclaw.ai/):** persistent identity
-(SOUL/IDENTITY/SELF stack), heartbeat agent with periodic autonomy,
-and trust boundaries that define what the AI can do without asking.
-
-**From [Beads](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a):**
-per-project ticket tracking with dependencies, priorities, and
-agent-readable markdown — work graphs the AI can plan against.
-
-**From [Perplexity](https://perplexity.ai/):** multi-model council —
-the same question to multiple models in parallel, synthesized into
-one answer. Perplexity does this for search; HIVE does it for
-architecture decisions and tradeoff analysis.
-
-**Original to HIVE:** the synthesis layer that ties all of this
-together without a database.
 
 Claude Code handles orchestration, subagents, tools, and file I/O.
 HIVE adds what it doesn't ship with:
@@ -48,49 +20,50 @@ HIVE adds what it doesn't ship with:
 
 > Runs on Claude Code directly. Your Claude subscription covers it.
 
-## What Hive Does
+**HIVE:** Provides a local MCP and consistency layer that ties all of this
+together without a database.
 
-**Persistent identity.** SOUL.md, IDENTITY.md, and SELF.md live in
-`~/.hive/` and define who your AI is, what it values, and how it works
-with you. Every Claude Code session picks this up through a CLAUDE.md
-reference. Identity persists across projects and sessions.
+## What It Does
 
-**Project memory.** Facts, conventions, decisions, and open questions
-accumulate in `~/.hive/memory/projects/<name>/`. Claude Code reads
-and writes this through MCP tools. Knowledge compounds over time
-instead of starting fresh every session.
+**Persistent identity.** 
 
-**Multi-model council.** Send the same question to Claude, GPT, Gemini,
-and local models simultaneously. Each model gives an independent
-position. Claude Code acts as chair and synthesizes agreement and
-disagreement. Useful for architecture decisions, tradeoff analysis, and
-anything where multiple perspectives help.
+- SOUL.md, IDENTITY.md, and SELF.md live in `~/.hive/` and define who your AI is, what it values, and how it works with you. Every Claude Code session picks this up through a CLAUDE.md reference. Identity persists across projects and sessions.
+- Inspired by [OpenClaw](https://openclaw.ai/)
 
-**Ticket tracking.** Per-project tickets stored as markdown files with
-YAML frontmatter at `~/.hive/projects/<name>/tickets/`. Bugs,
-features, tasks, epics, and chores with priorities, tags, dependencies,
-and timestamped notes. Exposed as both CLI commands and MCP tools so
-the agent can track its own work. Tickets live under `~/.hive/`, not in
-the repo — they're a personal working surface for one developer's
-human+agent loop, not a team coordination layer. Each dev on a project
-opts into HIVE independently; team-wide work still belongs in GitHub
-Issues, Linear, or whatever your team already uses.
+**Project memory.** 
 
-**Heartbeat.** A persistent Claude session per project, resumed every
-30 minutes via launchd. The heartbeat agent reads standing orders
-(`HEARTBEAT.md`), checks git status, tickets, memory, and dispatch
-runs, then acts on what it finds. It can autonomously dispatch standalone
-tasks (docs, chores), close completed tickets, consolidate memory, and
-surface recommendations. Trust boundaries are defined per project in
-the standing orders file. Also available interactively via
-`hive heartbeat chat`, which resumes the same persistent session.
+- Facts, conventions, decisions, and open questions accumulate in `~/.hive/memory/projects/<name>/`. Claude Code reads and writes this through MCP tools. Knowledge compounds over time instead of starting fresh every session.
+- Inspired by [Hippo](https://github.com/kitfunso/hippo-memory): memory
+decay and retrieval strengthening — entries you actually use get
+stronger, everything else fades. Biological memory dynamics without
+the SQLite.
+- Inspired by [ClawMem](https://github.com/yoloshii/ClawMem): BM25 ranked
+search as the base retrieval layer. No embeddings needed at this scale.
+- Inspired by [claude-mem](https://github.com/thedotmack/claude-mem):
+progressive disclosure — lightweight index at session start, details
+on demand.
 
-**Autonomous dispatch.** `hive dispatch "<goal>"` spawns a background
-Claude session with the maya-executor agent in a git worktree. The
-executor plans, builds, tests, and merges. Configurable timeout
-(default 30m). `hive kill` to stop, `hive ps` for status with failure
-details. The heartbeat can trigger dispatches on its own for
-authorized work categories.
+**Multi-model council.** 
+
+- Send the same question to Claude, GPT, Gemini, and local models simultaneously. Each model gives an independent position. Claude Code acts as chair and synthesizes agreement and disagreement. Useful for architecture decisions, tradeoff analysis, and anything where multiple perspectives help.
+- Ask the models to pick sides and debate over multiple rounds.
+- Inspired by [Perplexity](https://perplexity.ai/):** multi-model council —
+the same question to multiple models in parallel, synthesized into
+one answer. Perplexity does this for search; HIVE does it for
+architecture decisions and tradeoff analysis.
+
+**Ticket tracking.** 
+
+- Per-project tickets stored as markdown files with YAML frontmatter at `~/.hive/projects/<name>/tickets/`. Bugs, features, tasks, epics, and chores with priorities, tags, dependencies, and timestamped notes. 
+- Exposed as both CLI commands and MCP tools so the agent can track its own work. Tickets live under `~/.hive/`, not in the repo — they're a personal working surface for one developer's human+agent loop, not a team coordination layer. Each dev on a project opts into HIVE independently; team-wide work still belongs in GitHub Issues, Linear, or whatever your team already uses.
+- Inspired by [Beads](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a): per-project ticket tracking with dependencies, priorities, and agent-readable markdown — work graphs the AI can plan against.
+
+**Heartbeat and Autonomous dispatch.**
+
+- A persistent Claude session per project, resumed every 30 minutes via launchd. The heartbeat agent reads standing orders (`HEARTBEAT.md`), checks git status, tickets, memory, and dispatch runs, then acts on what it finds. 
+- It can autonomously dispatch standalone tasks (docs, chores), close completed tickets, consolidate memory, and surface recommendations. Trust boundaries are defined per project in the standing orders file. Also available interactively via `hive heartbeat chat`, which resumes the same persistent session.
+- `hive dispatch "<goal>"` spawns a background Claude session with the maya-executor agent in a git worktree. The executor plans, builds, tests, and merges. Configurable timeout (default 30m). `hive kill` to stop, `hive ps` for status with failure details. The heartbeat can trigger dispatches on its own for authorized work categories.
+- Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw)
 
 ## Quick Start
 
