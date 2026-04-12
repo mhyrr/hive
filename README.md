@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="logo.svg" alt="HIVE" width="120" height="120">
-</p>
-
-# Hive
+# <img src="logo.svg" alt="" width="32" height="32"> Hive
 
 HIVE is a thin wrapper around Claude Code with some of the best ideas from heavyweight agent systems.
 
