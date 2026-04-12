@@ -17,6 +17,7 @@ HIVE adds what it doesn't ship with:
 - **Per-project ticket tracking** in markdown
 - **Heartbeat**: a persistent agent that wakes every 30 minutes, checks project state, and dispatches work within defined trust boundaries
 - **Autonomous dispatch**: background goal execution with timeout, kill, and status tracking
+- **Nightly extraction**: reads Claude Code session transcripts (JSONL), distills key insights, and promotes durable learnings into project memory automatically
 - **Local MCP**: Provides a consistency layer that ties all of this together without a database.
 
 _Runs on Claude Code directly. Your Claude subscription covers it._
@@ -63,6 +64,11 @@ architecture decisions and tradeoff analysis.
 - `hive dispatch "<goal>"` spawns a background Claude session with the maya-executor agent in a git worktree. The executor plans, builds, tests, and merges. Configurable timeout (default 30m). `hive kill` to stop, `hive ps` for status with failure details. The heartbeat can trigger dispatches on its own for authorized work categories.
 - Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw)
 
+**Nightly extraction.**
+
+- A launchd job runs at 2am nightly. It condenses every Claude Code session transcript from the last 24 hours — the raw JSONL files Claude Code writes during every conversation — into readable markdown, then dispatches the maya-nightly agent to review them alongside git activity. The agent extracts reasoning, rejected approaches, and key decisions that don't show up in git logs or code comments, and promotes durable learnings into project memory. Memory compounds from actual work, not just what someone remembers to write down.
+- This means corrections and preferences you give during any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — get picked up by the nightly, distilled into memory, and applied in every future session. Tell the AI once, it sticks forever.
+
 ## Quick Start
 
 ```bash
@@ -75,6 +81,21 @@ This builds the binaries, creates `~/.hive/` with identity templates,
 installs agents and scripts, registers the MCP server, and sets up
 launchd jobs. It will prompt for your name to personalize templates
 (or pass `--name="Your Name"`).
+
+The installer registers four launchd jobs:
+
+| Job | Schedule | What it does |
+| --- | --- | --- |
+| `com.hive.heartbeat` | Every 30 minutes | Checks project state, dispatches autonomous work, consolidates memory |
+| `com.hive.nightly` | 2:00am daily | Extracts session transcripts, promotes learnings to project memory |
+| `com.hive.sync` | 2:30am daily | Commits and pushes `~/.hive/` to git |
+| `com.hive.morning` | 7:00am daily | Writes a daily briefing across all projects |
+
+All jobs log to `~/.hive/logs/`. Manage with `launchctl`:
+```bash
+launchctl list | grep hive         # see running jobs
+launchctl unload ~/Library/LaunchAgents/com.hive.heartbeat.plist  # stop one
+```
 
 Then register a project and start working:
 

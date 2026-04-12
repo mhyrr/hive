@@ -16,7 +16,11 @@ HIVE="${HIVE_BIN:-$(which hive 2>/dev/null || echo "$HOME/.local/bin/hive")}"
 echo "--- Promoting reflections ---"
 "$HIVE" memory promote 2>&1 || echo "Reflection promotion failed (non-fatal)"
 
-# Step 2: Extract and consolidate session transcripts
+# Step 2: Condense raw JSONL session transcripts into readable markdown
+echo "--- Extracting sessions ---"
+"$HIVE" memory extract-sessions 2>&1 || echo "Session extraction failed (non-fatal)"
+
+# Step 3: Dispatch maya-nightly to review and extract durable learnings
 echo "--- Nightly extraction ---"
 "$HIVE" --agent maya-nightly \
   --max-turns 40 \
