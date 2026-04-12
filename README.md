@@ -45,7 +45,7 @@ on demand.
 
 - Send the same question to Claude, GPT, Gemini, and local models simultaneously. Each model gives an independent position. Claude Code acts as chair and synthesizes agreement and disagreement. Useful for architecture decisions, tradeoff analysis, and anything where multiple perspectives help.
 - Ask the models to pick sides and debate over multiple rounds.
-- Inspired by [Perplexity](https://perplexity.ai/):** multi-model council —
+- Inspired by [Perplexity](https://perplexity.ai/): multi-model council —
 the same question to multiple models in parallel, synthesized into
 one answer. Perplexity does this for search; HIVE does it for
 architecture decisions and tradeoff analysis.
