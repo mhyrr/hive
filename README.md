@@ -1,22 +1,52 @@
 # Hive
 
-Identity, memory, council, and autonomous agency for Claude Code.
+The AI agent ecosystem has claws, hippos, and filing cabinets. Most
+of them want to own your stack — databases, embedding servers, hook
+frameworks, the works. HIVE takes the best ideas from all of them
+and re-implements in a lightweight shell around Claude Code. No
+databases. No vector stores. No dependencies worth mentioning.
+Everything is markdown files in `~/.hive/`, tracked by git,
+readable by humans.
 
-> **Runs on Claude Code directly.** Every HIVE operation invokes the
-> `claude` CLI, so it benefits from Claude Code's prompt caching,
-> session management, and tool framework. Anthropic's April 2026
-> subscription policy applies to third-party agent runtimes like
-> OpenClaw; HIVE is unaffected. Your Claude subscription covers it.
+**From [Hippo](https://github.com/kitfunso/hippo-memory):** memory
+decay and retrieval strengthening — entries you actually use get
+stronger, everything else fades. Biological memory dynamics without
+the SQLite.
 
-Claude Code handles orchestration, subagents, tools, loops, and
-file I/O. Hive adds what Claude Code doesn't ship with:
+**From [ClawMem](https://github.com/yoloshii/ClawMem):** BM25 ranked
+search as the base retrieval layer. No embeddings needed at this scale.
+
+**From [claude-mem](https://github.com/thedotmack/claude-mem):**
+progressive disclosure — lightweight index at session start, details
+on demand.
+
+**From [OpenClaw](https://openclaw.ai/):** persistent identity
+(SOUL/IDENTITY/SELF stack), heartbeat agent with periodic autonomy,
+and trust boundaries that define what the AI can do without asking.
+
+**From [Beads](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a):**
+per-project ticket tracking with dependencies, priorities, and
+agent-readable markdown — work graphs the AI can plan against.
+
+**From [Perplexity](https://perplexity.ai/):** multi-model council —
+the same question to multiple models in parallel, synthesized into
+one answer. Perplexity does this for search; HIVE does it for
+architecture decisions and tradeoff analysis.
+
+**Original to HIVE:** the synthesis layer that ties all of this
+together without a database.
+
+Claude Code handles orchestration, subagents, tools, and file I/O.
+HIVE adds what it doesn't ship with:
 
 - **Persistent identity** that carries across sessions
-- **Three-layer project memory** (log, knowledge, index) that compounds over time
+- **Three-layer project memory** (log, knowledge, index) with BM25 search and decay
 - **Multi-model council** with standard and adversarial dialectic modes
 - **Per-project ticket tracking** in markdown
-- **Heartbeat**: a persistent agent session that wakes up every 30 minutes, checks project state, and dispatches work within defined trust boundaries
+- **Heartbeat**: a persistent agent that wakes every 30 minutes, checks project state, and dispatches work within defined trust boundaries
 - **Autonomous dispatch**: background goal execution with timeout, kill, and status tracking
+
+> Runs on Claude Code directly. Your Claude subscription covers it.
 
 ## What Hive Does
 
@@ -40,7 +70,11 @@ anything where multiple perspectives help.
 YAML frontmatter at `~/.hive/projects/<name>/tickets/`. Bugs,
 features, tasks, epics, and chores with priorities, tags, dependencies,
 and timestamped notes. Exposed as both CLI commands and MCP tools so
-the agent can track its own work.
+the agent can track its own work. Tickets live under `~/.hive/`, not in
+the repo — they're a personal working surface for one developer's
+human+agent loop, not a team coordination layer. Each dev on a project
+opts into HIVE independently; team-wide work still belongs in GitHub
+Issues, Linear, or whatever your team already uses.
 
 **Heartbeat.** A persistent Claude session per project, resumed every
 30 minutes via launchd. The heartbeat agent reads standing orders
