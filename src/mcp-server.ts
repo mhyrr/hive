@@ -300,8 +300,10 @@ server.registerTool("reflect_session", {
 // Tool 5: Search project memory
 server.registerTool("search_memory", {
   description:
-    "Search across all layers of project memory — knowledge (compiled facts, conventions, decisions), " +
-    "session logs (raw daily capture), and the index. Results are ranked: knowledge first, then log. " +
+    "Search across all layers of project memory — knowledge (compiled facts, conventions, decisions) " +
+    "and session logs (raw daily capture). Results are ranked by BM25 relevance combined with entry " +
+    "strength (entries recalled more often rank higher). Searching also strengthens recalled entries, " +
+    "so frequently useful knowledge persists longer. " +
     "Use this to answer questions like 'what do we know about auth?' or 'what decisions have we made about the API?'. " +
     "Prefer this over read_hive_memory when looking for something specific.",
   inputSchema: {

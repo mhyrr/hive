@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 import { ensureDirectory, type HivePaths } from "./paths";
 import { toIsoTimestamp, toDateLabel, now } from "./time";
@@ -45,6 +46,20 @@ export type SearchResult = {
   entry: string;
   tags: string[];
   date?: string;
+  score: number;
+};
+
+// Metadata sidecar types — decay & retrieval strengthening
+export type EntryMeta = {
+  createdAt: string;
+  lastRecalled: string | null;
+  recallCount: number;
+  halfLife: number;
+};
+
+export type MetaSidecar = {
+  entries: Record<string, EntryMeta>;
+  version: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -73,6 +88,160 @@ const expectedSectionOrder = [
 ] as const;
 
 const MAX_ENTRY_LENGTH = 1000;
+
+// BM25 parameters
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+
+// Decay parameters
+const KNOWLEDGE_HALF_LIFE = 30; // days
+const RETRIEVAL_BOOST = 7; // days added per recall
+const MAX_HALF_LIFE = 90; // cap
+
+// ---------------------------------------------------------------------------
+// Tokenization
+// ---------------------------------------------------------------------------
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// BM25 Scoring
+// ---------------------------------------------------------------------------
+
+type BM25Corpus = {
+  docCount: number;
+  avgDocLen: number;
+  df: Map<string, number>; // document frequency per term
+};
+
+function buildCorpus(documents: string[]): BM25Corpus {
+  const df = new Map<string, number>();
+  let totalLen = 0;
+
+  for (const doc of documents) {
+    const tokens = tokenize(doc);
+    totalLen += tokens.length;
+    const seen = new Set(tokens);
+    for (const term of seen) {
+      df.set(term, (df.get(term) ?? 0) + 1);
+    }
+  }
+
+  return {
+    docCount: documents.length,
+    avgDocLen: documents.length > 0 ? totalLen / documents.length : 1,
+    df,
+  };
+}
+
+function bm25Score(query: string, document: string, corpus: BM25Corpus): number {
+  const queryTerms = tokenize(query);
+  const docTokens = tokenize(document);
+  if (queryTerms.length === 0 || docTokens.length === 0) return 0;
+
+  const docLen = docTokens.length;
+
+  // Count term frequencies in this document
+  const tf = new Map<string, number>();
+  for (const t of docTokens) {
+    tf.set(t, (tf.get(t) ?? 0) + 1);
+  }
+
+  let score = 0;
+  for (const term of queryTerms) {
+    const termFreq = tf.get(term) ?? 0;
+    if (termFreq === 0) continue;
+
+    const docFreq = corpus.df.get(term) ?? 0;
+    // IDF: log((N - df + 0.5) / (df + 0.5) + 1)
+    const idf = Math.log(
+      (corpus.docCount - docFreq + 0.5) / (docFreq + 0.5) + 1,
+    );
+
+    // TF saturation with length normalization
+    const tfNorm =
+      (termFreq * (BM25_K1 + 1)) /
+      (termFreq + BM25_K1 * (1 - BM25_B + BM25_B * (docLen / corpus.avgDocLen)));
+
+    score += idf * tfNorm;
+  }
+
+  return score;
+}
+
+// ---------------------------------------------------------------------------
+// Entry Hashing — stable identity for metadata linkage
+// ---------------------------------------------------------------------------
+
+export function entryHash(text: string): string {
+  const cleaned = parseTags(text).text;
+  return createHash("sha256").update(cleaned).digest("hex").slice(0, 8);
+}
+
+// ---------------------------------------------------------------------------
+// Metadata Sidecar — _meta.json
+// ---------------------------------------------------------------------------
+
+export function metaPath(paths: HivePaths, projectId: string): string {
+  return join(memoryProjectDir(paths, projectId), "_meta.json");
+}
+
+async function readMeta(paths: HivePaths, projectId: string): Promise<MetaSidecar> {
+  const file = Bun.file(metaPath(paths, projectId));
+  try {
+    if (await file.exists()) {
+      return await file.json();
+    }
+  } catch {
+    // Corrupted — start fresh
+  }
+  return { entries: {}, version: 1 };
+}
+
+async function writeMeta(paths: HivePaths, projectId: string, meta: MetaSidecar): Promise<void> {
+  await Bun.write(metaPath(paths, projectId), JSON.stringify(meta, null, 2));
+}
+
+function createEntryMeta(): EntryMeta {
+  return {
+    createdAt: toDateLabel(),
+    lastRecalled: null,
+    recallCount: 0,
+    halfLife: KNOWLEDGE_HALF_LIFE,
+  };
+}
+
+function bumpRecall(meta: EntryMeta): EntryMeta {
+  return {
+    ...meta,
+    lastRecalled: toDateLabel(),
+    recallCount: meta.recallCount + 1,
+    halfLife: Math.min(meta.halfLife + RETRIEVAL_BOOST, MAX_HALF_LIFE),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Strength Calculation
+// ---------------------------------------------------------------------------
+
+function daysBetween(dateA: string, dateB: string): number {
+  const a = new Date(dateA);
+  const b = new Date(dateB);
+  return Math.max(0, (b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+export function entryStrength(meta: EntryMeta | undefined): number {
+  if (!meta) return 1.0; // no metadata = default strength (graceful degradation)
+  const age = daysBetween(meta.createdAt, toDateLabel());
+  const decayFactor = Math.pow(0.5, age / meta.halfLife);
+  return decayFactor * (1 + Math.log2(meta.recallCount + 1));
+}
 
 // ---------------------------------------------------------------------------
 // Paths — project memory is now a directory
@@ -353,6 +522,12 @@ export async function appendProjectMemory(
     }
 
     await Bun.write(filePath, updated);
+
+    // Create metadata for the new entry
+    const hash = entryHash(cleaned);
+    const meta = await readMeta(paths, projectId);
+    meta.entries[hash] = createEntryMeta();
+    await writeMeta(paths, projectId, meta);
   });
 }
 
@@ -410,6 +585,14 @@ export async function supersedeEntry(
     }
 
     await Bun.write(filePath, updated);
+
+    // Remove old metadata, create fresh for new entry
+    const oldHash = entryHash(oldText);
+    const newHash = entryHash(cleanedNew);
+    const meta = await readMeta(paths, projectId);
+    delete meta.entries[oldHash];
+    meta.entries[newHash] = createEntryMeta();
+    await writeMeta(paths, projectId, meta);
   });
 }
 
@@ -540,11 +723,26 @@ export async function rebuildIndex(
 ): Promise<string> {
   const snapshot = await readProjectMemorySnapshot(paths, projectId);
   const recentLog = await readLog(paths, projectId, 7);
+  const meta = await readMeta(paths, projectId);
 
   const activeFacts = snapshot.facts.filter((f) => !f.superseded);
   const activeConventions = snapshot.conventions.filter((c) => !c.superseded);
   const activeDecisions = snapshot.decisions.filter((d) => !d.superseded);
   const openQuestions = snapshot.questions.filter((q) => !q.superseded);
+
+  // Sort entries by strength descending
+  const MAX_PER_SECTION = 20;
+  const sortByStrength = <T extends MemoryEntry>(entries: T[]): T[] => {
+    return [...entries].sort((a, b) => {
+      const sa = entryStrength(meta.entries[entryHash(a.text)]);
+      const sb = entryStrength(meta.entries[entryHash(b.text)]);
+      return sb - sa;
+    });
+  };
+
+  const rankedFacts = sortByStrength(activeFacts);
+  const rankedConventions = sortByStrength(activeConventions);
+  const rankedQuestions = sortByStrength(openQuestions);
 
   // Collect all tags for the tag index
   const tagMap = new Map<string, number>();
@@ -592,7 +790,7 @@ export async function rebuildIndex(
   // Open questions
   if (openQuestions.length > 0) {
     lines.push(`## Open Questions`);
-    for (const q of openQuestions) {
+    for (const q of rankedQuestions) {
       lines.push(`- ${q.text}${formatTags(q.tags)}`);
     }
     lines.push(``);
@@ -607,20 +805,28 @@ export async function rebuildIndex(
     lines.push(``);
   }
 
-  // Key facts (all of them — this is the navigational overview)
-  if (activeFacts.length > 0) {
+  // Key facts — strength-ranked, capped for large corpora
+  if (rankedFacts.length > 0) {
+    const displayFacts = rankedFacts.slice(0, MAX_PER_SECTION);
     lines.push(`## Key Facts`);
-    for (const f of activeFacts) {
+    for (const f of displayFacts) {
       lines.push(`- ${f.text}${formatTags(f.tags)}`);
+    }
+    if (rankedFacts.length > MAX_PER_SECTION) {
+      lines.push(`- _(${rankedFacts.length - MAX_PER_SECTION} more — use search_memory for full results)_`);
     }
     lines.push(``);
   }
 
-  // Conventions
-  if (activeConventions.length > 0) {
+  // Conventions — strength-ranked
+  if (rankedConventions.length > 0) {
+    const displayConventions = rankedConventions.slice(0, MAX_PER_SECTION);
     lines.push(`## Conventions`);
-    for (const c of activeConventions) {
+    for (const c of displayConventions) {
       lines.push(`- ${c.text}${formatTags(c.tags)}`);
+    }
+    if (rankedConventions.length > MAX_PER_SECTION) {
+      lines.push(`- _(${rankedConventions.length - MAX_PER_SECTION} more — use search_memory for full results)_`);
     }
     lines.push(``);
   }
@@ -643,82 +849,108 @@ export async function searchMemory(
   options: { tag?: string; section?: MemorySection; includeSuperseded?: boolean; logDays?: number } = {},
 ): Promise<SearchResult[]> {
   const results: SearchResult[] = [];
-  const q = query.toLowerCase();
   const tagFilter = options.tag?.toLowerCase();
 
-  // Layer 2: Knowledge (highest priority)
+  // Load knowledge + metadata
   const snapshot = await readProjectMemorySnapshot(paths, projectId);
+  const meta = await readMeta(paths, projectId);
 
-  const searchSection = (
+  // Collect all knowledge entry texts for BM25 corpus building
+  const allEntries: Array<{ text: string; fullText: string; section: string; tags: string[]; entry: MemoryEntry | ProjectDecision }> = [];
+
+  const collectSection = (
     entries: Array<MemoryEntry | ProjectDecision>,
     sectionName: string,
+    sectionKey: MemorySection,
   ) => {
+    if (options.section && options.section !== sectionKey) return;
     for (const entry of entries) {
       if (!options.includeSuperseded && entry.superseded) continue;
       if (tagFilter && !entry.tags.some((t) => t === tagFilter)) continue;
 
-      const entryText = "ts" in entry
+      const fullText = "ts" in entry
         ? `[${(entry as ProjectDecision).ts}] ${entry.text}`
         : entry.text;
 
-      if (entryText.toLowerCase().includes(q) || entry.tags.some((t) => t.includes(q))) {
-        results.push({
-          source: "knowledge",
-          file: "knowledge.md",
-          section: sectionName,
-          entry: entryText,
-          tags: entry.tags,
-        });
-      }
+      // Include tags in searchable text
+      allEntries.push({
+        text: `${entry.text} ${entry.tags.join(" ")}`,
+        fullText,
+        section: sectionName,
+        tags: entry.tags,
+        entry,
+      });
     }
   };
 
-  if (!options.section || options.section === "fact") {
-    searchSection(snapshot.facts, "facts");
-  }
-  if (!options.section || options.section === "convention") {
-    searchSection(snapshot.conventions, "conventions");
-  }
-  if (!options.section || options.section === "decision") {
-    searchSection(snapshot.decisions, "decisions");
-  }
-  if (!options.section || options.section === "question") {
-    searchSection(snapshot.questions, "questions");
-  }
+  collectSection(snapshot.facts, "facts", "fact");
+  collectSection(snapshot.conventions, "conventions", "convention");
+  collectSection(snapshot.decisions, "decisions", "decision");
+  collectSection(snapshot.questions, "questions", "question");
 
-  // Layer 3: Index
-  const iPath = indexPath(paths, projectId);
-  try {
-    const indexContent = await Bun.file(iPath).text();
-    for (const line of indexContent.split("\n")) {
-      if (line.toLowerCase().includes(q) && line.startsWith("- ")) {
-        // Don't duplicate entries already found in knowledge
-        const stripped = line.slice(2).trim();
-        if (!results.some((r) => r.entry.includes(stripped) || stripped.includes(r.entry))) {
-          results.push({
-            source: "index",
-            file: "_index.md",
-            entry: stripped,
-            tags: [],
-          });
-        }
-      }
-    }
-  } catch {
-    // No index yet
-  }
-
-  // Layer 1: Log (lowest priority, recent only)
+  // Collect log entries
   const logEntries = await readLog(paths, projectId, options.logDays ?? 14);
+  const logTexts = logEntries.map((e) => e.text);
+
+  // Build BM25 corpus from all searchable documents
+  const allDocs = [...allEntries.map((e) => e.text), ...logTexts];
+  const corpus = buildCorpus(allDocs);
+
+  // Score knowledge entries
+  const recalledHashes: string[] = [];
+  for (const item of allEntries) {
+    const score = bm25Score(query, item.text, corpus);
+    if (score > 0) {
+      const hash = entryHash(item.entry.text);
+      const strength = entryStrength(meta.entries[hash]);
+      recalledHashes.push(hash);
+
+      results.push({
+        source: "knowledge",
+        file: "knowledge.md",
+        section: item.section,
+        entry: item.fullText,
+        tags: item.tags,
+        score: score * strength,
+      });
+    }
+  }
+
+  // Score log entries
+  const today = toDateLabel();
+  const logDays = options.logDays ?? 14;
   for (const entry of logEntries) {
-    if (entry.text.toLowerCase().includes(q)) {
+    const score = bm25Score(query, entry.text, corpus);
+    if (score > 0) {
+      const entryDate = entry.time.slice(0, 10);
+      const age = daysBetween(entryDate, today);
+      const recencyWeight = Math.max(0.1, 1.0 - (age / logDays) * 0.9);
+
       results.push({
         source: "log",
-        file: `log/${entry.time.slice(0, 10)}.md`,
+        file: `log/${entryDate}.md`,
         entry: `${entry.time} | ${entry.type} | ${entry.text}`,
         tags: [],
-        date: entry.time.slice(0, 10),
+        date: entryDate,
+        score: score * recencyWeight,
       });
+    }
+  }
+
+  // Sort by score descending
+  results.sort((a, b) => b.score - a.score);
+
+  // Retrieval strengthening — bump metadata for recalled knowledge entries
+  if (recalledHashes.length > 0) {
+    let changed = false;
+    for (const hash of recalledHashes) {
+      if (meta.entries[hash]) {
+        meta.entries[hash] = bumpRecall(meta.entries[hash]!);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await writeMeta(paths, projectId, meta);
     }
   }
 
@@ -735,29 +967,20 @@ export function formatSearchResults(results: SearchResult[], query: string): str
   }
 
   const lines: string[] = [
-    `Found ${results.length} result(s) for "${query}":`,
+    `Found ${results.length} result(s) for "${query}" (ranked by relevance):`,
     ``,
   ];
 
-  // Group by source
+  // Results are already sorted by score — present in order
   const knowledge = results.filter((r) => r.source === "knowledge");
   const log = results.filter((r) => r.source === "log");
 
   if (knowledge.length > 0) {
     lines.push(`### Knowledge (compiled)`);
-    // Group by section
-    const bySection = new Map<string, SearchResult[]>();
-    for (const r of knowledge) {
-      const key = r.section ?? "unknown";
-      if (!bySection.has(key)) bySection.set(key, []);
-      bySection.get(key)!.push(r);
-    }
-    for (const [section, entries] of bySection) {
-      lines.push(`**${section}:**`);
-      for (const e of entries) {
-        const tagStr = e.tags.length > 0 ? ` [${e.tags.join(", ")}]` : "";
-        lines.push(`  - ${e.entry}${tagStr}`);
-      }
+    for (const e of knowledge) {
+      const tagStr = e.tags.length > 0 ? ` [${e.tags.join(", ")}]` : "";
+      const scoreStr = ` (score: ${e.score.toFixed(2)})`;
+      lines.push(`  - [${e.section}] ${e.entry}${tagStr}${scoreStr}`);
     }
     lines.push(``);
   }
@@ -765,7 +988,8 @@ export function formatSearchResults(results: SearchResult[], query: string): str
   if (log.length > 0) {
     lines.push(`### Session Log (raw)`);
     for (const e of log) {
-      lines.push(`  - ${e.entry}`);
+      const scoreStr = ` (score: ${e.score.toFixed(2)})`;
+      lines.push(`  - ${e.entry}${scoreStr}`);
     }
     lines.push(``);
   }
