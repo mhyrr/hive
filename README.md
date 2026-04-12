@@ -184,6 +184,8 @@ Available to Claude Code when the HIVE MCP server is running:
 | `show_ticket` | Show full ticket details. Supports partial ID matching. |
 | `update_ticket` | Update ticket status, priority, tags, or other fields. |
 | `add_ticket_note` | Add a timestamped note with optional actor attribution. |
+| `add_project` | Register a project with HIVE (creates config, memory, wires CLAUDE.md). |
+| `hive_status` | Dashboard showing identity, projects, tickets, scheduled jobs, and agents. |
 
 ## CLI Commands
 
