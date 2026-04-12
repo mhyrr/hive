@@ -1,0 +1,61 @@
+import { ensureHiveScaffold, listProjects, getProjectPaths } from "../lib/paths";
+import { UsageError } from "../lib/errors";
+
+function resolveProjectFromCwd(projects: string[]): string | null {
+  const cwd = process.cwd();
+  return projects.find((p) => cwd.toLowerCase().includes(p.toLowerCase())) ?? projects[0] ?? null;
+}
+
+export async function inboxCommand(args: string[]): Promise<void> {
+  const usage = `Usage:
+  hive inbox                    Show inbox for current project
+  hive inbox clear              Clear inbox after review
+  hive inbox --project <name>   Specify project`;
+
+  const paths = await ensureHiveScaffold();
+  const projects = await listProjects(paths.projectsDir);
+
+  let projectId: string | null = null;
+  let subcommand: string | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--project" || arg === "-p") {
+      projectId = args[++i] ?? "";
+    } else {
+      subcommand = arg;
+    }
+  }
+
+  projectId ??= resolveProjectFromCwd(projects);
+  if (!projectId) {
+    throw new UsageError("No project found. Register one with: hive project add <name> <path>");
+  }
+
+  const pp = getProjectPaths(paths, projectId);
+  const file = Bun.file(pp.inbox);
+
+  if (subcommand === "clear") {
+    await Bun.write(pp.inbox, `# Inbox: ${projectId}\n\n`);
+    console.log(`Inbox cleared for ${projectId}.`);
+    return;
+  }
+
+  if (subcommand && subcommand !== "show") {
+    throw new UsageError(`Unknown subcommand: ${subcommand}\n\n${usage}`);
+  }
+
+  if (!(await file.exists())) {
+    console.log(`No inbox for ${projectId}.`);
+    return;
+  }
+
+  const content = await file.text();
+  const headerOnly = content.trim() === `# Inbox: ${projectId}`;
+  if (headerOnly || content.trim().length === 0) {
+    console.log(`Inbox empty for ${projectId}.`);
+    return;
+  }
+
+  console.log(content);
+}

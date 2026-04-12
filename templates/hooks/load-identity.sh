@@ -39,6 +39,7 @@ if [ -n "$MATCHED_PROJECT" ]; then
     cat "$knowledgefile"
     echo ""
   fi
+
 fi
 
 cat <<'REFLECT'

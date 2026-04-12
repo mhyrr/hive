@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { councilCommand } from "./commands/council";
 import { dispatchCommand } from "./commands/dispatch";
 import { heartbeatCommand } from "./commands/heartbeat";
+import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
 import { killCommand } from "./commands/kill";
 import { memoryCommand } from "./commands/memory";
@@ -22,6 +23,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   ticket: ticketCommand,
   dispatch: dispatchCommand,
   heartbeat: heartbeatCommand,
+  inbox: inboxCommand,
   kill: killCommand,
   ps: psCommand,
 };
@@ -39,6 +41,7 @@ HIVE Commands:
   ticket [create|list|...]   Project ticket tracker
   dispatch "<goal>" [opts]   Dispatch autonomous goal execution
   heartbeat start|stop|...   Periodic project awareness
+  inbox                      Show project inbox (clear with: inbox clear)
   kill <run-id>              Kill a running dispatch
   ps                         Show active and recent dispatch runs
 

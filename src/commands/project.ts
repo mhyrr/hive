@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 
 import { UsageError } from "../lib/errors";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
@@ -35,8 +35,18 @@ export async function projectCommand(args: string[]): Promise<void> {
   // Create memory file
   await ensureProjectMemoryFile(paths, projectId);
 
+  // Write HEARTBEAT.md from template if missing
+  const heartbeatPath = join(projectDir, "HEARTBEAT.md");
+  if (!existsSync(heartbeatPath)) {
+    const templatePath = join(dirname(import.meta.dir), "..", "templates", "heartbeat", "HEARTBEAT.md");
+    let content = await Bun.file(templatePath).text();
+    content = content.replaceAll("{{projectName}}", projectId);
+    await Bun.write(heartbeatPath, content);
+  }
+
   console.log(`Project '${projectId}' registered at ${repoPath}`);
   console.log(`Memory: ~/.hive/memory/projects/${projectId}.md`);
+  console.log(`Heartbeat: ~/.hive/projects/${projectId}/HEARTBEAT.md`);
   console.log();
   console.log(`Use \`hive\` from ${repoPath} to start a Maya session with project context.`);
 }

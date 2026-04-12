@@ -89,6 +89,11 @@ const expectedSectionOrder = [
 
 const MAX_ENTRY_LENGTH = 1000;
 
+// Index budget: approximate token cap per section (facts, conventions).
+// ~4 chars per token is a rough heuristic. This replaces a fixed entry count
+// so short entries pack more densely and verbose ones naturally limit themselves.
+const INDEX_SECTION_TOKEN_BUDGET = 3000;
+
 // BM25 parameters
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
@@ -102,7 +107,7 @@ const MAX_HALF_LIFE = 90; // cap
 // Tokenization
 // ---------------------------------------------------------------------------
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^\w\s-]/g, " ")
@@ -114,13 +119,13 @@ function tokenize(text: string): string[] {
 // BM25 Scoring
 // ---------------------------------------------------------------------------
 
-type BM25Corpus = {
+export type BM25Corpus = {
   docCount: number;
   avgDocLen: number;
   df: Map<string, number>; // document frequency per term
 };
 
-function buildCorpus(documents: string[]): BM25Corpus {
+export function buildCorpus(documents: string[]): BM25Corpus {
   const df = new Map<string, number>();
   let totalLen = 0;
 
@@ -140,7 +145,7 @@ function buildCorpus(documents: string[]): BM25Corpus {
   };
 }
 
-function bm25Score(query: string, document: string, corpus: BM25Corpus): number {
+export function bm25Score(query: string, document: string, corpus: BM25Corpus): number {
   const queryTerms = tokenize(query);
   const docTokens = tokenize(document);
   if (queryTerms.length === 0 || docTokens.length === 0) return 0;
@@ -208,7 +213,7 @@ async function writeMeta(paths: HivePaths, projectId: string, meta: MetaSidecar)
   await Bun.write(metaPath(paths, projectId), JSON.stringify(meta, null, 2));
 }
 
-function createEntryMeta(): EntryMeta {
+export function createEntryMeta(): EntryMeta {
   return {
     createdAt: toDateLabel(),
     lastRecalled: null,
@@ -217,7 +222,7 @@ function createEntryMeta(): EntryMeta {
   };
 }
 
-function bumpRecall(meta: EntryMeta): EntryMeta {
+export function bumpRecall(meta: EntryMeta): EntryMeta {
   return {
     ...meta,
     lastRecalled: toDateLabel(),
@@ -230,7 +235,7 @@ function bumpRecall(meta: EntryMeta): EntryMeta {
 // Strength Calculation
 // ---------------------------------------------------------------------------
 
-function daysBetween(dateA: string, dateB: string): number {
+export function daysBetween(dateA: string, dateB: string): number {
   const a = new Date(dateA);
   const b = new Date(dateB);
   return Math.max(0, (b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
@@ -730,14 +735,25 @@ export async function rebuildIndex(
   const activeDecisions = snapshot.decisions.filter((d) => !d.superseded);
   const openQuestions = snapshot.questions.filter((q) => !q.superseded);
 
-  // Sort entries by strength descending
-  const MAX_PER_SECTION = 20;
+  // Sort entries by strength descending, cap by token budget
+  const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
   const sortByStrength = <T extends MemoryEntry>(entries: T[]): T[] => {
     return [...entries].sort((a, b) => {
       const sa = entryStrength(meta.entries[entryHash(a.text)]);
       const sb = entryStrength(meta.entries[entryHash(b.text)]);
       return sb - sa;
     });
+  };
+  const budgetSlice = <T extends MemoryEntry>(entries: T[]): T[] => {
+    let tokens = 0;
+    const result: T[] = [];
+    for (const e of entries) {
+      const cost = estimateTokens(e.text);
+      if (tokens + cost > INDEX_SECTION_TOKEN_BUDGET && result.length > 0) break;
+      result.push(e);
+      tokens += cost;
+    }
+    return result;
   };
 
   const rankedFacts = sortByStrength(activeFacts);
@@ -805,28 +821,28 @@ export async function rebuildIndex(
     lines.push(``);
   }
 
-  // Key facts — strength-ranked, capped for large corpora
+  // Key facts — strength-ranked, token-budgeted
   if (rankedFacts.length > 0) {
-    const displayFacts = rankedFacts.slice(0, MAX_PER_SECTION);
+    const displayFacts = budgetSlice(rankedFacts);
     lines.push(`## Key Facts`);
     for (const f of displayFacts) {
       lines.push(`- ${f.text}${formatTags(f.tags)}`);
     }
-    if (rankedFacts.length > MAX_PER_SECTION) {
-      lines.push(`- _(${rankedFacts.length - MAX_PER_SECTION} more — use search_memory for full results)_`);
+    if (rankedFacts.length > displayFacts.length) {
+      lines.push(`- _(${rankedFacts.length - displayFacts.length} more — use search_memory for full results)_`);
     }
     lines.push(``);
   }
 
-  // Conventions — strength-ranked
+  // Conventions — strength-ranked, token-budgeted
   if (rankedConventions.length > 0) {
-    const displayConventions = rankedConventions.slice(0, MAX_PER_SECTION);
+    const displayConventions = budgetSlice(rankedConventions);
     lines.push(`## Conventions`);
     for (const c of displayConventions) {
       lines.push(`- ${c.text}${formatTags(c.tags)}`);
     }
-    if (rankedConventions.length > MAX_PER_SECTION) {
-      lines.push(`- _(${rankedConventions.length - MAX_PER_SECTION} more — use search_memory for full results)_`);
+    if (rankedConventions.length > displayConventions.length) {
+      lines.push(`- _(${rankedConventions.length - displayConventions.length} more — use search_memory for full results)_`);
     }
     lines.push(``);
   }

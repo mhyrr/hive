@@ -10,15 +10,40 @@
     </linearGradient>
   </defs>
 
-  <!-- Honeycomb cluster — 7 hexagons, tight pack -->
-  <!-- hex function: flat-top hexagon, radius r, centered at (cx, cy) -->
-  <!-- flat-top hex points: (cx+r, cy), (cx+r/2, cy+r*√3/2), (cx-r/2, cy+r*√3/2), (cx-r, cy), (cx-r/2, cy-r*√3/2), (cx+r/2, cy-r*√3/2) -->
+  <!-- Honeycomb grid — core 7 + outer partials that clip at edges -->
   <!-- r=28, horizontal spacing = r*1.5 = 42, vertical spacing = r*√3 ≈ 48.5 -->
 
   <g transform="translate(100, 100)">
-    <!-- Center hex -->
+    <!-- Outer ring — varied opacity, partially clipped by viewBox -->
     <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
-             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2.5"/>
+             transform="translate(85, 0)"
+             fill="url(#honeydark)" stroke="#1a1a1a" stroke-width="2" opacity="0.25"/>
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(42.5, -74.25)"
+             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2" opacity="0.55"/>
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(-42.5, -74.25)"
+             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2" opacity="0.18"/>
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(-85, 0)"
+             fill="url(#honeydark)" stroke="#1a1a1a" stroke-width="2" opacity="0.5"/>
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(-42.5, 74.25)"
+             fill="url(#honeydark)" stroke="#1a1a1a" stroke-width="2" opacity="0.1"/>
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(42.5, 74.25)"
+             fill="url(#honeydark)" stroke="#1a1a1a" stroke-width="2" opacity="0.35"/>
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(85, -49.5)"
+             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2" opacity="0.12"/>
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(85, 49.5)"
+             fill="url(#honeydark)" stroke="#1a1a1a" stroke-width="2" opacity="0.08"/>
+
+    <!-- Core cluster — 7 hexagons -->
+    <!-- Center -->
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2.5" opacity="0.85"/>
 
     <!-- Top -->
     <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"

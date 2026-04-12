@@ -11,6 +11,7 @@ import {
   type MemorySection,
 } from "../lib/memory";
 import { writeDailySessions } from "../lib/sessions";
+import { promoteReflections } from "../lib/reflections";
 
 function resolveProjectFromCwd(projects: string[]): string | null {
   const cwd = process.cwd();
@@ -49,6 +50,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory search <query> [--tag t] [--section s]  Search across all memory layers
   hive memory index                        Rebuild the project memory index
   hive memory reflect                      Batch-write learnings from stdin (JSON)
+  hive memory promote                      Promote unprocessed reflections to memory
   hive memory --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
@@ -62,6 +64,19 @@ export async function memoryCommand(args: string[]): Promise<void> {
   }
 
   const subcommand = positional[0];
+
+  if (subcommand === "promote") {
+    const result = await promoteReflections(paths, projectId);
+    console.log(`Reflection promotion for ${projectId}:`);
+    console.log(`  ${result.promoted} promoted to knowledge`);
+    console.log(`  ${result.skipped} skipped (duplicate)`);
+    console.log(`  ${result.proposed} proposed to inbox`);
+    if (result.details.length > 0) {
+      console.log("");
+      for (const d of result.details) console.log(`  ${d}`);
+    }
+    return;
+  }
 
   if (subcommand === "extract-sessions") {
     const outputPath = await writeDailySessions();

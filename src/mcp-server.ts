@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 import { extractConfigValue } from "./lib/config";
 
@@ -541,8 +541,21 @@ server.registerTool("add_project", {
 
   await ensureProjectMemoryDir(paths, projectId);
 
+  // Write HEARTBEAT.md from template if missing
+  const heartbeatPath = join(projectDir, "HEARTBEAT.md");
+  if (!existsSync(heartbeatPath)) {
+    const templatePath = join(dirname(import.meta.dir), "templates", "heartbeat", "HEARTBEAT.md");
+    try {
+      let content = await Bun.file(templatePath).text();
+      content = content.replaceAll("{{projectName}}", projectId);
+      await Bun.write(heartbeatPath, content);
+    } catch {
+      // Template may not exist in all installations — non-fatal
+    }
+  }
+
   return {
-    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}/\n\nUse \`hive\` from ${repoPath} to start a Maya session with project context.` }],
+    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}/\nHeartbeat: ~/.hive/projects/${projectId}/HEARTBEAT.md\n\nUse \`hive\` from ${repoPath} to start a Maya session with project context.` }],
   };
 });
 
