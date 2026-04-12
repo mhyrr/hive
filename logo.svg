@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="honey" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F2A900"/>
+      <stop offset="100%" stop-color="#D4860B"/>
+    </linearGradient>
+    <linearGradient id="honeydark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C97A08"/>
+      <stop offset="100%" stop-color="#A66207"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Honeycomb cluster — 7 hexagons, tight pack -->
+  <!-- hex function: flat-top hexagon, radius r, centered at (cx, cy) -->
+  <!-- flat-top hex points: (cx+r, cy), (cx+r/2, cy+r*√3/2), (cx-r/2, cy+r*√3/2), (cx-r, cy), (cx-r/2, cy-r*√3/2), (cx+r/2, cy-r*√3/2) -->
+  <!-- r=28, horizontal spacing = r*1.5 = 42, vertical spacing = r*√3 ≈ 48.5 -->
+
+  <g transform="translate(100, 100)">
+    <!-- Center hex -->
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2.5"/>
+
+    <!-- Top -->
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(0, -49.5)"
+             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2.5"/>
+
+    <!-- Top-right -->
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(42.5, -24.75)"
+             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2.5"/>
+
+    <!-- Bottom-right -->
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(42.5, 24.75)"
+             fill="url(#honeydark)" stroke="#1a1a1a" stroke-width="2.5"/>
+
+    <!-- Bottom -->
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(0, 49.5)"
+             fill="url(#honeydark)" stroke="#1a1a1a" stroke-width="2.5"/>
+
+    <!-- Bottom-left -->
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(-42.5, 24.75)"
+             fill="url(#honeydark)" stroke="#1a1a1a" stroke-width="2.5"/>
+
+    <!-- Top-left -->
+    <polygon points="28,0 14,24.25 -14,24.25 -28,0 -14,-24.25 14,-24.25"
+             transform="translate(-42.5, -24.75)"
+             fill="url(#honey)" stroke="#1a1a1a" stroke-width="2.5"/>
+  </g>
+</svg>

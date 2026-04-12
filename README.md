@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="HIVE" width="120" height="120">
+</p>
+
 # Hive
 
 HIVE is a thin wrapper around Claude Code with some of the best ideas from heavyweight agent systems.
@@ -53,7 +57,7 @@ architecture decisions and tradeoff analysis.
 **Ticket tracking.** 
 
 - Per-project tickets stored as markdown files with YAML frontmatter at `~/.hive/projects/<name>/tickets/`. Bugs, features, tasks, epics, and chores with priorities, tags, dependencies, and timestamped notes. 
-- Exposed as both CLI commands and MCP tools so the agent can track its own work. Tickets live under `~/.hive/`, not in the repo — they're a personal working surface for one developer's human+agent loop, not a team coordination layer. Each dev on a project opts into HIVE independently; team-wide work still belongs in GitHub Issues, Linear, or whatever your team already uses.
+- Tickets live under `~/.hive/`, not in the repo — they're a personal working surface for one developer's human+agent loop, not a team coordination layer. Each dev on a project opts into HIVE independently; team-wide work still belongs in GitHub Issues, Linear, or whatever your team already uses.
 - Inspired by [Beads](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a): per-project ticket tracking with dependencies, priorities, and agent-readable markdown — work graphs the AI can plan against.
 
 **Heartbeat and Autonomous dispatch.**
