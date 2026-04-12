@@ -17,11 +17,9 @@ HIVE adds what it doesn't ship with:
 - **Per-project ticket tracking** in markdown
 - **Heartbeat**: a persistent agent that wakes every 30 minutes, checks project state, and dispatches work within defined trust boundaries
 - **Autonomous dispatch**: background goal execution with timeout, kill, and status tracking
+- **Local MCP**: Provides a consistency layer that ties all of this together without a database.
 
-> Runs on Claude Code directly. Your Claude subscription covers it.
-
-**HIVE:** Provides a local MCP and consistency layer that ties all of this
-together without a database.
+_Runs on Claude Code directly. Your Claude subscription covers it._
 
 ## What It Does
 

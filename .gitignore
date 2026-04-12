@@ -11,6 +11,7 @@
 *.bun-build
 .*.bun-build
 /hive
+/hive-mcp
 /hive-bin
 /hive.exe
 coverage/
