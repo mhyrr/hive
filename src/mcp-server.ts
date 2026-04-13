@@ -529,7 +529,7 @@ server.registerTool("add_project", {
   }
 
   return {
-    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}/\nHeartbeat: ~/.hive/projects/${projectId}/HEARTBEAT.md\n\nUse \`hive\` from ${repoPath} to start a Maya session with project context.` }],
+    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}/\nHeartbeat: ~/.hive/projects/${projectId}/HEARTBEAT.md\n\nUse \`hive\` from ${repoPath} to start a session with project context.` }],
   };
 });
 

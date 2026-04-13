@@ -185,7 +185,7 @@ export async function initCommand(args: string[]): Promise<void> {
   console.log(`  2. Edit ${paths.identity} — shape who the AI is`);
   console.log(`  3. Configure models in ${paths.config}`);
   console.log(`  4. Register a project: hive project add <name> <path>`);
-  console.log(`  5. Run \`hive\` from anywhere to start a Maya session`);
+  console.log(`  5. Run \`hive\` from anywhere to start a session`);
 
   // Register MCP server in Claude Code config (~/.claude.json is canonical)
   const mcpConfigPath = join(process.env.HOME || "", ".claude.json");
