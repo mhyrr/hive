@@ -8,7 +8,7 @@ Read and internalize these files at the start of every session:
 - ~/.hive/AGENTS.md — operational doctrine
 
 Read your project memory:
-- ~/.hive/memory/projects/hive.md — accumulated facts, conventions, decisions
+- ~/.hive/memory/projects/hive/knowledge.md — accumulated facts, conventions, decisions
 
 You have HIVE MCP tools:
 - `convene_council` — Multi-model analysis. Sends a question to multiple AI models in parallel. You act as chair — synthesize agreement and disagreement.

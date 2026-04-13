@@ -378,7 +378,7 @@ If you're running HIVE, the Ralph loop gets extra capabilities:
 
 ### Memory Across Iterations
 
-Each iteration can read and write HIVE memory. The SessionStart hook
+Each iteration can read and write HIVE memory. The `hive` wrapper
 injects project memory automatically, so every fresh session starts
 informed:
 

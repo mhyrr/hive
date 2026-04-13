@@ -47,13 +47,14 @@ Five files in `~/.hive/` define who the AI is and how it operates:
 | `AGENTS.md` | Operational doctrine — how sessions work, memory discipline, council protocol |
 | `TRUST.md` | Action classification — what the AI may do freely vs. what needs approval |
 
-These are loaded at session start via a **SessionStart hook** (see
-[How They Compose](#4-how-they-compose)). Every Claude Code session —
-interactive, subagent, scheduled — picks up identity automatically.
+These are loaded at session start via the `hive` CLI wrapper, which
+assembles the stack and passes it to Claude Code via
+`--append-system-prompt-file`. Projects also reference the identity
+files in their CLAUDE.md for sessions started directly via `claude`.
 
 ### Project Memory
 
-Per-project intelligence accumulates in `~/.hive/memory/projects/<name>.md`
+Per-project intelligence accumulates in `~/.hive/memory/projects/<name>/knowledge.md`
 with four sections:
 
 - **Durable Facts** — architecture, constraints, gotchas
@@ -62,9 +63,10 @@ with four sections:
 - **Open Questions** — unresolved issues for future sessions
 
 Memory is written via MCP tools (`write_hive_memory`, `reflect_session`)
-and read both by the SessionStart hook and on-demand via `read_hive_memory`.
-Every write is validated against corruption and serialized to prevent
-lost-update bugs.
+and read at session start (via the identity assembly) and on-demand via
+`read_hive_memory`. Retrieval uses BM25 ranked search with decay —
+entries you use get stronger, unused entries fade in ranking. Every write
+is validated against corruption and serialized to prevent lost-update bugs.
 
 ### Multi-Model Council
 
@@ -126,46 +128,30 @@ project intelligence, and multi-vendor model deliberation.
 
 ## 4. How They Compose
 
-### The SessionStart Hook
+### The `hive` CLI Wrapper
 
-The core integration point. When Claude Code starts any session, a hook
-script runs and injects HIVE's identity stack into the context:
+The core integration point. The `hive` command wraps Claude Code with
+identity injection. When you run `hive` (with or without arguments),
+it assembles the full identity stack into a temp file and launches
+Claude Code with `--append-system-prompt-file`:
 
-```bash
-# templates/hooks/load-identity.sh
-#!/bin/bash
-HIVE_DIR="$HOME/.hive"
+1. Loads the identity stack: SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md
+2. Resolves the current project by matching `$PWD` against registered project paths
+3. Loads the matched project's memory index (`_index.md`)
+4. Appends the session reflection protocol
 
-# 1. Load identity stack
-for file in SOUL.md IDENTITY.md SELF.md AGENTS.md TRUST.md; do
-  [ -f "$HIVE_DIR/$file" ] && cat "$HIVE_DIR/$file"
-done
+Any arguments you pass to `hive` are forwarded to Claude Code. So
+`hive --agent maya-coder "implement TK-005"` becomes a Claude Code
+session with identity prepended.
 
-# 2. Resolve project by matching $PWD against registered paths
-# 3. Load matched project's memory
-# 4. Append session reflection protocol
-```
+For sessions started directly via `claude` (not through the `hive`
+wrapper), projects include a HIVE block in their CLAUDE.md that
+tells the agent to read the identity files and use MCP tools.
 
-This hook is registered in Claude Code's `settings.json`:
+### Custom Agents
 
-```json
-{
-  "hooks": {
-    "SessionStart": [{
-      "type": "command",
-      "command": "bash ~/.hive/hooks/load-identity.sh"
-    }]
-  }
-}
-```
-
-The result: every session — interactive, subagent, scheduled, dispatched —
-wakes up knowing who it is, who it's working with, what the project has
-learned, and how to record new learnings.
-
-### Subagents Inherit Identity
-
-HIVE installs custom agent definitions to `~/.claude/agents/`:
+HIVE installs custom agent definitions to `~/.claude/agents/`. Agent
+names are derived from your IDENTITY.md name:
 
 | Agent | Role | Key Tools |
 |-------|------|-----------|
@@ -174,9 +160,10 @@ HIVE installs custom agent definitions to `~/.claude/agents/`:
 | `maya-reviewer` | Code review against project conventions | `read_hive_memory` |
 | `maya-nightly` | Nightly maintenance and knowledge extraction | `reflect_session`, `list_tickets` |
 
-Each agent gets the SessionStart hook injection automatically. The planner
-reads memory and tickets before architecting. The coder reads conventions
-before writing code. The reviewer checks work against accumulated standards.
+Each agent reads the identity stack and project memory via CLAUDE.md
+references. The planner reads memory and tickets before architecting.
+The coder reads conventions before writing code. The reviewer checks
+work against accumulated standards.
 
 ### Scheduled Tasks Use HIVE Tools
 
@@ -214,7 +201,7 @@ even attempt forbidden actions because the identity stack tells them not to.
 
 - [Bun](https://bun.sh/) 1.3+
 - [Claude Code](https://claude.ai/claude-code) installed
-- macOS or Linux
+- macOS (launchd required for heartbeat and scheduled jobs)
 
 For multi-model council (optional):
 - Claude CLI subscription OAuth or `ANTHROPIC_API_KEY`
@@ -264,8 +251,11 @@ bun run src/cli.ts project add myapp ~/work/myapp
 
 This:
 - Creates `~/.hive/projects/myapp/config.md` with the project path
-- Creates `~/.hive/memory/projects/myapp.md` with empty memory sections
-- Appends a HIVE reference block to `~/work/myapp/CLAUDE.md`
+- Creates `~/.hive/memory/projects/myapp/knowledge.md` with empty memory sections
+- Creates `~/.hive/projects/myapp/HEARTBEAT.md` with default standing orders
+
+Then add the HIVE reference block to your project's CLAUDE.md manually
+(see the README template).
 
 ### Step 4: Start Working
 
@@ -274,28 +264,9 @@ cd ~/work/myapp
 claude
 ```
 
-Claude Code starts, the SessionStart hook fires, HIVE identity loads.
-The agent knows who it is, reads project memory, and has access to
-HIVE MCP tools. You're in business.
-
-### Step 5: Install the SessionStart Hook
-
-If `hive init` didn't configure the hook automatically, add it to your
-Claude Code settings. Create or edit `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{
-      "type": "command",
-      "command": "bash ~/.hive/hooks/load-identity.sh"
-    }]
-  }
-}
-```
-
-Or add it at the project level in `.claude/settings.json` within
-the project directory.
+Claude Code starts with HIVE identity loaded (either via the `hive`
+wrapper or via CLAUDE.md references). The agent knows who it is, reads
+project memory, and has access to HIVE MCP tools.
 
 ---
 
@@ -370,7 +341,7 @@ assumptions, distinguished facts vs. inferences, and risk assessment.
 Inspired by OpenClaw's pattern: many short, focused coding sessions
 beat one long marathon. Each session:
 
-1. Reads HIVE memory for context (automatic via SessionStart hook)
+1. Reads HIVE memory for context (automatic via identity assembly)
 2. Does one focused piece of work
 3. Records learnings via `write_hive_memory` or `reflect_session`
 4. Commits and exits
@@ -451,18 +422,23 @@ multi-model deliberation.
 ├── AGENTS.md            # Operational doctrine
 ├── TRUST.md             # Action classification and boundaries
 ├── config.md            # Model pool, provider auth, defaults
-├── hooks/
-│   └── load-identity.sh # SessionStart hook — injects identity
 ├── scripts/
 │   ├── morning.sh       # 7am briefing via maya-morning agent
 │   ├── nightly.sh       # 2am extraction via maya-nightly agent
 │   └── hive-sync.sh     # 2:30am git commit + push
 ├── memory/
 │   └── projects/
-│       └── <name>.md    # Per-project accumulated intelligence
+│       └── <name>/
+│           ├── knowledge.md  # Compiled facts, conventions, decisions
+│           ├── _index.md     # Auto-generated summary
+│           ├── _meta.json    # Search metadata (decay, recall counts)
+│           └── log/          # Daily session log entries
 ├── projects/
 │   └── <name>/
 │       ├── config.md    # Project path registration
+│       ├── HEARTBEAT.md # Standing orders + authorized actions
+│       ├── heartbeat.json # Heartbeat config + counters
+│       ├── inbox.md     # Heartbeat findings
 │       └── tickets/
 │           └── TK-001.md  # Individual ticket files
 ├── logs/                # Script execution logs
@@ -475,7 +451,6 @@ multi-model deliberation.
 │   ├── maya-coder.md    # Implementation agent (worktree-isolated)
 │   ├── maya-reviewer.md # Code review agent
 │   └── maya-nightly.md  # Nightly maintenance agent
-└── settings.json        # Hooks configuration (SessionStart)
 ```
 
 ---

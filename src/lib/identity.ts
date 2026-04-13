@@ -102,6 +102,19 @@ export async function assembleHeartbeatIdentity(): Promise<string> {
   return parts.join("\n");
 }
 
+export function getIdentityName(): string {
+  const paths = getHivePaths();
+  const idPath = join(paths.home, "IDENTITY.md");
+  if (!existsSync(idPath)) return "Claude";
+  try {
+    const content = require("fs").readFileSync(idPath, "utf-8");
+    const match = content.match(/^- Name:\s*(.+)$/m);
+    return match?.[1]?.trim() || "Claude";
+  } catch {
+    return "Claude";
+  }
+}
+
 export async function writeIdentityTempFile(): Promise<string> {
   const content = await assembleIdentity();
   const tempPath = join(tmpdir(), `hive-identity-${process.pid}.md`);

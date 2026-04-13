@@ -44,9 +44,11 @@ export async function projectCommand(args: string[]): Promise<void> {
     await Bun.write(heartbeatPath, content);
   }
 
+  const { getIdentityName } = await import("../lib/identity");
+  const name = getIdentityName();
   console.log(`Project '${projectId}' registered at ${repoPath}`);
-  console.log(`Memory: ~/.hive/memory/projects/${projectId}.md`);
+  console.log(`Memory: ~/.hive/memory/projects/${projectId}/knowledge.md`);
   console.log(`Heartbeat: ~/.hive/projects/${projectId}/HEARTBEAT.md`);
   console.log();
-  console.log(`Use \`hive\` from ${repoPath} to start a Maya session with project context.`);
+  console.log(`Use \`hive\` from ${repoPath} to start a ${name} session with project context.`);
 }

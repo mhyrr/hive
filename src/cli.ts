@@ -13,7 +13,7 @@ import { projectCommand } from "./commands/project";
 import { psCommand } from "./commands/ps";
 import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
-import { writeIdentityTempFile, cleanupIdentityTempFile } from "./lib/identity";
+import { writeIdentityTempFile, cleanupIdentityTempFile, getIdentityName } from "./lib/identity";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: initCommand,
@@ -28,10 +28,12 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   ps: psCommand,
 };
 
-const usage = `Usage: hive [command] [args]
+function getUsage(): string {
+  const name = getIdentityName();
+  return `Usage: hive [command] [args]
 
 When called with a HIVE command, runs that command directly.
-When called with anything else (or no args), launches Claude as Maya.
+When called with anything else (or no args), launches Claude as ${name}.
 
 HIVE Commands:
   init                       Set up ~/.hive and register MCP server
@@ -45,11 +47,12 @@ HIVE Commands:
   kill <run-id>              Kill a running dispatch
   ps                         Show active and recent dispatch runs
 
-Maya (Claude with identity):
-  hive                       Interactive Maya session
-  hive "fix the auth bug"    Maya with a prompt
-  hive --agent maya-coder    Maya with a specific agent
+${name} (Claude with identity):
+  hive                       Interactive ${name} session
+  hive "fix the auth bug"    ${name} with a prompt
+  hive --agent maya-coder    ${name} with a specific agent
   hive [any claude flags]    Passed through to claude with identity`;
+}
 
 function findClaude(): string {
   try {
@@ -61,7 +64,7 @@ function findClaude(): string {
   }
 }
 
-async function launchMaya(args: string[]): Promise<void> {
+async function launchClaude(args: string[]): Promise<void> {
   const identityFile = await writeIdentityTempFile();
 
   // Clean up on exit
@@ -97,15 +100,15 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
 
-  // No args → interactive Maya session
+  // No args → interactive session
   if (!command) {
-    await launchMaya([]);
+    await launchClaude([]);
     return;
   }
 
   // Help
-  if (command === "help" || command === "--help") {
-    console.log(usage);
+  if (command === "help" || command === "--help" || command === "-h") {
+    console.log(getUsage());
     return;
   }
 
@@ -124,8 +127,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Everything else → pass through to claude as Maya
-  await launchMaya(args);
+  // Everything else → pass through to claude with identity
+  await launchClaude(args);
 }
 
 main().catch((error) => {

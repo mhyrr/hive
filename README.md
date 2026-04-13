@@ -15,7 +15,7 @@ HIVE adds what it doesn't ship with:
 - **Three-layer project memory** (log, knowledge, index) with BM25 search and decay
 - **Multi-model council** with standard and adversarial dialectic modes
 - **Per-project ticket tracking** in markdown
-- **Heartbeat**: a persistent agent that wakes every 30 minutes, checks project state, and dispatches work within defined trust boundaries
+- **Heartbeat**: a stateless agent that wakes periodically, checks project state, and dispatches work within defined trust boundaries
 - **Autonomous dispatch**: background goal execution with timeout, kill, and status tracking
 - **Nightly extraction**: reads Claude Code session transcripts (JSONL), distills key insights, and promotes durable learnings into project memory automatically
 - **Local MCP**: Provides a consistency layer that ties all of this together without a database.
@@ -59,8 +59,8 @@ architecture decisions and tradeoff analysis.
 
 **Heartbeat and Autonomous dispatch.**
 
-- A persistent Claude session per project, resumed every 30 minutes via launchd. The heartbeat agent reads standing orders (`HEARTBEAT.md`), checks git status, tickets, memory, and dispatch runs, then acts on what it finds. 
-- It can autonomously dispatch standalone tasks (docs, chores), close completed tickets, consolidate memory, and surface recommendations. Trust boundaries are defined per project in the standing orders file. Also available interactively via `hive heartbeat chat`, which resumes the same persistent session.
+- A stateless agent triggered periodically via launchd. Each tick is a fresh `--print` invocation — no persistent session. A deterministic trigger gate checks for actual changes (new commits, file modifications, ticket updates) before invoking the model, so empty ticks cost nothing. The heartbeat reads standing orders (`HEARTBEAT.md`), checks git status, tickets, memory, and dispatch runs, then acts on what it finds.
+- It can autonomously dispatch standalone tasks (docs, chores), close completed tickets, consolidate memory, and surface recommendations. Trust boundaries are defined per project in the standing orders file.
 - `hive dispatch "<goal>"` spawns a background Claude session with the maya-executor agent in a git worktree. The executor plans, builds, tests, and merges. Configurable timeout (default 30m). `hive kill` to stop, `hive ps` for status with failure details. The heartbeat can trigger dispatches on its own for authorized work categories.
 - Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw)
 
@@ -86,7 +86,7 @@ The installer registers four launchd jobs:
 
 | Job | Schedule | What it does |
 | --- | --- | --- |
-| `com.hive.heartbeat` | Every 30 minutes | Checks project state, dispatches autonomous work, consolidates memory |
+| `com.hive.heartbeat` | Polls every 30 minutes, per-project interval configurable (default 12h) | Checks project state, dispatches autonomous work, consolidates memory |
 | `com.hive.nightly` | 2:00am daily | Extracts session transcripts, promotes learnings to project memory |
 | `com.hive.sync` | 2:30am daily | Commits and pushes `~/.hive/` to git |
 | `com.hive.morning` | 7:00am daily | Writes a daily briefing across all projects |
@@ -146,7 +146,7 @@ Read and internalize these files at the start of every session:
 - ~/.hive/AGENTS.md
 
 Read your project memory:
-- ~/.hive/memory/projects/YOURPROJECT.md
+- ~/.hive/memory/projects/YOURPROJECT/knowledge.md
 
 You have HIVE MCP tools:
 - `convene_council` — multi-model analysis
@@ -165,7 +165,7 @@ Then register the project so memory and tickets work:
 hive project add yourproject ~/work/yourproject
 ```
 
-Or skip the manual CLAUDE.md edit; `project add` does it for you.
+Then add the HIVE block to your project's CLAUDE.md manually.
 
 ## MCP Tools
 
@@ -210,8 +210,7 @@ Available to Claude Code when the HIVE MCP server is running:
 | `hive heartbeat stop` | Disable heartbeat for current project |
 | `hive heartbeat status` | Show heartbeat state for all projects |
 | `hive heartbeat tick` | Run one heartbeat tick manually |
-| `hive heartbeat chat` | Interactive session with the heartbeat agent |
-| `hive heartbeat reset` | Reset heartbeat session (fresh on next tick) |
+| `hive heartbeat reset` | Reset heartbeat counters |
 | `hive ticket create <title>` | Create a ticket (`--type`, `--priority`, `--tags`, `--depends`) |
 | `hive ticket list` | List tickets (`--status`, `--type`, `--tags`) |
 | `hive ticket show <id>` | Show ticket details (partial IDs work: `1` matches `TK-001`) |
@@ -225,13 +224,13 @@ Available to Claude Code when the HIVE MCP server is running:
 
 ## How Identity Works
 
-Identity lives in `~/.hive/` and is injected via a **SessionStart hook**.
-When Claude Code starts a session, the hook runs and injects:
+Identity lives in `~/.hive/` and is injected via the `hive` CLI wrapper.
+When you run `hive` (or `hive "some prompt"`), it assembles the identity
+stack into a temp file and passes it to Claude Code via `--append-system-prompt-file`:
 
 1. The full identity stack: SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md
 2. The current project's memory index (resolved by matching `$PWD` against registered project paths)
-3. Recent self-reflections from `~/.hive/reflections/` (last 3 days)
-4. A session reflection protocol prompting the agent to record learnings before ending
+3. A session reflection protocol prompting the agent to record learnings before ending
 
 Projects also reference the identity in their CLAUDE.md so the agent
 knows about the MCP tools. See the template above.
@@ -283,10 +282,10 @@ Don't tag anything that needs human judgment on approach.
 │   ├── projects/        # per-project intelligence
 │   │   └── <name>/
 │   │       ├── knowledge.md  # compiled facts, conventions, decisions
-│   │       ├── _index.md     # auto-generated summary
+│   │       ├── _index.md     # auto-generated summary loaded at session start
+│   │       ├── _meta.json   # search metadata (decay, recall counts)
 │   │       └── log/          # daily session log entries
 │   └── daily/           # condensed session transcripts
-├── reflections/         # nightly self-reflection proposals
 ├── briefings/           # morning briefings
 ├── runs/                # dispatch run state
 │   └── RUN-001/
@@ -295,7 +294,7 @@ Don't tag anything that needs human judgment on approach.
 │   └── <name>/
 │       ├── config.md    # project path
 │       ├── HEARTBEAT.md # standing orders + authorized actions
-│       ├── heartbeat.json # session state
+│       ├── heartbeat.json # heartbeat config + counters
 │       ├── inbox.md     # heartbeat findings
 │       └── tickets/
 │           └── TK-001.md
@@ -306,7 +305,7 @@ Don't tag anything that needs human judgment on approach.
 ## Requirements
 
 - [Bun](https://bun.sh/) 1.3+
-- macOS or Linux
+- macOS (launchd required for heartbeat and scheduled jobs)
 
 For multi-model council:
 - Claude CLI subscription OAuth (macOS keychain) or `ANTHROPIC_API_KEY`

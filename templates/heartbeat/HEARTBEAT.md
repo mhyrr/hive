@@ -6,7 +6,7 @@
 - Standalone documentation tasks (ticket type: task, clearly writing-only)
 - Chores and cleanup tickets (ticket type: chore)
 - Any ticket explicitly tagged `auto-dispatch`
-- Goals stated in the heartbeat chat session, if they map to a clear standalone task
+- Goals written to inbox.md, if they map to a clear standalone task
 
 When dispatching: `hive dispatch "<goal>" --ticket <id> --project {{projectName}}`
 Log to inbox.md: what was dispatched, the run ID, and why.

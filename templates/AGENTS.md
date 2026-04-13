@@ -7,7 +7,8 @@ and multi-model deliberation. This file covers how to use that infrastructure.
 
 ## How Sessions Work
 
-A SessionStart hook loads your identity stack automatically:
+Your identity stack is loaded at session start (via the `hive` wrapper
+or CLAUDE.md references):
 1. SOUL.md → IDENTITY.md → SELF.md → AGENTS.md → TRUST.md
 2. The current project's memory (matched by working directory)
 3. The session reflection protocol
@@ -57,7 +58,7 @@ Two memory systems coexist. Don't fight this — they serve different purposes.
 It captures user feedback, session preferences, working notes. Let it do
 its thing. Don't manage it, don't clean it up, don't duplicate its work.
 
-**HIVE memory** (~/.hive/memory/projects/<name>.md) is the intentional layer.
+**HIVE memory** (~/.hive/memory/projects/<name>/knowledge.md) is the intentional layer.
 Structured project intelligence written deliberately via MCP tools. This is
 the system of record for what the project has learned. When you learn
 something durable, write it here.
