@@ -1,4 +1,9 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { UsageError } from "./errors";
+import { getHivePaths } from "./paths";
+import { parseFrontmatter } from "./frontmatter";
 
 export type ModelPoolEntry = {
   name: string;
@@ -19,6 +24,33 @@ export function normalizeProjectName(input: string): string {
   }
 
   return normalized;
+}
+
+/**
+ * Resolve which registered project owns the current working directory.
+ * Matches cwd against the `path` field in each project's config.md frontmatter.
+ * Falls back to the first registered project if no path matches.
+ */
+export function resolveProjectFromCwd(): string | null {
+  const paths = getHivePaths();
+  const cwd = process.cwd();
+  if (!existsSync(paths.projectsDir)) return null;
+
+  const projects = readdirSync(paths.projectsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+
+  for (const projectId of projects) {
+    try {
+      const configPath = join(paths.projectsDir, projectId, "config.md");
+      const raw = readFileSync(configPath, "utf-8");
+      const parsed = parseFrontmatter(raw);
+      const projectPath = parsed.attributes?.path as string | undefined;
+      if (projectPath && cwd.startsWith(projectPath)) return projectId;
+    } catch { /* skip */ }
+  }
+
+  return projects[0] ?? null;
 }
 
 export function extractRepoPath(projectConfig: string): string | null {

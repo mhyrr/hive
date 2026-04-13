@@ -1,5 +1,6 @@
 import { UsageError } from "../lib/errors";
-import { ensureHiveScaffold, listProjects } from "../lib/paths";
+import { ensureHiveScaffold } from "../lib/paths";
+import { resolveProjectFromCwd } from "../lib/project";
 import {
   createTicket,
   readTicket,
@@ -14,11 +15,6 @@ import {
   type TicketPriority,
   type TicketStatus,
 } from "../lib/ticket";
-
-function resolveProjectFromCwd(projects: string[]): string | null {
-  const cwd = process.cwd();
-  return projects.find((p) => cwd.toLowerCase().includes(p.toLowerCase())) ?? projects[0] ?? null;
-}
 
 function parseFlags(args: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -70,8 +66,7 @@ export async function ticketCommand(args: string[]): Promise<void> {
     prefiltered.push(args[i]!);
   }
 
-  const projects = await listProjects(paths.projectsDir);
-  const projectId = projectOverride ?? resolveProjectFromCwd(projects);
+  const projectId = projectOverride ?? resolveProjectFromCwd();
 
   if (!projectId) {
     throw new UsageError("No project found. Register one with: hive project add <name> <path>");

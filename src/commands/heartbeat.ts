@@ -4,8 +4,8 @@ import { join, dirname } from "node:path";
 
 import { UsageError } from "../lib/errors";
 import { getHivePaths, getProjectPaths, listProjects } from "../lib/paths";
-import { parseFrontmatter } from "../lib/frontmatter";
 import { writeIdentityTempFile, cleanupIdentityTempFile } from "../lib/identity";
+import { resolveProjectFromCwd } from "../lib/project";
 import {
   readHeartbeatConfig,
   writeHeartbeatConfig,
@@ -14,28 +14,6 @@ import {
   defaultConfig,
 } from "../lib/heartbeat";
 
-function resolveProjectFromCwd(): string | null {
-  const paths = getHivePaths();
-  const cwd = process.cwd();
-  if (!existsSync(paths.projectsDir)) return null;
-
-  const projects = require("fs")
-    .readdirSync(paths.projectsDir, { withFileTypes: true })
-    .filter((e: any) => e.isDirectory())
-    .map((e: any) => e.name);
-
-  for (const projectId of projects) {
-    try {
-      const configPath = join(paths.projectsDir, projectId, "config.md");
-      const raw = require("fs").readFileSync(configPath, "utf-8");
-      const parsed = parseFrontmatter(raw);
-      const projectPath = parsed.attributes?.path as string | undefined;
-      if (projectPath && cwd.startsWith(projectPath)) return projectId;
-    } catch {}
-  }
-
-  return projects[0] ?? null;
-}
 
 function parseProjectFlag(args: string[]): { projectId: string; remaining: string[] } {
   const remaining: string[] = [];

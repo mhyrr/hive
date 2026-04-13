@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { getHivePaths } from "./paths";
-import { parseFrontmatter } from "./frontmatter";
+import { resolveProjectFromCwd } from "./project";
 
 const IDENTITY_FILES = ["SOUL.md", "IDENTITY.md", "SELF.md", "AGENTS.md", "TRUST.md"];
 
@@ -18,26 +18,6 @@ reflect_session (or individual write_hive_memory calls) for:
 Only record genuinely durable, non-obvious information.
 Skip if the session was trivial (quick question, no new learnings).
 `;
-
-function detectProject(paths: ReturnType<typeof getHivePaths>): string | null {
-  const cwd = process.cwd();
-  if (!existsSync(paths.projectsDir)) return null;
-
-  try {
-    const entries = require("fs").readdirSync(paths.projectsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const configPath = join(paths.projectsDir, entry.name, "config.md");
-      if (!existsSync(configPath)) continue;
-      const raw = require("fs").readFileSync(configPath, "utf-8");
-      const parsed = parseFrontmatter(raw);
-      const projectPath = parsed.attributes?.path as string | undefined;
-      if (projectPath && cwd.startsWith(projectPath)) return entry.name;
-    }
-  } catch { /* skip */ }
-
-  return null;
-}
 
 export async function assembleIdentity(): Promise<string> {
   const paths = getHivePaths();
@@ -54,7 +34,7 @@ export async function assembleIdentity(): Promise<string> {
   }
 
   // Detect and load project memory (prefer index, fall back to knowledge)
-  const projectId = detectProject(paths);
+  const projectId = resolveProjectFromCwd();
   if (projectId) {
     const indexFile = join(paths.memoryProjectsDir, projectId, "_index.md");
     const knowledgeFile = join(paths.memoryProjectsDir, projectId, "knowledge.md");

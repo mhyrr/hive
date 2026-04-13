@@ -5,9 +5,9 @@ import { spawn } from "node:child_process";
 
 import { UsageError } from "../lib/errors";
 import { ensureDirectory, getHivePaths } from "../lib/paths";
-import { parseFrontmatter } from "../lib/frontmatter";
 import { readTicket, formatTicketDetail } from "../lib/ticket";
 import { assembleIdentity } from "../lib/identity";
+import { resolveProjectFromCwd } from "../lib/project";
 
 async function nextRunId(runsDir: string): Promise<string> {
   const entries = await readdir(runsDir).catch(() => []);
@@ -19,27 +19,6 @@ async function nextRunId(runsDir: string): Promise<string> {
   return `RUN-${String(next).padStart(3, "0")}`;
 }
 
-function resolveProjectFromCwd(paths: ReturnType<typeof getHivePaths>): string | null {
-  const cwd = process.cwd();
-  if (!existsSync(paths.projectsDir)) return null;
-
-  const projects = require("fs")
-    .readdirSync(paths.projectsDir, { withFileTypes: true })
-    .filter((e: any) => e.isDirectory())
-    .map((e: any) => e.name);
-
-  for (const projectId of projects) {
-    try {
-      const configPath = join(paths.projectsDir, projectId, "config.md");
-      const raw = require("fs").readFileSync(configPath, "utf-8");
-      const parsed = parseFrontmatter(raw);
-      const projectPath = parsed.attributes?.path as string | undefined;
-      if (projectPath && cwd.startsWith(projectPath)) return projectId;
-    } catch { /* skip */ }
-  }
-
-  return projects[0] ?? null;
-}
 
 function findClaude(): string {
   try {
@@ -83,7 +62,7 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   }
 
   if (!projectId) {
-    projectId = resolveProjectFromCwd(paths) ?? "";
+    projectId = resolveProjectFromCwd() ?? "";
   }
 
   if (!projectId) {

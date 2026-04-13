@@ -1,10 +1,6 @@
-import { ensureHiveScaffold, listProjects, getProjectPaths } from "../lib/paths";
+import { ensureHiveScaffold, getProjectPaths } from "../lib/paths";
 import { UsageError } from "../lib/errors";
-
-function resolveProjectFromCwd(projects: string[]): string | null {
-  const cwd = process.cwd();
-  return projects.find((p) => cwd.toLowerCase().includes(p.toLowerCase())) ?? projects[0] ?? null;
-}
+import { resolveProjectFromCwd } from "../lib/project";
 
 export async function inboxCommand(args: string[]): Promise<void> {
   const usage = `Usage:
@@ -13,8 +9,6 @@ export async function inboxCommand(args: string[]): Promise<void> {
   hive inbox --project <name>   Specify project`;
 
   const paths = await ensureHiveScaffold();
-  const projects = await listProjects(paths.projectsDir);
-
   let projectId: string | null = null;
   let subcommand: string | undefined;
 
@@ -27,7 +21,7 @@ export async function inboxCommand(args: string[]): Promise<void> {
     }
   }
 
-  projectId ??= resolveProjectFromCwd(projects);
+  projectId ??= resolveProjectFromCwd();
   if (!projectId) {
     throw new UsageError("No project found. Register one with: hive project add <name> <path>");
   }

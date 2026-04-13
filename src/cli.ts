@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { councilCommand } from "./commands/council";
 import { dispatchCommand } from "./commands/dispatch";
+import { doctorCommand } from "./commands/doctor";
 import { heartbeatCommand } from "./commands/heartbeat";
 import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
@@ -17,6 +18,7 @@ import { writeIdentityTempFile, cleanupIdentityTempFile, getIdentityName } from 
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: initCommand,
+  doctor: doctorCommand,
   project: projectCommand,
   council: councilCommand,
   memory: memoryCommand,
@@ -37,6 +39,7 @@ When called with anything else (or no args), launches Claude as ${name}.
 
 HIVE Commands:
   init                       Set up ~/.hive and register MCP server
+  doctor                     Validate installation health
   project add <name> <path>  Register a project
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory

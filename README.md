@@ -192,7 +192,8 @@ Available to Claude Code when the HIVE MCP server is running:
 | Command | Purpose |
 | --- | --- |
 | `hive init` | Create `~/.hive/` scaffold, register MCP server |
-| `hive project add <name> <path>` | Register project, create memory, wire CLAUDE.md |
+| `hive doctor` | Validate installation health (`--verbose` for details) |
+| `hive project add <name> <path>` | Register project, create memory |
 | `hive council "<question>"` | Multi-model council from terminal |
 | `hive council --persona analyst "<question>"` | Council with analytical framing |
 | `hive council --format json "<question>"` | Machine-readable council output |

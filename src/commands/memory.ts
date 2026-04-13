@@ -1,5 +1,6 @@
 import { UsageError } from "../lib/errors";
-import { ensureHiveScaffold, listProjects } from "../lib/paths";
+import { ensureHiveScaffold } from "../lib/paths";
+import { resolveProjectFromCwd } from "../lib/project";
 import {
   appendProjectMemory,
   appendToLog,
@@ -12,12 +13,6 @@ import {
 } from "../lib/memory";
 import { writeDailySessions } from "../lib/sessions";
 import { promoteReflections } from "../lib/reflections";
-
-function resolveProjectFromCwd(projects: string[]): string | null {
-  const cwd = process.cwd();
-  // Simple heuristic: find a project whose name appears in the cwd path
-  return projects.find((p) => cwd.toLowerCase().includes(p.toLowerCase())) ?? projects[0] ?? null;
-}
 
 function parseFlagsAndArgs(args: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -56,8 +51,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
   const paths = await ensureHiveScaffold();
   const { flags, positional } = parseFlagsAndArgs(args);
 
-  const projects = await listProjects(paths.projectsDir);
-  const projectId = flags.project ?? resolveProjectFromCwd(projects);
+  const projectId = flags.project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     throw new UsageError("No project found. Register one with: hive project add <name> <path>");

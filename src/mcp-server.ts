@@ -14,7 +14,7 @@ import {
   resolveCouncilMembers,
   clampRounds,
 } from "./lib/council";
-import { parseModelPool } from "./lib/project";
+import { parseModelPool, resolveProjectFromCwd } from "./lib/project";
 import { getHivePaths, listProjects, resolveHiveHome } from "./lib/paths";
 import {
   readProjectMemorySnapshot,
@@ -46,32 +46,6 @@ import {
   type TicketPriority,
 } from "./lib/ticket";
 
-function resolveProjectFromCwd(paths: ReturnType<typeof getHivePaths>): string | null {
-  const cwd = process.cwd();
-  const projectsDir = paths.projectsDir;
-
-  if (!existsSync(projectsDir)) return null;
-
-  const projects = readdirSync(projectsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name);
-
-  // Try to match cwd against project paths from config files
-  for (const projectId of projects) {
-    try {
-      const configPath = join(projectsDir, projectId, "config.md");
-      const raw = Bun.file(configPath).textSync?.() ?? "";
-      const parsed = parseFrontmatter(raw);
-      const projectPath = parsed.attributes?.path as string | undefined;
-      if (projectPath && cwd.startsWith(projectPath)) return projectId;
-    } catch {
-      // skip
-    }
-  }
-
-  // Fallback: match project name in cwd
-  return projects.find((p) => cwd.toLowerCase().includes(p.toLowerCase())) ?? projects[0] ?? null;
-}
 
 const server = new McpServer(
   { name: "hive", version: "2.0.0" },
@@ -174,7 +148,7 @@ server.registerTool("read_hive_memory", {
   },
 }, async ({ project, section, source, include_superseded }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -214,7 +188,7 @@ server.registerTool("write_hive_memory", {
   },
 }, async ({ project, type, content, tags, supersedes }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -248,7 +222,7 @@ server.registerTool("reflect_session", {
   },
 }, async ({ project, learnings }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -316,7 +290,7 @@ server.registerTool("search_memory", {
   },
 }, async ({ project, query, tag, section, include_superseded, log_days }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -354,7 +328,7 @@ server.registerTool("create_ticket", {
   },
 }, async ({ project, title, body, type, priority, tags, ref, depends }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -388,7 +362,7 @@ server.registerTool("list_tickets", {
   },
 }, async ({ project, status, type, tags }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -420,7 +394,7 @@ server.registerTool("show_ticket", {
   },
 }, async ({ project, id }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -455,7 +429,7 @@ server.registerTool("update_ticket", {
   },
 }, async ({ project, id, status, title, type, priority, tags, ref, depends }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -492,7 +466,7 @@ server.registerTool("add_ticket_note", {
   },
 }, async ({ project, id, note, actor }) => {
   const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd(paths);
+  const projectId = project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     return {
@@ -748,7 +722,7 @@ server.tool(
   },
   async ({ action, project, interval_minutes }) => {
     const paths = getHivePaths();
-    const projectId = project || resolveProjectFromCwd(paths);
+    const projectId = project || resolveProjectFromCwd();
     if (!projectId) {
       return { content: [{ type: "text" as const, text: "No project found. Specify a project name." }] };
     }
