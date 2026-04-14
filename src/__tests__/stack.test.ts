@@ -47,6 +47,26 @@ describe("rewriteSkillName", () => {
     expect(result).not.toContain('- "a"');
   });
 
+  test("preserves block-map keys (metadata: with nested scalar pairs)", () => {
+    const input = `---\nname: typescript-pro\ndescription: "foo"\nlicense: MIT\nmetadata:\n  author: https://example.com\n  version: "1.1.0"\n  domain: language\n---\n\nBody\n`;
+    const result = rewriteSkillName(input, "ts-typescript-pro");
+    expect(result).toContain("name: ts-typescript-pro");
+    expect(result).toContain("metadata:");
+    expect(result).toContain("  author: https://example.com");
+    expect(result).toContain('  version: "1.1.0"');
+    expect(result).toContain("  domain: language");
+    expect(result).toContain("license: MIT");
+  });
+
+  test("distinguishes block-list and block-map when both are present", () => {
+    const input = `---\nname: x\npaths:\n  - "**/*.ts"\nmetadata:\n  version: "2"\n---\n\nBody\n`;
+    const result = rewriteSkillName(input, "stack-x");
+    expect(result).not.toContain("paths:");
+    expect(result).not.toContain('- "**/*.ts"');
+    expect(result).toContain("metadata:");
+    expect(result).toContain('  version: "2"');
+  });
+
   test("preserves body", () => {
     const body = "# Heading\n\nSome **markdown** body.\n\n- bullet\n";
     const input = `---\nname: x\n---\n\n${body}`;

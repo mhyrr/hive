@@ -169,10 +169,12 @@ export function rewriteSkillName(content: string, newName: string): string {
   let replacedName = false;
   let skippingBlock = false;
 
-  for (const line of source) {
+  const isBlockListItem = (line: string): boolean => /^\s+-\s/.test(line);
+
+  for (let i = 0; i < source.length; i++) {
+    const line = source[i]!;
+
     if (skippingBlock) {
-      // Block values are indented lines (space or tab start). Stop skipping
-      // when we hit a line that's clearly a new top-level key.
       if (line.length === 0 || /^\s/.test(line)) continue;
       skippingBlock = false;
     }
@@ -183,12 +185,16 @@ export function rewriteSkillName(content: string, newName: string): string {
       continue;
     }
 
-    // Any key with an empty value followed by an indented block list — drop it.
-    // Typical shape: `paths:\n  - "**/*.ex"`.
+    // Key with no inline value. Could be a block list (drop) or a block map
+    // (keep) — distinguish by peeking at the next non-empty line. `- item`
+    // dashes mean block list.
     const blockKeyMatch = /^([A-Za-z_][A-Za-z0-9_-]*):\s*$/.exec(line);
     if (blockKeyMatch) {
-      skippingBlock = true;
-      continue;
+      const lookahead = source.slice(i + 1).find((peek) => peek.length > 0);
+      if (lookahead && isBlockListItem(lookahead)) {
+        skippingBlock = true;
+        continue;
+      }
     }
 
     output.push(line);
