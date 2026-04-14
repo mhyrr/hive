@@ -5,6 +5,8 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  installStack,
+  listCannedStacks,
   listSourceSkills,
   listSourceStacks,
   listSyncedSkills,
@@ -180,5 +182,58 @@ describe("stack filesystem operations", () => {
 
     expect(await listSyncedSkills("elixir")).toEqual(["idioms"]);
     expect(existsSync(foreign)).toBe(true);
+  });
+
+  // --- installStack (canned template → source tree) ---
+
+  test("listCannedStacks reports templates shipped with the repo", async () => {
+    const canned = await listCannedStacks();
+    // The elixir stack is vendored into templates/stacks/elixir/.
+    expect(canned).toContain("elixir");
+  });
+
+  test("installStack copies the elixir template into HIVE_HOME", async () => {
+    const result = await installStack("elixir");
+    expect(result.overwrote).toBe(false);
+    expect(result.target).toBe(join(hiveHome, "stacks", "elixir"));
+
+    const readme = join(result.target, "README.md");
+    const skillsDir = join(result.target, "skills");
+    expect(existsSync(readme)).toBe(true);
+    expect(existsSync(skillsDir)).toBe(true);
+
+    // All seven skill topics should land in source tree (pre-sync).
+    const topics = (await listSourceSkills("elixir")).sort();
+    expect(topics).toEqual([
+      "ecto-patterns",
+      "idioms",
+      "liveview-patterns",
+      "oban",
+      "phoenix-contexts",
+      "security",
+      "testing",
+    ]);
+  });
+
+  test("installStack refuses to overwrite without --force", async () => {
+    await installStack("elixir");
+    expect(installStack("elixir")).rejects.toThrow(/already installed/);
+  });
+
+  test("installStack with --force reinstalls cleanly", async () => {
+    await installStack("elixir");
+
+    // Simulate a stale user edit that should be wiped on --force.
+    const stale = join(hiveHome, "stacks", "elixir", "skills", "stale-topic");
+    await mkdir(stale, { recursive: true });
+    await writeFile(join(stale, "SKILL.md"), "---\nname: stale\n---\n");
+
+    const result = await installStack("elixir", { force: true });
+    expect(result.overwrote).toBe(true);
+    expect(existsSync(stale)).toBe(false);
+  });
+
+  test("installStack throws UsageError for unknown template", async () => {
+    expect(installStack("no-such-stack")).rejects.toThrow(/No template for stack/);
   });
 });

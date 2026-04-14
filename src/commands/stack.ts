@@ -1,6 +1,8 @@
 import { UsageError } from "../lib/errors";
 import {
   initStack,
+  installStack,
+  listCannedStacks,
   listSourceSkills,
   listSourceStacks,
   listSyncedSkills,
@@ -9,41 +11,73 @@ import {
 } from "../lib/stack";
 
 const USAGE = `Usage:
-  hive stack list              List available stacks and sync status
-  hive stack init <name>       Scaffold a new stack source tree
-  hive stack sync <name>       Copy stack skills into ~/.claude/skills/<name>-*`;
+  hive stack list                  List installed + canned stacks
+  hive stack install <name>        Install a canned stack template to ~/.hive/stacks/
+    --force                        Overwrite existing installation
+  hive stack sync <name>           Copy stack skills into ~/.claude/skills/<name>-*
+  hive stack init <name>           Scaffold an empty stack source tree`;
 
 function arraysEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 async function runList(): Promise<void> {
-  const stacks = await listSourceStacks();
-  if (stacks.length === 0) {
-    console.log("No stacks found. Scaffold one with: hive stack init <name>");
+  const installed = await listSourceStacks();
+  const canned = await listCannedStacks();
+  const installedSet = new Set(installed);
+  const notInstalled = canned.filter((name) => !installedSet.has(name));
+
+  if (installed.length === 0 && canned.length === 0) {
+    console.log("No stacks available. (This HIVE build ships no canned templates.)");
     return;
   }
 
-  for (const stack of stacks) {
-    const source = await listSourceSkills(stack);
-    const synced = await listSyncedSkills(stack);
-    let status: string;
-    if (source.length === 0) {
-      status = "empty";
-    } else if (synced.length === 0) {
-      status = "not synced";
-    } else if (arraysEqual(source, synced)) {
-      status = "synced";
-    } else {
-      status = "drift";
-    }
+  if (installed.length > 0) {
+    console.log("Installed:");
+    for (const stack of installed) {
+      const source = await listSourceSkills(stack);
+      const synced = await listSyncedSkills(stack);
+      let status: string;
+      if (source.length === 0) status = "empty";
+      else if (synced.length === 0) status = "not synced";
+      else if (arraysEqual(source, synced)) status = "synced";
+      else status = "drift";
 
-    console.log(`${stack}  (${source.length} skills, ${status})`);
-    console.log(`  source: ${stackSourceDir(stack)}`);
-    if (source.length > 0) {
-      console.log(`  skills: ${source.join(", ")}`);
+      const cannedTag = canned.includes(stack) ? " [canned]" : "";
+      console.log(`  ${stack}  (${source.length} skills, ${status})${cannedTag}`);
+      console.log(`    source: ${stackSourceDir(stack)}`);
+      if (source.length > 0) {
+        console.log(`    skills: ${source.join(", ")}`);
+      }
     }
   }
+
+  if (notInstalled.length > 0) {
+    if (installed.length > 0) console.log();
+    console.log("Canned templates (not installed):");
+    for (const stack of notInstalled) {
+      console.log(`  ${stack}  →  hive stack install ${stack}`);
+    }
+  }
+}
+
+async function runInstall(args: string[]): Promise<void> {
+  let force = false;
+  let name: string | undefined;
+
+  for (const arg of args) {
+    if (arg === "--force" || arg === "-f") force = true;
+    else if (!name) name = arg;
+    else throw new UsageError(`Unexpected argument: ${arg}`);
+  }
+
+  if (!name) throw new UsageError("Usage: hive stack install <name> [--force]");
+
+  const result = await installStack(name, { force });
+  const verb = result.overwrote ? "Reinstalled" : "Installed";
+  console.log(`${verb} stack '${name}' at ${result.target}`);
+  console.log(`  from: ${result.source}`);
+  console.log(`Next:   hive stack sync ${name}`);
 }
 
 async function runInit(name: string | undefined): Promise<void> {
@@ -77,6 +111,9 @@ export async function stackCommand(args: string[]): Promise<void> {
   switch (sub) {
     case "list":
       await runList();
+      return;
+    case "install":
+      await runInstall(args.slice(1));
       return;
     case "init":
       await runInit(args[1]);

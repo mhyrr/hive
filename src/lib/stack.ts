@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { UsageError } from "./errors";
 import { resolveHiveHome } from "./paths";
@@ -23,6 +23,62 @@ export function getStackPaths(): StackPaths {
     stacksRoot: join(resolveHiveHome(), "stacks"),
     userSkillsDir: join(resolveHome(), ".claude", "skills"),
   };
+}
+
+/** Resolve templates/stacks/ relative to this module. Matches how the project
+ * command resolves its HEARTBEAT.md template. */
+export function resolveTemplatesStacksDir(): string {
+  return join(dirname(import.meta.dir), "..", "templates", "stacks");
+}
+
+export async function listCannedStacks(): Promise<string[]> {
+  const dir = resolveTemplatesStacksDir();
+  if (!existsSync(dir)) return [];
+  const entries = await readdir(dir, { withFileTypes: true });
+
+  return entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+export type InstallResult = {
+  stack: string;
+  source: string;
+  target: string;
+  overwrote: boolean;
+};
+
+export async function installStack(
+  name: string,
+  opts: { force?: boolean } = {},
+): Promise<InstallResult> {
+  const source = join(resolveTemplatesStacksDir(), name);
+  if (!existsSync(source)) {
+    const available = await listCannedStacks();
+    const hint = available.length > 0
+      ? ` Available templates: ${available.join(", ")}.`
+      : " No canned stacks available in this HIVE build.";
+    throw new UsageError(`No template for stack '${name}'.${hint}`);
+  }
+
+  const target = stackSourceDir(name);
+  const existed = existsSync(target);
+
+  if (existed && !opts.force) {
+    throw new UsageError(
+      `Stack already installed at ${target}. Pass --force to overwrite (destroys local edits).`,
+    );
+  }
+
+  if (existed) {
+    await rm(target, { recursive: true, force: true });
+  }
+
+  await mkdir(getStackPaths().stacksRoot, { recursive: true });
+  await cp(source, target, { recursive: true });
+
+  return { stack: name, source, target, overwrote: existed };
 }
 
 export function stackSourceDir(stack: string): string {

@@ -43,7 +43,7 @@ HIVE Commands:
   init                       Set up ~/.hive and register MCP server
   doctor                     Validate installation health
   project add <name> <path>  Register a project
-  stack list|init|sync       Manage language/framework skill stacks
+  stack list|install|sync    Manage language/framework skill stacks
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
   ticket [create|list|...]   Project ticket tracker
