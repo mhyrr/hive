@@ -12,6 +12,7 @@ import { killCommand } from "./commands/kill";
 import { memoryCommand } from "./commands/memory";
 import { projectCommand } from "./commands/project";
 import { psCommand } from "./commands/ps";
+import { stackCommand } from "./commands/stack";
 import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
 import { writeIdentityTempFile, cleanupIdentityTempFile, getIdentityName } from "./lib/identity";
@@ -20,6 +21,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: initCommand,
   doctor: doctorCommand,
   project: projectCommand,
+  stack: stackCommand,
   council: councilCommand,
   memory: memoryCommand,
   ticket: ticketCommand,
@@ -41,6 +43,7 @@ HIVE Commands:
   init                       Set up ~/.hive and register MCP server
   doctor                     Validate installation health
   project add <name> <path>  Register a project
+  stack list|init|sync       Manage language/framework skill stacks
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
   ticket [create|list|...]   Project ticket tracker
