@@ -88,8 +88,15 @@ export async function initStack(name: string): Promise<string> {
 }
 
 /**
- * Rewrite the `name:` line in a SKILL.md frontmatter block, leaving everything
- * else untouched. Returns the original string if no frontmatter or no name key.
+ * Rewrite SKILL.md frontmatter for deployment:
+ *   - Set `name:` to the stack-prefixed skill name.
+ *   - Strip block-list keys (e.g. `paths:` with indented `- value` lines).
+ *     Claude Code's skill loader chokes on nested YAML and silently drops
+ *     skills that use it; the path-scoping these fields expressed only had
+ *     meaning inside the source plugin's own workflow machinery, which we
+ *     intentionally don't import.
+ *
+ * Returns the original string if no frontmatter or no `name:` key.
  */
 export function rewriteSkillName(content: string, newName: string): string {
   const normalized = content.replace(/\r\n/g, "\n");
@@ -101,21 +108,39 @@ export function rewriteSkillName(content: string, newName: string): string {
   const frontmatter = normalized.slice(4, closingIndex);
   const rest = normalized.slice(closingIndex);
 
-  let replaced = false;
-  const rewritten = frontmatter
-    .split("\n")
-    .map((line) => {
-      if (/^name:\s*/.test(line)) {
-        replaced = true;
-        return `name: ${newName}`;
-      }
-      return line;
-    })
-    .join("\n");
+  const source = frontmatter.split("\n");
+  const output: string[] = [];
+  let replacedName = false;
+  let skippingBlock = false;
 
-  if (!replaced) return content;
+  for (const line of source) {
+    if (skippingBlock) {
+      // Block values are indented lines (space or tab start). Stop skipping
+      // when we hit a line that's clearly a new top-level key.
+      if (line.length === 0 || /^\s/.test(line)) continue;
+      skippingBlock = false;
+    }
 
-  return `---\n${rewritten}${rest}`;
+    if (/^name:\s*/.test(line)) {
+      replacedName = true;
+      output.push(`name: ${newName}`);
+      continue;
+    }
+
+    // Any key with an empty value followed by an indented block list — drop it.
+    // Typical shape: `paths:\n  - "**/*.ex"`.
+    const blockKeyMatch = /^([A-Za-z_][A-Za-z0-9_-]*):\s*$/.exec(line);
+    if (blockKeyMatch) {
+      skippingBlock = true;
+      continue;
+    }
+
+    output.push(line);
+  }
+
+  if (!replacedName) return content;
+
+  return `---\n${output.join("\n")}${rest}`;
 }
 
 export type SyncResult = {

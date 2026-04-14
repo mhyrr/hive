@@ -24,13 +24,25 @@ describe("rewriteSkillName", () => {
     expect(result).not.toContain("name: ecto-patterns\n");
   });
 
-  test("preserves nested frontmatter structures (arrays)", () => {
-    const input = `---\nname: liveview-patterns\neffort: medium\npaths:\n  - "**/*_live.ex"\n  - "**/*.sface"\n---\n\nBody\n`;
+  test("strips block-list keys (paths:) that break Claude Code's parser", () => {
+    const input = `---\nname: liveview-patterns\neffort: medium\nuser-invocable: false\npaths:\n  - "**/*_live.ex"\n  - "**/*.sface"\n---\n\nBody\n`;
     const result = rewriteSkillName(input, "elixir-liveview-patterns");
     expect(result).toContain("name: elixir-liveview-patterns");
-    expect(result).toContain('  - "**/*_live.ex"');
-    expect(result).toContain('  - "**/*.sface"');
     expect(result).toContain("effort: medium");
+    expect(result).toContain("user-invocable: false");
+    expect(result).not.toContain("paths:");
+    expect(result).not.toContain("_live.ex");
+    expect(result).not.toContain(".sface");
+  });
+
+  test("strips block-list keys in any frontmatter position", () => {
+    // Block before `name:` — ensure we don't accidentally keep trailing indented lines.
+    const input = `---\npaths:\n  - "a"\n  - "b"\nname: x\ndescription: "y"\n---\n\nBody\n`;
+    const result = rewriteSkillName(input, "stack-x");
+    expect(result).toContain("name: stack-x");
+    expect(result).toContain('description: "y"');
+    expect(result).not.toContain("paths:");
+    expect(result).not.toContain('- "a"');
   });
 
   test("preserves body", () => {
