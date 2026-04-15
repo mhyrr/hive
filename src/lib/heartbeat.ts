@@ -243,7 +243,7 @@ export async function runTick(projectId: string): Promise<TickResult> {
   // keyed by project (not pid) so subsequent ticks land on the same filename,
   // and the *content* is byte-stable across ticks unless the user edits an
   // identity file. (TK-024)
-  const identity = await assembleHeartbeatIdentity();
+  const identity = await assembleHeartbeatIdentity(projectId);
   const identityPath = join(tmpdir(), `hive-heartbeat-${projectId}.md`);
   await Bun.write(identityPath, identity);
 

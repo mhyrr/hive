@@ -1,10 +1,11 @@
-import { existsSync } from "node:fs";
-import { cp, mkdir, readdir, rm } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { cp, mkdir, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { UsageError } from "./errors";
 import { resolveHiveHome } from "./paths";
+import { parseFrontmatter } from "./frontmatter";
 
 export type StackPaths = {
   stacksRoot: string;
@@ -203,6 +204,105 @@ export function rewriteSkillName(content: string, newName: string): string {
   if (!replacedName) return content;
 
   return `---\n${output.join("\n")}${rest}`;
+}
+
+// ---------------------------------------------------------------------------
+// Stack detection + binding
+// ---------------------------------------------------------------------------
+
+/** Marker files at a project root → stack name. First match wins. */
+const AUTO_DETECT_TABLE: [string, string][] = [
+  ["mix.exs", "elixir"],
+  ["package.json", "typescript"],
+  ["Cargo.toml", "rust"],
+  ["pyproject.toml", "python"],
+];
+
+/** Regex for valid stack names — same as initStack uses. */
+export const STACK_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * Read the explicit stack binding for a project.
+ * Returns the stack name, "none" (opt-out), or null (no binding file).
+ */
+export function readStackBinding(projectId: string): string | null {
+  const bindingPath = join(resolveHiveHome(), "projects", projectId, "stack");
+  if (!existsSync(bindingPath)) return null;
+  try {
+    return readFileSync(bindingPath, "utf-8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Auto-detect the stack from marker files at the project root.
+ * Returns the stack name or null if nothing matches.
+ */
+export function autoDetectStack(projectPath: string): string | null {
+  for (const [file, stack] of AUTO_DETECT_TABLE) {
+    if (existsSync(join(projectPath, file))) return stack;
+  }
+  return null;
+}
+
+/**
+ * Resolve the project path from a HIVE project config.
+ */
+function resolveProjectPath(projectId: string): string | null {
+  const configPath = join(resolveHiveHome(), "projects", projectId, "config.md");
+  if (!existsSync(configPath)) return null;
+  try {
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = parseFrontmatter(raw);
+    return (parsed.attributes?.path as string) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the effective stack for a project.
+ * Priority: explicit binding > auto-detect > null.
+ * Returns null if no stack detected or explicitly opted out ("none").
+ */
+export function resolveProjectStack(projectId: string): string | null {
+  const binding = readStackBinding(projectId);
+  if (binding === "none") return null;
+  if (binding) return binding;
+
+  const projectPath = resolveProjectPath(projectId);
+  if (!projectPath) return null;
+
+  return autoDetectStack(projectPath);
+}
+
+/**
+ * Build the session-start hint line for a detected stack.
+ * Returns empty string if no stack.
+ */
+export function buildStackHint(stack: string | null): string {
+  if (!stack) return "";
+  return `Project stack: ${stack}. Prefer ${stack}-* skills when they apply.`;
+}
+
+/**
+ * Write a stack binding file. Pass "none" to opt out, or a stack name.
+ */
+export async function writeStackBinding(projectId: string, value: string): Promise<void> {
+  const dir = join(resolveHiveHome(), "projects", projectId);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "stack"), value + "\n");
+}
+
+/**
+ * Remove the stack binding file (revert to auto-detection).
+ */
+export async function clearStackBinding(projectId: string): Promise<void> {
+  const bindingPath = join(resolveHiveHome(), "projects", projectId, "stack");
+  if (existsSync(bindingPath)) {
+    await unlink(bindingPath);
+  }
 }
 
 export type SyncResult = {

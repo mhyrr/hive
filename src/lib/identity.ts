@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 
 import { getHivePaths } from "./paths";
 import { resolveProjectFromCwd } from "./project";
+import { buildStackHint, resolveProjectStack } from "./stack";
 
 const IDENTITY_FILES = ["SOUL.md", "IDENTITY.md", "SELF.md", "AGENTS.md", "TRUST.md"];
 
@@ -44,6 +45,13 @@ export async function assembleIdentity(): Promise<string> {
       parts.push(content.trim());
       parts.push("\n");
     }
+
+    // Stack hint — stable per project, adds ~1 line
+    const stackHint = buildStackHint(resolveProjectStack(projectId));
+    if (stackHint) {
+      parts.push(stackHint);
+      parts.push("\n");
+    }
   }
 
   // Append reflection protocol
@@ -57,14 +65,20 @@ export async function assembleIdentity(): Promise<string> {
  *
  * Unlike `assembleIdentity()`, this is byte-stable across ticks: it loads
  * only the static identity stack (SOUL/IDENTITY/SELF/AGENTS/TRUST) plus the
- * reflection protocol. No project memory index, no reflections — those
- * mutate between ticks and would invalidate the prompt cache.
+ * reflection protocol and an optional stack hint. No project memory index,
+ * no reflections — those mutate between ticks and would invalidate the
+ * prompt cache.
+ *
+ * The stack hint is stable for a given project (stack binding doesn't change
+ * between ticks), so including it preserves byte-stability. The heartbeat
+ * temp file is already per-project, so per-project content is fine — cache
+ * keying is per-path.
  *
  * Project-specific state (memory index, tickets, git, dispatch runs) is
  * delivered via the per-tick context brief in the user message, which sits
  * below the cached system prompt and doesn't break the cache.
  */
-export async function assembleHeartbeatIdentity(): Promise<string> {
+export async function assembleHeartbeatIdentity(projectId?: string): Promise<string> {
   const paths = getHivePaths();
   const parts: string[] = [];
 
@@ -74,6 +88,15 @@ export async function assembleHeartbeatIdentity(): Promise<string> {
       const content = await Bun.file(filePath).text();
       parts.push(content.trim());
       parts.push("\n---\n");
+    }
+  }
+
+  // Stack hint — stable per project, safe for cache
+  if (projectId) {
+    const stackHint = buildStackHint(resolveProjectStack(projectId));
+    if (stackHint) {
+      parts.push(stackHint);
+      parts.push("\n");
     }
   }
 

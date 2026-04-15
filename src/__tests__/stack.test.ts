@@ -5,13 +5,20 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  autoDetectStack,
+  buildStackHint,
+  clearStackBinding,
   installStack,
   listCannedStacks,
   listSourceSkills,
   listSourceStacks,
   listSyncedSkills,
+  readStackBinding,
+  resolveProjectStack,
   rewriteSkillName,
+  STACK_NAME_RE,
   syncStack,
+  writeStackBinding,
 } from "../lib/stack";
 
 // ---------------------------------------------------------------------------
@@ -255,5 +262,269 @@ describe("stack filesystem operations", () => {
 
   test("installStack throws UsageError for unknown template", async () => {
     expect(installStack("no-such-stack")).rejects.toThrow(/No template for stack/);
+  });
+
+  // --- Stack binding + detection ---
+
+  test("readStackBinding returns null when no binding file", () => {
+    expect(readStackBinding("nonexistent-project")).toBeNull();
+  });
+
+  test("writeStackBinding + readStackBinding round-trip", async () => {
+    const projectDir = join(hiveHome, "projects", "test-proj");
+    await mkdir(projectDir, { recursive: true });
+    await writeStackBinding("test-proj", "elixir");
+
+    expect(readStackBinding("test-proj")).toBe("elixir");
+  });
+
+  test("writeStackBinding with 'none' reads back as 'none'", async () => {
+    const projectDir = join(hiveHome, "projects", "test-proj");
+    await mkdir(projectDir, { recursive: true });
+    await writeStackBinding("test-proj", "none");
+
+    expect(readStackBinding("test-proj")).toBe("none");
+  });
+
+  test("clearStackBinding removes the binding file", async () => {
+    const projectDir = join(hiveHome, "projects", "test-proj");
+    await mkdir(projectDir, { recursive: true });
+    await writeStackBinding("test-proj", "elixir");
+
+    expect(readStackBinding("test-proj")).toBe("elixir");
+    await clearStackBinding("test-proj");
+    expect(readStackBinding("test-proj")).toBeNull();
+  });
+
+  test("clearStackBinding is a no-op when no file exists", async () => {
+    // Should not throw
+    await clearStackBinding("no-such-project");
+  });
+
+  test("autoDetectStack finds mix.exs → elixir", async () => {
+    const projRoot = join(fakeHome, "my-elixir-app");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "mix.exs"), "defmodule MyApp do\nend\n");
+
+    expect(autoDetectStack(projRoot)).toBe("elixir");
+  });
+
+  test("autoDetectStack finds package.json → typescript", async () => {
+    const projRoot = join(fakeHome, "my-ts-app");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "package.json"), "{}");
+
+    expect(autoDetectStack(projRoot)).toBe("typescript");
+  });
+
+  test("autoDetectStack finds Cargo.toml → rust", async () => {
+    const projRoot = join(fakeHome, "my-rust-app");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "Cargo.toml"), "[package]\nname = \"x\"\n");
+
+    expect(autoDetectStack(projRoot)).toBe("rust");
+  });
+
+  test("autoDetectStack finds pyproject.toml → python", async () => {
+    const projRoot = join(fakeHome, "my-py-app");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "pyproject.toml"), "[tool.poetry]\n");
+
+    expect(autoDetectStack(projRoot)).toBe("python");
+  });
+
+  test("autoDetectStack returns null for empty dir", async () => {
+    const projRoot = join(fakeHome, "plain-dir");
+    await mkdir(projRoot, { recursive: true });
+
+    expect(autoDetectStack(projRoot)).toBeNull();
+  });
+
+  test("autoDetectStack prefers mix.exs over package.json (first match wins)", async () => {
+    const projRoot = join(fakeHome, "multi");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "mix.exs"), "");
+    await writeFile(join(projRoot, "package.json"), "{}");
+
+    expect(autoDetectStack(projRoot)).toBe("elixir");
+  });
+
+  test("resolveProjectStack uses binding over auto-detect", async () => {
+    // Set up a project with config pointing to a dir with package.json
+    const projDir = join(hiveHome, "projects", "bound-proj");
+    await mkdir(projDir, { recursive: true });
+    await writeFile(
+      join(projDir, "config.md"),
+      "---\nname: bound-proj\npath: /tmp/fake-proj\n---\n",
+    );
+    await writeStackBinding("bound-proj", "elixir");
+
+    // Even though the project path might auto-detect differently,
+    // the explicit binding wins
+    expect(resolveProjectStack("bound-proj")).toBe("elixir");
+  });
+
+  test("resolveProjectStack returns null for 'none' binding", async () => {
+    const projDir = join(hiveHome, "projects", "opted-out");
+    await mkdir(projDir, { recursive: true });
+    await writeStackBinding("opted-out", "none");
+
+    expect(resolveProjectStack("opted-out")).toBeNull();
+  });
+
+  test("resolveProjectStack falls back to auto-detect", async () => {
+    // Set up a project config pointing to a dir with mix.exs
+    const projRoot = join(fakeHome, "elixir-proj");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "mix.exs"), "");
+
+    const projDir = join(hiveHome, "projects", "auto-proj");
+    await mkdir(projDir, { recursive: true });
+    await writeFile(
+      join(projDir, "config.md"),
+      `---\nname: auto-proj\npath: ${projRoot}\n---\n`,
+    );
+
+    // No binding file → should auto-detect elixir
+    expect(resolveProjectStack("auto-proj")).toBe("elixir");
+  });
+
+  test("resolveProjectStack returns null when no config", () => {
+    expect(resolveProjectStack("ghost-project")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildStackHint — pure function
+// ---------------------------------------------------------------------------
+
+describe("buildStackHint", () => {
+  test("returns hint for a stack name", () => {
+    expect(buildStackHint("elixir")).toBe(
+      "Project stack: elixir. Prefer elixir-* skills when they apply.",
+    );
+  });
+
+  test("returns empty string for null", () => {
+    expect(buildStackHint(null)).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STACK_NAME_RE
+// ---------------------------------------------------------------------------
+
+describe("STACK_NAME_RE", () => {
+  test("accepts valid names", () => {
+    expect(STACK_NAME_RE.test("elixir")).toBe(true);
+    expect(STACK_NAME_RE.test("typescript")).toBe(true);
+    expect(STACK_NAME_RE.test("my-stack")).toBe(true);
+    expect(STACK_NAME_RE.test("a1")).toBe(true);
+  });
+
+  test("rejects invalid names", () => {
+    expect(STACK_NAME_RE.test("")).toBe(false);
+    expect(STACK_NAME_RE.test("1bad")).toBe(false);
+    expect(STACK_NAME_RE.test("-bad")).toBe(false);
+    expect(STACK_NAME_RE.test("Bad")).toBe(false);
+    expect(STACK_NAME_RE.test("no spaces")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Identity injection — verify assembleIdentity/assembleHeartbeatIdentity
+// include the stack hint when a project has a detectable stack.
+// ---------------------------------------------------------------------------
+
+import { assembleIdentity, assembleHeartbeatIdentity } from "../lib/identity";
+
+describe("identity stack hint injection", () => {
+  let hiveHome: string;
+  let fakeHome: string;
+  let prevHiveHome: string | undefined;
+  let prevHome: string;
+  let prevCwd: string;
+
+  beforeEach(async () => {
+    hiveHome = await mkdtemp(join(tmpdir(), "hive-id-hint-"));
+    fakeHome = await mkdtemp(join(tmpdir(), "hive-id-fakehome-"));
+    prevHiveHome = process.env.HIVE_HOME;
+    prevHome = process.env.HOME ?? homedir();
+    prevCwd = process.cwd();
+    process.env.HIVE_HOME = hiveHome;
+    process.env.HOME = fakeHome;
+  });
+
+  afterEach(async () => {
+    process.chdir(prevCwd);
+    if (prevHiveHome === undefined) delete process.env.HIVE_HOME;
+    else process.env.HIVE_HOME = prevHiveHome;
+    process.env.HOME = prevHome;
+    await rm(hiveHome, { recursive: true, force: true });
+    await rm(fakeHome, { recursive: true, force: true });
+  });
+
+  async function seedProject(projectId: string, projectPath: string) {
+    const projDir = join(hiveHome, "projects", projectId);
+    await mkdir(projDir, { recursive: true });
+    await writeFile(
+      join(projDir, "config.md"),
+      `---\nname: ${projectId}\npath: ${projectPath}\n---\n`,
+    );
+  }
+
+  test("assembleIdentity includes stack hint when project has mix.exs", async () => {
+    // Create a fake project root with mix.exs
+    const projRoot = join(fakeHome, "my-elixir-app");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "mix.exs"), "defmodule X do\nend\n");
+
+    // Register the project in HIVE
+    await seedProject("elx", projRoot);
+
+    // cd into the project so resolveProjectFromCwd finds it
+    process.chdir(projRoot);
+
+    const output = await assembleIdentity();
+    expect(output).toContain("Project stack: elixir. Prefer elixir-* skills when they apply.");
+  });
+
+  test("assembleIdentity omits hint when no stack detected", async () => {
+    const projRoot = join(fakeHome, "plain-app");
+    await mkdir(projRoot, { recursive: true });
+
+    await seedProject("plain", projRoot);
+    process.chdir(projRoot);
+
+    const output = await assembleIdentity();
+    expect(output).not.toContain("Project stack:");
+  });
+
+  test("assembleHeartbeatIdentity includes hint when projectId given", async () => {
+    const projRoot = join(fakeHome, "hb-elixir");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "mix.exs"), "");
+
+    await seedProject("hb-elx", projRoot);
+
+    const output = await assembleHeartbeatIdentity("hb-elx");
+    expect(output).toContain("Project stack: elixir. Prefer elixir-* skills when they apply.");
+  });
+
+  test("assembleHeartbeatIdentity omits hint when no projectId", async () => {
+    const output = await assembleHeartbeatIdentity();
+    expect(output).not.toContain("Project stack:");
+  });
+
+  test("assembleHeartbeatIdentity respects 'none' binding", async () => {
+    const projRoot = join(fakeHome, "hb-none");
+    await mkdir(projRoot, { recursive: true });
+    await writeFile(join(projRoot, "mix.exs"), "");
+
+    await seedProject("hb-none", projRoot);
+    await writeStackBinding("hb-none", "none");
+
+    const output = await assembleHeartbeatIdentity("hb-none");
+    expect(output).not.toContain("Project stack:");
   });
 });
