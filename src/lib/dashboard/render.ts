@@ -378,7 +378,18 @@ function renderFooter(data: DashboardData): string {
 // Top-level
 // ---------------------------------------------------------------------------
 
-export function renderDashboard(data: DashboardData): string {
+export type RenderOptions = {
+  /**
+   * When `false`, emit a frozen, read-only snapshot: no `<script>` block,
+   * no action buttons. Defaults to `true` (full interactive page, for
+   * the `serve` command).
+   */
+  interactive?: boolean;
+};
+
+export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): string {
+  const interactive = opts.interactive !== false;
+
   const body = [
     renderMasthead(data),
     `<main class="page">`,
@@ -392,6 +403,8 @@ export function renderDashboard(data: DashboardData): string {
     `</main>`,
   ].join("\n");
 
+  const scriptBlock = interactive ? `<script>${DASHBOARD_JS}</script>` : "";
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -403,7 +416,7 @@ export function renderDashboard(data: DashboardData): string {
 </head>
 <body>
 ${body}
-<script>${DASHBOARD_JS}</script>
+${scriptBlock}
 </body>
 </html>`;
 }

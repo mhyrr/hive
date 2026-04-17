@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { type HivePaths } from "../paths";
 import { collectDashboardData, type DashboardData } from "./collect";
 import { renderDashboard } from "./render";
+import { archivePathForDate, todayDateString } from "./archive";
 
 export { collectDashboardData } from "./collect";
 export { renderDashboard } from "./render";
@@ -23,6 +24,7 @@ export function dashboardPath(paths: HivePaths): string {
 
 export type BuildResult = {
   output: string;    // absolute path written
+  archive: string;   // absolute path of daily snapshot
   html: string;      // rendered HTML
   data: DashboardData;
 };
@@ -32,10 +34,19 @@ export async function buildDashboard(
   outputPath: string = dashboardPath(paths),
 ): Promise<BuildResult> {
   const data = await collectDashboardData(paths);
-  const html = renderDashboard(data);
+  // Static / frozen output: no action buttons, no client JS that would
+  // 404 against a server that isn't running.
+  const html = renderDashboard(data, { interactive: false });
 
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, html, "utf-8");
 
-  return { output: outputPath, html, data };
+  // Archive snapshot for the day. Overwrites same-day rebuilds — last
+  // write wins. The morning job runs once after the briefing so that's
+  // the canonical snapshot.
+  const archivePath = archivePathForDate(paths, todayDateString());
+  await mkdir(dirname(archivePath), { recursive: true });
+  await writeFile(archivePath, html, "utf-8");
+
+  return { output: outputPath, archive: archivePath, html, data };
 }
