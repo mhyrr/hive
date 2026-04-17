@@ -63,6 +63,46 @@ function md(source: string): string {
   return marked.parse(source, { async: false, breaks: false, gfm: true }) as string;
 }
 
+/**
+ * Post-process rendered briefing HTML so per-project subsections participate
+ * in the project filter. Any `<hN>` whose text matches a known project id is
+ * wrapped with everything that follows (up to the next heading of same or
+ * higher level) in a `<section data-project="...">`.
+ */
+function tagProjectSections(html: string, projectIds: string[]): string {
+  if (!html || projectIds.length === 0) return html;
+  const idSet = new Set(projectIds.map((p) => p.toLowerCase()));
+  const tokens = html.split(/(<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>)/i);
+  const out: string[] = [];
+  let wrap: { id: string; level: number; buf: string[] } | null = null;
+  const flush = () => {
+    if (!wrap) return;
+    out.push(`<section class="briefing-project-section" data-project="${wrap.id}">${wrap.buf.join("")}</section>`);
+    wrap = null;
+  };
+  for (const tok of tokens) {
+    const hm = tok.match(/^<h([1-6])[^>]*>([\s\S]*?)<\/h\1>$/i);
+    if (hm) {
+      const level = parseInt(hm[1]!, 10);
+      const text = hm[2]!.replace(/<[^>]+>/g, "").trim().toLowerCase();
+      if (wrap && level <= wrap.level) flush();
+      if (idSet.has(text)) {
+        wrap = { id: text, level, buf: [tok] };
+      } else if (wrap) {
+        wrap.buf.push(tok);
+      } else {
+        out.push(tok);
+      }
+    } else if (wrap) {
+      wrap.buf.push(tok);
+    } else {
+      out.push(tok);
+    }
+  }
+  flush();
+  return out.join("");
+}
+
 function longDate(iso: string): string {
   const d = iso.length === 10 ? new Date(`${iso}T00:00:00`) : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -273,11 +313,12 @@ export function renderBriefings(data: DashboardData): string {
 </section>`;
   }
 
+  const projectIds = data.projects.map((p) => p.id);
   const articles = data.briefings
     .map((b: BriefingEntry) => {
       const isActive = b.date === data.today;
       return `<article class="briefing-article ${isActive ? "active" : ""}" data-briefing-date="${escapeHtml(b.date)}">
-  <div class="briefing">${md(b.body)}</div>
+  <div class="briefing">${tagProjectSections(md(b.body), projectIds)}</div>
 </article>`;
     })
     .join("\n");
