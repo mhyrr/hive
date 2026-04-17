@@ -18,6 +18,7 @@ HIVE adds what it doesn't ship with:
 - **Heartbeat**: a stateless agent that wakes periodically, checks project state, and dispatches work within defined trust boundaries
 - **Autonomous dispatch**: background goal execution with timeout, kill, and status tracking
 - **Nightly extraction**: reads Claude Code session transcripts (JSONL), distills key insights, and promotes durable learnings into project memory automatically
+- **Language stacks**: bundles of domain knowledge (Iron Laws, patterns, idioms) packaged as Claude Code skills, auto-detected per project and loaded on demand
 - **Local MCP**: Provides a consistency layer that ties all of this together without a database.
 
 _Runs on Claude Code directly. Your Claude subscription covers it._
@@ -68,6 +69,13 @@ architecture decisions and tradeoff analysis.
 
 - A launchd job runs at 2am nightly. It condenses every Claude Code session transcript from the last 24 hours — the raw JSONL files Claude Code writes during every conversation — into readable markdown, then dispatches the maya-nightly agent to review them alongside git activity. The agent extracts reasoning, rejected approaches, and key decisions that don't show up in git logs or code comments, and promotes durable learnings into project memory. Memory compounds from actual work, not just what someone remembers to write down.
 - This means corrections and preferences you give during any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — get picked up by the nightly, distilled into memory, and applied in every future session. Tell the AI once, it sticks forever.
+
+**Language stacks.**
+
+- A stack bundles domain knowledge — Iron Laws, patterns, idioms — as Claude Code skills. Install with `hive stack install elixir` and the skills sync into `~/.claude/skills/` so every session can load them on demand (~50 tokens per description at startup, full skill content loads only when invoked).
+- Stacks are auto-detected per project: `mix.exs` → elixir, `package.json` → typescript, `Cargo.toml` → rust, `pyproject.toml` → python. A session-start hint nudges the agent to load the matching skill before recommending on domain-specific patterns (Phoenix contexts, Ecto, LiveView, OTP, React, Next.js, types).
+- Current stacks: **elixir** (Phoenix contexts, Ecto, LiveView, Oban, OTP idioms, testing, security) and **typescript** (React, Next.js, advanced types). Run `hive stack list` to see what's installed, `hive stack init <name>` to scaffold your own.
+- Elixir content lifted from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix). TypeScript content lifted from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills). Both MIT.
 
 ## Quick Start
 
@@ -222,6 +230,11 @@ Available to Claude Code when the HIVE MCP server is running:
 | `hive ticket dispatch <id>` | Tag ticket for heartbeat auto-dispatch |
 | `hive ticket ready` | Show unblocked open tickets |
 | `hive ticket blocked` | Show dependency-blocked tickets |
+| `hive stack list` | List installed and canned stacks |
+| `hive stack install <name>` | Install a canned stack template to `~/.hive/stacks/` |
+| `hive stack sync <name>` | Copy stack skills into `~/.claude/skills/<name>-*` |
+| `hive stack init <name>` | Scaffold an empty stack source tree |
+| `hive stack bind <project> <stack>` | Bind project to a stack (name, `auto`, or `none`) |
 
 ## How Identity Works
 
