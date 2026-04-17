@@ -182,7 +182,8 @@ export function renderPillRow(data: DashboardData, c: RenderContext): string {
   <button type="button" class="needs-action-toggle" data-needs-action-toggle aria-pressed="false">
     [ needs action only ]
   </button>
-</nav>`;
+</nav>
+<div id="filter-banner" class="filter-banner" aria-live="polite"></div>`;
 }
 
 /**

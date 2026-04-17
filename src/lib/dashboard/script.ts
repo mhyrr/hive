@@ -96,6 +96,7 @@ export const DASHBOARD_JS = `
   function activeFilter() {
     return readHashFilter() || state.filter || "ALL";
   }
+  var baseTitle = document.title;
   function applyFilter(id) {
     var all = id === "ALL";
     document.querySelectorAll("[data-project]").forEach(function (el) {
@@ -109,6 +110,19 @@ export const DASHBOARD_JS = `
       if (p.getAttribute("data-project-filter") === id) p.classList.add("pill--active");
       else p.classList.remove("pill--active");
     });
+    var banner = document.getElementById("filter-banner");
+    if (banner) {
+      if (all) {
+        banner.classList.remove("visible");
+        banner.textContent = "";
+      } else {
+        banner.classList.add("visible");
+        banner.innerHTML = "FILTERING \u2192 <strong>" + id + "</strong> \u00B7 <button type=\"button\" class=\"filter-clear\" data-project-filter=\"ALL\">clear</button>";
+        var clearBtn = banner.querySelector(".filter-clear");
+        if (clearBtn) clearBtn.addEventListener("click", function () { setFilter("ALL"); });
+      }
+    }
+    document.title = all ? baseTitle : baseTitle.replace(/^HIVE/, "HIVE \u00B7 " + id);
   }
   function setFilter(id) {
     state.filter = id;
@@ -137,6 +151,11 @@ export const DASHBOARD_JS = `
     });
   });
   applyFilter(activeFilter());
+
+  // Hashchange: refilter when the user edits the URL hash directly.
+  window.addEventListener("hashchange", function () {
+    applyFilter(activeFilter());
+  });
 
   // ---------- Per-project collapse persistence ----------
   document.querySelectorAll("details.per-project-section").forEach(function (d) {

@@ -563,6 +563,42 @@ table.ledger td.path { color: var(--muted); font-family: var(--mono); font-size:
   border-bottom: 2px solid var(--amber);
   color: var(--ink);
 }
+.filter-banner {
+  display: none;
+  padding: 8px 12px;
+  margin: 4px 0 10px 0;
+  border-top: 1px solid var(--amber);
+  border-bottom: 1px solid var(--amber);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  color: var(--ink);
+  background: transparent;
+}
+.filter-banner.visible { display: block; }
+.filter-banner strong {
+  font-weight: 700;
+  color: var(--amber);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.filter-clear {
+  background: transparent;
+  border: 0;
+  padding: 0 0 0 6px;
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  color: var(--rust);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--rust);
+  text-underline-offset: 2px;
+}
+.filter-clear:hover { color: var(--ink); }
 .needs-action-toggle {
   background: transparent;
   border: 0;
