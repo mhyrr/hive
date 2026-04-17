@@ -526,6 +526,73 @@ table.ledger td.path { color: var(--muted); font-family: var(--mono); font-size:
    Typographic, no filled pills, no shadows, no border-radius above 2px.
    ===================================================================== */
 
+/* ---------- Sticky top navigation ---------- */
+
+html { scroll-padding-top: 48px; }
+
+.sticky-nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--bg);
+  border-bottom: 1px solid var(--amber);
+  padding: 0 18px;
+}
+.sticky-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 6px 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+}
+.sticky-title {
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.sticky-title .sep {
+  color: var(--muted);
+  font-weight: 400;
+  margin: 0 6px;
+}
+.jump-links {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.jump-links a {
+  color: var(--ink);
+  text-decoration: none;
+  padding-bottom: 2px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 120ms, color 120ms;
+}
+.jump-links a:hover {
+  color: var(--amber);
+  border-bottom-color: var(--amber);
+}
+.sticky-filter {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.sticky-filter .pills { gap: 10px; }
+.sticky-filter .pill { font-size: 10.5px; padding: 0; }
+.sticky-filter .needs-action-toggle { font-size: 10px; }
+@media (max-width: 900px) {
+  .sticky-row { flex-wrap: wrap; gap: 8px; }
+  .jump-links { justify-content: flex-start; order: 3; flex-basis: 100%; }
+  .sticky-filter { order: 2; }
+}
+
 /* ---------- Pill row + Needs-Action toggle ---------- */
 
 .pill-row {

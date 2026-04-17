@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 
 import {
   renderDashboard,
-  renderPillRow,
+  renderStickyNav,
   renderTopThree,
   selectTopThree,
   renderProjects,
@@ -78,24 +78,32 @@ function baseData(overrides: Partial<DashboardData> = {}): DashboardData {
   };
 }
 
-describe("Pill row", () => {
-  test("renders an ALL pill + one pill per project in interactive mode", () => {
-    const html = renderPillRow(baseData(), { interactive: true });
+describe("Sticky nav", () => {
+  test("renders jump links, ALL pill + one pill per project in interactive mode", () => {
+    const html = renderStickyNav(baseData(), { interactive: true });
+    expect(html).toContain('class="sticky-nav"');
+    expect(html).toContain('href="#section-briefing"');
+    expect(html).toContain('href="#section-tickets"');
+    expect(html).toContain('href="#section-archive"');
     expect(html).toContain('data-project-filter="ALL"');
     expect(html).toContain('data-project-filter="alpha"');
     expect(html).toContain('data-project-filter="beta"');
     expect(html).toContain("pill--active");
     expect(html).toContain("needs-action-toggle");
+    expect(html).toContain('id="filter-banner"');
   });
 
   test("omits entirely in non-interactive mode", () => {
-    const html = renderPillRow(baseData(), { interactive: false });
+    const html = renderStickyNav(baseData(), { interactive: false });
     expect(html).toBe("");
   });
 
-  test("omits when no projects", () => {
-    const html = renderPillRow(baseData({ projects: [] }), { interactive: true });
-    expect(html).toBe("");
+  test("renders nav + jump links without pills when there are no projects", () => {
+    const html = renderStickyNav(baseData({ projects: [] }), { interactive: true });
+    expect(html).toContain('class="sticky-nav"');
+    expect(html).toContain('href="#section-briefing"');
+    expect(html).not.toContain("data-project-filter");
+    expect(html).not.toContain("needs-action-toggle");
   });
 });
 

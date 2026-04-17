@@ -201,29 +201,51 @@ export function renderMasthead(data: DashboardData): string {
 }
 
 /**
- * Project filter pills + Needs-Action toggle. Purely typographic —
- * small caps, amber underline on the active pill, no filled shapes.
+ * Sticky top navigation: HIVE label, section jump links, project filter
+ * pills, needs-action toggle, and the filter-active banner. Pinned to the
+ * viewport top so it stays visible while the reader scrolls through the
+ * long-form sections below.
  */
-export function renderPillRow(data: DashboardData, c: RenderContext): string {
+export function renderStickyNav(data: DashboardData, c: RenderContext): string {
   if (!c.interactive) return "";
-  if (data.projects.length === 0) return "";
 
-  const pills = [
-    `<button type="button" class="pill pill--active" data-project-filter="ALL">ALL</button>`,
-    ...data.projects.map(
-      (p) =>
-        `<button type="button" class="pill" data-project-filter="${escapeHtml(p.id)}">${escapeHtml(p.id)}</button>`,
-    ),
-  ].join("");
+  const pills = data.projects.length === 0
+    ? ""
+    : [
+        `<button type="button" class="pill pill--active" data-project-filter="ALL">ALL</button>`,
+        ...data.projects.map(
+          (p) =>
+            `<button type="button" class="pill" data-project-filter="${escapeHtml(p.id)}">${escapeHtml(p.id)}</button>`,
+        ),
+      ].join("");
+
+  const jumpLinks = [
+    ["#section-briefing", "Briefing"],
+    ["#section-projects", "Projects"],
+    ["#section-inboxes", "Inbox"],
+    ["#section-tickets", "Tickets"],
+    ["#section-runs", "Dispatch"],
+    ["#section-archive", "Archive"],
+  ]
+    .map(([href, label]) => `<a href="${href}">${label}</a>`)
+    .join("");
+
+  const filterGroup = pills
+    ? `<div class="sticky-filter">
+         <div class="pills">${pills}</div>
+         <button type="button" class="needs-action-toggle" data-needs-action-toggle aria-pressed="false">[ needs action ]</button>
+       </div>`
+    : "";
 
   return `
-<nav class="pill-row" aria-label="Project filter">
-  <div class="pills">${pills}</div>
-  <button type="button" class="needs-action-toggle" data-needs-action-toggle aria-pressed="false">
-    [ needs action only ]
-  </button>
-</nav>
-<div id="filter-banner" class="filter-banner" aria-live="polite"></div>`;
+<nav class="sticky-nav" aria-label="Dashboard navigation">
+  <div class="sticky-row">
+    <div class="sticky-title">HIVE <span class="sep">·</span> ${escapeHtml(weekdayDate(data.today))}</div>
+    <div class="jump-links">${jumpLinks}</div>
+    ${filterGroup}
+  </div>
+  <div id="filter-banner" class="filter-banner" aria-live="polite"></div>
+</nav>`;
 }
 
 /**
@@ -633,9 +655,9 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
   const c = ctx(opts);
 
   const body = [
+    renderStickyNav(data, c),
     renderMasthead(data),
     `<main class="page">`,
-    renderPillRow(data, c),
     renderTopThree(data),
     renderBriefings(data),
     renderProjects(data, c),
