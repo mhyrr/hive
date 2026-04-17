@@ -399,10 +399,42 @@ describe("stack filesystem operations", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildStackHint", () => {
-  test("returns hint for a stack name", () => {
-    expect(buildStackHint("elixir")).toBe(
-      "Project stack: elixir. Prefer elixir-* skills when they apply.",
+  test("elixir hint names Phoenix/Ecto/LiveView/OTP/security as triggers", () => {
+    const hint = buildStackHint("elixir");
+    expect(hint).toBe(
+      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
     );
+  });
+
+  test("typescript hint names React/Next.js/types as triggers", () => {
+    const hint = buildStackHint("typescript");
+    expect(hint).toBe(
+      "Project stack: typescript. Before recommending on React components, Next.js routing, or TypeScript types, load the matching typescript-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
+    );
+  });
+
+  test("unknown stack falls back to generic-domain phrasing", () => {
+    // Rust/python/etc. don't have named triggers yet — still emit the
+    // direct instruction so the discipline applies, just without specifics.
+    const hint = buildStackHint("rust");
+    expect(hint).toBe(
+      "Project stack: rust. Before recommending in this stack's domain, load the matching rust-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
+    );
+  });
+
+  test("hint drops the soft 'Prefer ... when they apply' wording", () => {
+    // Regression guard: TK-042 replaced the soft preference with a direct
+    // instruction. If this string reappears, the hint has drifted back.
+    expect(buildStackHint("elixir")).not.toContain("Prefer");
+    expect(buildStackHint("elixir")).not.toContain("when they apply");
+  });
+
+  test("hint is byte-stable across calls (TK-024 cache discipline)", () => {
+    // The hint rides in the cache-stable prefix. Repeated calls must
+    // produce identical output so the prompt prefix stays reachable.
+    expect(buildStackHint("elixir")).toBe(buildStackHint("elixir"));
+    expect(buildStackHint("typescript")).toBe(buildStackHint("typescript"));
+    expect(buildStackHint("rust")).toBe(buildStackHint("rust"));
   });
 
   test("returns empty string for null", () => {
@@ -486,7 +518,9 @@ describe("identity stack hint injection", () => {
     process.chdir(projRoot);
 
     const output = await assembleIdentity();
-    expect(output).toContain("Project stack: elixir. Prefer elixir-* skills when they apply.");
+    expect(output).toContain(
+      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
+    );
   });
 
   test("assembleIdentity omits hint when no stack detected", async () => {
@@ -508,7 +542,9 @@ describe("identity stack hint injection", () => {
     await seedProject("hb-elx", projRoot);
 
     const output = await assembleHeartbeatIdentity("hb-elx");
-    expect(output).toContain("Project stack: elixir. Prefer elixir-* skills when they apply.");
+    expect(output).toContain(
+      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
+    );
   });
 
   test("assembleHeartbeatIdentity omits hint when no projectId", async () => {
