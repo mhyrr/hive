@@ -122,8 +122,13 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   const identityPath = join(runDir, "identity.md");
   await Bun.write(identityPath, identity);
 
-  // Build the message for the executor
+  // Build the message for the executor. TK-039: write to a file and cat it in
+  // the wrapper — embedding the message as a bash string literal causes `set -u`
+  // to abort on any `${...}` token in the goal text (common in ticket bodies
+  // with shell snippets). Command substitution from a file side-steps expansion.
   const message = `Your run directory is: ${runDir}\nWrite your plan to: ${runDir}/plan.md\nProject: ${projectId}\n\nGoal:\n${goalText}`;
+  const messagePath = join(runDir, "message.txt");
+  await Bun.write(messagePath, message);
 
   // Write a wrapper script that runs claude with identity, then handles cleanup
   const wrapperPath = join(runDir, "run.sh");
@@ -144,7 +149,7 @@ timeout ${timeoutMin * 60} "${claude}" \\
   --permission-mode bypassPermissions \\
   --worktree \\
   --name "${runId}" \\
-  "${message.replace(/"/g, '\\"').replace(/\n/g, '\\n')}" \\
+  "$(cat "${messagePath}")" \\
   > "${logPath}" 2>&1
 
 EXIT_CODE=$?
