@@ -87,7 +87,16 @@ export async function dispatchCommand(args: string[]): Promise<void> {
       : `Execute this plan:\n\n${planContent}`;
   }
 
-  if (!goalText) throw new UsageError("No goal specified. Provide a goal string, --ticket, or --plan.");
+  if (!goalText || !goalText.trim()) {
+    throw new UsageError("No goal specified. Provide a goal string, --ticket, or --plan.");
+  }
+  const trimmedGoal = goalText.trim();
+  if (trimmedGoal === "<goal>") {
+    throw new UsageError("Goal is the literal placeholder '<goal>'. Substitute a real goal before dispatching.");
+  }
+  if (trimmedGoal.length < 10) {
+    throw new UsageError(`Goal is too short (${trimmedGoal.length} chars). Provide a descriptive goal.`);
+  }
 
   // Create run directory
   const runId = await nextRunId(paths.runsDir);
@@ -171,23 +180,39 @@ else
   fi
 fi
 
-# Clean up worktree if claude left one behind
-cd "${projectPath}"
-for wt in .claude/worktrees/*/; do
-  if [ -d "$wt" ]; then
-    # Check if worktree has unmerged changes
-    BRANCH=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    if [ -n "$BRANCH" ]; then
-      DIFF=$(git -C "$wt" diff --stat HEAD 2>/dev/null || echo "")
-      AHEAD=$(git log "main..$BRANCH" --oneline 2>/dev/null | wc -l | tr -d ' ')
-      if [ "$AHEAD" = "0" ] && [ -z "$DIFF" ]; then
-        # No changes — safe to remove
-        git worktree remove "$wt" 2>/dev/null || true
-      fi
-      # If there are commits, leave the worktree for review
-    fi
+# Clean up worktree if claude left one behind.
+# TK-045: Skip cleanup entirely if any other run is still active — a sibling
+# run's worktree can be transiently AHEAD=0 with clean diff (e.g. right after
+# a ff-only merge from main) and our prune would delete its live working dir.
+OTHER_RUNNING=0
+for rd in "${paths.runsDir}"/RUN-*/; do
+  [ -d "$rd" ] || continue
+  [ "$rd" = "${runDir}/" ] && continue
+  ST=$(cat "$rd/status" 2>/dev/null || echo "")
+  if [ "$ST" = "running" ]; then
+    OTHER_RUNNING=1
+    break
   fi
 done
+
+if [ "$OTHER_RUNNING" = "0" ]; then
+  cd "${projectPath}"
+  for wt in .claude/worktrees/*/; do
+    if [ -d "$wt" ]; then
+      # Check if worktree has unmerged changes
+      BRANCH=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+      if [ -n "$BRANCH" ]; then
+        DIFF=$(git -C "$wt" diff --stat HEAD 2>/dev/null || echo "")
+        AHEAD=$(git log "main..$BRANCH" --oneline 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$AHEAD" = "0" ] && [ -z "$DIFF" ]; then
+          # No changes — safe to remove
+          git worktree remove "$wt" 2>/dev/null || true
+        fi
+        # If there are commits, leave the worktree for review
+      fi
+    fi
+  done
+fi
 
 # Notify
 STATUS=$(cat "${runDir}/status")
