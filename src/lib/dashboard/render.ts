@@ -2,6 +2,9 @@
  * Pure render: DashboardData -> single HTML string.
  *
  * No I/O. Tests assert on structural properties of the output.
+ *
+ * Section renderers are exported individually so the server can produce
+ * per-section HTML fragments for optimistic UI updates.
  */
 
 import { marked } from "marked";
@@ -21,6 +24,27 @@ import { DASHBOARD_JS } from "./script";
 import type { TicketPriority } from "../ticket";
 
 // ---------------------------------------------------------------------------
+// Render context
+// ---------------------------------------------------------------------------
+
+export type RenderOptions = {
+  /**
+   * When `false`, emit a frozen snapshot: no `<script>` block, no
+   * action buttons, no interactive affordances. Defaults to `true`
+   * (full interactive page, for the `serve` command).
+   */
+  interactive?: boolean;
+};
+
+export type RenderContext = {
+  interactive: boolean;
+};
+
+function ctx(opts: RenderOptions = {}): RenderContext {
+  return { interactive: opts.interactive !== false };
+}
+
+// ---------------------------------------------------------------------------
 // Helpers (escape + format)
 // ---------------------------------------------------------------------------
 
@@ -36,12 +60,10 @@ function escapeHtml(s: string): string {
 /** Render markdown → HTML. `marked` is fine for our local-only use case. */
 function md(source: string): string {
   if (!source || !source.trim()) return "";
-  // Synchronous usage by default in marked v18.
   return marked.parse(source, { async: false, breaks: false, gfm: true }) as string;
 }
 
 function longDate(iso: string): string {
-  // "2026-04-17" or ISO → "Wednesday, April 17, 2026"
   const d = iso.length === 10 ? new Date(`${iso}T00:00:00`) : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const weekday = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getDay()]!;
@@ -99,11 +121,24 @@ const PRIORITY_LABELS: Record<TicketPriority, string> = {
   3: "P3",
 };
 
+/** Emit an inline `[ label ]` action button, only in interactive mode. */
+function actionButton(
+  c: RenderContext,
+  label: string,
+  attrs: Record<string, string>,
+): string {
+  if (!c.interactive) return "";
+  const attrStr = Object.entries(attrs)
+    .map(([k, v]) => `${escapeHtml(k)}="${escapeHtml(v)}"`)
+    .join(" ");
+  return `<button type="button" class="action" ${attrStr}>[ ${escapeHtml(label)} ]</button>`;
+}
+
 // ---------------------------------------------------------------------------
-// Section renderers
+// Section renderers (exported for fragment use)
 // ---------------------------------------------------------------------------
 
-function renderMasthead(data: DashboardData): string {
+export function renderMasthead(data: DashboardData): string {
   const tickerItems = data.health
     .map((h: HealthEntry) => {
       const when = h.mtime ? relativeTime(h.mtime) : "—";
@@ -125,10 +160,112 @@ function renderMasthead(data: DashboardData): string {
 <div class="ticker">${tickerItems}</div>`;
 }
 
-function renderBriefings(data: DashboardData): string {
+/**
+ * Project filter pills + Needs-Action toggle. Purely typographic —
+ * small caps, amber underline on the active pill, no filled shapes.
+ */
+export function renderPillRow(data: DashboardData, c: RenderContext): string {
+  if (!c.interactive) return "";
+  if (data.projects.length === 0) return "";
+
+  const pills = [
+    `<button type="button" class="pill pill--active" data-project-filter="ALL">ALL</button>`,
+    ...data.projects.map(
+      (p) =>
+        `<button type="button" class="pill" data-project-filter="${escapeHtml(p.id)}">${escapeHtml(p.id)}</button>`,
+    ),
+  ].join("");
+
+  return `
+<nav class="pill-row" aria-label="Project filter">
+  <div class="pills">${pills}</div>
+  <button type="button" class="needs-action-toggle" data-needs-action-toggle aria-pressed="false">
+    [ needs action only ]
+  </button>
+</nav>`;
+}
+
+/**
+ * Today's Three Things card. Sources in order:
+ *   (a) `## Top Three` section in today's briefing
+ *   (b) first 3 `-` bullets of the briefing's first `## Priorities` section
+ *   (c) first 3 blocked/high-priority tickets
+ */
+export function renderTopThree(data: DashboardData): string {
+  const { items, sourceLabel } = selectTopThree(data);
+  if (items.length === 0) return "";
+
+  const body = items
+    .map((line) => `<li>${md(line).replace(/^<p>|<\/p>\s*$/g, "")}</li>`)
+    .join("");
+
+  return `
+<section class="top-three" id="section-top-three">
+  <div class="top-three-head">
+    <h2>Today&rsquo;s Three Things</h2>
+    <span class="kicker">— ${escapeHtml(sourceLabel)}</span>
+  </div>
+  <ol class="top-three-list">${body}</ol>
+</section>`;
+}
+
+/** Public for the fragment endpoint and unit testing. */
+export function selectTopThree(data: DashboardData): {
+  items: string[];
+  sourceLabel: string;
+} {
+  const body = data.todayBriefing?.body ?? "";
+
+  // (a) Explicit ## Top Three section
+  const explicit = extractBullets(body, /^##\s+Top\s+Three\s*$/im);
+  if (explicit.length > 0) {
+    return { items: explicit.slice(0, 3), sourceLabel: "from briefing" };
+  }
+
+  // (b) First 3 bullets of the first ## Priorities section
+  const priorities = extractBullets(body, /^##\s+Priorities\b.*$/im);
+  if (priorities.length > 0) {
+    return { items: priorities.slice(0, 3), sourceLabel: "from briefing priorities" };
+  }
+
+  // (c) Fallback to blocked + high-priority tickets
+  const fallback = [
+    ...data.tickets.blocked,
+    ...data.tickets.inProgress,
+    ...data.tickets.ready,
+  ]
+    .filter((t) => t.priority <= 1)
+    .slice(0, 3)
+    .map(
+      (t) =>
+        `**${t.id}** — ${t.title} _(${t.projectId})_`,
+    );
+  if (fallback.length === 0) return { items: [], sourceLabel: "" };
+  return { items: fallback, sourceLabel: "auto-selected" };
+}
+
+function extractBullets(body: string, headingRe: RegExp): string[] {
+  const lines = body.split("\n");
+  let inSection = false;
+  const out: string[] = [];
+  for (const line of lines) {
+    if (headingRe.test(line)) {
+      inSection = true;
+      continue;
+    }
+    if (!inSection) continue;
+    // Stop at next heading at the same or higher level.
+    if (/^#{1,6}\s/.test(line)) break;
+    const m = line.match(/^\s*[-*]\s+(.*?)\s*$/);
+    if (m && m[1]) out.push(m[1]);
+  }
+  return out;
+}
+
+export function renderBriefings(data: DashboardData): string {
   if (data.briefings.length === 0) {
     return `
-<section class="section">
+<section class="section" id="section-briefing">
   <div class="section-head"><h2>Today&rsquo;s Briefing</h2><span class="kicker">No briefings on file</span></div>
   <hr class="amber"/>
   <p>Run the morning job to generate a briefing.</p>
@@ -145,7 +282,7 @@ function renderBriefings(data: DashboardData): string {
     .join("\n");
 
   return `
-<section class="section" id="briefing-section">
+<section class="section" id="section-briefing">
   <div class="section-head">
     <h2>Today&rsquo;s Briefing</h2>
     <span class="kicker">Dated ${escapeHtml(longDate(data.today))}</span>
@@ -157,18 +294,22 @@ function renderBriefings(data: DashboardData): string {
 </section>`;
 }
 
-function renderProjects(projects: ProjectCard[]): string {
-  if (projects.length === 0) {
-    return "";
-  }
+/**
+ * Projects section: v2 collapsed-by-default per-project `<details>`
+ * blocks with one-line summaries. The classic ledger table is kept
+ * as a summary view above the expandables.
+ */
+export function renderProjects(data: DashboardData, c: RenderContext): string {
+  const projects = data.projects;
+  if (projects.length === 0) return "";
 
-  const rows = projects
+  const summaryRows = projects
     .map((p: ProjectCard) => {
       const p0 = p.ticketCounts.byPriority[0] || 0;
       const p1 = p.ticketCounts.byPriority[1] || 0;
       const p2 = p.ticketCounts.byPriority[2] || 0;
       const p3 = p.ticketCounts.byPriority[3] || 0;
-      return `<tr>
+      return `<tr data-project="${escapeHtml(p.id)}">
   <td class="project-name">${escapeHtml(p.id)}</td>
   <td class="path">${escapeHtml(p.path ?? "—")}</td>
   <td class="num">${p.ticketCounts.open}</td>
@@ -182,8 +323,12 @@ function renderProjects(projects: ProjectCard[]): string {
     })
     .join("\n");
 
+  const details = projects
+    .map((p: ProjectCard) => renderProjectDetail(p, c))
+    .join("\n");
+
   return `
-<section class="section">
+<section class="section" id="section-projects">
   <div class="section-head">
     <h2>Projects at a Glance</h2>
     <span class="kicker">${projects.length} Registered</span>
@@ -204,40 +349,85 @@ function renderProjects(projects: ProjectCard[]): string {
       </tr>
     </thead>
     <tbody>
-${rows}
+${summaryRows}
     </tbody>
   </table>
+  <div class="project-details">
+${details}
+  </div>
 </section>`;
 }
 
-function renderInboxes(inboxes: InboxEntry[]): string {
+function renderProjectDetail(p: ProjectCard, c: RenderContext): string {
+  const redFlags: string[] = [];
+  if (p.ticketCounts.byPriority[0]) redFlags.push(`${p.ticketCounts.byPriority[0]} P0`);
+  if (p.inboxMtime && Date.now() - new Date(p.inboxMtime).getTime() > 72 * 3600 * 1000) {
+    redFlags.push("stale inbox");
+  }
+  const warn = redFlags.length > 0 ? ` · <span class="warn">${escapeHtml(redFlags.join(" · "))}</span>` : "";
+  const ticketTotal = p.ticketCounts.open + p.ticketCounts.inProgress;
+  const oneLine = `
+    <span class="project-name">${escapeHtml(p.id)}</span>
+    · ${ticketTotal} ticket${ticketTotal === 1 ? "" : "s"}
+    · heartbeat ${escapeHtml(relativeTime(p.lastHeartbeat))}${warn}
+  `.trim();
+  const filterButton = actionButton(c, "filter", {
+    "data-project-filter-shortcut": p.id,
+  });
+
+  return `<details class="per-project-section" data-project="${escapeHtml(p.id)}">
+  <summary>${oneLine} ${filterButton}</summary>
+  <div class="project-body">
+    <dl class="project-kv">
+      <dt>Path</dt><dd class="mono">${escapeHtml(p.path ?? "—")}</dd>
+      <dt>Open</dt><dd>${p.ticketCounts.open}</dd>
+      <dt>In progress</dt><dd>${p.ticketCounts.inProgress}</dd>
+      <dt>P0–1</dt><dd>${(p.ticketCounts.byPriority[0] || 0) + (p.ticketCounts.byPriority[1] || 0)}</dd>
+      <dt>P2–3</dt><dd>${(p.ticketCounts.byPriority[2] || 0) + (p.ticketCounts.byPriority[3] || 0)}</dd>
+      <dt>Ticks</dt><dd>${p.tickCount}</dd>
+      <dt>Last result</dt><dd>${escapeHtml(p.lastResult ?? "—")}</dd>
+    </dl>
+  </div>
+</details>`;
+}
+
+export function renderInboxes(inboxes: InboxEntry[], c: RenderContext): string {
   if (inboxes.length === 0) return "";
 
   const entries = inboxes
     .map((entry: InboxEntry, idx: number) => {
       const bodyId = `inbox-body-${idx}`;
       const toggleId = `inbox-toggle-${idx}`;
+      const projectId = escapeHtml(entry.projectId);
       if (entry.isEmpty) {
-        return `<div class="inbox-entry empty">
-  <div class="head"><span class="project">${escapeHtml(entry.projectId)}</span><span class="mtime">quiet</span></div>
+        return `<div class="inbox-entry empty" data-project="${projectId}">
+  <div class="head"><span class="project">${projectId}</span><span class="mtime">quiet</span></div>
   <div class="body">No dispatches on file.</div>
 </div>`;
       }
       const when = entry.mtime ? relativeTime(entry.mtime) : "—";
-      return `<div class="inbox-entry">
+      const actions = c.interactive
+        ? `<div class="row-actions">
+            ${actionButton(c, "promote", { "data-action": "inbox-promote", "data-project": entry.projectId })}
+            ${actionButton(c, "dispatch", { "data-action": "inbox-dispatch", "data-project": entry.projectId })}
+            ${actionButton(c, "ack", { "data-action": "inbox-ack", "data-project": entry.projectId, "data-confirm": "true" })}
+          </div>`
+        : "";
+      return `<div class="inbox-entry" data-project="${projectId}">
   <div class="head">
-    <span class="project">${escapeHtml(entry.projectId)}
+    <span class="project">${projectId}
       <span id="${toggleId}" class="toggle" data-toggle="${bodyId}" data-show="Show" data-hide="Hide">Hide</span>
     </span>
     <span class="mtime">${escapeHtml(when)}</span>
   </div>
-  <div class="body" id="${bodyId}">${md(entry.body)}</div>
+  <div class="body" id="${bodyId}" data-inbox-body>${md(entry.body)}</div>
+  ${actions}
 </div>`;
     })
     .join("\n");
 
   return `
-<section class="section">
+<section class="section" id="section-inboxes">
   <div class="section-head">
     <h2>The Inbox</h2>
     <span class="kicker">Per-project dispatches</span>
@@ -249,13 +439,21 @@ ${entries}
 </section>`;
 }
 
-function renderTicketRow(t: TicketCitation): string {
+function renderTicketRow(t: TicketCitation, c: RenderContext): string {
   const priority = PRIORITY_LABELS[t.priority] ?? "P?";
   const tags = t.tags.length > 0 ? ` · ${t.tags.join(" · ")}` : "";
   const deps = t.depends.length > 0
     ? `<div class="deps">depends on ${t.depends.map((d) => escapeHtml(d)).join(", ")}</div>`
     : "";
-  return `<div class="ticket-row">
+  const actions = c.interactive
+    ? `<div class="row-actions">
+        ${actionButton(c, "start", { "data-action": "ticket-start", "data-id": t.id, "data-project": t.projectId })}
+        ${actionButton(c, "dispatch", { "data-action": "ticket-dispatch-run", "data-id": t.id, "data-project": t.projectId })}
+        ${actionButton(c, "note", { "data-action": "ticket-note", "data-id": t.id, "data-project": t.projectId })}
+        ${actionButton(c, "close", { "data-action": "ticket-close", "data-id": t.id, "data-project": t.projectId, "data-confirm": "true" })}
+      </div>`
+    : "";
+  return `<div class="ticket-row" data-project="${escapeHtml(t.projectId)}" data-ticket-id="${escapeHtml(t.id)}">
   <div>
     <span class="id">${escapeHtml(t.projectId)}/${escapeHtml(t.id)}</span>
     <span class="title">${escapeHtml(t.title)}</span>
@@ -265,14 +463,15 @@ function renderTicketRow(t: TicketCitation): string {
     · ${t.ageDays}d old${escapeHtml(tags)}
   </div>
   ${deps}
+  ${actions}
 </div>`;
 }
 
-function renderTickets(buckets: TicketBuckets): string {
+export function renderTickets(buckets: TicketBuckets, c: RenderContext): string {
   const total = buckets.ready.length + buckets.inProgress.length + buckets.blocked.length;
   if (total === 0) {
     return `
-<section class="section">
+<section class="section" id="section-tickets">
   <div class="section-head"><h2>Tickets</h2><span class="kicker">None open</span></div>
   <hr class="amber"/>
   <p>Clean desk.</p>
@@ -286,7 +485,7 @@ function renderTickets(buckets: TicketBuckets): string {
   <div class="ticket-row" style="color: var(--muted); font-style: italic;">None.</div>
 </div>`;
     }
-    const rows = items.map(renderTicketRow).join("\n");
+    const rows = items.map((t) => renderTicketRow(t, c)).join("\n");
     return `<div class="ticket-group">
   <h3>${escapeHtml(label)} <span class="status-tag ${kind}">${items.length}</span></h3>
 ${rows}
@@ -294,7 +493,7 @@ ${rows}
   };
 
   return `
-<section class="section">
+<section class="section" id="section-tickets">
   <div class="section-head">
     <h2>Tickets</h2>
     <span class="kicker">${total} Active across all projects</span>
@@ -308,25 +507,33 @@ ${rows}
 </section>`;
 }
 
-function renderRuns(runs: RunEntry[]): string {
+export function renderRuns(runs: RunEntry[], c: RenderContext): string {
   if (runs.length === 0) return "";
 
   const rows = runs
     .map((r: RunEntry) => {
       const statusClass = `status-${(r.status || "unknown").toLowerCase()}`;
       const ticketCell = r.ticketId ? escapeHtml(r.ticketId) : "—";
-      return `<li class="dispatch-row">
+      const projectAttr = r.projectId ? `data-project="${escapeHtml(r.projectId)}"` : "";
+      const actions = c.interactive
+        ? `<div class="row-actions">
+            ${r.status === "running" ? actionButton(c, "kill", { "data-action": "dispatch-kill", "data-run-id": r.id, "data-confirm": "true" }) : ""}
+            ${actionButton(c, "override", { "data-action": "dispatch-override", "data-run-id": r.id, "data-confirm": "true" })}
+          </div>`
+        : "";
+      return `<li class="dispatch-row" ${projectAttr} data-run-id="${escapeHtml(r.id)}">
   <span class="id">${escapeHtml(r.id)}</span>
   <span class="status ${statusClass}">${escapeHtml(r.status)}</span>
   <span class="duration">${escapeHtml(formatDuration(r.durationMs))}</span>
   <span class="goal">${escapeHtml(r.goalSnippet || "—")}</span>
   <span class="ticket">${ticketCell}</span>
+  ${actions}
 </li>`;
     })
     .join("\n");
 
   return `
-<section class="section">
+<section class="section" id="section-runs">
   <div class="section-head">
     <h2>Dispatch Log</h2>
     <span class="kicker">${runs.length} Most recent</span>
@@ -338,7 +545,7 @@ ${rows}
 </section>`;
 }
 
-function renderArchive(data: DashboardData): string {
+export function renderArchive(data: DashboardData, c: RenderContext): string {
   if (data.briefings.length === 0) return "";
 
   const limit = 30;
@@ -346,15 +553,17 @@ function renderArchive(data: DashboardData): string {
     .slice(0, limit)
     .map((b: BriefingEntry) => {
       const isActive = b.date === data.today;
-      return `<div class="archive-card ${isActive ? "active" : ""}" data-archive-card="${escapeHtml(b.date)}">
+      const href = c.interactive ? `/archive/${escapeHtml(b.date)}` : "#";
+      const target = c.interactive ? ` target="_blank"` : "";
+      return `<a class="archive-card ${isActive ? "active" : ""}" href="${href}"${target} data-archive-card="${escapeHtml(b.date)}">
   <div class="date">${escapeHtml(weekdayDate(b.date))}</div>
   <div class="head">${escapeHtml(b.headline)}</div>
-</div>`;
+</a>`;
     })
     .join("\n");
 
   return `
-<section class="section">
+<section class="section" id="section-archive">
   <div class="section-head">
     <h2>The Archive</h2>
     <span class="kicker">Past ${Math.min(limit, data.briefings.length)} days · click a date to load</span>
@@ -366,11 +575,11 @@ ${cards}
 </section>`;
 }
 
-function renderFooter(data: DashboardData): string {
+export function renderFooter(data: DashboardData): string {
   return `
 <footer class="footer">
   Generated ${escapeHtml(new Date(data.generatedAt).toLocaleString())}
-  · Single-file static · No network
+  · ${new URL("https://github.com/anthropics").host ? "" : ""}Single-file · No network
 </footer>`;
 }
 
@@ -378,19 +587,26 @@ function renderFooter(data: DashboardData): string {
 // Top-level
 // ---------------------------------------------------------------------------
 
-export function renderDashboard(data: DashboardData): string {
+export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): string {
+  const c = ctx(opts);
+
   const body = [
     renderMasthead(data),
     `<main class="page">`,
+    renderPillRow(data, c),
+    renderTopThree(data),
     renderBriefings(data),
-    renderProjects(data.projects),
-    renderInboxes(data.inboxes),
-    renderTickets(data.tickets),
-    renderRuns(data.runs),
-    renderArchive(data),
+    renderProjects(data, c),
+    renderInboxes(data.inboxes, c),
+    renderTickets(data.tickets, c),
+    renderRuns(data.runs, c),
+    renderArchive(data, c),
     renderFooter(data),
+    c.interactive ? `<div class="snackbar" id="snackbar" role="status" aria-live="polite"></div>` : "",
     `</main>`,
   ].join("\n");
+
+  const scriptBlock = c.interactive ? `<script>${DASHBOARD_JS}</script>` : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -403,7 +619,7 @@ export function renderDashboard(data: DashboardData): string {
 </head>
 <body>
 ${body}
-<script>${DASHBOARD_JS}</script>
+${scriptBlock}
 </body>
 </html>`;
 }

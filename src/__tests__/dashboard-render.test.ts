@@ -176,7 +176,7 @@ describe("renderDashboard", () => {
     expect(html).toContain("The Archive");
     expect(html).toContain('data-archive-card="2026-04-17"');
     expect(html).toContain('data-archive-card="2026-04-16"');
-    expect(html).toMatch(/archive-card active" data-archive-card="2026-04-17"/);
+    expect(html).toMatch(/archive-card active"[^>]*data-archive-card="2026-04-17"/);
   });
 
   test("masthead ticker lists all four health labels", () => {

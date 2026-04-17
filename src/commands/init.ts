@@ -151,6 +151,9 @@ export async function initCommand(args: string[]): Promise<void> {
   if (installLaunchAgent("com.hive.heartbeat.plist")) {
     console.log("Installed heartbeat (every 30m via launchd)");
   }
+  if (installLaunchAgent("com.hive.dashboard.plist")) {
+    console.log("Installed dashboard server (127.0.0.1:7777, KeepAlive, via launchd)");
+  }
 
   // Symlink binaries to ~/.local/bin/
   const localBin = join(process.env.HOME || "", ".local", "bin");
