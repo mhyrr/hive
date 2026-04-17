@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { councilCommand } from "./commands/council";
+import { dashboardCommand } from "./commands/dashboard";
 import { dispatchCommand } from "./commands/dispatch";
 import { doctorCommand } from "./commands/doctor";
 import { heartbeatCommand } from "./commands/heartbeat";
@@ -30,6 +31,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   inbox: inboxCommand,
   kill: killCommand,
   ps: psCommand,
+  dashboard: dashboardCommand,
 };
 
 function getUsage(): string {
@@ -52,6 +54,7 @@ HIVE Commands:
   inbox                      Show project inbox (clear with: inbox clear)
   kill <run-id>              Kill a running dispatch
   ps                         Show active and recent dispatch runs
+  dashboard [build|open]     Build or open the Morning Edition dashboard
 
 ${name} (Claude with identity):
   hive                       Interactive ${name} session
