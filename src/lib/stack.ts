@@ -278,12 +278,33 @@ export function resolveProjectStack(projectId: string): string | null {
 }
 
 /**
+ * Named trigger surfaces per stack — the domains where a skill exists
+ * and Claude should load it BEFORE responding, not reason from memory.
+ *
+ * These ride in the cache-stable session-start prefix (see TK-024), so every
+ * token persists forever. Keep each phrase short. Add stacks here as they
+ * gain skill coverage; unknown stacks fall back to a generic phrasing.
+ */
+const STACK_TRIGGERS: Record<string, string> = {
+  elixir: "Phoenix contexts, Ecto, LiveView, OTP, or security patterns",
+  typescript: "React components, Next.js routing, or TypeScript types",
+};
+
+/**
  * Build the session-start hint line for a detected stack.
  * Returns empty string if no stack.
+ *
+ * Worded as a direct instruction, not a soft preference: the prior phrasing
+ * ("Prefer X-* skills when they apply") was observed failing as a trigger —
+ * Claude self-flagged domain concerns without loading the matching skill.
+ * This wording names the trigger surfaces and labels skipping the skill as
+ * an anti-pattern so it registers as an action to take, not a hint to weigh.
  */
 export function buildStackHint(stack: string | null): string {
   if (!stack) return "";
-  return `Project stack: ${stack}. Prefer ${stack}-* skills when they apply.`;
+  const triggers = STACK_TRIGGERS[stack];
+  const triggerClause = triggers ? `on ${triggers}` : `in this stack's domain`;
+  return `Project stack: ${stack}. Before recommending ${triggerClause}, load the matching ${stack}-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.`;
 }
 
 /**

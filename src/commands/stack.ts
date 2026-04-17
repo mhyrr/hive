@@ -1,5 +1,6 @@
 import { UsageError } from "../lib/errors";
 import {
+  buildStackHint,
   clearStackBinding,
   initStack,
   installStack,
@@ -147,7 +148,9 @@ async function runBind(args: string[]): Promise<void> {
 
   await writeStackBinding(project, stack);
   console.log(`Bound project '${project}' to stack '${stack}'.`);
-  console.log(`Session hint: "Project stack: ${stack}. Prefer ${stack}-* skills when they apply."`);
+  // Preview uses the same builder as the session-start injection so the
+  // echoed text can't drift from what actually lands in the prompt.
+  console.log(`Session hint: "${buildStackHint(stack)}"`);
 }
 
 export async function stackCommand(args: string[]): Promise<void> {
