@@ -117,7 +117,7 @@ export const DASHBOARD_JS = `
         banner.textContent = "";
       } else {
         banner.classList.add("visible");
-        banner.innerHTML = "FILTERING \u2192 <strong>" + id + "</strong> \u00B7 <button type=\"button\" class=\"filter-clear\" data-project-filter=\"ALL\">clear</button>";
+        banner.innerHTML = "FILTERING \u2192 <strong>" + id + "</strong> \u00B7 <button type='button' class='filter-clear' data-project-filter='ALL'>clear</button>";
         var clearBtn = banner.querySelector(".filter-clear");
         if (clearBtn) clearBtn.addEventListener("click", function () { setFilter("ALL"); });
       }
