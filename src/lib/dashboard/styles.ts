@@ -520,4 +520,219 @@ table.ledger td.path { color: var(--muted); font-family: var(--mono); font-size:
   color: var(--muted);
   text-align: center;
 }
+
+/* =====================================================================
+   v2: pill row, Top Three, collapsed projects, action buttons, snackbar
+   Typographic, no filled pills, no shadows, no border-radius above 2px.
+   ===================================================================== */
+
+/* ---------- Pill row + Needs-Action toggle ---------- */
+
+.pill-row {
+  margin-top: 18px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--amber);
+  padding: 4px 0 6px;
+  gap: 18px;
+}
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  font-variant: small-caps;
+  letter-spacing: var(--smallcaps-tracking);
+  font-size: 13px;
+}
+.pill {
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  font-family: var(--serif);
+  font-size: inherit;
+  letter-spacing: inherit;
+  font-variant: inherit;
+  border-bottom: 1px solid transparent;
+}
+.pill:hover { color: var(--rust); }
+.pill--active {
+  font-weight: 700;
+  border-bottom: 2px solid var(--amber);
+  color: var(--ink);
+}
+.needs-action-toggle {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--amber);
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  padding: 2px 0;
+}
+.needs-action-toggle[aria-pressed="true"] { color: var(--rust); font-weight: 700; }
+
+/* When filter on: rows without action buttons fade out */
+body.filtered-by-actions .row-less:not(.has-action) {
+  display: none;
+}
+
+/* ---------- Today's Three Things ---------- */
+
+.top-three {
+  margin: 22px 0 8px;
+  border: 1px solid var(--amber);
+  padding: 14px 20px 12px;
+}
+.top-three-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.top-three-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+.top-three-head .kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+}
+.top-three-list {
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+.top-three-list li { margin-bottom: 4px; }
+.top-three-list li:last-child { margin-bottom: 0; }
+
+/* ---------- Per-project collapsed details ---------- */
+
+.project-details { margin-top: 22px; }
+.per-project-section {
+  margin: 0 0 6px;
+  padding: 0;
+  border-bottom: 1px solid var(--faint);
+}
+.per-project-section > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 0;
+  font-family: var(--serif);
+  font-size: 13.5px;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.per-project-section > summary::-webkit-details-marker { display: none; }
+.per-project-section > summary::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--amber);
+  margin-right: 8px;
+}
+.per-project-section[open] > summary::before { content: "▾"; }
+.per-project-section > summary .project-name {
+  font-weight: 800;
+  font-variant: small-caps;
+  letter-spacing: var(--smallcaps-tracking);
+}
+.per-project-section .warn { color: var(--rust); font-style: italic; }
+.project-body { padding: 6px 0 14px 22px; }
+.project-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 18px;
+  row-gap: 2px;
+  font-size: 12.5px;
+  margin: 0;
+}
+.project-kv dt {
+  color: var(--muted);
+  font-variant: small-caps;
+  letter-spacing: var(--smallcaps-tracking);
+  font-size: 11px;
+}
+.project-kv dd { margin: 0; }
+
+/* ---------- Action buttons — typographic [ label ] ---------- */
+
+.action {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--amber);
+  background: transparent;
+  border: 0;
+  padding: 0 6px 0 0;
+  cursor: pointer;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: lowercase;
+}
+.action:hover { color: var(--rust); }
+.action[aria-pressed="true"] { color: var(--rust); font-weight: 700; }
+.action[disabled] { color: var(--muted); cursor: default; }
+
+/* Row actions cluster to the right/below row content */
+.row-actions {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ticket-row .row-actions,
+.dispatch-row .row-actions,
+.inbox-entry .row-actions {
+  margin-top: 4px;
+}
+
+/* ---------- Snackbar ---------- */
+
+.snackbar {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 8px 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 100;
+  max-width: 520px;
+}
+.snackbar.visible { opacity: 1; }
+.snackbar.err { background: var(--rust); }
+
+/* ---------- Row fade for optimistic UI ---------- */
+
+.pending { opacity: 0.4; transition: opacity 0.15s ease; }
+.gone { display: none !important; }
+
+/* ---------- Focus ring for keyboard nav ---------- */
+
+.focused {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
 `;
