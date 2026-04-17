@@ -182,6 +182,7 @@ function checkScheduler(): Check[] {
     "com.hive.nightly",
     "com.hive.sync",
     "com.hive.morning",
+    "com.hive.dashboard",
   ];
 
   const launchAgentsDir = join(process.env.HOME || "", "Library", "LaunchAgents");

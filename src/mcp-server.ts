@@ -615,7 +615,7 @@ server.registerTool("hive_status", {
   // Scheduled jobs
   lines.push(`## Scheduled Jobs`);
   const launchAgentsDir = join(home, "Library", "LaunchAgents");
-  const hivePlists = ["com.hive.morning.plist", "com.hive.nightly.plist", "com.hive.sync.plist"];
+  const hivePlists = ["com.hive.morning.plist", "com.hive.nightly.plist", "com.hive.sync.plist", "com.hive.heartbeat.plist", "com.hive.dashboard.plist"];
   for (const plist of hivePlists) {
     const installed = existsSync(join(launchAgentsDir, plist));
     const label = plist.replace(".plist", "");
