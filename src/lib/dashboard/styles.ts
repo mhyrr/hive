@@ -535,13 +535,9 @@ html { scroll-padding-top: 48px; }
   top: 0;
   z-index: 1000;
   isolation: isolate;
-  background: var(--bg);
+  background: var(--paper);
   border-bottom: 1px solid var(--amber);
   padding: 0 18px;
-  /* Belt-and-suspenders: force a compositor layer so scrolled content
-     below never bleeds through sub-pixel seams at the sticky edge. */
-  transform: translateZ(0);
-  will-change: transform;
 }
 .sticky-row {
   display: flex;
