@@ -14,4 +14,4 @@ Also scan ~/.hive/projects/*/inbox.md for items surfaced by the heartbeat agent.
 
 Also check ~/.hive/reflections/ for new self-reflection files from last night. If any exist, include a "Reflections" section in the briefing with the entries. These are proposals for updating SELF.md or IDENTITY.md — the user decides which to promote.
 
-Keep it scannable — priorities first, then per-project state, dispatch runs, heartbeat inbox items, reflections, then suggestions. Read only. Don't modify projects, tickets, or memory.
+Keep it scannable — priorities first, then per-project state, dispatch runs, heartbeat inbox items, reflections, then suggestions. Read only. Leave projects, tickets, and memory untouched.

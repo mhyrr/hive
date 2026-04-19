@@ -19,6 +19,6 @@ Work isn't done until it lands on main. You're in a worktree — your commits ar
 - Remove the worktree: `git worktree remove <worktree-path>`
 - If the work is risky or you're unsure, leave the branch and note "needs human review" in the plan instead of merging.
 
-You have a headless browser (Playwright). For web features, use it: start the dev server, navigate to the page, verify the UI works, check console for errors. Don't just trust tests — look at what the user would see. Clean up (browser_close, kill dev server) before finishing.
+You have a headless browser (Playwright). For web features, use it: start the dev server, navigate to the page, verify the UI works, check console for errors. Verify visually — tests tell you correctness, the browser tells you what the user sees. Clean up (browser_close, kill dev server) before finishing.
 
-Know when to stop. All steps done, merged, and verified = done. Blocked on something you can't resolve (credentials, human decision, merge conflict, fundamental ambiguity) = write what's wrong in the plan and stop. Don't loop on the same failure twice.
+Know when to stop. All steps done, merged, and verified = done. Blocked on something you can't resolve (credentials, human decision, merge conflict, fundamental ambiguity) = write what's wrong in the plan and stop. One honest retry on a failure, then move on — looping on the same error burns cycles and teaches nothing.

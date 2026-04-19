@@ -34,4 +34,4 @@ Write self-reflections to `~/.hive/reflections/YYYY-MM-DD.md` as a simple markdo
 - Write daily notes to ~/.hive/memory/daily/YYYY-MM-DD.md
 - Commit and push ~/.hive
 
-Be conservative — only write entries that are genuinely durable and non-obvious. Don't modify SELF.md, IDENTITY.md, or other identity files directly — that's what the reflections staging area is for. If nothing happened today, say so and exit.
+Be conservative — only write entries that are genuinely durable and non-obvious. Write proposals to the reflections staging area; SELF.md and IDENTITY.md edits are the user's call. If nothing happened today, say so and exit.
