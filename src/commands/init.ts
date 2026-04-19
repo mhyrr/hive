@@ -5,6 +5,9 @@ import { execSync } from "node:child_process";
 
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
 
+type SettingsHookEntry = { hooks?: Array<{ type?: string; command?: string }> };
+type SettingsShape = { hooks?: Record<string, SettingsHookEntry[]> };
+
 async function readTemplate(templatePath: string): Promise<string> {
   return Bun.file(join(dirname(import.meta.dir), "..", "templates", templatePath)).text();
 }
@@ -73,6 +76,49 @@ async function installSkillDirs(destDir: string): Promise<number> {
   return installed;
 }
 
+async function installIdentityHook(): Promise<{ hookInstalled: boolean; wired: boolean }> {
+  const home = process.env.HOME || "";
+  const claudeDir = join(home, ".claude");
+  const hooksDir = join(claudeDir, "hooks");
+  await ensureDirectory(hooksDir);
+
+  const hookDest = join(hooksDir, "load-identity.sh");
+  const hookInstalled = await writeIfMissing(hookDest, "hooks/load-identity.sh");
+  if (hookInstalled) {
+    await chmod(hookDest, 0o755);
+  }
+
+  const settingsPath = join(claudeDir, "settings.json");
+  let settings: SettingsShape = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(await Bun.file(settingsPath).text()) as SettingsShape;
+    } catch {
+      return { hookInstalled, wired: false };
+    }
+  }
+
+  settings.hooks = settings.hooks ?? {};
+  let wired = false;
+  for (const event of ["SessionStart", "PostCompact"] as const) {
+    const entries = settings.hooks[event] ?? [];
+    const alreadyWired = entries.some((entry) =>
+      entry.hooks?.some((h) => h.command === hookDest),
+    );
+    if (!alreadyWired) {
+      entries.push({ hooks: [{ type: "command", command: hookDest }] });
+      settings.hooks[event] = entries;
+      wired = true;
+    }
+  }
+
+  if (wired) {
+    await Bun.write(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  }
+
+  return { hookInstalled, wired };
+}
+
 function installLaunchAgent(plistName: string): boolean {
   const home = process.env.HOME || "";
   const launchAgentsDir = join(home, "Library", "LaunchAgents");
@@ -114,6 +160,7 @@ export async function initCommand(args: string[]): Promise<void> {
   await writeIfMissing(paths.self, "SELF.md");
   await writeIfMissing(paths.agents, "AGENTS.md");
   await writeIfMissing(paths.trust, "TRUST.md");
+  await writeIfMissing(paths.overrides, "OVERRIDES.md");
   await writeIfMissing(paths.config, "config.md");
 
   // Install HIVE agents and skills to ~/.claude/
@@ -126,6 +173,15 @@ export async function initCommand(args: string[]): Promise<void> {
   }
   if (skillsInstalled > 0) {
     console.log(`Installed ${skillsInstalled} HIVE skill(s) to ~/.claude/skills/`);
+  }
+
+  // Install identity hook at user level and wire SessionStart + PostCompact
+  const identityHook = await installIdentityHook();
+  if (identityHook.hookInstalled) {
+    console.log("Installed identity hook at ~/.claude/hooks/load-identity.sh");
+  }
+  if (identityHook.wired) {
+    console.log("Wired SessionStart + PostCompact hooks in ~/.claude/settings.json");
   }
 
   // Install HIVE scripts to ~/.hive/scripts/

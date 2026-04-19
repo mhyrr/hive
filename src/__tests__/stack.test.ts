@@ -564,3 +564,63 @@ describe("identity stack hint injection", () => {
     expect(output).not.toContain("Project stack:");
   });
 });
+
+// ---------------------------------------------------------------------------
+// OVERRIDES — platform counter-weights emit at end (loudest position)
+// ---------------------------------------------------------------------------
+
+describe("identity OVERRIDES emission", () => {
+  let hiveHome: string;
+  let fakeHome: string;
+  let prevHiveHome: string | undefined;
+  let prevHome: string;
+
+  beforeEach(async () => {
+    hiveHome = await mkdtemp(join(tmpdir(), "hive-id-overrides-"));
+    fakeHome = await mkdtemp(join(tmpdir(), "hive-id-overrides-home-"));
+    prevHiveHome = process.env.HIVE_HOME;
+    prevHome = process.env.HOME ?? homedir();
+    process.env.HIVE_HOME = hiveHome;
+    process.env.HOME = fakeHome;
+  });
+
+  afterEach(async () => {
+    if (prevHiveHome === undefined) delete process.env.HIVE_HOME;
+    else process.env.HIVE_HOME = prevHiveHome;
+    process.env.HOME = prevHome;
+    await rm(hiveHome, { recursive: true, force: true });
+    await rm(fakeHome, { recursive: true, force: true });
+  });
+
+  test("assembleHeartbeatIdentity includes OVERRIDES.md AFTER reflection protocol", async () => {
+    await writeFile(
+      join(hiveHome, "OVERRIDES.md"),
+      "# Counter-weights\n\nTone override content.\n",
+    );
+
+    const output = await assembleHeartbeatIdentity();
+    expect(output).toContain("# Counter-weights");
+    expect(output).toContain("Tone override content.");
+
+    const reflectionIdx = output.indexOf("Session Reflection Protocol");
+    const overridesIdx = output.indexOf("# Counter-weights");
+    expect(reflectionIdx).toBeGreaterThan(-1);
+    expect(overridesIdx).toBeGreaterThan(reflectionIdx);
+  });
+
+  test("gracefully omits OVERRIDES section when file absent", async () => {
+    const output = await assembleHeartbeatIdentity();
+    expect(output).not.toContain("# Counter-weights");
+  });
+
+  test("heartbeat identity is byte-stable across invocations with OVERRIDES present", async () => {
+    await writeFile(
+      join(hiveHome, "OVERRIDES.md"),
+      "# Counter-weights\n\nStable content.\n",
+    );
+
+    const a = await assembleHeartbeatIdentity();
+    const b = await assembleHeartbeatIdentity();
+    expect(a).toBe(b);
+  });
+});

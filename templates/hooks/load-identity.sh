@@ -1,7 +1,10 @@
 #!/bin/bash
-# HIVE identity loader — injects ~/.hive identity files into Claude Code context
+# HIVE identity loader — injects ~/.hive identity files into Claude Code context.
+# Order matters: soul stack → project memory → reflection protocol → overrides.
+# Later instructions get more weight in the system prompt, so OVERRIDES.md is last.
 HIVE_DIR="$HOME/.hive"
 
+# 1. Soul stack — who we are, who Greg is, operational doctrine, trust boundaries
 for file in SOUL.md IDENTITY.md SELF.md AGENTS.md TRUST.md; do
   path="$HIVE_DIR/$file"
   if [ -f "$path" ]; then
@@ -12,7 +15,7 @@ for file in SOUL.md IDENTITY.md SELF.md AGENTS.md TRUST.md; do
   fi
 done
 
-# Resolve current project by matching PWD against registered project paths
+# 2. Project context — resolve project by PWD, load its memory index
 MATCHED_PROJECT=""
 if [ -d "$HIVE_DIR/projects" ]; then
   for projdir in "$HIVE_DIR"/projects/*/; do
@@ -27,11 +30,9 @@ if [ -d "$HIVE_DIR/projects" ]; then
   done
 fi
 
-# Load the matched project's memory index (lightweight summary)
 if [ -n "$MATCHED_PROJECT" ]; then
   indexfile="$HIVE_DIR/memory/projects/$MATCHED_PROJECT/_index.md"
   knowledgefile="$HIVE_DIR/memory/projects/$MATCHED_PROJECT/knowledge.md"
-  # Prefer index (lightweight); fall back to full knowledge
   if [ -f "$indexfile" ]; then
     cat "$indexfile"
     echo ""
@@ -39,9 +40,9 @@ if [ -n "$MATCHED_PROJECT" ]; then
     cat "$knowledgefile"
     echo ""
   fi
-
 fi
 
+# 3. Reflection protocol — session-end discipline
 cat <<'REFLECT'
 
 ## Session Reflection Protocol
@@ -54,3 +55,11 @@ reflect_session (or individual write_hive_memory calls) for:
 Only record genuinely durable, non-obvious information.
 Skip if the session was trivial (quick question, no new learnings).
 REFLECT
+
+# 4. Platform counter-weights — loudest because they come last
+if [ -f "$HIVE_DIR/OVERRIDES.md" ]; then
+  echo ""
+  echo "---"
+  echo ""
+  cat "$HIVE_DIR/OVERRIDES.md"
+fi

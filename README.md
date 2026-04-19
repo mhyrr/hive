@@ -140,40 +140,22 @@ Edit `~/.hive/config.md` to set up the council:
 
 ## Add Hive to an Existing Project
 
-If you've already run `hive init` and just want to wire up a new project,
-add this to your project's `CLAUDE.md`:
+After `hive init`, identity injection is automatic for every project.
+The user-level SessionStart hook (`~/.claude/hooks/load-identity.sh`,
+wired in `~/.claude/settings.json`) loads the soul stack, the project's
+memory index (if registered), and platform counter-weights at every
+session start. No per-project `CLAUDE.md` block required.
 
-```md
-# HIVE
-
-Read and internalize these files at the start of every session:
-- ~/.hive/SOUL.md
-- ~/.hive/IDENTITY.md
-- ~/.hive/SELF.md
-- ~/.hive/TRUST.md
-- ~/.hive/AGENTS.md
-
-Read your project memory:
-- ~/.hive/memory/projects/YOURPROJECT/knowledge.md
-
-You have HIVE MCP tools:
-- `convene_council` — multi-model analysis
-- `read_hive_memory` — read accumulated project intelligence
-- `write_hive_memory` — record new facts, conventions, or decisions
-- `create_ticket` — create a ticket with priority, tags, and dependencies
-- `list_tickets` — list and filter project tickets
-- `show_ticket` — show full ticket details including notes
-- `update_ticket` — update ticket status, priority, or other fields
-- `add_ticket_note` — add a timestamped note
-```
-
-Then register the project so memory and tickets work:
+Register the project so its memory and tickets work:
 
 ```bash
 hive project add yourproject ~/work/yourproject
 ```
 
-Then add the HIVE block to your project's CLAUDE.md manually.
+That's it. The hook matches `$PWD` against registered project paths
+and loads the right memory automatically. Keep `CLAUDE.md` in the
+project repo for project-specific guidelines only (framework conventions,
+domain constraints) — identity loads independently.
 
 ## MCP Tools
 
@@ -238,16 +220,41 @@ Available to Claude Code when the HIVE MCP server is running:
 
 ## How Identity Works
 
-Identity lives in `~/.hive/` and is injected via the `hive` CLI wrapper.
-When you run `hive` (or `hive "some prompt"`), it assembles the identity
-stack into a temp file and passes it to Claude Code via `--append-system-prompt-file`:
+Identity lives in `~/.hive/` and loads via a user-level SessionStart
+hook (`~/.claude/hooks/load-identity.sh`) wired into Claude Code's
+`~/.claude/settings.json`. Every session, regardless of project, picks
+up the same stack in deliberate emit order (later sections carry more
+weight in system-prompt interpretation):
 
-1. The full identity stack: SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md
-2. The current project's memory index (resolved by matching `$PWD` against registered project paths)
-3. A session reflection protocol prompting the agent to record learnings before ending
+1. **Soul stack** — `SOUL.md`, `IDENTITY.md`, `SELF.md`, `AGENTS.md`, `TRUST.md`
+2. **Project memory** — the matched project's `_index.md` (or full
+   `knowledge.md` fallback), resolved by matching `$PWD` against registered
+   project paths
+3. **Stack hint** — per-project skill-trigger line (e.g., "Project stack:
+   elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP,
+   or security patterns, load the matching elixir-* skill.")
+4. **Session reflection protocol** — prompts the agent to record learnings
+   before ending substantive sessions
+5. **OVERRIDES.md** — platform counter-weights (last, loudest position)
 
-Projects also reference the identity in their CLAUDE.md so the agent
-knows about the MCP tools. See the template above.
+### Tuned for Opus 4.7
+
+`OVERRIDES.md` exists specifically because Opus 4.7 and Claude Code 2.1.x
+shifted defaults toward terseness, deferred tool use, and stricter literal
+instruction-following. The file asserts HIVE voice as a task requirement
+(so the base ≤100-word cap yields when warmth matters), names HIVE MCP
+tools as first reach, and directs a first-turn schema pre-fetch to route
+around `ToolSearch` friction. SOUL.md and IDENTITY.md templates now lead
+with positive voice examples (Anthropic's 4.7 guidance: positive examples
+work better than negative "don't do this" instructions). `hive dispatch`
+and `hive heartbeat tick` pin to `claude-opus-4-6` by default for
+judgment-heavy autonomous work where 4.7's literalness hurts the
+exploratory instinct — override via `--model` or the `HIVE_DISPATCH_MODEL`
+/ `HIVE_HEARTBEAT_MODEL` env vars.
+
+See `docs/identity-injection.md` for the full architecture — emit order,
+cache stability guarantees, the "Maya feels cold" debug runbook, and how
+to add a new file to the stack.
 
 ## Memory
 
@@ -291,6 +298,7 @@ Don't tag anything that needs human judgment on approach.
 ├── SELF.md              # user preferences
 ├── AGENTS.md            # operational doctrine
 ├── TRUST.md             # action classification + heartbeat authority
+├── OVERRIDES.md         # platform counter-weights (Opus 4.7 / CC 2.1.x)
 ├── config.md            # model pool
 ├── memory/
 │   ├── projects/        # per-project intelligence

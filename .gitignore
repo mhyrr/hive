@@ -19,3 +19,9 @@ node_modules/
 
 # Local HIVE working state when this repo is used as a tracked project
 /.hive/
+
+# Claude Code runtime artifacts
+/.claude/scheduled_tasks.lock
+
+# Playwright MCP traces (regenerated on every run)
+/.playwright-mcp/

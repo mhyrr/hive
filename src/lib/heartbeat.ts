@@ -277,7 +277,14 @@ export async function runTick(projectId: string): Promise<TickResult> {
   // the system prompt (via assembleHeartbeatIdentity) and the user message
   // are invariant, so the prompt cache prefix matches between ticks within
   // the 1h TTL window.
+  // Pin heartbeat to Opus 4.6. 4.7 is architected for more literal instruction-
+  // following and fewer subagent spawns — that hurts judgment-heavy autonomous
+  // work (cf. Anthropic's 4.7 release notes). 4.6 retains the exploratory
+  // instinct we want for heartbeat. Override via HIVE_HEARTBEAT_MODEL env.
+  const model = process.env.HIVE_HEARTBEAT_MODEL || "claude-opus-4-6";
+
   const args = [
+    "--model", model,
     "--append-system-prompt-file", identityPath,
     "--agent", "maya-heartbeat",
     "--add-dir", hiveHome,

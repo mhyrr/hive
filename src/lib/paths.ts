@@ -9,6 +9,7 @@ export type HivePaths = {
   self: string;
   agents: string;
   trust: string;
+  overrides: string;
   config: string;
   memoryDir: string;
   memoryProjectsDir: string;
@@ -38,6 +39,7 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     self: join(home, "SELF.md"),
     agents: join(home, "AGENTS.md"),
     trust: join(home, "TRUST.md"),
+    overrides: join(home, "OVERRIDES.md"),
     config: join(home, "config.md"),
     memoryDir: join(home, "memory"),
     memoryProjectsDir: join(home, "memory", "projects"),

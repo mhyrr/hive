@@ -45,6 +45,10 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   let ticketId = "";
   let planPath = "";
   let timeoutMin = 30;
+  // Pin dispatch to Opus 4.6. Same reasoning as heartbeat — 4.7's literal
+  // instruction-following and fewer-subagents bias hurt judgment-heavy
+  // autonomous work. Override via --model or HIVE_DISPATCH_MODEL env.
+  let model = process.env.HIVE_DISPATCH_MODEL || "claude-opus-4-6";
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--project" && args[i + 1]) {
@@ -56,6 +60,8 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     } else if (args[i] === "--timeout" && args[i + 1]) {
       timeoutMin = parseInt(args[++i]!, 10);
       if (isNaN(timeoutMin) || timeoutMin < 1) timeoutMin = 30;
+    } else if (args[i] === "--model" && args[i + 1]) {
+      model = args[++i]!;
     } else if (!args[i]!.startsWith("--")) {
       goal = args[i]!;
     }
@@ -143,6 +149,7 @@ unset ANTHROPIC_API_KEY
 cd "${projectPath}"
 
 timeout ${timeoutMin * 60} "${claude}" \\
+  --model "${model}" \\
   --append-system-prompt-file "${identityPath}" \\
   --add-dir "${hiveHome}" \\
   --agent maya-executor \\

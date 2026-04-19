@@ -1,16 +1,10 @@
 # HIVE
 
-Read and internalize these files at the start of every session:
-- ~/.hive/SOUL.md — your values and craft standards
-- ~/.hive/IDENTITY.md — who you are
-- ~/.hive/SELF.md — who you're working with
-- ~/.hive/TRUST.md — action classification and approval rules
-- ~/.hive/AGENTS.md — operational doctrine
+Identity, project memory, and the reflection protocol load via the user-level
+SessionStart hook at `~/.claude/hooks/load-identity.sh` — no per-repo wiring
+needed. If identity feels missing, run `hive doctor`.
 
-Read your project memory:
-- ~/.hive/memory/projects/hive/knowledge.md — accumulated facts, conventions, decisions
-
-You have HIVE MCP tools:
+HIVE MCP tools (pre-fetched by the hook):
 - `convene_council` — Multi-model analysis. Sends a question to multiple AI models in parallel. You act as chair — synthesize agreement and disagreement.
 - `read_hive_memory` — Read accumulated project intelligence.
 - `write_hive_memory` — Record new facts, conventions, or decisions.

@@ -1,4 +1,4 @@
-import { existsSync, statSync, readdirSync } from "node:fs";
+import { existsSync, statSync, readdirSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -91,6 +91,136 @@ function checkIdentity(): Check[] {
       label: `${present.length}/5 identity files`,
       detail: `Missing: ${missing.map(f => f.key).join(", ")}`,
     });
+  }
+
+  // OVERRIDES.md — Opus 4.7 platform counter-weights (tone + pre-fetch)
+  if (existsSync(paths.overrides)) {
+    checks.push({ status: "pass", label: "OVERRIDES.md (platform counter-weights)" });
+  } else {
+    checks.push({
+      status: "warn",
+      label: "OVERRIDES.md missing",
+      detail: "Opus 4.7 tone override + pre-fetch directive not loaded. Run: hive init",
+    });
+  }
+
+  // Canonical SessionStart hook at user level
+  const home = process.env.HOME || "";
+  const hookPath = join(home, ".claude", "hooks", "load-identity.sh");
+  if (existsSync(hookPath)) {
+    try {
+      const st = statSync(hookPath);
+      const isExec = (st.mode & 0o111) !== 0;
+      if (isExec) {
+        checks.push({ status: "pass", label: "~/.claude/hooks/load-identity.sh" });
+      } else {
+        checks.push({
+          status: "warn",
+          label: "load-identity.sh not executable",
+          detail: `Run: chmod +x ${hookPath}`,
+        });
+      }
+    } catch {
+      checks.push({ status: "warn", label: "load-identity.sh unreadable" });
+    }
+  } else {
+    checks.push({
+      status: "fail",
+      label: "load-identity.sh missing",
+      detail: `Expected at ${hookPath}. Run: hive init`,
+    });
+  }
+
+  // Hook wired in ~/.claude/settings.json for SessionStart + PostCompact
+  const settingsPath = join(home, ".claude", "settings.json");
+  if (existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+      const events = ["SessionStart", "PostCompact"] as const;
+      const missingEvents: string[] = [];
+      for (const event of events) {
+        const entries = settings.hooks?.[event] ?? [];
+        const wired = entries.some((e: { hooks?: Array<{ command?: string }> }) =>
+          e.hooks?.some((h) => h.command === hookPath),
+        );
+        if (!wired) missingEvents.push(event);
+      }
+      if (missingEvents.length === 0) {
+        checks.push({ status: "pass", label: "hook wired in SessionStart + PostCompact" });
+      } else {
+        checks.push({
+          status: "fail",
+          label: `hook not wired in ${missingEvents.join(", ")}`,
+          detail: "Run: hive init (re-wires hooks without overwriting other settings)",
+        });
+      }
+    } catch {
+      checks.push({
+        status: "warn",
+        label: "~/.claude/settings.json malformed — cannot verify hook wiring",
+      });
+    }
+  } else {
+    checks.push({
+      status: "warn",
+      label: "~/.claude/settings.json absent — hook wiring unverifiable",
+    });
+  }
+
+  // Claude Code version ≥ 2.1.x (where the hook event set was stabilized)
+  const version = run("claude --version 2>/dev/null");
+  if (version) {
+    const match = version.match(/(\d+)\.(\d+)\.\d+/);
+    if (match) {
+      const major = parseInt(match[1]!, 10);
+      const minor = parseInt(match[2]!, 10);
+      const meets = major > 2 || (major === 2 && minor >= 1);
+      if (meets) {
+        checks.push({ status: "pass", label: `claude-code ${match[0]}` });
+      } else {
+        checks.push({
+          status: "warn",
+          label: `claude-code ${match[0]} (pre-2.1.x)`,
+          detail: "HIVE identity injection tuned for 2.1.x+ hook events",
+        });
+      }
+    }
+  }
+
+  return checks;
+}
+
+async function checkStaleClaudeMd(): Promise<Check[]> {
+  const checks: Check[] = [];
+  const paths = getHivePaths();
+
+  if (!existsSync(paths.projectsDir)) return checks;
+
+  const projects = await listProjects(paths.projectsDir);
+  for (const projectId of projects) {
+    const configPath = join(paths.projectsDir, projectId, "config.md");
+    if (!existsSync(configPath)) continue;
+
+    const config = readFileSync(configPath, "utf-8");
+    const pathMatch = config.match(/^path:\s*(.+)$/m);
+    if (!pathMatch) continue;
+    const projectPath = pathMatch[1]!.trim();
+
+    const claudeMd = join(projectPath, "CLAUDE.md");
+    if (!existsSync(claudeMd)) continue;
+
+    const content = readFileSync(claudeMd, "utf-8");
+    if (content.includes("Read and internalize") && content.includes("~/.hive/")) {
+      checks.push({
+        status: "warn",
+        label: `${projectId}: stale identity block in CLAUDE.md`,
+        detail: `${claudeMd} still has "Read and internalize ~/.hive/" — redundant with canonical hook. Safe to delete.`,
+      });
+    }
+  }
+
+  if (checks.length === 0) {
+    checks.push({ status: "pass", label: "no stale identity blocks in registered CLAUDE.md files" });
   }
 
   return checks;
@@ -352,6 +482,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
     { heading: "MCP", checks: checkMcp() },
     { heading: "Models", checks: checkModels() },
     { heading: "Scheduler", checks: checkScheduler() },
+    { heading: "Registered CLAUDE.md", checks: await checkStaleClaudeMd() },
     await checkProject(),
     { heading: "Build", checks: checkBuild() },
   ];
