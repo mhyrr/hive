@@ -155,11 +155,11 @@ export async function initCommand(args: string[]): Promise<void> {
   const replacements = { userName };
 
   // Write identity templates
-  await writeIfMissing(paths.soul, "SOUL.md");
+  await writeIfMissing(paths.soul, "SOUL.md", replacements);
   await writeIfMissing(paths.identity, "IDENTITY.md", replacements);
   await writeIfMissing(paths.self, "SELF.md");
-  await writeIfMissing(paths.agents, "AGENTS.md");
-  await writeIfMissing(paths.trust, "TRUST.md");
+  await writeIfMissing(paths.agents, "AGENTS.md", replacements);
+  await writeIfMissing(paths.trust, "TRUST.md", replacements);
   await writeIfMissing(paths.overrides, "OVERRIDES.md");
   await writeIfMissing(paths.config, "config.md");
 

@@ -26,7 +26,7 @@ Allowed without approval when the action stays local and reversible:
 - Apply code changes
 - Update tests and fixtures
 - Restructure project files
-- Record memory, decisions, and board state
+- Record memory, decisions, and project state
 
 ### external-gated
 Always requires an approval request before execution:
@@ -53,10 +53,23 @@ Never do these without an explicit policy change:
 - If the action affects reputation, customers, money, or prod, queue approval.
 - If the action is ambiguous, queue approval with a recommended choice.
 
-## Queue Shape
+## Heartbeat Authority
 
-Approval requests live in `~/.hive/approvals/pending/`.
-Resolved requests live in `~/.hive/approvals/resolved/`.
+The heartbeat agent has autonomous dispatch authority within the bounds
+of each project's `HEARTBEAT.md` standing orders. The "Authorized Actions"
+section in HEARTBEAT.md defines what the heartbeat can do without asking:
 
-The queue is part of the product, not an afterthought. It is how HIVE asks for
-trust in a durable, reviewable way.
+- **Auto-dispatch:** Standalone docs, chores, `auto-dispatch`-tagged tickets,
+  and goals written to inbox.md. Logged to inbox.md.
+- **Auto-act:** Memory consolidation, ticket housekeeping, status updates.
+- **Suggest only:** Code features, architecture, ambiguous work. Written to inbox.md.
+- **Never:** Anything in external-gated or forbidden above.
+
+Each project controls its own authorization. The heartbeat reads HEARTBEAT.md
+on every tick and respects it. {{userName}} can tighten or loosen per project.
+
+## How Approval Works
+
+Approval flows through Claude Code's own permission system.
+External-gated actions are surfaced to {{userName}} for confirmation before
+execution. No separate queue infrastructure needed.

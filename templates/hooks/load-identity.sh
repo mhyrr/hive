@@ -4,7 +4,7 @@
 # Later instructions get more weight in the system prompt, so OVERRIDES.md is last.
 HIVE_DIR="$HOME/.hive"
 
-# 1. Soul stack — who we are, who Greg is, operational doctrine, trust boundaries
+# 1. Soul stack — who we are, who the user is, operational doctrine, trust boundaries
 for file in SOUL.md IDENTITY.md SELF.md AGENTS.md TRUST.md; do
   path="$HIVE_DIR/$file"
   if [ -f "$path" ]; then
