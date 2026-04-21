@@ -12,14 +12,17 @@ Single-shot `hive dispatch` stays untouched as the atomic primitive. Campaign co
 
 ## Motivation
 
-Current `hive dispatch` is a 30-minute fire-and-forget. It does one thing well: takes a scoped task, runs a `claude --print` session in a fresh worktree, commits, exits. But two failure modes have accumulated evidence:
+**The core value is obstacle traversal.** Current `hive dispatch` is a 30-minute fire-and-forget: scoped task, fresh worktree, `claude --print`, commit, exit. When the executor hits a block — ambiguous spec, test failure, dead-end approach, missing information, decision point — it exits `partial` or `failed`. There is no machinery that asks "what tools do I have to get past this and keep moving?"
 
-- **Horizon too short.** The overnight story is "set up work in the evening, review in the morning," but 30-minute boxes can't hold multi-phase work. Large goals get chopped into tickets manually and dispatched serially, with Greg as the glue.
-- **Premature quit.** Dispatches exit `partial` or `failed` on recoverable obstacles (test failure, ambiguous spec, dead-end on one approach) where a second pass with adjusted framing would clear the block. The single-shot shape has no retry-with-reorientation.
+The campaign exists to answer that question. The OODA loop's point, specifically, is: when the executor stalls, the orchestrator classifies the block, picks a lever from an explicit unblocking toolkit, and applies it. Running longer is incidental — what matters is that stopping on the first obstacle stops being the default outcome.
 
-A third opportunity, discussed in brainstorm: **emergent scope**. When vision opens up mid-run — "while implementing X, I noticed Y would unlock Z" — the current system has no way to capture, score, or selectively pursue the discovery. Either the executor pursues it unchecked (drift risk) or it's lost.
+Failure modes this fixes, in priority order:
 
-The control loop to fix all three has the same shape: Observe (what did the last iteration produce?), Orient (how does it track against the frozen goal?), Decide (what's the next move, and does it warrant a second opinion?), Act (dispatch the next iteration). OODA.
+- **Premature quit at recoverable blocks.** Dispatches exit on obstacles where a second pass with memory search, web research, or a rewritten task would clear the block. The single-shot shape has no retry-with-reorientation and no toolkit to reach for.
+- **Horizon too short.** Even when work isn't blocked, 30-minute boxes can't hold multi-phase work. Large goals get chopped into tickets manually, with Greg as the glue.
+- **Emergent scope lost.** When vision opens up mid-run — "while implementing X, I noticed Y would unlock Z" — the system has no way to capture, score, or selectively pursue the discovery. Either the executor pursues it unchecked (drift risk) or it's lost.
+
+The control loop has the same shape for all three: Observe (what did the last iteration produce?), Orient (how does it track against the frozen goal, and am I blocked?), Decide (what tool from the toolkit applies, or what's the next move?), Act (dispatch the next iteration with the chosen shape). OODA, specifically in service of obstacle traversal.
 
 ## Non-Goals
 
@@ -65,6 +68,52 @@ Checkpoints can **request an extension** via a field: `needs_more_time: "running
 
 Campaign-level budget is a separate ceiling (e.g., "burn no more than 2M tokens or 8 wall-clock hours on this campaign"). Orchestrator enforces, terminates cleanly when exceeded.
 
+### Unblocking: the OODA point
+
+The judge's first-class job, every iteration, is to ask: "is the executor blocked, and if so, what do I have in the toolkit to clear it?" This is the thing the campaign exists to do. Everything else (scoring progress, tracking drift, managing scope) is in service of making this mechanism trustworthy.
+
+**Block classes** the judge discriminates:
+
+- **Technical** — test failure, build error, missing dependency, unknown API surface
+- **Information** — goal ambiguity, missing context in the spec, unclear requirement
+- **External** — network flake, third-party service down, credential or auth issue
+- **Environmental** — merge conflict, branch drift, dirty worktree, wrong state
+- **Decision** — multiple valid paths with no obvious winner
+- **Scope** — block requires crossing the scope fence to proceed
+- **Resource** — token or time cap hit mid-operation
+
+**Unblocking toolkit** — the levers the orchestrator can reach for:
+
+| Tool | Applies to | Mechanism |
+|------|-----------|-----------|
+| `research-memory` | information, technical | Deterministic search of HIVE memory for prior instances. No LLM call. |
+| `research-web` | information, technical | Dispatch a narrow-scoped research subagent with WebSearch/WebFetch. Returns a written answer. |
+| `research-code` | information, technical | Dispatch a subagent to read wider code context than the executor saw. Returns a written summary. |
+| `convene-council` | decision, scope | Multi-model read on the block. Reuses existing `convene_council` infrastructure. |
+| `try-different-approach` | technical, decision | Rewrite the blocking task with different framing, dispatch fresh iteration. |
+| `decompose-finer` | technical, information | Break the blocking step into smaller steps, dispatch the first. |
+| `revert-and-retry` | environmental, technical | Back up to last good commit on the campaign branch, try a different path. |
+| `skip-and-continue` | information, scope | If block is on an optional sub-goal, note in `emergent.md` and move on. |
+| `ask-human` | information, scope, decision | Surface to Greg via `pause-for-human` with a specific question in the inbox. |
+| `retry-later` | external | For flakes, loop back after a wait. Orchestrator schedules the retry. |
+
+**Resolution workflow:**
+
+1. Judge reads checkpoint, detects a block (explicit from executor's self-report, or inferred from signals — two iterations with no progress delta, dropped confidence, repeated failure signature).
+2. Judge classifies the block and picks the cheapest applicable tool from the toolkit that hasn't been tried on this specific block.
+3. Orchestrator applies the tool. Deterministic tools (`research-memory`, `revert-and-retry`, `retry-later`) execute in TypeScript, no LLM. LLM tools (`research-*` subagents, `try-different-approach`, `decompose-finer`) become the next iteration's shape. Council and human tools branch into their own paths.
+4. Next iteration runs. Its checkpoint tells the judge whether the block cleared.
+5. If block persists, judge escalates: next-tier tool, or `ask-human` if the ladder is exhausted for this block.
+
+**Escalation ladder** when a tool doesn't clear the block:
+
+1. **First tier (cheap):** memory search, replan, try-different-approach on existing context.
+2. **Second tier (bounded LLM):** research subagent (web or code), decompose-finer, council.
+3. **Third tier (structural):** revert-and-retry to a known-good state, skip-and-continue if the sub-goal is truly optional.
+4. **Terminal:** ask-human. Campaign pauses with a specific question.
+
+The escalation is tracked per-block in `iterations/ITER-NNN/block.json` so the judge sees which tools have already been tried and can't loop on the same lever.
+
 ### Scoring: scorecard + judge + council
 
 Every iteration, the orchestrator runs one stateless LLM call (the **judge**) with a curated prompt. The judge returns a structured scorecard row appended to `scorecard.jsonl`:
@@ -72,16 +121,33 @@ Every iteration, the orchestrator runs one stateless LLM call (the **judge**) wi
 ```json
 {
   "iter": 7,
-  "timestamp": "2026-04-20T23:14:00Z",
+  "timestamp": "2026-04-21T23:14:00Z",
   "progress_vs_prime": 0.6,
   "drift": 0.1,
   "fence_integrity": "intact",
   "confidence": 4,
   "recommendation": "continue",
   "second_opinion": "no",
+  "block": null,
   "one_fact_that_could_be_wrong": "executor claims tests pass, but I only see a timestamp delta — haven't verified suite name matches",
   "evidence_cited": "commit abc1234 adds FooService; plan step 3 checked; no new test failures",
   "next_task": "proceed to plan step 4: wire FooService into the controller"
+}
+```
+
+When a block is detected, the `block` field carries the classification and chosen tool:
+
+```json
+{
+  "block": {
+    "detected": true,
+    "class": "information",
+    "description": "plan step 4 requires knowing whether feature X uses the old or new auth middleware; spec ambiguous",
+    "tier_attempted": 1,
+    "tools_tried": [],
+    "tool_chosen": "research-memory",
+    "tool_params": {"query": "feature X auth middleware"}
+  }
 }
 ```
 
@@ -189,24 +255,28 @@ MCP tools pass structured JSON, so goal text with `$`, backticks, quotes, and sh
 
 ## V1 Scope
 
-Ship the minimum that validates the shape:
+Ship the minimum that validates the thesis — specifically, that the campaign clears real blocks:
 
 - Orchestrator process (deterministic loop)
 - Stateless judge calls with curated prompts
-- Council integration (reuse existing `convene_council`)
+- Block detection + classification in judge rubric
+- Unblocking toolkit — V1 ships: `research-memory`, `research-web`, `research-code`, `convene-council`, `try-different-approach`, `revert-and-retry`, `skip-and-continue`, `ask-human`. Defer `decompose-finer` and `retry-later` to V2 unless they fall out cheap.
+- Escalation ladder with per-block tracking
 - Campaign state on disk, exactly as specified
 - CLI surface: `start`, `status`, `tail`, `stop`, `resume`, `list`, `direct`
 - MCP tools: `start_campaign`, `campaign_status`, `campaign_tail`, `direct_campaign`, `stop_campaign`, `list_campaigns`, and retroactively `start_dispatch`
 - Dispatch primitive extension: accept existing worktree path
 - Inbox writes and macOS notifications via `osascript` (same as current dispatch)
-- One representative campaign end-to-end as the acceptance test
+- One acceptance test: a campaign that deliberately encounters at least one block, clears it via the toolkit, and completes.
 
 ## V2+ Possibilities
 
 - Long-lived executor atom (address the atom concern)
+- Unblocking toolkit expansion: `decompose-finer`, `retry-later` with scheduled wakes, custom per-project tools registered in config
 - Auto-approve modes for low-risk scope-fence changes
 - Mid-campaign iteration rollback
 - Multi-project campaigns (cross-repo work)
 - Richer tripwire DSL (regex on diffs, file-path globs, cost thresholds)
 - Dashboard integration: live campaign view in the HIVE dashboard
 - Pause-and-resume across machines (campaign state is already on disk; orchestrator process isn't)
+- Block pattern library — recurring block signatures that map to known-good resolutions, written to memory over time
