@@ -154,14 +154,29 @@ Executor: each iteration spawns the existing dispatch primitive (extended to acc
 
 ### Command surface
 
+**CLI (terminal):**
+
 - `hive campaign start "<goal>"` — kick off a campaign. Flags: `--project`, `--scope-fence <file>`, `--council-on <tripwires>`, `--budget-tokens <n>`, `--budget-wall <duration>`, `--iteration-cap-tokens <n>`, `--iteration-cap-wall <duration>`.
 - `hive campaign status <id>` — snapshot: current iteration, scorecard summary, budget state, last inbox entries.
 - `hive campaign tail <id>` — stream the inbox.
 - `hive campaign direct <id> "<directive>"` — append to `directive.md` for mid-run steering.
 - `hive campaign stop <id>` — clean termination. Orchestrator writes final checkpoint, kills in-flight executor if any, updates status.
+- `hive campaign resume <id>` — continue a paused campaign after a `pause-for-human` decision.
 - `hive campaign list` — all campaigns and their status.
 
 `hive dispatch` unchanged. Extended only to accept `--worktree-path` internally when called from an orchestrator.
+
+**MCP tools (callable from inside any Claude Code session, including heartbeat):**
+
+- `start_campaign` — mirrors `hive campaign start` args (goal, project, scope fence, tripwires, budgets). Returns campaign ID, inbox path, status file path.
+- `campaign_status` — mirrors `hive campaign status`. Returns structured JSON (not text) for programmatic consumption.
+- `campaign_tail` — returns the last N inbox entries.
+- `direct_campaign` — appends to `directive.md`.
+- `stop_campaign` — clean termination.
+- `list_campaigns` — all campaigns across projects.
+- `start_dispatch` — retroactively added. Mirrors `hive dispatch` args. Closes the gap where sessions currently shell out to the CLI, which has repeatedly hit shell-escaping bugs (e.g., TK-039: `${...}` in goal text triggering `set -u` under `bypassPermissions`).
+
+MCP tools pass structured JSON, so goal text with `$`, backticks, quotes, and shell metacharacters travels safely — the historical failure class disappears for any caller that uses the MCP surface instead of Bash-invoking the CLI.
 
 ## Open Questions / Risks
 
@@ -180,7 +195,8 @@ Ship the minimum that validates the shape:
 - Stateless judge calls with curated prompts
 - Council integration (reuse existing `convene_council`)
 - Campaign state on disk, exactly as specified
-- Command surface: `start`, `status`, `tail`, `stop`, `list`, `direct`
+- CLI surface: `start`, `status`, `tail`, `stop`, `resume`, `list`, `direct`
+- MCP tools: `start_campaign`, `campaign_status`, `campaign_tail`, `direct_campaign`, `stop_campaign`, `list_campaigns`, and retroactively `start_dispatch`
 - Dispatch primitive extension: accept existing worktree path
 - Inbox writes and macOS notifications via `osascript` (same as current dispatch)
 - One representative campaign end-to-end as the acceptance test
