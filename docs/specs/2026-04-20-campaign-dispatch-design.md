@@ -12,17 +12,20 @@ Single-shot `hive dispatch` stays untouched as the atomic primitive. Campaign co
 
 ## Motivation
 
-**The core value is obstacle traversal.** Current `hive dispatch` is a 30-minute fire-and-forget: scoped task, fresh worktree, `claude --print`, commit, exit. When the executor hits a block — ambiguous spec, test failure, dead-end approach, missing information, decision point — it exits `partial` or `failed`. There is no machinery that asks "what tools do I have to get past this and keep moving?"
+The campaign is two things at once, sharing one control loop:
 
-The campaign exists to answer that question. The OODA loop's point, specifically, is: when the executor stalls, the orchestrator classifies the block, picks a lever from an explicit unblocking toolkit, and applies it. Running longer is incidental — what matters is that stopping on the first obstacle stops being the default outcome.
+1. **A long-horizon orchestrator** that runs multi-phase work overnight, adapts when emergent scope is discovered, and surfaces compelling progress in the morning.
+2. **An obstacle traversal mechanism** that, when the executor hits a block, classifies it and reaches for an explicit toolkit (memory search, research subagent, council, revert, ask-human, etc.) instead of exiting `partial`.
 
-Failure modes this fixes, in priority order:
+Neither is primary. Both are the point. The shared OODA loop — Observe (what did the last iteration produce?), Orient (how does it track against the frozen goal, and am I blocked?), Decide (what's the next move, what tool applies, does this warrant a second opinion?), Act (dispatch the next iteration with the chosen shape) — is the machinery that serves both.
 
-- **Premature quit at recoverable blocks.** Dispatches exit on obstacles where a second pass with memory search, web research, or a rewritten task would clear the block. The single-shot shape has no retry-with-reorientation and no toolkit to reach for.
-- **Horizon too short.** Even when work isn't blocked, 30-minute boxes can't hold multi-phase work. Large goals get chopped into tickets manually, with Greg as the glue.
+Current `hive dispatch` is a 30-minute fire-and-forget: scoped task, fresh worktree, `claude --print`, commit, exit. It ships three failure modes the campaign is designed to fix:
+
+- **Horizon too short.** 30-minute boxes can't hold multi-phase work. Large goals get chopped into tickets manually, with Greg as the glue. The overnight promise doesn't scale past a single ticket.
+- **Premature quit at recoverable blocks.** Dispatches exit `partial` or `failed` on obstacles where a second pass with memory search, web research, a council read, or a rewritten task would clear the block. The single-shot shape has no retry-with-reorientation and no toolkit to reach for.
 - **Emergent scope lost.** When vision opens up mid-run — "while implementing X, I noticed Y would unlock Z" — the system has no way to capture, score, or selectively pursue the discovery. Either the executor pursues it unchecked (drift risk) or it's lost.
 
-The control loop has the same shape for all three: Observe (what did the last iteration produce?), Orient (how does it track against the frozen goal, and am I blocked?), Decide (what tool from the toolkit applies, or what's the next move?), Act (dispatch the next iteration with the chosen shape). OODA, specifically in service of obstacle traversal.
+The design insight is that all three want the same loop. A campaign that only runs longer but can't traverse blocks is still brittle. A campaign that traverses blocks but can't hold emergent scope misses half the value overnight. The OODA loop, with an unblocking toolkit on one axis and goal/scope/emergent machinery on another, fixes all three as a single piece of infrastructure.
 
 ## Non-Goals
 
@@ -255,7 +258,7 @@ MCP tools pass structured JSON, so goal text with `$`, backticks, quotes, and sh
 
 ## V1 Scope
 
-Ship the minimum that validates the thesis — specifically, that the campaign clears real blocks:
+Ship the minimum that validates both thesis pillars — the orchestrator holds multi-iteration work against a frozen prime, AND clears real blocks via the toolkit:
 
 - Orchestrator process (deterministic loop)
 - Stateless judge calls with curated prompts
@@ -267,7 +270,7 @@ Ship the minimum that validates the thesis — specifically, that the campaign c
 - MCP tools: `start_campaign`, `campaign_status`, `campaign_tail`, `direct_campaign`, `stop_campaign`, `list_campaigns`, and retroactively `start_dispatch`
 - Dispatch primitive extension: accept existing worktree path
 - Inbox writes and macOS notifications via `osascript` (same as current dispatch)
-- One acceptance test: a campaign that deliberately encounters at least one block, clears it via the toolkit, and completes.
+- Two acceptance tests: (1) a multi-iteration campaign that holds prime directive across at least 3 phases, adapts plan between iterations, and completes cleanly; (2) a campaign that deliberately encounters at least one block, clears it via the toolkit, and completes.
 
 ## V2+ Possibilities
 
