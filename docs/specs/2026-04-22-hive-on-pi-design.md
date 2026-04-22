@@ -117,16 +117,25 @@ Pi gives us what we actually need: we own the prompt byte-for-byte, the SDK path
 Pi's package format (installable via `pi install npm:@hive/pi-package` or git) bundles:
 
 - **`extensions/`** — TypeScript modules via `pi.registerTool`, `pi.registerCommand`, `pi.on(...)`
-  - `identity.ts` — assembles and injects the HIVE identity block at session start
-  - `mcp.ts` — registers HIVE's MCP server tools as Pi tools
-  - `stacks.ts` — detects project stack, injects stack hint, loads matching skills
-  - `trust.ts` — permission-gate extension implementing `TRUST.md` classes (internal-safe, code-safe, external-gated, forbidden)
-  - `subagents.ts` — agent-team registry with HIVE-specific agent templates
-  - `observability.ts` — footer cost/token accounting piped to `~/.hive/runs/` for `hive ps`/`hive tail`
+  - `identity.ts` — adapted from in-tree `examples/extensions/claude-rules.ts`; loads SOUL/IDENTITY/SELF/AGENTS/TRUST/OVERRIDES and injects via `before_agent_start`
+  - `stacks.ts` — detects project stack, injects stack hint, loads matching skills via `resources_discover`
+  - `trust.ts` — thin composer over the in-tree safety primitives (`permission-gate.ts`, `confirm-destructive.ts`, `protected-paths.ts`, `dirty-repo-guard.ts`), mapping each TRUST class to its appropriate gate
+  - `teams.ts` — worktree-sharded parallelism built on `pi-subagents`; coordinator decomposes ticket, spawns worker sessions each in its own worktree, merges results
+  - `observability.ts` — thin layer that symlinks Pi's native session JSONL into `~/.hive/runs/<runId>/` for `hive ps`/`hive tail`; no re-serialization
 - **`skills/`** — ported skills in Agent Skills markdown (brainstorming, TDD, verification-before-completion, systematic-debugging, writing-plans, executing-plans — plus stack-specific skills from `~/.hive/stacks/`)
 - **`commands/`** — HIVE slash commands (`/council`, `/memory`, `/ticket`, `/dispatch`, `/inbox`, etc.) mapped to MCP tool calls
-- **`models.json`** — additional provider configs if needed
-- **`prompt/`** — HIVE prompt fragments: soul stack, stack hints, MCP triggers
+- **`mcp.json`** — registers HIVE's MCP server, Tidewave (Phoenix projects), Playwright MCP; consumed by `pi-mcp-adapter`
+- **`prompt/`** — HIVE prompt fragments: behaviors carried from Claude Code (§3.1), stack hints, trust triggers
+
+### Build discipline
+
+Before building any new extension, exhaust in this order:
+
+1. **In-tree examples** at `packages/coding-agent/examples/extensions/` — 80+ reference patterns, many reach production quality (the subagent example is 987 lines and is itself reference code, not a toy)
+2. **The nicobailon ecosystem** — `pi-subagents`, `pi-mcp-adapter`, `pi-web-access`, `pi-boomerang`, `pi-model-switch`, `pi-interactive-shell` cover parallelism, MCP, browser, compression, model arbitrage, PTY
+3. **Upstream contribution** — if an existing piece almost fits, patch upstream or fork narrowly, don't rewrite
+
+Only build fresh when none of the above covers the need. This is a governance rule, not a preference. Every line we don't write is one we don't debug, version, or explain. Sunsetting Claude Code is meant to reduce the plumbing we own, not shift it sideways.
 
 ### System prompt assembly + cache architecture
 
@@ -245,20 +254,28 @@ Each HIVE component → concrete Pi primitive. Every mapping references the actu
 
 Today: `~/.claude/hooks/load-identity.sh` runs on SessionStart + PostCompact, emits stdout that Claude Code prepends. Opaque what happens downstream.
 
-On Pi: a HIVE extension subscribes to `before_agent_start` (`packages/coding-agent/src/core/extensions/types.ts:619-629`) and returns a `systemPrompt` replacement (`BeforeAgentStartEventResult.systemPrompt`, `types.ts:991-995`). HIVE assembles SOUL→IDENTITY→SELF→AGENTS→TRUST→OVERRIDES→stack hint into one string, returns it. Multiple extensions chain cleanly.
+On Pi: adapt `examples/extensions/claude-rules.ts` (86 lines, 80% of the shape we need). The pattern is exact: `session_start` scans a directory, `before_agent_start` appends to `systemPrompt`. Change source directory to `~/.hive/`, change the framing text, add the behavior fragments from §3.1. Net build: ~30 lines of diff against the example.
 
-Cache control lives in a second handler on `before_provider_request` (`types.ts:605-609`) — inspect the payload, mark `cache_control` breakpoints at the SEG 1/2/3 boundaries we designed in §2. Anthropic SDK respects them. The `packages/ai/test/cache-retention.test.ts` and `openai-completions-cache-control-format.test.ts` prove this path is well-tested upstream.
+Relevant APIs:
+- `before_agent_start` (`packages/coding-agent/src/core/extensions/types.ts:619-629`) with `BeforeAgentStartEventResult.systemPrompt` for replacement (`types.ts:991-995`)
+- `before_provider_request` (`types.ts:605-609`) for cache_control breakpoint injection at SEG 1/2/3 boundaries (§2)
+
+Cache discipline proven upstream: `packages/ai/test/cache-retention.test.ts`, `openai-completions-cache-control-format.test.ts`.
 
 Identity fragments live at `~/.hive/` and are read at `session_start`. Both harnesses read the same files during transition.
 
 ### 4.2 MCP & external surfaces
 
-HIVE's MCP server (memory, council, tickets, hive_status, manage_heartbeat) is unchanged. Two integration paths:
+`pi-mcp-adapter` is the integration path — no custom extension to build. Install once, configure MCP servers via `~/.pi/agent/mcp.json`, adapter handles lazy-loading, stdio + StreamableHTTP with SSE fallback.
 
-- **Install `pi-mcp-adapter`** and register HIVE in `~/.pi/agent/mcp.json` — lazy-loading proxy, same shape as Claude Code's MCP client
-- **Write a thin HIVE extension** that calls the MCP stdio protocol directly and registers each tool via `pi.registerTool` — ~100 lines, drops the nicobailon dependency, full control
+HIVE's MCP server (memory, council, tickets, hive_status, manage_heartbeat) is unchanged — just registered as one of several MCP endpoints. Servers we register by default:
 
-Recommend option 2 for the production path (fewer third-party deps; HIVE-specific tools get HIVE-specific `promptSnippet`/`promptGuidelines` that `pi-mcp-adapter` doesn't). Option 1 as a day-one shim.
+- **HIVE MCP server** (stdio, localhost) — memory, council, tickets, trust gates
+- **Tidewave** (HTTP/SSE, per-project) — Runtime Intelligence for Phoenix/Rails/Django/FastAPI/Flask/React/Next.js apps. Phoenix projects (revrec, matreas, resonance) add `tidewave_phoenix` to deps; running app exposes MCP. Bridges via `tidewave-ai/mcp_proxy_rust` if stdio is required, but pi-mcp-adapter speaks HTTP/SSE natively
+- **Playwright MCP** (stdio) — browser manipulation for deployed-app verification, headless research, dashboard checks; already wired in HIVE today
+- **Context7** (optional, stdio) — library docs fetching; avoids token cost of web search for well-known frameworks
+
+If `pi-mcp-adapter` misses a feature we need (HIVE-specific `promptSnippet`/`promptGuidelines` per tool is the most likely gap), patch upstream or fork narrowly — don't replace the whole adapter.
 
 ### 4.3 Skills & stacks
 
@@ -275,13 +292,48 @@ Skills in `~/.hive/stacks/<stack>/skills/` carry over verbatim. Superpowers skil
 
 Today: Claude Code's accept-edits / bypass-permissions / ask permission modes + our custom overlay.
 
-On Pi: subscribe to `tool_call` (`types.ts:1104`). Return `{ block: true, reason: "…" }` for gated actions per `TRUST.md`'s four classes. Per-class logic: internal-safe passes through, code-safe passes through, external-gated prompts via `ctx.ui.confirm(...)` (`types.ts:128`), forbidden blocks with a loud reason. Reference examples: `permission-gate.ts`, `confirm-destructive.ts`, `dirty-repo-guard.ts`, `protected-paths.ts`.
+On Pi: compose the four in-tree safety examples — don't rewrite them. Our `trust.ts` is a classifier + orchestrator that routes each `tool_call` to the right gate:
+
+| TRUST class | Gate mechanism | Source |
+|---|---|---|
+| internal-safe | no-op, pass through | — |
+| code-safe | `protected-paths.ts` pattern (30 lines) for sensitive paths; `dirty-repo-guard.ts` pattern (56 lines) for unclean repo state | in-tree examples |
+| external-gated | `permission-gate.ts` (34 lines) + `confirm-destructive.ts` (59 lines) with `ctx.ui.confirm` | in-tree examples |
+| forbidden | hardcoded block with loud reason | trust.ts |
+
+Total HIVE code: ~50 lines of glue mapping TRUST classes → gate selection. The gates themselves are the in-tree examples, possibly lightly adapted for HIVE-specific triggers (e.g. `~/.hive/` paths protected-by-default).
 
 ### 4.5 Subagents & agent teams
 
-Pi has a first-party subagent example in-tree: `examples/extensions/subagent/index.ts` + `subagent/agents.ts`. Parallel execution, separate sessions, role-addressable.
+**Subagents: use `pi-subagents` directly** (nicobailon). Purpose-built, parallel execution, battle-tested in nicobailon's own flows. Fallback if gaps appear: the 987-line in-tree `examples/extensions/subagent/` reference.
 
-Agent teams extend this: each HIVE agent role (architect, implementer, reviewer, tester) registered as a subagent with its own model, own system-prompt fragment, own skill subset. Coordination via tickets (MCP) + inbox messaging (filesystem). The `handoff.ts` example shows the cross-agent handoff shape. No dependency on nicobailon's `pi-subagents`.
+**Agent teams: worktree-sharded parallelism, NOT filesystem messaging.** This is the key design choice. Teams work like real engineering teams — async, git-mediated, with a coordinator who integrates:
+
+1. Coordinator session reads ticket, decomposes into N independent subtasks
+2. For each subtask: spawn a worktree (same primitive as `hive dispatch` uses today), assign to a team worker
+3. Workers run in parallel via `pi-subagents`, each with its own:
+   - Worktree (`.claude/worktrees/<runId>/`)
+   - Branch (`ticket-<id>-worker-<n>`)
+   - Pi session (its own JSONL, its own cache profile)
+   - Role (architect / implementer / reviewer / tester) with role-specific system prompt
+   - Model (heterogeneous — architect-Opus, mechanical-Haiku, review-Codex, etc.)
+   - Scoped ticket slice (subtask ID + success criteria)
+4. Workers commit results to their branch and close their subtask ticket
+5. Coordinator merges branches sequentially, resolves conflicts, closes parent ticket
+
+**Why worktrees, not messenger:**
+- Matches how `hive dispatch` already works — same ops, same failure modes
+- Clean isolation: one worker's broken worktree doesn't block others
+- No live-messaging race conditions
+- Merge conflicts surface real coordination issues, don't get papered over by chat
+- Heterogeneous models are natural — each worker is its own Pi session
+- Failure recovery is familiar (re-dispatch a single worker, not re-sync shared state)
+
+**Why not `pi-messenger`:** teams isn't about live chat; it's about work division. FS-messaging is the wrong primitive here.
+
+Coordination substrate: git (worktree creation, branch commits, merge) + tickets (subtask status via MCP) + shared memory (MCP). Coordinator is a sequential loop, not a realtime orchestrator.
+
+The `handoff.ts` in-tree pattern (153 lines) covers the coordinator→worker baton-pass. The pi-subagents extension covers the parallel execution primitive. HIVE's `teams.ts` is the composition layer: ticket decomposition, worktree provisioning, merge orchestration. ~200 lines estimate.
 
 ### 4.6 Execution modes for automation
 
@@ -298,7 +350,11 @@ Agent teams extend this: each HIVE agent role (architect, implementer, reviewer,
 
 Today: scrape plan.md, check git log on worktree branch. Brittle.
 
-On Pi: subscribe to `tool_execution_start`/`update`/`end` (`types.ts:677-700`) and `turn_start`/`turn_end` (`types.ts:643-655`), write structured JSONL to `~/.hive/runs/<runId>/events.jsonl` per dispatch. `hive ps` reads the latest event to show state; `hive tail` tails events.jsonl live. Session tree (`SessionManager.getTree`, `getLeafEntry`) replaces checkbox heuristics.
+On Pi: **read Pi's native session JSONL directly.** Pi already writes complete, structured session logs to `~/.pi/agent/sessions/` — every tool call, every turn, every message, with timestamps and IDs. No reason to build a parallel telemetry stream.
+
+Implementation: `observability.ts` extension writes a symlink from `~/.hive/runs/<runId>/session.jsonl` → the active Pi session file on `session_start`. `hive ps` tails the symlink live; `hive tail` follows it. Session tree (`SessionManager.getTree`, `getLeafEntry`) gives status deterministically without checkbox heuristics.
+
+We own: the symlink, the run metadata (`~/.hive/runs/<runId>/meta.json` with ticket ID, model, timestamps), the parser that extracts state from Pi session entries for `hive ps` output. Everything else — the actual event stream — is Pi's native format. If Pi evolves its session schema, we adapt the parser, but we never duplicate the logs.
 
 ### 4.8 Commands & UX
 
@@ -352,7 +408,7 @@ Expected to differ — we don't fight it:
 - Slash command sets (Pi's richer: `/tree`, `/fork`, `/clone`, `/compact [prompt]`)
 - Subagent invocation (Agent tool vs Pi subagent extension)
 - Permission UX (Claude Code accept/bypass modes vs Pi `tool_call` gate)
-- Tool surface (WebFetch/WebSearch native in Claude Code; Pi via extension or bash)
+- Tool surface (WebFetch/WebSearch native in Claude Code; Pi via `pi-web-access` for research + Playwright MCP for browser manipulation)
 
 ### 5.4 The governance rule — restated with teeth
 
@@ -433,15 +489,17 @@ Ordered, each step reversible. Claude Code keeps working until we choose to stop
 
 ### Step 1 — Foundation extensions (week 1–2)
 
-Build in this order, each with its own tests:
+Mostly adaptation, not build. Order:
 
-1. `identity.ts` — `before_agent_start` handler assembling SOUL→IDENTITY→SELF→AGENTS→TRUST→OVERRIDES→stack hint
-2. `mcp.ts` — direct MCP stdio extension, registers HIVE tools via `pi.registerTool` with `promptSnippet`/`promptGuidelines`
-3. `observability.ts` — tool event subscriptions → `~/.hive/runs/<runId>/events.jsonl`
-4. `stacks.ts` — `resources_discover` returning stack-matched skill paths
-5. `trust.ts` — `tool_call` gate enforcing `TRUST.md` classes
+1. **`identity.ts`** — adapt `examples/extensions/claude-rules.ts` (~30 line diff): change scan dir to `~/.hive/`, insert behavior fragments from §3.1, add cache_control breakpoint handler on `before_provider_request`
+2. **MCP wiring** — install `pi-mcp-adapter`; author `mcp.json` registering HIVE MCP server, Tidewave (for Phoenix projects), Playwright. No extension code.
+3. **`observability.ts`** — ~40 lines: symlink run dir to Pi session JSONL, write run meta.json; `hive ps`/`hive tail` parser reads Pi session format
+4. **`stacks.ts`** — ~80 lines (new build, no existing pattern): `resources_discover` returning stack-matched skill paths
+5. **`trust.ts`** — ~50 lines of classifier + glue over in-tree safety examples (`permission-gate.ts`, `confirm-destructive.ts`, `protected-paths.ts`, `dirty-repo-guard.ts`)
 
-**Deliverable:** `hive` opens interactive session with HIVE identity loaded, MCP tools callable, permission gates enforced, telemetry written.
+**Deliverable:** `hive` opens interactive session with HIVE identity loaded, MCP tools callable (HIVE + Tidewave + Playwright), permission gates enforced per TRUST class, `hive ps` reads live session state.
+
+**Total HIVE code across Step 1: ~200 lines.** Everything else is adaptation or configuration.
 
 ### Step 2 — Heartbeat on Pi (week 2)
 
@@ -583,7 +641,7 @@ What becomes possible after the migration that isn't today. Near-term follow-ons
 
 2. **Role-to-model binding** per subagent. Architect-Opus (reasoning-heavy), mechanical-Haiku (cheap/fast), security-Codex (independent review), research-breadth-Gemini (long context). Configured per agent template, not hard-coded.
 
-3. **Agent teams** — peer agents with shared goal, coordinating via tickets + inbox + memory. Architect drafts, implementer executes, reviewer audits, tester verifies. Generalizes campaign-dispatch to arbitrary team shapes.
+3. **Agent teams (worktree-sharded)** — coordinator decomposes ticket into N independent subtasks, spawns one worktree per subtask, assigns each to a role-specific worker (architect / implementer / reviewer / tester) with role-specific model. Workers run in parallel via `pi-subagents`; coordinator merges branches sequentially and resolves conflicts. Same ops surface as `hive dispatch`, N-way. No live messaging.
 
 4. **Real adversarial council** — today council members can't read each other's sessions because Claude Code sessions are opaque. On Pi, council members read session JSONL, debug each other's outputs, do genuine adversarial review not just parallel position-taking.
 
@@ -599,9 +657,13 @@ What becomes possible after the migration that isn't today. Near-term follow-ons
 
 10. **Interactive plan-and-approve with second model** — plan mode extension + `registerProvider` lets us prompt Opus for changes, render diff, submit to Codex for review, gate on approval before commit. All in one session.
 
-11. **Custom compaction that preserves HIVE artifacts** — `session_before_compact` handler ensures memory writes, ticket references, and identity layer survive compaction intact.
+11. **Custom compaction that preserves HIVE artifacts** — adapt `examples/extensions/custom-compaction.ts` (127 lines) with `session_before_compact` handler to ensure memory writes, ticket references, and identity layer survive compaction intact.
 
 12. **Transcript-as-training-signal** — Pi sessions are JSONL with full tool I/O. Extract patterns of successful tool sequences, failed loops; feed back into skills or heartbeat triggers.
+
+13. **Tidewave runtime intelligence for Phoenix projects** — revrec, matreas, resonance get direct DB query, log capture, code execution, and DOM→source tracing via Tidewave MCP. Previously requires switching to a separate tool; now a registered MCP server in every HIVE Phoenix session. Unlocks: "why did this LiveView render 3 times?", "what did this Ecto query return last request?", "run this function in the live app right now" — all from within Maya.
+
+14. **Context efficiency on long runs via `pi-boomerang`** — nicobailon's automatic context compression for long-horizon task execution. Pairs with campaign and agent teams where iterations accumulate context fast. Reduces model arbitrage need by making the expensive model cheaper to run long.
 
 ---
 
@@ -609,28 +671,63 @@ What becomes possible after the migration that isn't today. Near-term follow-ons
 
 Things not settled at doc-write time:
 
-1. **MCP integration path** — `pi-mcp-adapter` (less code, third-party dep) vs direct MCP-stdio extension (~100 lines, zero third-party). §4.2 recommends direct for production; adapter as day-one shim. Decide after V6.
+1. **Package distribution** — HIVE-as-Pi-package ships as (a) in-tree under `packages/hive-pi/`, (b) separate npm `@hive/pi-package`, (c) git-installed. Recommendation: start in-tree (simplest), extract to npm when stable.
 
-2. **Subagent implementation** — in-tree example pattern (`examples/extensions/subagent/`) vs `pi-subagents` (nicobailon). V3 determines. If in-tree works, no dep needed.
+2. **Build our own TUI or use InteractiveMode** — InteractiveMode is turnkey; custom TUI on `pi-tui` gives HIVE-specific UX (council panel, inbox banner, campaign progress). Decide after Step 4 validation.
 
-3. **Package distribution** — HIVE-as-Pi-package ships as (a) in-tree under `packages/hive-pi/`, (b) separate npm `@hive/pi-package`, (c) git-installed. Recommendation: start in-tree (simplest), extract to npm when stable.
+3. **`hive migrate` helper** — one-shot installer for existing users (copies skills, migrates settings, installs extension, generates mcp.json). Probably yes, not critical-path.
 
-4. **Build our own TUI or use InteractiveMode** — InteractiveMode is turnkey; custom TUI on `pi-tui` gives HIVE-specific UX (council panel, inbox banner, campaign progress). Decide after Step 4 validation.
+4. **Sunset date precision** — 6–8 weeks is an estimate anchored to Steps 4+5 velocity.
 
-5. **`hive migrate` helper** — one-shot installer for existing users (copies skills, migrates settings, installs extension). Probably yes, not critical-path.
+5. **Tidewave auto-detection** — should `stacks.ts` detect `tidewave_phoenix` in `mix.exs` and auto-register the Tidewave MCP endpoint per-project? Or require explicit config in project `.pi/mcp.json`? Auto-detect is friendlier; explicit is clearer. Lean toward auto-detect with `--no-tidewave` opt-out.
 
-6. **Sunset date precision** — 6–8 weeks is an estimate anchored to Steps 4+5 velocity.
+6. **Upstream contributions to pi-mono and nicobailon extensions** — if HIVE's identity injection pattern or trust composer is broadly useful, upstreaming strengthens the ecosystem and reduces our maintenance burden. Evaluate per extension as we ship.
 
-7. **Upstream contributions to pi-mono** — if HIVE's MCP extension or identity injection pattern is broadly useful, contributing strengthens the ecosystem. Deferred decision.
+### Resolved since first draft
+
+- **MCP integration path** — `pi-mcp-adapter`. Not building direct.
+- **Subagent implementation** — `pi-subagents`. Not building from scratch.
+- **Agent team coordination** — worktree-sharded (git-mediated, ticket-tracked), not filesystem messaging via `pi-messenger`.
+- **Observability** — read Pi's native session JSONL. Not duplicating with events.jsonl.
+- **Web/browser** — `pi-web-access` for research, Playwright MCP for manipulation.
 
 ---
 
 ## References
 
-- Pi-mono source: `~/work/pi-mono` (cloned 2026-04-22)
-- Extension types: `packages/coding-agent/src/core/extensions/types.ts`
+### Pi-mono (cloned at `~/work/pi-mono`, 2026-04-22)
+
+- Extension API types: `packages/coding-agent/src/core/extensions/types.ts`
 - SDK docs: `packages/coding-agent/docs/sdk.md`
-- Extension examples: `packages/coding-agent/examples/extensions/`
+- RPC docs: `packages/coding-agent/docs/rpc.md`
+- Extensions docs: `packages/coding-agent/docs/extensions.md`
+- Compaction docs: `packages/coding-agent/docs/compaction.md`
+- Extension examples: `packages/coding-agent/examples/extensions/` (80+ reference patterns)
+- Key examples cited: `claude-rules.ts` (identity pattern), `permission-gate.ts` + `confirm-destructive.ts` + `protected-paths.ts` + `dirty-repo-guard.ts` (trust gates), `subagent/` (subagent reference, 987 lines), `handoff.ts` (coordinator→worker pattern), `custom-compaction.ts` (compaction customization), `plan-mode/` (plan mode), `todo.ts` (task tracking)
+
+### Nicobailon ecosystem
+
+- `pi-subagents` — parallel child agents (used in teams)
+- `pi-mcp-adapter` — MCP client with lazy-loading, stdio + HTTP/SSE
+- `pi-web-access` — web search + content extraction (Chrome/Perplexity/Gemini backends)
+- `pi-boomerang` — automatic context compression for long-horizon runs
+- `pi-model-switch` — agent self-switches models mid-session
+- `pi-interactive-shell` — PTY-emulated shell for interactive CLI tools
+
+### External MCP servers
+
+- Tidewave (`tidewave-ai/tidewave_phoenix`, `mcp_proxy_rust`) — Runtime Intelligence for Phoenix/Rails/etc running apps
+- Playwright MCP — browser manipulation
+- Context7 — library documentation fetching
+
+### HIVE specs
+
 - Campaign-dispatch design: `docs/specs/2026-04-20-campaign-dispatch-design.md`
 - Language stacks design: `docs/specs/2026-04-13-language-stacks-design.md`
-- Prior memory: TK-028 (cross-tick cache), TK-024 (stateless heartbeat), TK-047 (identity reconsolidation)
+
+### HIVE memory touchpoints
+
+- TK-028 — cross-tick cache; Pi resolves the uncontrolled-injection problem
+- TK-024 — stateless heartbeat; Pi SDK simplifies this significantly
+- TK-047 — identity reconsolidation; replaced by Pi extension-based injection
+- TK-039, TK-045, TK-046 — dispatch bash-wrapper bugs; all deprecated at sunset
