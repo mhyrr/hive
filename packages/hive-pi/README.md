@@ -22,8 +22,8 @@ models.json   Provider/model configuration (optional)
 This directory is created in **Step 0 — Scaffold** of the hive-on-pi
 migration sequence. Subsequent steps populate it:
 
-- Step 1 (foundations): `extensions/identity.ts`, `extensions/stacks.ts`,
-  `extensions/trust.ts`, `extensions/observability.ts`, `mcp.json`.
+- Step 1 (foundations): `extensions/identity.ts` ✓, `extensions/observability.ts` ✓,
+  `mcp.json` ✓, `extensions/stacks.ts`, `extensions/trust.ts`.
 - Step 3 (skills): `skills/` populated from `~/.hive/stacks/` and
   ported superpowers skills.
 - Step 4 (interactive parity): `commands/` populated with HIVE slash
