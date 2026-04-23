@@ -1,0 +1,13 @@
+{
+  "name": "@hive/pi-package",
+  "version": "0.1.0-alpha",
+  "private": true,
+  "description": "HIVE packaged as Pi extensions, skills, commands, and prompt fragments. See docs/specs/2026-04-22-hive-on-pi-design.md.",
+  "type": "module",
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.58.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
