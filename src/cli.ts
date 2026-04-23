@@ -16,6 +16,7 @@ import { psCommand } from "./commands/ps";
 import { stackCommand } from "./commands/stack";
 import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
+import { extractHarnessFlag, HarnessNotImplementedError, resolveHarness } from "./lib/harness";
 import { writeIdentityTempFile, cleanupIdentityTempFile, getIdentityName } from "./lib/identity";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
@@ -60,7 +61,12 @@ ${name} (Claude with identity):
   hive                       Interactive ${name} session
   hive "fix the auth bug"    ${name} with a prompt
   hive --agent maya-coder    ${name} with a specific agent
-  hive [any claude flags]    Passed through to claude with identity`;
+  hive [any claude flags]    Passed through to claude with identity
+
+Harness selection (hive-on-pi migration):
+  -c, --claude-code          Force Claude Code for this invocation
+  HIVE_HARNESS=claude-code   Env-var equivalent (applies to full session)
+  (default: pi — but Pi interactive is not yet implemented)`;
 }
 
 function findClaude(): string {
@@ -74,6 +80,10 @@ function findClaude(): string {
 }
 
 async function launchClaude(args: string[]): Promise<void> {
+  if (resolveHarness() === "pi") {
+    throw new HarnessNotImplementedError("interactive agent launch");
+  }
+
   const identityFile = await writeIdentityTempFile();
 
   // Clean up on exit
@@ -106,7 +116,10 @@ async function launchClaude(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+  const { forceClaudeCode, remaining: args } = extractHarnessFlag(process.argv.slice(2));
+  if (forceClaudeCode) {
+    process.env.HIVE_HARNESS = "claude-code";
+  }
   const command = args[0];
 
   // No args → interactive session
@@ -141,6 +154,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  if (error instanceof HarnessNotImplementedError) {
+    console.error(error.message);
+    process.exit(1);
+  }
   console.error(error);
   process.exit(1);
 });
