@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "hive": {
+      "command": "bun",
+      "args": ["/Users/mhyrr/work/hive/src/mcp-server.ts"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  }
+}

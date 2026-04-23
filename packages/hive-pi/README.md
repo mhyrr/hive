@@ -30,6 +30,28 @@ migration sequence. Subsequent steps populate it:
   commands wrapping MCP tool calls.
 - Step 5–6: extensions/teams.ts, RPC-mode dispatch integration.
 
+## Install (manual, pre-Step-7)
+
+Until `hive init` handles it automatically:
+
+```bash
+# 1. Install pi-mcp-adapter (once)
+pi install npm:pi-mcp-adapter
+
+# 2. Copy mcp.json to Pi's agent dir
+cp packages/hive-pi/mcp.json ~/.pi/agent/mcp.json
+
+# 3. Launch with identity extension
+pi --print -e $(pwd)/packages/hive-pi/extensions/identity.ts \
+   --thinking off --provider anthropic \
+   "your prompt here"
+```
+
+Caveat: `mcp.json` contains a machine-specific path to the HIVE MCP
+server (`/Users/.../work/hive/src/mcp-server.ts`). On another machine,
+edit the path before copying. Step 7 of the migration adds install
+templating.
+
 ## Build discipline
 
 Before adding a new extension here, exhaust the in-tree pi-mono examples
