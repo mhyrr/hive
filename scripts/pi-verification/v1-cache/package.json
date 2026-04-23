@@ -1,0 +1,13 @@
+{
+  "name": "hive-pi-v1-cache",
+  "private": true,
+  "type": "module",
+  "description": "V1 verification: Pi cross-session prompt caching works with subscription OAuth",
+  "scripts": {
+    "run": "bun index.ts"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.58.0",
+    "@mariozechner/pi-ai": "^0.58.0"
+  }
+}
