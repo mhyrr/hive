@@ -71,10 +71,10 @@ ${name} (Claude with identity):
   hive --agent maya-coder    ${name} with a specific agent
   hive [any claude flags]    Passed through to claude with identity
 
-Harness selection (hive-on-pi migration):
-  (default)                  Pi with identity, MCP adapter, subscription OAuth
-  -c, --claude-code          Route this invocation through Claude Code
-  HIVE_HARNESS=claude-code   Env-var equivalent (applies to full session)`;
+Harness selection:
+  (default)                  Claude Code with identity
+  -3, --pi                   Route this invocation through Pi (subscription OAuth, MCP adapter)
+  HIVE_HARNESS=pi            Env-var equivalent (applies to full session)`;
 }
 
 function findClaude(): string {
@@ -225,9 +225,9 @@ async function launchClaude(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const { forceClaudeCode, remaining: args } = extractHarnessFlag(process.argv.slice(2));
-  if (forceClaudeCode) {
-    process.env.HIVE_HARNESS = "claude-code";
+  const { forcePi, remaining: args } = extractHarnessFlag(process.argv.slice(2));
+  if (forcePi) {
+    process.env.HIVE_HARNESS = "pi";
   }
   const command = args[0];
 

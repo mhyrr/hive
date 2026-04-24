@@ -5,32 +5,32 @@ import { extractHarnessFlag, resolveHarness } from "../lib/harness";
 describe("extractHarnessFlag", () => {
   test("no flag, no change", () => {
     const r = extractHarnessFlag(["dispatch", "do X"]);
-    expect(r.forceClaudeCode).toBe(false);
+    expect(r.forcePi).toBe(false);
     expect(r.remaining).toEqual(["dispatch", "do X"]);
   });
 
-  test("-c at start", () => {
-    const r = extractHarnessFlag(["-c", "dispatch", "do X"]);
-    expect(r.forceClaudeCode).toBe(true);
+  test("-3 at start", () => {
+    const r = extractHarnessFlag(["-3", "dispatch", "do X"]);
+    expect(r.forcePi).toBe(true);
     expect(r.remaining).toEqual(["dispatch", "do X"]);
   });
 
-  test("-c mid-args", () => {
-    const r = extractHarnessFlag(["dispatch", "-c", "do X"]);
-    expect(r.forceClaudeCode).toBe(true);
+  test("-3 mid-args", () => {
+    const r = extractHarnessFlag(["dispatch", "-3", "do X"]);
+    expect(r.forcePi).toBe(true);
     expect(r.remaining).toEqual(["dispatch", "do X"]);
   });
 
-  test("--claude-code long form", () => {
-    const r = extractHarnessFlag(["--claude-code", "doctor"]);
-    expect(r.forceClaudeCode).toBe(true);
+  test("--pi long form", () => {
+    const r = extractHarnessFlag(["--pi", "doctor"]);
+    expect(r.forcePi).toBe(true);
     expect(r.remaining).toEqual(["doctor"]);
   });
 
   test("does not match similar flags", () => {
-    const r = extractHarnessFlag(["ticket", "create", "-c-like", "--claude-codex"]);
-    expect(r.forceClaudeCode).toBe(false);
-    expect(r.remaining).toEqual(["ticket", "create", "-c-like", "--claude-codex"]);
+    const r = extractHarnessFlag(["ticket", "create", "-3-like", "--pix"]);
+    expect(r.forcePi).toBe(false);
+    expect(r.remaining).toEqual(["ticket", "create", "-3-like", "--pix"]);
   });
 });
 
@@ -46,8 +46,8 @@ describe("resolveHarness", () => {
     else process.env.HIVE_HARNESS = original;
   });
 
-  test("defaults to pi when unset", () => {
-    expect(resolveHarness()).toBe("pi");
+  test("defaults to claude-code when unset", () => {
+    expect(resolveHarness()).toBe("claude-code");
   });
 
   test("reads HIVE_HARNESS=claude-code", () => {
@@ -60,8 +60,8 @@ describe("resolveHarness", () => {
     expect(resolveHarness()).toBe("pi");
   });
 
-  test("unknown value falls back to pi default", () => {
+  test("unknown value falls back to claude-code default", () => {
     process.env.HIVE_HARNESS = "gibberish";
-    expect(resolveHarness()).toBe("pi");
+    expect(resolveHarness()).toBe("claude-code");
   });
 });
