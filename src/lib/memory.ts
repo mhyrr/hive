@@ -100,7 +100,9 @@ const BM25_B = 0.75;
 
 // Decay parameters
 const KNOWLEDGE_HALF_LIFE = 30; // days
-const RETRIEVAL_BOOST = 7; // days added per recall
+const RETRIEVAL_BOOST = 7; // days added per searchMemory recall
+const AUTOLOAD_BOOST = 1; // days added per index auto-load (damped)
+const AUTOLOAD_RECALL_INCREMENT = 0.25; // fractional recall bump for auto-load
 const MAX_HALF_LIFE = 90; // cap
 
 // ---------------------------------------------------------------------------
@@ -228,6 +230,18 @@ export function bumpRecall(meta: EntryMeta): EntryMeta {
     lastRecalled: toDateLabel(),
     recallCount: meta.recallCount + 1,
     halfLife: Math.min(meta.halfLife + RETRIEVAL_BOOST, MAX_HALF_LIFE),
+  };
+}
+
+// Damped variant for auto-load (index rebuild) — entries earning a slot in the
+// session-start index strengthen, but more gently than explicit search recalls.
+// recallCount becomes fractional; entryStrength's log2 multiplier handles it.
+export function bumpRecallDamped(meta: EntryMeta): EntryMeta {
+  return {
+    ...meta,
+    lastRecalled: toDateLabel(),
+    recallCount: meta.recallCount + AUTOLOAD_RECALL_INCREMENT,
+    halfLife: Math.min(meta.halfLife + AUTOLOAD_BOOST, MAX_HALF_LIFE),
   };
 }
 
@@ -760,6 +774,11 @@ export async function rebuildIndex(
   const rankedConventions = sortByStrength(activeConventions);
   const rankedQuestions = sortByStrength(openQuestions);
 
+  // Compute the slices that will land in the index up front so we can both
+  // render them and bump their recall metadata (auto-load strengthening).
+  const displayFacts = budgetSlice(rankedFacts);
+  const displayConventions = budgetSlice(rankedConventions);
+
   // Collect all tags for the tag index
   const tagMap = new Map<string, number>();
   for (const entries of [activeFacts, activeConventions, openQuestions]) {
@@ -823,7 +842,6 @@ export async function rebuildIndex(
 
   // Key facts — strength-ranked, token-budgeted
   if (rankedFacts.length > 0) {
-    const displayFacts = budgetSlice(rankedFacts);
     lines.push(`## Key Facts`);
     for (const f of displayFacts) {
       lines.push(`- ${f.text}${formatTags(f.tags)}`);
@@ -836,7 +854,6 @@ export async function rebuildIndex(
 
   // Conventions — strength-ranked, token-budgeted
   if (rankedConventions.length > 0) {
-    const displayConventions = budgetSlice(rankedConventions);
     lines.push(`## Conventions`);
     for (const c of displayConventions) {
       lines.push(`- ${c.text}${formatTags(c.tags)}`);
@@ -850,6 +867,29 @@ export async function rebuildIndex(
   const output = lines.join("\n");
   const iPath = indexPath(paths, projectId);
   await Bun.write(iPath, output);
+
+  // Auto-load strengthening — entries that earned a slot in the index get a
+  // damped recall bump. Closes the gap where searchMemory was the only path
+  // that strengthened entries (Hippo retrieval-strengthening principle).
+  const indexedEntries: Array<{ text: string }> = [
+    ...displayFacts,
+    ...displayConventions,
+    ...rankedQuestions,
+    ...recentDecisions,
+  ];
+  if (indexedEntries.length > 0) {
+    let changed = false;
+    for (const entry of indexedEntries) {
+      const hash = entryHash(entry.text);
+      if (meta.entries[hash]) {
+        meta.entries[hash] = bumpRecallDamped(meta.entries[hash]!);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await writeMeta(paths, projectId, meta);
+    }
+  }
 
   return output;
 }

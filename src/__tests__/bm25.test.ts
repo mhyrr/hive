@@ -6,6 +6,7 @@ import {
   bm25Score,
   entryStrength,
   bumpRecall,
+  bumpRecallDamped,
   createEntryMeta,
   daysBetween,
   entryHash,
@@ -209,6 +210,61 @@ describe("bumpRecall", () => {
     meta = bumpRecall(meta);
     expect(meta.recallCount).toBe(3);
     expect(meta.halfLife).toBe(51); // 30 + 7*3
+  });
+});
+
+describe("bumpRecallDamped", () => {
+  test("increments recall count by 0.25 (fractional)", () => {
+    const meta = createEntryMeta();
+    const bumped = bumpRecallDamped(meta);
+    expect(bumped.recallCount).toBe(0.25);
+  });
+
+  test("extends half-life by 1 day", () => {
+    const meta = createEntryMeta();
+    const bumped = bumpRecallDamped(meta);
+    expect(bumped.halfLife).toBe(31);
+  });
+
+  test("caps half-life at 90", () => {
+    const meta: EntryMeta = {
+      createdAt: "2026-01-01",
+      lastRecalled: null,
+      recallCount: 0,
+      halfLife: 90,
+    };
+    const bumped = bumpRecallDamped(meta);
+    expect(bumped.halfLife).toBe(90);
+  });
+
+  test("sets lastRecalled to today", () => {
+    const meta = createEntryMeta();
+    const bumped = bumpRecallDamped(meta);
+    expect(bumped.lastRecalled).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  test("four damped bumps equal one full bump in recallCount only", () => {
+    let meta = createEntryMeta();
+    for (let i = 0; i < 4; i++) meta = bumpRecallDamped(meta);
+    // recallCount: 0 + 0.25*4 = 1.0 (matches one bumpRecall)
+    expect(meta.recallCount).toBeCloseTo(1.0, 5);
+    // halfLife: 30 + 1*4 = 34 (vs 37 for one bumpRecall — damped)
+    expect(meta.halfLife).toBe(34);
+  });
+
+  test("strength formula handles fractional recallCount", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const meta: EntryMeta = {
+      createdAt: today,
+      lastRecalled: today,
+      recallCount: 0.25,
+      halfLife: 31,
+    };
+    // 1 + log2(1.25) ≈ 1 + 0.32 = 1.32. Should be a real positive number.
+    const strength = entryStrength(meta);
+    expect(Number.isFinite(strength)).toBe(true);
+    expect(strength).toBeGreaterThan(1.0);
+    expect(strength).toBeLessThan(1.5);
   });
 });
 

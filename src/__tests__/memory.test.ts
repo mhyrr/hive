@@ -19,6 +19,9 @@ import {
   supersedeEntry,
   knowledgePath,
   indexPath,
+  metaPath,
+  entryHash,
+  type MetaSidecar,
 } from "../lib/memory";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 
@@ -423,5 +426,41 @@ describe("rebuildIndex", () => {
     const iPath = indexPath(paths, "test-project");
     const content = await Bun.file(iPath).text();
     expect(content).toContain("# Index: test-project");
+  });
+
+  test("auto-load strengthening — bumps damped recall for indexed facts", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "auto-load fact one");
+    await appendProjectMemory(paths, "test-project", "convention", "auto-load convention one");
+    await appendProjectMemory(paths, "test-project", "decision", "auto-load decision one");
+    await appendProjectMemory(paths, "test-project", "question", "auto-load question one");
+
+    await rebuildIndex(paths, "test-project");
+
+    const meta: MetaSidecar = await Bun.file(metaPath(paths, "test-project")).json();
+    const factHash = entryHash("auto-load fact one");
+    const convHash = entryHash("auto-load convention one");
+    const decisionHash = entryHash("auto-load decision one");
+    const questionHash = entryHash("auto-load question one");
+
+    expect(meta.entries[factHash]?.recallCount).toBe(0.25);
+    expect(meta.entries[factHash]?.halfLife).toBe(31);
+    expect(meta.entries[convHash]?.recallCount).toBe(0.25);
+    expect(meta.entries[decisionHash]?.recallCount).toBe(0.25);
+    expect(meta.entries[questionHash]?.recallCount).toBe(0.25);
+  });
+
+  test("auto-load bumps accumulate across multiple rebuilds", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "persistent fact");
+
+    await rebuildIndex(paths, "test-project");
+    await rebuildIndex(paths, "test-project");
+    await rebuildIndex(paths, "test-project");
+    await rebuildIndex(paths, "test-project");
+
+    const meta: MetaSidecar = await Bun.file(metaPath(paths, "test-project")).json();
+    const hash = entryHash("persistent fact");
+    // 4 damped bumps: recallCount 0 + 0.25*4 = 1.0, halfLife 30 + 1*4 = 34
+    expect(meta.entries[hash]?.recallCount).toBeCloseTo(1.0, 5);
+    expect(meta.entries[hash]?.halfLife).toBe(34);
   });
 });

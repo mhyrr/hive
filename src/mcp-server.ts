@@ -57,10 +57,11 @@ const server = new McpServer(
 // Tool 1: Multi-model council
 server.registerTool("convene_council", {
   description:
-    "Send a question to multiple AI models in parallel and collect their independent positions. " +
-    "Use for architecture decisions, tradeoff analysis, risk assessment, or any question where " +
-    "multiple perspectives add value. You act as chair — synthesize the results. " +
-    "Mode 'dialectic' assigns models to argue specific camps across multiple rounds.",
+    "Use when a judgment call has multiple valid approaches and reasonable people would diverge — " +
+    "architecture decisions, tradeoff analysis, risk assessment before consequential changes. " +
+    "Sends the question to multiple models in parallel; each returns an independent position. " +
+    "You act as chair and synthesize. Mode 'dialectic' assigns camps across multiple rounds. " +
+    "Don't use for questions with obvious answers.",
   inputSchema: {
     question: z.string().describe("The question to ask all council members. Be specific and give enough context."),
     models: z.array(z.string()).optional().describe("Model pool names to consult (e.g. ['opus', 'sonnet', 'gpt54']). Defaults to all configured models."),
@@ -137,9 +138,10 @@ server.registerTool("convene_council", {
 // Tool 2: Read project memory
 server.registerTool("read_hive_memory", {
   description:
-    "Read accumulated project intelligence — facts, conventions, decisions, and open questions. " +
-    "For targeted lookups, prefer search_memory instead. " +
-    "Set source to 'index' for a lightweight summary (loaded at session start).",
+    "Use when you need the full picture of a project's accumulated intelligence — facts, " +
+    "conventions, decisions, open questions — not a targeted lookup. For a specific question, " +
+    "use search_memory instead (it ranks by relevance and strengthens recalled entries). " +
+    "Set source to 'index' for the lightweight summary already loaded at session start.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     section: z.enum(["all", "facts", "conventions", "decisions", "questions"]).optional().describe("Which section to read. Defaults to 'all'."),
@@ -178,7 +180,12 @@ server.registerTool("read_hive_memory", {
 
 // Tool 3: Write project memory
 server.registerTool("write_hive_memory", {
-  description: "Record a new fact, convention, decision, or open question in project memory. Use proactively when you learn something durable about the project. Tags help with search — use them to categorize entries by topic.",
+  description:
+    "Use immediately when you learn something durable in this session — a convention discovered, " +
+    "a decision made with rationale, a constraint or gotcha worth remembering, or an open " +
+    "question. Don't batch to end-of-session. Mid-session writes queue to a candidates file; " +
+    "the nightly verifier admits them to canon. Reach for it freely — the night is the gatekeeper. " +
+    "Tags help with search; use them to categorize.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     type: z.enum(["fact", "convention", "decision", "question"]).describe("What kind of memory to record."),
@@ -209,9 +216,11 @@ server.registerTool("write_hive_memory", {
 // Tool 4: Batch reflect session learnings
 server.registerTool("reflect_session", {
   description:
-    "Batch-write session learnings to project memory. Writes to both the session log (raw capture) " +
-    "and knowledge file (compiled intelligence). Rebuilds the index afterward. " +
-    "Use at end of a substantive session to record durable facts, conventions, decisions, or open questions.",
+    "Use at the end of a substantive session to batch-record durable learnings (facts, " +
+    "conventions, decisions, open questions). Skip if the session was trivial. " +
+    "Like write_hive_memory, mid-session reflections queue to a candidates file; the nightly " +
+    "verifier admits them. Writes to the session log (raw capture) regardless, and rebuilds " +
+    "the index.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     learnings: z.array(z.object({
@@ -274,12 +283,13 @@ server.registerTool("reflect_session", {
 // Tool 5: Search project memory
 server.registerTool("search_memory", {
   description:
-    "Search across all layers of project memory — knowledge (compiled facts, conventions, decisions) " +
-    "and session logs (raw daily capture). Results are ranked by BM25 relevance combined with entry " +
-    "strength (entries recalled more often rank higher). Searching also strengthens recalled entries, " +
-    "so frequently useful knowledge persists longer. " +
-    "Use this to answer questions like 'what do we know about auth?' or 'what decisions have we made about the API?'. " +
-    "Prefer this over read_hive_memory when looking for something specific.",
+    "Use BEFORE recommending in a domain you've worked in, BEFORE proposing a pattern, or " +
+    "WHEN something feels familiar — a previous session probably learned it. The session-start " +
+    "index is a summary, not the full library; search_memory is the actual library. " +
+    "Searches knowledge (compiled facts, conventions, decisions, questions) and session logs, " +
+    "ranked by BM25 × entry strength. Searching strengthens recalled entries, so the act of " +
+    "searching makes the memory smarter over time. Prefer this over read_hive_memory for " +
+    "anything specific.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     query: z.string().describe("Search query — matches against entry text and tags."),
