@@ -14,6 +14,10 @@ import {
 import { writeDailySessions } from "../lib/sessions";
 import { promoteReflections } from "../lib/reflections";
 import { buildConditionReport, writeConditionReport } from "../lib/condition";
+import {
+  runProjectExtractor,
+  runReflectionExtractor,
+} from "../lib/extract";
 
 function parseFlagsAndArgs(args: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -49,6 +53,10 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory promote                      Promote unprocessed reflections to memory
   hive memory condition [--hours N] [--top-k N] [--dry-run]
                                            Pass A: build the nightly signal report
+  hive memory extract-project <name> [--date YYYY-MM-DD]
+                                           Pass B: Sonnet extracts candidates per project
+  hive memory extract-reflections [--date YYYY-MM-DD]
+                                           Pass C: Sonnet extracts cross-project reflections
   hive memory --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
@@ -89,6 +97,60 @@ export async function memoryCommand(args: string[]): Promise<void> {
       `  ${report.totals.projectCount} projects · ${report.totals.sessionCount} sessions · ` +
         `${report.totals.exchangeCount} exchanges · ${report.totals.commitCount} commits · ` +
         `${report.totals.ticketsMoved} tickets moved`,
+    );
+    return;
+  }
+
+  if (subcommand === "extract-project") {
+    const target = positional[1];
+    if (!target) {
+      throw new UsageError(
+        "Project name required.\n\nhive memory extract-project <name> [--date YYYY-MM-DD]",
+      );
+    }
+    let date = new Date().toISOString().slice(0, 10);
+    const rest = positional.slice(2);
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--date") date = rest[++i] ?? date;
+    }
+
+    console.log(`Pass B (Sonnet) — extracting candidates for ${target} (${date})…`);
+    const { outputPath, result } = await runProjectExtractor({
+      paths,
+      projectId: target,
+      date,
+    });
+    const u = result.usage;
+    console.log(`Wrote ${result.candidates.length} candidate(s) to ${outputPath}`);
+    if (result.rejected > 0) {
+      console.log(`  Rejected ${result.rejected} malformed item(s) from model output.`);
+    }
+    console.log(
+      `  Model: ${u.provider}/${u.model} · ` +
+        `tokens in/out: ${u.inputTokens ?? "?"}/${u.outputTokens ?? "?"} · ` +
+        `${u.durationMs ? `${u.durationMs}ms` : "duration ?"}`,
+    );
+    return;
+  }
+
+  if (subcommand === "extract-reflections") {
+    let date = new Date().toISOString().slice(0, 10);
+    const rest = positional.slice(1);
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--date") date = rest[++i] ?? date;
+    }
+
+    console.log(`Pass C (Sonnet) — extracting cross-project reflections (${date})…`);
+    const { outputPath, result } = await runReflectionExtractor({ paths, date });
+    const u = result.usage;
+    console.log(`Wrote ${result.candidates.length} reflection candidate(s) to ${outputPath}`);
+    if (result.rejected > 0) {
+      console.log(`  Rejected ${result.rejected} malformed item(s) from model output.`);
+    }
+    console.log(
+      `  Model: ${u.provider}/${u.model} · ` +
+        `tokens in/out: ${u.inputTokens ?? "?"}/${u.outputTokens ?? "?"} · ` +
+        `${u.durationMs ? `${u.durationMs}ms` : "duration ?"}`,
     );
     return;
   }

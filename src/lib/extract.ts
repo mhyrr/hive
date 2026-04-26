@@ -1,0 +1,542 @@
+// Pass B + C extractors. Single-model Sonnet calls that read the day's
+// signal and emit structured candidate JSON for the verifier (Pass V) to admit.
+//
+// docs/specs/2026-04-26-memory-design.md §Pass B + Pass C
+
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
+import { completePiText, type PiTextCompletion } from "./pi";
+import type { HivePaths } from "./paths";
+import { readProjectMemorySnapshot } from "./memory";
+import type { ConditionReport, ProjectSignal } from "./condition";
+
+const DEFAULT_PROVIDER = "anthropic";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
+
+function extractorModel(): { provider: string; modelId: string } {
+  const override = process.env.HIVE_EXTRACT_MODEL;
+  if (override && override.includes("/")) {
+    const [provider, modelId] = override.split("/", 2);
+    return { provider: provider!, modelId: modelId! };
+  }
+  return {
+    provider: process.env.HIVE_EXTRACT_PROVIDER || DEFAULT_PROVIDER,
+    modelId: override || DEFAULT_MODEL,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// JSON parsing — tolerant of code fences and stray prose around the array
+// ---------------------------------------------------------------------------
+
+export function parseExtractionJson(raw: string): unknown[] {
+  let text = raw.trim();
+
+  // Strip ``` or ```json fences if present
+  const fenceMatch = text.match(/^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/);
+  if (fenceMatch) text = fenceMatch[1]!.trim();
+
+  // Try direct parse first (the cleanest case)
+  try {
+    const direct = JSON.parse(text);
+    if (Array.isArray(direct)) return direct;
+    if (direct && Array.isArray((direct as { candidates?: unknown[] }).candidates)) {
+      return (direct as { candidates: unknown[] }).candidates;
+    }
+  } catch {
+    // fall through to bracket-extraction
+  }
+
+  // Last resort: grab the first balanced [...] in the text
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start >= 0 && end > start) {
+    const slice = text.slice(start, end + 1);
+    try {
+      const parsed = JSON.parse(slice);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // give up
+    }
+  }
+
+  throw new Error(
+    `Could not parse extractor output as JSON array. First 200 chars: ${raw.slice(0, 200)}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Schema validation
+// ---------------------------------------------------------------------------
+
+const PROJECT_TYPES = new Set(["fact", "convention", "decision", "question"]);
+
+export interface ProjectCandidate {
+  type: "fact" | "convention" | "decision" | "question";
+  content: string;
+  tags: string[];
+  provenance: string;
+  supersedes_hint?: string;
+}
+
+export function validateProjectCandidate(obj: unknown): ProjectCandidate | null {
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  if (typeof o.type !== "string" || !PROJECT_TYPES.has(o.type)) return null;
+  if (typeof o.content !== "string" || !o.content.trim()) return null;
+  if (typeof o.provenance !== "string" || !o.provenance.trim()) return null;
+  const tags = Array.isArray(o.tags)
+    ? o.tags.filter((t): t is string => typeof t === "string").map((t) => t.toLowerCase())
+    : [];
+  return {
+    type: o.type as ProjectCandidate["type"],
+    content: o.content.trim(),
+    tags,
+    provenance: o.provenance.trim(),
+    ...(typeof o.supersedes_hint === "string" && o.supersedes_hint.trim()
+      ? { supersedes_hint: o.supersedes_hint.trim() }
+      : {}),
+  };
+}
+
+const REFLECTION_SUBJECTS = new Set(["greg", "maya", "system"]);
+
+export interface ReflectionCandidate {
+  subject: "greg" | "maya" | "system";
+  content: string;
+  tags: string[];
+  provenance: string;
+}
+
+export function validateReflectionCandidate(obj: unknown): ReflectionCandidate | null {
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  const subj = typeof o.subject === "string" ? o.subject.toLowerCase() : null;
+  if (!subj || !REFLECTION_SUBJECTS.has(subj)) return null;
+  if (typeof o.content !== "string" || !o.content.trim()) return null;
+  if (typeof o.provenance !== "string" || !o.provenance.trim()) return null;
+  const tags = Array.isArray(o.tags)
+    ? o.tags.filter((t): t is string => typeof t === "string").map((t) => t.toLowerCase())
+    : [];
+  return {
+    subject: subj as ReflectionCandidate["subject"],
+    content: o.content.trim(),
+    tags,
+    provenance: o.provenance.trim(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pass B — Project extraction prompts
+// ---------------------------------------------------------------------------
+
+const PROJECT_SYSTEM_PROMPT = `You are a memory extractor for HIVE, a project-intelligence system that powers a craftsman's daily work.
+
+Your job: read the day's signal for ONE project — top exchanges from sessions, git activity, ticket movement — and extract durable learnings as structured candidates. Another model (Opus, the verifier) will read your output and decide what lands in canon.
+
+A learning is durable if:
+- It will help a session a month from now (a constraint, decision rationale, gotcha, convention)
+- It is non-obvious from the code or git history alone — i.e. someone reading the codebase later wouldn't reach this insight without the conversational context
+- It can stand on its own without the surrounding exchange
+
+Skip ruthlessly:
+- Task status, work-in-progress, "currently doing X", "next we'll Y"
+- Anything already captured in the project's existing knowledge.md (provided below)
+- Speculative observations or ones with weak grounding
+- User preferences or working-style observations — those go to a separate self-reflection channel
+- Anything obvious from a glance at the code or commit messages
+
+Output format: ONE valid JSON array. No prose, no commentary, no code fences.
+
+Each element:
+{
+  "type": "fact" | "convention" | "decision" | "question",
+  "content": "string under 600 chars, single line, no markdown headers",
+  "tags": ["lowercase", "short", "topic-style"],
+  "provenance": "brief reference to the source — e.g. 'topRanked[2] — Greg said: <short quote>' or 'commit <subject> — <why this matters>'",
+  "supersedes_hint": "optional — if this clearly replaces an existing canon entry, paste a short snippet of that entry here. The verifier decides whether to honor."
+}
+
+Type discipline:
+- fact: a durable truth about the project (architecture, constraint, dependency, gotcha)
+- convention: an established way of working ("we always X", "never Y")
+- decision: a deliberate choice with rationale, dated implicitly to today
+- question: an open question worth tracking across sessions
+
+If the day yielded no durable learnings for this project, return [].`;
+
+interface BuildProjectUserContentOpts {
+  projectId: string;
+  signal: ProjectSignal;
+  knowledgeText: string;
+  date: string;
+}
+
+export function buildProjectExtractionUserContent(
+  opts: BuildProjectUserContentOpts,
+): string {
+  const { projectId, signal, knowledgeText, date } = opts;
+  const sections: string[] = [];
+
+  sections.push(`# Pass B — Project extraction
+Project: ${projectId}
+Date: ${date}
+`);
+
+  sections.push(`## Existing canon (knowledge.md — do not duplicate these)
+
+${knowledgeText.trim() || "(empty — this is a fresh project)"}
+`);
+
+  sections.push(`## Git activity (last ${signal.git.commits} commit(s))
+
+${signal.git.commits === 0
+    ? "(no commits in window)"
+    : signal.git.subjects.map((s) => `- ${s}`).join("\n") +
+      `\n\nDiff: +${signal.git.insertions} −${signal.git.deletions} across ${signal.git.filesChanged} file(s)`}
+`);
+
+  if (signal.tickets.moved.length > 0) {
+    sections.push(`## Tickets that moved
+
+${signal.tickets.moved.map((t) => `- ${t.id} [${t.status}] ${t.title}`).join("\n")}
+`);
+  }
+
+  if (signal.sessions.topRanked.length > 0) {
+    const previews = signal.sessions.topRanked
+      .map((r, i) => {
+        const tags: string[] = [];
+        if (r.alwaysInclude) tags.push("always-include");
+        if (r.novelty < 0.3) tags.push("low-novelty");
+        const tagStr = tags.length > 0 ? ` (${tags.join(", ")})` : "";
+        return `### topRanked[${i}] — ${r.role}${tagStr}\n> ${r.preview}`;
+      })
+      .join("\n\n");
+    sections.push(`## Top-ranked exchanges (${signal.sessions.exchangeCount} total in window)
+
+${previews}
+`);
+  } else {
+    sections.push(`## Sessions
+
+(no session exchanges in window)
+`);
+  }
+
+  sections.push(`## Output
+
+Return a JSON array of candidates per the system prompt. Be conservative — three excellent candidates beat ten mediocre ones.`);
+
+  return sections.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Pass C — Self-reflection extraction prompts
+// ---------------------------------------------------------------------------
+
+const REFLECTION_SYSTEM_PROMPT = `You are a self-reflection extractor for HIVE.
+
+Your job: read the day's signal across ALL projects and surface durable observations about three subjects:
+- "greg" — communication style, work patterns, what he values, how he gives feedback, friction points
+- "maya" — Maya's tool habits, voice, productive moves, anti-patterns to learn from, recurring blind spots
+- "system" — what's working in HIVE itself, what's friction, brittle paths, automation that earns its keep
+
+A reflection is durable if it's broader than today — it would help a session a month from now calibrate working style or system design. One observation grounded in two pieces of evidence beats five speculative ones.
+
+Skip:
+- One-off events without a pattern
+- Observations already captured in IDENTITY.md / SELF.md / AGENTS.md (provided below)
+- Project-specific decisions or constraints — those are extracted in a separate per-project pass
+- Vague platitudes ("Greg likes good code") — observations must be specific and actionable
+
+Output format: ONE valid JSON array. No prose, no fences.
+
+{
+  "subject": "greg" | "maya" | "system",
+  "content": "string under 600 chars, single line, specific and concrete",
+  "tags": ["lowercase", "short"],
+  "provenance": "brief reference — e.g. 'project=hive, topRanked[3] — Greg pushed back on length cap, accepted the tighter version'"
+}
+
+If the day yielded no durable reflections, return [].`;
+
+interface BuildReflectionUserContentOpts {
+  identityText: string; // bundled IDENTITY + SELF + AGENTS
+  report: ConditionReport;
+  date: string;
+}
+
+export function buildReflectionExtractionUserContent(
+  opts: BuildReflectionUserContentOpts,
+): string {
+  const { identityText, report, date } = opts;
+  const sections: string[] = [];
+
+  sections.push(`# Pass C — Self-reflection extraction
+Date: ${date}
+`);
+
+  sections.push(`## Existing identity layer (do not restate what's here)
+
+${identityText.trim() || "(empty)"}
+`);
+
+  for (const project of report.projects) {
+    if (project.sessions.topRanked.length === 0 && project.git.commits === 0) continue;
+    const previews = project.sessions.topRanked
+      .slice(0, 10) // cap per-project to keep input bounded
+      .map((r, i) => `- [${i}] ${r.role}: "${r.preview}"`)
+      .join("\n");
+    sections.push(`### Project: ${project.projectName}
+
+Git: ${project.git.commits} commit(s), +${project.git.insertions}/−${project.git.deletions}.
+Top exchanges:
+${previews || "(none)"}
+`);
+  }
+
+  sections.push(`## Output
+
+Return a JSON array of reflection candidates. Three sharp ones beat fifteen vague ones.`);
+
+  return sections.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Extractor invocation
+// ---------------------------------------------------------------------------
+
+export interface ExtractorCallResult<T> {
+  candidates: T[];
+  rejected: number;
+  raw: string;
+  usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    durationMs: number | null;
+    provider: string;
+    model: string;
+  };
+}
+
+export type ModelCaller = (input: {
+  provider: string;
+  modelId: string;
+  systemPrompt: string;
+  userContent: string;
+}) => Promise<PiTextCompletion>;
+
+const defaultCaller: ModelCaller = (input) => completePiText(input);
+
+export async function callProjectExtractor(
+  systemPrompt: string,
+  userContent: string,
+  caller: ModelCaller = defaultCaller,
+): Promise<ExtractorCallResult<ProjectCandidate>> {
+  const { provider, modelId } = extractorModel();
+  const response = await caller({ provider, modelId, systemPrompt, userContent });
+  const raw = response.text;
+  const parsed = parseExtractionJson(raw);
+  let rejected = 0;
+  const candidates: ProjectCandidate[] = [];
+  for (const item of parsed) {
+    const valid = validateProjectCandidate(item);
+    if (valid) candidates.push(valid);
+    else rejected++;
+  }
+  return {
+    candidates,
+    rejected,
+    raw,
+    usage: {
+      inputTokens: response.inputTokens,
+      outputTokens: response.outputTokens,
+      durationMs: response.durationMs,
+      provider: response.provider,
+      model: response.model,
+    },
+  };
+}
+
+export async function callReflectionExtractor(
+  systemPrompt: string,
+  userContent: string,
+  caller: ModelCaller = defaultCaller,
+): Promise<ExtractorCallResult<ReflectionCandidate>> {
+  const { provider, modelId } = extractorModel();
+  const response = await caller({ provider, modelId, systemPrompt, userContent });
+  const raw = response.text;
+  const parsed = parseExtractionJson(raw);
+  let rejected = 0;
+  const candidates: ReflectionCandidate[] = [];
+  for (const item of parsed) {
+    const valid = validateReflectionCandidate(item);
+    if (valid) candidates.push(valid);
+    else rejected++;
+  }
+  return {
+    candidates,
+    rejected,
+    raw,
+    usage: {
+      inputTokens: response.inputTokens,
+      outputTokens: response.outputTokens,
+      durationMs: response.durationMs,
+      provider: response.provider,
+      model: response.model,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Top-level orchestration — read condition.json + canon, call extractor, write JSON
+// ---------------------------------------------------------------------------
+
+export async function loadConditionReport(
+  paths: HivePaths,
+  date: string,
+): Promise<ConditionReport> {
+  const file = join(paths.memoryRunsDir, date, "condition.json");
+  const raw = await Bun.file(file).text();
+  return JSON.parse(raw) as ConditionReport;
+}
+
+export async function loadProjectKnowledgeText(
+  paths: HivePaths,
+  projectId: string,
+): Promise<string> {
+  const snap = await readProjectMemorySnapshot(paths, projectId).catch(() => null);
+  if (!snap) return "";
+  const lines: string[] = [];
+  if (snap.facts.length > 0) {
+    lines.push("## Facts");
+    for (const f of snap.facts) if (!f.superseded) lines.push(`- ${f.text}`);
+    lines.push("");
+  }
+  if (snap.conventions.length > 0) {
+    lines.push("## Conventions");
+    for (const c of snap.conventions) if (!c.superseded) lines.push(`- ${c.text}`);
+    lines.push("");
+  }
+  if (snap.decisions.length > 0) {
+    lines.push("## Decisions");
+    for (const d of snap.decisions) if (!d.superseded) lines.push(`- [${d.ts}] ${d.text}`);
+    lines.push("");
+  }
+  if (snap.questions.length > 0) {
+    lines.push("## Open questions");
+    for (const q of snap.questions) if (!q.superseded) lines.push(`- ${q.text}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+export async function loadIdentityText(paths: HivePaths): Promise<string> {
+  const files = [paths.identity, paths.self, paths.agents];
+  const sections: string[] = [];
+  for (const file of files) {
+    try {
+      sections.push(await Bun.file(file).text());
+    } catch {
+      // skip missing files
+    }
+  }
+  return sections.join("\n\n---\n\n");
+}
+
+export async function writeJsonArtifact(
+  filePath: string,
+  payload: unknown,
+): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  await Bun.write(filePath, JSON.stringify(payload, null, 2));
+}
+
+// Convenience surfaces used by the CLI.
+
+export interface RunProjectExtractorOptions {
+  paths: HivePaths;
+  projectId: string;
+  date: string;
+  caller?: ModelCaller;
+}
+
+export async function runProjectExtractor(
+  opts: RunProjectExtractorOptions,
+): Promise<{ outputPath: string; result: ExtractorCallResult<ProjectCandidate> }> {
+  const report = await loadConditionReport(opts.paths, opts.date);
+  const signal = report.projects.find((p) => p.projectName === opts.projectId);
+  if (!signal) {
+    throw new Error(
+      `Project "${opts.projectId}" not present in condition.json for ${opts.date}. Run \`hive memory condition\` first.`,
+    );
+  }
+  const knowledgeText = await loadProjectKnowledgeText(opts.paths, opts.projectId);
+  const userContent = buildProjectExtractionUserContent({
+    projectId: opts.projectId,
+    signal,
+    knowledgeText,
+    date: opts.date,
+  });
+  const result = await callProjectExtractor(
+    PROJECT_SYSTEM_PROMPT,
+    userContent,
+    opts.caller,
+  );
+  const outputPath = join(
+    opts.paths.memoryRunsDir,
+    opts.date,
+    `candidates.B.${opts.projectId}.json`,
+  );
+  await writeJsonArtifact(outputPath, {
+    pass: "B",
+    project: opts.projectId,
+    date: opts.date,
+    extractedAt: new Date().toISOString(),
+    candidates: result.candidates,
+    rejected: result.rejected,
+    usage: result.usage,
+  });
+  return { outputPath, result };
+}
+
+export interface RunReflectionExtractorOptions {
+  paths: HivePaths;
+  date: string;
+  caller?: ModelCaller;
+}
+
+export async function runReflectionExtractor(
+  opts: RunReflectionExtractorOptions,
+): Promise<{ outputPath: string; result: ExtractorCallResult<ReflectionCandidate> }> {
+  const report = await loadConditionReport(opts.paths, opts.date);
+  const identityText = await loadIdentityText(opts.paths);
+  const userContent = buildReflectionExtractionUserContent({
+    identityText,
+    report,
+    date: opts.date,
+  });
+  const result = await callReflectionExtractor(
+    REFLECTION_SYSTEM_PROMPT,
+    userContent,
+    opts.caller,
+  );
+  const outputPath = join(opts.paths.memoryRunsDir, opts.date, "candidates.C.json");
+  await writeJsonArtifact(outputPath, {
+    pass: "C",
+    date: opts.date,
+    extractedAt: new Date().toISOString(),
+    candidates: result.candidates,
+    rejected: result.rejected,
+    usage: result.usage,
+  });
+  return { outputPath, result };
+}
+
+// Exposed for tests + downstream tooling.
+export const __PROMPTS = {
+  project: PROJECT_SYSTEM_PROMPT,
+  reflection: REFLECTION_SYSTEM_PROMPT,
+};
