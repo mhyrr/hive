@@ -22,6 +22,7 @@ node_modules/
 
 # Claude Code runtime artifacts
 /.claude/scheduled_tasks.lock
+/.claude/worktrees/
 
 # Playwright MCP traces (regenerated on every run)
 /.playwright-mcp/
