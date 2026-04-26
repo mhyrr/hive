@@ -13,6 +13,7 @@ import {
 } from "../lib/memory";
 import { writeDailySessions } from "../lib/sessions";
 import { promoteReflections } from "../lib/reflections";
+import { buildConditionReport, writeConditionReport } from "../lib/condition";
 
 function parseFlagsAndArgs(args: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -46,18 +47,57 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory index                        Rebuild the project memory index
   hive memory reflect                      Batch-write learnings from stdin (JSON)
   hive memory promote                      Promote unprocessed reflections to memory
+  hive memory condition [--hours N] [--top-k N] [--dry-run]
+                                           Pass A: build the nightly signal report
   hive memory --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
   const { flags, positional } = parseFlagsAndArgs(args);
+
+  const subcommand = positional[0];
+
+  // Cross-project subcommands — don't require a project context.
+  if (subcommand === "condition") {
+    const rest = positional.slice(1);
+    let hours = 24;
+    let topK = 30;
+    let dryRun = false;
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i]!;
+      if (a === "--hours") hours = Number(rest[++i]) || 24;
+      else if (a === "--top-k") topK = Number(rest[++i]) || 30;
+      else if (a === "--dry-run") dryRun = true;
+    }
+
+    const report = await buildConditionReport(paths, {
+      hoursWindow: hours,
+      topK,
+    });
+
+    if (dryRun) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+
+    if (report.trivial) {
+      console.log(`Today was light: ${report.trivialReason}.`);
+    }
+
+    const out = await writeConditionReport(paths, report);
+    console.log(`Condition report → ${out}`);
+    console.log(
+      `  ${report.totals.projectCount} projects · ${report.totals.sessionCount} sessions · ` +
+        `${report.totals.exchangeCount} exchanges · ${report.totals.commitCount} commits · ` +
+        `${report.totals.ticketsMoved} tickets moved`,
+    );
+    return;
+  }
 
   const projectId = flags.project ?? resolveProjectFromCwd();
 
   if (!projectId) {
     throw new UsageError("No project found. Register one with: hive project add <name> <path>");
   }
-
-  const subcommand = positional[0];
 
   if (subcommand === "promote") {
     const result = await promoteReflections(paths, projectId);

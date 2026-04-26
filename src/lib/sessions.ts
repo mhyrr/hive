@@ -4,6 +4,7 @@ import { join, basename } from "node:path";
 
 import { getHivePaths, listProjects } from "./paths";
 import { parseFrontmatter } from "./frontmatter";
+import { buildCorpus, bm25Score, tokenize } from "./memory";
 
 interface SessionMeta {
   pid: number;
@@ -15,9 +16,17 @@ interface SessionMeta {
   name: string;
 }
 
-interface ExtractedExchange {
+export interface ExtractedExchange {
   role: "user" | "assistant";
   text: string;
+}
+
+export interface RankedExchange {
+  exchange: ExtractedExchange;
+  score: number;
+  tokenCount: number;
+  novelty: number;
+  alwaysInclude: boolean;
 }
 
 interface SessionSummary {
@@ -331,4 +340,120 @@ export async function writeDailySessions(hoursAgo: number = 24): Promise<string>
   await Bun.write(outputPath, content);
 
   return outputPath;
+}
+
+// ---------------------------------------------------------------------------
+// Ranking (V1 Pass A) — replaces 50KB-by-recency with signal-based selection
+// ---------------------------------------------------------------------------
+
+// Patterns where the user is explicitly asking to remember / capture something.
+// Matches override the score; the exchange always lands in the report.
+const ALWAYS_INCLUDE_PATTERNS: RegExp[] = [
+  /\bsave (?:this|that)\b/i,
+  /\b(?:please )?remember (?:this|that)\b/i,
+  /\bwrite (?:this|that) down\b/i,
+  /\btake note\b/i,
+  /\bdon'?t forget\b/i,
+  /\blet'?s remember\b/i,
+  /\b(?:write|save|put) (?:this|that)? ?(?:in|to) memory\b/i,
+];
+
+export function hasAlwaysIncludeMarker(text: string): boolean {
+  return ALWAYS_INCLUDE_PATTERNS.some((p) => p.test(text));
+}
+
+// Rough token estimate — 4 chars/token. Cheap and good enough for ranking.
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * Score how novel an exchange is relative to the project's existing canon.
+ * Returns 1.0 for "fully novel" (corpus empty or no overlap), approaching 0
+ * as the exchange's words match canonical entries more strongly.
+ *
+ * Uses BM25 with the exchange as query and each canon entry as a document;
+ * takes the max score and inverts it so high overlap → low novelty.
+ */
+export function noveltyScore(exchangeText: string, knowledgeTexts: string[]): number {
+  if (knowledgeTexts.length === 0) return 1.0;
+  const corpus = buildCorpus(knowledgeTexts);
+  let bestMatch = 0;
+  for (const doc of knowledgeTexts) {
+    const score = bm25Score(exchangeText, doc, corpus);
+    if (score > bestMatch) bestMatch = score;
+  }
+  // BM25 scores are positive and unbounded; map to (0, 1] decreasing.
+  return 1 / (1 + bestMatch);
+}
+
+/**
+ * Rank exchanges by signal: tokenCount × novelty, plus a forced inclusion
+ * for any exchange that contains an always-include marker.
+ *
+ * Returns the same exchanges sorted descending by score, with diagnostics
+ * attached so the consumer can choose how many to take.
+ */
+export function rankExchanges(
+  exchanges: ExtractedExchange[],
+  knowledgeTexts: string[],
+): RankedExchange[] {
+  const ranked: RankedExchange[] = [];
+
+  for (const exchange of exchanges) {
+    if (!exchange.text.trim()) continue;
+    if (tokenize(exchange.text).length === 0) continue;
+
+    const tokenCount = estimateTokens(exchange.text);
+    const novelty = noveltyScore(exchange.text, knowledgeTexts);
+    const alwaysInclude = hasAlwaysIncludeMarker(exchange.text);
+
+    // Always-include exchanges get a large boost so they sort to the top
+    // regardless of length or novelty. Greg said save it; save it.
+    const baseScore = tokenCount * novelty;
+    const score = alwaysInclude ? baseScore + 1_000_000 : baseScore;
+
+    ranked.push({ exchange, score, tokenCount, novelty, alwaysInclude });
+  }
+
+  ranked.sort((a, b) => b.score - a.score);
+  return ranked;
+}
+
+// ---------------------------------------------------------------------------
+// Raw exchange extraction (V1 Pass A) — no truncation, grouped by project
+// ---------------------------------------------------------------------------
+
+export interface ProjectExchanges {
+  projectName: string;
+  exchanges: ExtractedExchange[];
+  sessionCount: number;
+}
+
+/**
+ * Find recent sessions and extract every exchange, grouped by HIVE project.
+ * Used by Pass A conditioning. No 50KB cap — selection happens via
+ * rankExchanges + budget at the consumer.
+ */
+export async function extractAllRecentExchanges(
+  hoursAgo: number = 24,
+): Promise<ProjectExchanges[]> {
+  const recentByProject = findRecentSessions(hoursAgo);
+  const result: ProjectExchanges[] = [];
+
+  for (const [encodedPath, jsonlFiles] of recentByProject) {
+    const projectName = await resolveProjectName(encodedPath);
+    const allExchanges: ExtractedExchange[] = [];
+    for (const file of jsonlFiles) {
+      allExchanges.push(...extractExchanges(file));
+    }
+    if (allExchanges.length === 0) continue;
+    result.push({
+      projectName,
+      exchanges: allExchanges,
+      sessionCount: jsonlFiles.length,
+    });
+  }
+
+  return result;
 }
