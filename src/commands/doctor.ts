@@ -2,6 +2,7 @@ import { existsSync, statSync, readdirSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 
+import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
 import { getHivePaths, listProjects } from "../lib/paths";
 import { resolveProjectFromCwd } from "../lib/project";
 import { getTastePaths } from "../lib/taste";
@@ -94,14 +95,13 @@ function checkIdentity(): Check[] {
     });
   }
 
-  // OVERRIDES.md — Opus 4.7 platform counter-weights (tone + pre-fetch)
+  // OVERRIDES.md was retired — pre-fetch directive moved into AGENTS.md.
+  // If a stale file is still on disk, surface a one-line cleanup nudge.
   if (existsSync(paths.overrides)) {
-    checks.push({ status: "pass", label: "OVERRIDES.md (platform counter-weights)" });
-  } else {
     checks.push({
       status: "warn",
-      label: "OVERRIDES.md missing",
-      detail: "Opus 4.7 tone override + pre-fetch directive not loaded. Run: hive init",
+      label: "OVERRIDES.md present but no longer loaded",
+      detail: `Safe to delete: rm ${paths.overrides}`,
     });
   }
 
@@ -120,6 +120,24 @@ function checkIdentity(): Check[] {
           label: "load-identity.sh not executable",
           detail: `Run: chmod +x ${hookPath}`,
         });
+      }
+
+      // Drift guard: live hook must byte-match the canonical template that
+      // ships with this `hive` binary. The hook delegates identity assembly
+      // to the binary, so a stale live hook means the install is out of date.
+      try {
+        const liveContent = readFileSync(hookPath, "utf-8");
+        if (liveContent === LOAD_IDENTITY_HOOK) {
+          checks.push({ status: "pass", label: "load-identity.sh matches canonical template (no drift)" });
+        } else {
+          checks.push({
+            status: "warn",
+            label: "load-identity.sh drifted from canonical template",
+            detail: `Live hook differs from this binary's canonical template. Run: hive init --force-hook`,
+          });
+        }
+      } catch {
+        checks.push({ status: "warn", label: "could not read live hook for drift check" });
       }
     } catch {
       checks.push({ status: "warn", label: "load-identity.sh unreadable" });

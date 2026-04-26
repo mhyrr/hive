@@ -7,6 +7,7 @@ import { dashboardCommand } from "./commands/dashboard";
 import { dispatchCommand } from "./commands/dispatch";
 import { doctorCommand } from "./commands/doctor";
 import { heartbeatCommand } from "./commands/heartbeat";
+import { identityCommand } from "./commands/identity";
 import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
 import { killCommand } from "./commands/kill";
@@ -29,6 +30,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   ticket: ticketCommand,
   dispatch: dispatchCommand,
   heartbeat: heartbeatCommand,
+  identity: identityCommand,
   inbox: inboxCommand,
   kill: killCommand,
   ps: psCommand,
@@ -52,6 +54,7 @@ HIVE Commands:
   ticket [create|list|...]   Project ticket tracker
   dispatch "<goal>" [opts]   Dispatch autonomous goal execution
   heartbeat start|stop|...   Periodic project awareness
+  identity emit              Print canonical identity prefix (used by SessionStart hook)
   inbox                      Show project inbox (clear with: inbox clear)
   kill <run-id>              Kill a running dispatch
   ps                         Show active and recent dispatch runs

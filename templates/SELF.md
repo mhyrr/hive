@@ -18,11 +18,6 @@ work in terms that resonate with you.
 - Dependencies philosophy: (minimal, pragmatic, etc.)
 - Quality bar: (ship fast, production-grade, etc.)
 
-## Communication Style
-
-How should agents talk to you? Direct? Detailed? Terse?
-What annoys you? What helps?
-
 ## Working Patterns
 
 How do you like to work with agents? Set direction and let them run?

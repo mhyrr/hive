@@ -6,32 +6,41 @@ interactive, dispatched, and heartbeat.
 ## The Stack
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│  Soul stack     ~/.hive/{SOUL,IDENTITY,SELF,AGENTS,TRUST}.md   │  always
-│  Project memory ~/.hive/memory/projects/<p>/_index.md          │  interactive
-│  Stack hint     derived from repo markers (mix.exs → elixir)   │  per-project
-│  Reflection     session-end discipline                         │  always
-│  OVERRIDES      ~/.hive/OVERRIDES.md — platform counter-weights│  always (last)
-└────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│ 1. Soul stack     ~/.hive/{SOUL,IDENTITY,SELF,AGENTS,TRUST}.md     │  always
+│ 2. Project memory ~/.hive/memory/projects/<p>/_index.md            │  interactive + dispatch
+│ 3. Stack hint     derived from repo markers (mix.exs → elixir)     │  per-project
+│ 4. Reflection     session-end discipline                           │  always
+│ 5. Taste          ~/.hive/taste/principles.md (+ applications/<d>) │  always (principles); domain on hint (LAST)
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 Order is deliberate. Later content wins interpretation ties in the system
-prompt, so OVERRIDES.md sits last — its tone override and pre-fetch directive
-counter-weight Opus 4.7's literal instruction-following and Claude Code
-2.1.x's length caps.
+prompt, so the taste layer sits last.
 
-## The Three Consumers
+OVERRIDES.md (the old 6th tier) was retired once Claude Code's harness
+behavior settled. The single piece of OVERRIDES that was verifiably
+load-bearing — the MCP tool pre-fetch directive that works around
+ToolSearch deferral — moved into AGENTS.md.
 
-| Consumer           | Mechanism                                 | Source                                |
-| ------------------ | ----------------------------------------- | ------------------------------------- |
-| Interactive session | `~/.claude/hooks/load-identity.sh`       | Shell script, fires at SessionStart + PostCompact |
-| Dispatch (`hive dispatch`) | `--append-system-prompt-file`        | `assembleIdentity()` → `buildCanonicalIdentity()` |
-| Heartbeat (`hive heartbeat tick`) | `--append-system-prompt-file`  | `assembleHeartbeatIdentity()` → `buildCanonicalIdentity()` |
+## Single Source of Truth
 
-The shell hook and `buildCanonicalIdentity()` produce equivalent content
-but don't share a process — keeping shell in the hook avoids Bun startup
-latency on every SessionStart. Heartbeat skips project memory for TK-024
-cache stability; everything else is shared.
+`buildCanonicalIdentity()` in `src/lib/identity.ts` is the only program that
+assembles the identity prefix. All three consumers route through it:
+
+| Consumer            | How it gets the prefix                                       |
+| ------------------- | ------------------------------------------------------------ |
+| Interactive session | `~/.claude/hooks/load-identity.sh` → `hive identity emit`    |
+| Dispatch (`hive dispatch`)         | `--append-system-prompt-file` → `assembleIdentity()`          |
+| Heartbeat (`hive heartbeat tick`)  | `--append-system-prompt-file` → `assembleHeartbeatIdentity()` |
+
+The SessionStart hook is a thin shell wrapper that delegates to the
+`hive identity emit` command. Drift between the shell and TypeScript
+paths is structurally impossible: there is only one program that builds
+the prefix.
+
+Heartbeat skips project memory (TK-024 cache stability) — same code path,
+different option (`includeProjectMemory: false`).
 
 ## Wiring
 
@@ -47,19 +56,47 @@ It's wired in `~/.claude/settings.json`:
 }
 ```
 
-`hive init` installs and wires both. `hive doctor` verifies the wiring.
+`hive init` installs and wires both. `hive doctor` verifies wiring AND
+that the live hook hasn't drifted from `templates/hooks/load-identity.sh`.
 
-## Adding a New Identity File
+If the doctor flags drift, run `hive init --force-hook` to restore the
+canonical wrapper. (User customization belongs in `~/.hive/*.md` files,
+not in the hook.)
 
-1. Add the path to `HivePaths` in `src/lib/paths.ts`
-2. Add the file to `IDENTITY_FILES` in `src/lib/identity.ts` (if it's part
-   of the core soul stack) OR extend `buildCanonicalIdentity()` with a
-   new emission block (if it's a new category, like OVERRIDES was)
+## Adding a New Identity Section
+
+The full add-checklist when introducing a new section to the prefix:
+
+1. If it's a new file path, add it to `HivePaths` in `src/lib/paths.ts`
+2. If it's part of the soul stack, add the filename to `IDENTITY_FILES`
+   in `src/lib/identity.ts`. Otherwise extend `buildCanonicalIdentity()`
+   with a new emission block in the right ordering position.
 3. Create the template at `templates/<name>.md`
 4. Add a `writeIfMissing(paths.X, "<name>.md")` call in `src/commands/init.ts`
-5. Extend `checkIdentity()` in `src/commands/doctor.ts` with a check
-6. Update `~/.claude/hooks/load-identity.sh` AND `templates/hooks/load-identity.sh`
-   if the file's position in the hook output matters
+5. Extend `checkIdentity()` in `src/commands/doctor.ts` with a presence check
+6. Update `src/__tests__/identity.test.ts`:
+   - Seed the new file in the fixture
+   - Add a marker assertion in the "emits all six sections" test
+   - Adjust the canonical ordering list
+7. Update the stack diagram in this file
+
+The bash hook does NOT need updating — it always delegates to
+`hive identity emit`, which calls `assembleIdentity()`, which calls
+`buildCanonicalIdentity()`. The hook is generic plumbing.
+
+## Drift Detection
+
+Two tests guard against the drift that motivated this consolidation:
+
+- `hook ↔ assembleIdentity parity` — runs the template hook in a fixture
+  HIVE_HOME and asserts byte-equality with `assembleIdentity()`. If the
+  hook stops being a pure delegator (e.g. someone adds shell logic), this
+  fails.
+- `live ~/.claude/hooks/load-identity.sh matches the template` — verifies
+  that the installed hook hasn't been hand-edited away from the canonical
+  template. Mirrored by `hive doctor`.
+
+Together they enforce: shell hook == TypeScript code path == installed file.
 
 ## Debugging "Maya Feels Cold"
 
@@ -67,39 +104,23 @@ Run `hive doctor`. Look for FAILs and WARNs in the Identity group. If
 everything is green and Maya still feels off:
 
 1. **Verify you're in a fresh session.** Identity loads at SessionStart
-   (and PostCompact). Old sessions won't pick up hook changes until restart.
-2. **Check OVERRIDES.md content.** It's user-editable — someone may have
-   emptied or corrupted it. Compare against `templates/OVERRIDES.md`.
-3. **Check the model.** `claude --version` should show ≥ 2.1.x. Interactive
+   (and PostCompact). Old sessions won't pick up changes until restart.
+2. **Check the model.** `claude --version` should show ≥ 2.1.x. Interactive
    sessions use whatever `--model` / `~/.claude/settings.json` specifies.
    Dispatch and heartbeat pin to `claude-opus-4-6` by default (override
-   with `--model` or `HIVE_DISPATCH_MODEL` / `HIVE_HEARTBEAT_MODEL` env).
-4. **Dry-run the hook.** `bash ~/.claude/hooks/load-identity.sh | less` —
-   should show soul stack → project index → reflection protocol → OVERRIDES.
+   with `--model` or `HIVE_DISPATCH_MODEL` / `HIVE_HEARTBEAT_MODEL`).
+3. **Dry-run the hook.** `bash ~/.claude/hooks/load-identity.sh | less` —
+   should show soul stack → project memory → stack hint → reflection → taste.
+4. **Dry-run the command directly.** `hive identity emit | less` — same
+   output as the hook. If they differ, the hook drifted (run
+   `hive init --force-hook`).
 5. **Inspect what actually loaded.** In Claude Code, the SessionStart hook
    output appears in the system prompt. If your session shows the base
    prompt but not the HIVE stack, the hook didn't fire. Check settings.json
    wiring.
 
-## Why OVERRIDES.md Exists
-
-Opus 4.7 released on 2026-04-16 with explicit shifts toward [more direct,
-opinionated tone with less validation-forward phrasing and fewer emoji][4.7]
-than 4.6. 4.7 also follows system-prompt instructions more literally, which
-means Claude Code 2.1.x's base cap ("≤100 words final responses unless the
-task requires more detail") bites harder. Combined with 2.1.x's ToolSearch
-tool deferral and the `superpowers:using-superpowers` skill injection,
-HIVE's identity layer was getting outranked.
-
-OVERRIDES.md is a single file of platform counter-weights — tone override
-(define HIVE voice as a task requirement), emoji guidance, and a first-turn
-pre-fetch directive for HIVE MCP tools. It emits last in the injected block
-so later-instruction-wins heuristics favor it.
-
-[4.7]: https://www.anthropic.com/news/claude-opus-4-7
-
 ## Related
 
-- Tickets TK-047 through TK-053 (the epic + phases that built this)
+- Tickets TK-047 through TK-053 (the identity-reconsolidation epic)
 - TK-024 — heartbeat cache stability discipline (why heartbeat skips memory)
 - `docs/memory-architecture.md` — how project memory works

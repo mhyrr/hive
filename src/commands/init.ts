@@ -76,16 +76,27 @@ async function installSkillDirs(destDir: string): Promise<number> {
   return installed;
 }
 
-async function installIdentityHook(): Promise<{ hookInstalled: boolean; wired: boolean }> {
+async function installIdentityHook(opts: { forceHook?: boolean } = {}): Promise<{ hookInstalled: boolean; hookUpdated: boolean; wired: boolean }> {
   const home = process.env.HOME || "";
   const claudeDir = join(home, ".claude");
   const hooksDir = join(claudeDir, "hooks");
   await ensureDirectory(hooksDir);
 
   const hookDest = join(hooksDir, "load-identity.sh");
+  const hookExisted = existsSync(hookDest);
   const hookInstalled = await writeIfMissing(hookDest, "hooks/load-identity.sh");
+  let hookUpdated = false;
+
   if (hookInstalled) {
     await chmod(hookDest, 0o755);
+  } else if (hookExisted && opts.forceHook) {
+    // Force-rewrite: the hook is a thin delegating wrapper; user customization
+    // belongs in ~/.hive/*.md, not the hook itself. --force-hook restores the
+    // canonical wrapper when it has drifted.
+    const { LOAD_IDENTITY_HOOK } = await import("../lib/identity-hook-template");
+    await Bun.write(hookDest, LOAD_IDENTITY_HOOK);
+    await chmod(hookDest, 0o755);
+    hookUpdated = true;
   }
 
   const settingsPath = join(claudeDir, "settings.json");
@@ -116,7 +127,7 @@ async function installIdentityHook(): Promise<{ hookInstalled: boolean; wired: b
     await Bun.write(settingsPath, JSON.stringify(settings, null, 2) + "\n");
   }
 
-  return { hookInstalled, wired };
+  return { hookInstalled, hookUpdated, wired };
 }
 
 function installLaunchAgent(plistName: string): boolean {
@@ -160,7 +171,6 @@ export async function initCommand(args: string[]): Promise<void> {
   await writeIfMissing(paths.self, "SELF.md");
   await writeIfMissing(paths.agents, "AGENTS.md", replacements);
   await writeIfMissing(paths.trust, "TRUST.md", replacements);
-  await writeIfMissing(paths.overrides, "OVERRIDES.md");
   await writeIfMissing(paths.config, "config.md");
 
   // Install HIVE agents and skills to ~/.claude/
@@ -176,9 +186,13 @@ export async function initCommand(args: string[]): Promise<void> {
   }
 
   // Install identity hook at user level and wire SessionStart + PostCompact
-  const identityHook = await installIdentityHook();
+  const forceHook = args.includes("--force-hook");
+  const identityHook = await installIdentityHook({ forceHook });
   if (identityHook.hookInstalled) {
     console.log("Installed identity hook at ~/.claude/hooks/load-identity.sh");
+  }
+  if (identityHook.hookUpdated) {
+    console.log("Updated identity hook to current template (--force-hook)");
   }
   if (identityHook.wired) {
     console.log("Wired SessionStart + PostCompact hooks in ~/.claude/settings.json");
