@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { getHivePaths } from "./paths";
 import { resolveProjectFromCwd } from "./project";
 import { buildStackHint, resolveProjectStack } from "./stack";
+import { buildTasteLayer } from "./taste";
 
 const IDENTITY_FILES = ["SOUL.md", "IDENTITY.md", "SELF.md", "AGENTS.md", "TRUST.md"];
 
@@ -27,6 +28,10 @@ interface CanonicalIdentityOpts {
   includeProjectMemory: boolean;
   /** Include ~/.hive/OVERRIDES.md at the very end (platform counter-weights). */
   includeOverrides: boolean;
+  /** Domain hint for the taste layer. principles.md always loads when present;
+   * applications/<domain>.md loads only when a valid hint is supplied AND the
+   * file exists. Null/undefined = no application slice. */
+  tasteDomainHint?: string | null;
 }
 
 /**
@@ -37,7 +42,8 @@ interface CanonicalIdentityOpts {
  *   2. Project memory — index (lightweight) else full knowledge (skipped if !includeProjectMemory)
  *   3. Stack hint — per-project skill trigger (stable per project)
  *   4. Reflection protocol — session-end discipline
- *   5. OVERRIDES.md — platform counter-weights (last = loudest)
+ *   5. Taste layer — principles.md + optional applications/<domain>.md
+ *   6. OVERRIDES.md — platform counter-weights (last = loudest)
  *
  * Byte-stability: with `includeProjectMemory: false`, the output is stable
  * across invocations for a fixed projectId (soul files + stack hint + reflection
@@ -82,7 +88,15 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
   // 4. Reflection protocol
   parts.push(REFLECTION_PROTOCOL);
 
-  // 5. Platform counter-weights — LAST so they carry the most weight
+  // 5. Taste layer (between reflection and overrides; overrides stays loudest)
+  const taste = await buildTasteLayer(opts.tasteDomainHint);
+  if (taste) {
+    parts.push("\n---\n");
+    parts.push(taste);
+    parts.push("\n");
+  }
+
+  // 6. Platform counter-weights — LAST so they carry the most weight
   if (opts.includeOverrides && existsSync(paths.overrides)) {
     const content = await Bun.file(paths.overrides).text();
     parts.push("\n---\n");
@@ -93,11 +107,18 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
   return parts.join("\n");
 }
 
-export async function assembleIdentity(): Promise<string> {
+export type AssembleIdentityOpts = {
+  /** Domain for the taste layer. Loads applications/<domain>.md alongside
+   * principles.md. Null/undefined loads only principles.md. */
+  tasteDomainHint?: string | null;
+};
+
+export async function assembleIdentity(opts: AssembleIdentityOpts = {}): Promise<string> {
   return buildCanonicalIdentity({
     projectId: resolveProjectFromCwd(),
     includeProjectMemory: true,
     includeOverrides: true,
+    tasteDomainHint: opts.tasteDomainHint ?? null,
   });
 }
 
@@ -131,8 +152,8 @@ export function getIdentityName(): string {
   }
 }
 
-export async function writeIdentityTempFile(): Promise<string> {
-  const content = await assembleIdentity();
+export async function writeIdentityTempFile(opts: AssembleIdentityOpts = {}): Promise<string> {
+  const content = await assembleIdentity(opts);
   const tempPath = join(tmpdir(), `hive-identity-${process.pid}.md`);
   await Bun.write(tempPath, content);
   return tempPath;

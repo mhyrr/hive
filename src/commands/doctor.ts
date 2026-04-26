@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { getHivePaths, listProjects } from "../lib/paths";
 import { resolveProjectFromCwd } from "../lib/project";
+import { getTastePaths } from "../lib/taste";
 
 type Status = "pass" | "warn" | "fail";
 type Check = { status: Status; label: string; detail?: string };
@@ -221,6 +222,47 @@ async function checkStaleClaudeMd(): Promise<Check[]> {
 
   if (checks.length === 0) {
     checks.push({ status: "pass", label: "no stale identity blocks in registered CLAUDE.md files" });
+  }
+
+  return checks;
+}
+
+function checkTaste(): Check[] {
+  const checks: Check[] = [];
+  const paths = getTastePaths();
+
+  if (!existsSync(paths.root)) {
+    // Optional layer; absence is not a failure.
+    checks.push({
+      status: "warn",
+      label: "taste/ not configured",
+      detail: `Optional. Drop principles into ${paths.principles} to enable.`,
+    });
+    return checks;
+  }
+
+  if (existsSync(paths.principles)) {
+    checks.push({ status: "pass", label: "taste/principles.md" });
+  } else {
+    checks.push({
+      status: "warn",
+      label: "taste/ exists but principles.md missing",
+      detail: `Layer won't load until ${paths.principles} is present.`,
+    });
+  }
+
+  if (existsSync(paths.applicationsDir)) {
+    try {
+      const entries = readdirSync(paths.applicationsDir).filter((f) => f.endsWith(".md"));
+      if (entries.length > 0) {
+        const domains = entries.map((f) => f.replace(/\.md$/, "")).sort().join(", ");
+        checks.push({ status: "pass", label: `taste/applications: ${domains}` });
+      } else {
+        checks.push({ status: "warn", label: "taste/applications/ empty" });
+      }
+    } catch {
+      checks.push({ status: "warn", label: "taste/applications/ unreadable" });
+    }
   }
 
   return checks;
@@ -479,6 +521,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
   const groups: { heading: string; checks: Check[] }[] = [
     { heading: "Core", checks: checkCore() },
     { heading: "Identity", checks: checkIdentity() },
+    { heading: "Taste", checks: checkTaste() },
     { heading: "MCP", checks: checkMcp() },
     { heading: "Models", checks: checkModels() },
     { heading: "Scheduler", checks: checkScheduler() },
