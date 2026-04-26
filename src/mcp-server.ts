@@ -19,12 +19,12 @@ import { getHivePaths, listProjects, resolveHiveHome } from "./lib/paths";
 import {
   readProjectMemorySnapshot,
   readProjectMemorySection,
-  appendProjectMemory,
   appendToLog,
+  appendCandidate,
+  appendCandidates,
   searchMemory,
   formatSearchResults,
   rebuildIndex,
-  supersedeEntry,
   type MemorySection,
 } from "./lib/memory";
 import { parseFrontmatter } from "./lib/frontmatter";
@@ -178,22 +178,24 @@ server.registerTool("read_hive_memory", {
   return { content: [{ type: "text" as const, text: `# Project Memory: ${projectId}\n\n${output}` }] };
 });
 
-// Tool 3: Write project memory
+// Tool 3: Queue a memory candidate for verifier admission
 server.registerTool("write_hive_memory", {
   description:
     "Use immediately when you learn something durable in this session — a convention discovered, " +
     "a decision made with rationale, a constraint or gotcha worth remembering, or an open " +
     "question. Don't batch to end-of-session. Mid-session writes queue to a candidates file; " +
     "the nightly verifier admits them to canon. Reach for it freely — the night is the gatekeeper. " +
-    "Tags help with search; use them to categorize.",
+    "Tags help with search; use them to categorize. Provenance is auto-attached; use " +
+    "provenance_note to add context the verifier should weigh (e.g. 'Greg said X in design walk').",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     type: z.enum(["fact", "convention", "decision", "question"]).describe("What kind of memory to record."),
     content: z.string().describe("The text to record."),
     tags: z.array(z.string()).optional().describe("Topic tags for this entry (e.g. ['auth', 'security']). Lowercase, short."),
-    supersedes: z.string().optional().describe("If this replaces an existing entry, provide the text of the old entry. The old entry will be marked as superseded."),
+    supersedes: z.string().optional().describe("Hint: text of an existing entry this candidate would replace. The verifier decides whether to honor the supersede."),
+    provenance_note: z.string().optional().describe("Optional context for the verifier — what was said, by whom, in what flow. Strengthens the candidate's chance of admission."),
   },
-}, async ({ project, type, content, tags, supersedes }) => {
+}, async ({ project, type, content, tags, supersedes, provenance_note }) => {
   const paths = getHivePaths();
   const projectId = project ?? resolveProjectFromCwd();
 
@@ -204,23 +206,35 @@ server.registerTool("write_hive_memory", {
     };
   }
 
-  if (supersedes) {
-    await supersedeEntry(paths, projectId, type as MemorySection, supersedes, content, tags ?? []);
-  } else {
-    await appendProjectMemory(paths, projectId, type as MemorySection, content, tags ?? []);
-  }
+  const candidate = await appendCandidate(paths, projectId, {
+    type: type as MemorySection,
+    content,
+    tags: tags ?? [],
+    provenanceNote: provenance_note,
+    supersedesHint: supersedes,
+  });
 
-  return { content: [{ type: "text" as const, text: `Recorded ${type} in ${projectId} memory.` }] };
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text:
+          `Queued ${type} candidate for ${projectId}. ` +
+          `Nothing in canon yet — the nightly verifier admits, supersedes, or rejects.\n` +
+          `provenance: ${candidate.provenance}`,
+      },
+    ],
+  };
 });
 
-// Tool 4: Batch reflect session learnings
+// Tool 4: Batch-queue session learnings as candidates
 server.registerTool("reflect_session", {
   description:
     "Use at the end of a substantive session to batch-record durable learnings (facts, " +
     "conventions, decisions, open questions). Skip if the session was trivial. " +
-    "Like write_hive_memory, mid-session reflections queue to a candidates file; the nightly " +
-    "verifier admits them. Writes to the session log (raw capture) regardless, and rebuilds " +
-    "the index.",
+    "Like write_hive_memory, reflections queue to a candidates file; the nightly verifier " +
+    "admits them. Raw learnings still land in the session log for archival. " +
+    "provenance_note attaches to every candidate in the batch.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     learnings: z.array(z.object({
@@ -228,8 +242,9 @@ server.registerTool("reflect_session", {
       content: z.string().describe("The text to record."),
       tags: z.array(z.string()).optional().describe("Topic tags (e.g. ['auth', 'api']). Lowercase."),
     })).describe("Array of learnings to record."),
+    provenance_note: z.string().optional().describe("Optional shared context for the whole batch — e.g. 'closing reflection on the V1 design walk'."),
   },
-}, async ({ project, learnings }) => {
+}, async ({ project, learnings, provenance_note }) => {
   const paths = getHivePaths();
   const projectId = project ?? resolveProjectFromCwd();
 
@@ -244,37 +259,46 @@ server.registerTool("reflect_session", {
     return { content: [{ type: "text" as const, text: "No learnings provided. Nothing to record." }] };
   }
 
-  const counts: Record<string, number> = {};
   const errors: string[] = [];
 
-  // Write to session log (raw capture)
+  // Raw capture — survives even if the verifier rejects the candidate.
   try {
-    await appendToLog(paths, projectId, learnings.map((l) => ({ type: l.type as MemorySection, content: l.content })));
+    await appendToLog(
+      paths,
+      projectId,
+      learnings.map((l) => ({ type: l.type as MemorySection, content: l.content })),
+    );
   } catch (err) {
     errors.push(`log: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Write to knowledge (compiled)
-  for (const item of learnings) {
-    try {
-      await appendProjectMemory(paths, projectId, item.type as MemorySection, item.content, item.tags ?? []);
-      counts[item.type] = (counts[item.type] ?? 0) + 1;
-    } catch (err) {
-      errors.push(`${item.type}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  // Rebuild index
+  // Queue candidates — no canon write, no index rebuild. The verifier owns those.
+  let queued: Awaited<ReturnType<typeof appendCandidates>> = [];
   try {
-    await rebuildIndex(paths, projectId);
+    queued = await appendCandidates(
+      paths,
+      projectId,
+      learnings.map((l) => ({
+        type: l.type as MemorySection,
+        content: l.content,
+        tags: l.tags ?? [],
+        provenanceNote: provenance_note,
+      })),
+    );
   } catch (err) {
-    errors.push(`index: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`candidates: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  const counts: Record<string, number> = {};
+  for (const c of queued) counts[c.type] = (counts[c.type] ?? 0) + 1;
   const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}(s)`).join(", ");
-  let text = `Recorded ${summary} in ${projectId} memory (knowledge + log). Index rebuilt.`;
+
+  let text =
+    `Queued ${summary} as candidates in ${projectId}. Raw entries also written to log. ` +
+    `Nothing in canon — the nightly verifier admits, supersedes, or rejects.`;
+  if (queued[0]) text += `\nprovenance: ${queued[0].provenance}`;
   if (errors.length > 0) {
-    text += `\n\nSkipped ${errors.length} invalid entries:\n${errors.map(e => `- ${e}`).join("\n")}`;
+    text += `\n\nSkipped ${errors.length} invalid entries:\n${errors.map((e) => `- ${e}`).join("\n")}`;
   }
 
   return { content: [{ type: "text" as const, text }] };

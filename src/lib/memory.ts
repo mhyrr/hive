@@ -1052,3 +1052,154 @@ export function formatSearchResults(results: SearchResult[], query: string): str
 
   return lines.join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Candidates — mid-session writes pending nightly verifier admission.
+// docs/specs/2026-04-26-memory-design.md §Mid-session memory writes
+// ---------------------------------------------------------------------------
+
+export type Candidate = {
+  type: MemorySection;
+  content: string;
+  tags: string[];
+  provenance: string;        // auto-attached at write time
+  provenanceNote?: string;   // optional enrichment from caller
+  supersedesHint?: string;   // hint for Pass V; verifier still owns the call
+  writtenAt: string;         // ISO UTC
+};
+
+export type CandidateInput = {
+  type: MemorySection;
+  content: string;
+  tags?: string[];
+  provenanceNote?: string;
+  supersedesHint?: string;
+};
+
+const CANDIDATES_HEADER =
+  "# Candidates — pending verifier admission. Each line below is a JSON object.\n";
+
+export function candidatesPath(paths: HivePaths, projectId: string): string {
+  return join(memoryProjectDir(paths, projectId), "candidates.md");
+}
+
+function defaultProvenance(now: Date = new Date()): string {
+  // No real session ID at MCP-call time; pid + UTC time is enough for the
+  // verifier to correlate against the day's session digest.
+  const hh = String(now.getUTCHours()).padStart(2, "0");
+  const mm = String(now.getUTCMinutes()).padStart(2, "0");
+  const ss = String(now.getUTCSeconds()).padStart(2, "0");
+  return `session:pid-${process.pid} — agent-write at ${hh}:${mm}:${ss}Z`;
+}
+
+async function ensureCandidatesFile(paths: HivePaths, projectId: string): Promise<string> {
+  await ensureProjectMemoryDir(paths, projectId);
+  const file = candidatesPath(paths, projectId);
+  if (!(await Bun.file(file).exists())) {
+    await Bun.write(file, CANDIDATES_HEADER);
+  }
+  return file;
+}
+
+export async function appendCandidate(
+  paths: HivePaths,
+  projectId: string,
+  input: CandidateInput,
+  options: { now?: Date; provenanceOverride?: string } = {},
+): Promise<Candidate> {
+  const cleaned = validateMemoryEntry(input.content);
+  const now = options.now ?? new Date();
+  const candidate: Candidate = {
+    type: input.type,
+    content: cleaned,
+    tags: (input.tags ?? []).map((t) => t.toLowerCase()),
+    provenance: options.provenanceOverride ?? defaultProvenance(now),
+    writtenAt: now.toISOString(),
+    ...(input.provenanceNote ? { provenanceNote: input.provenanceNote } : {}),
+    ...(input.supersedesHint ? { supersedesHint: input.supersedesHint } : {}),
+  };
+
+  const file = await ensureCandidatesFile(paths, projectId);
+  const existing = await Bun.file(file).text();
+  const sep = existing.endsWith("\n") ? "" : "\n";
+  await Bun.write(file, existing + sep + JSON.stringify(candidate) + "\n");
+
+  return candidate;
+}
+
+export async function appendCandidates(
+  paths: HivePaths,
+  projectId: string,
+  inputs: CandidateInput[],
+  options: { now?: Date; provenanceOverride?: string } = {},
+): Promise<Candidate[]> {
+  if (inputs.length === 0) return [];
+  const file = await ensureCandidatesFile(paths, projectId);
+  const lines: string[] = [];
+  const candidates: Candidate[] = [];
+  // Same wall-clock for the batch; provenance time matches the reflect call.
+  const batchNow = options.now ?? new Date();
+
+  for (const input of inputs) {
+    const cleaned = validateMemoryEntry(input.content);
+    const candidate: Candidate = {
+      type: input.type,
+      content: cleaned,
+      tags: (input.tags ?? []).map((t) => t.toLowerCase()),
+      provenance: options.provenanceOverride ?? defaultProvenance(batchNow),
+      writtenAt: batchNow.toISOString(),
+      ...(input.provenanceNote ? { provenanceNote: input.provenanceNote } : {}),
+      ...(input.supersedesHint ? { supersedesHint: input.supersedesHint } : {}),
+    };
+    candidates.push(candidate);
+    lines.push(JSON.stringify(candidate));
+  }
+
+  const existing = await Bun.file(file).text();
+  const sep = existing.endsWith("\n") ? "" : "\n";
+  await Bun.write(file, existing + sep + lines.join("\n") + "\n");
+  return candidates;
+}
+
+export async function readCandidates(
+  paths: HivePaths,
+  projectId: string,
+): Promise<Candidate[]> {
+  const file = candidatesPath(paths, projectId);
+  if (!(await Bun.file(file).exists())) return [];
+  const content = await Bun.file(file).text();
+  const out: Candidate[] = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj === "object" && obj.type && obj.content) {
+        out.push(obj as Candidate);
+      }
+    } catch {
+      // Skip malformed lines — append-safety means we tolerate corruption.
+    }
+  }
+  return out;
+}
+
+/**
+ * Move the live candidates.md aside (typically into runs/{DATE}/) and reset
+ * the live file to just its header. Used by Pass F (Apply) after verify.
+ */
+export async function drainCandidates(
+  paths: HivePaths,
+  projectId: string,
+  destPath: string,
+): Promise<{ drained: number; destPath: string }> {
+  const file = candidatesPath(paths, projectId);
+  if (!(await Bun.file(file).exists())) {
+    return { drained: 0, destPath };
+  }
+  const content = await Bun.file(file).text();
+  const candidates = await readCandidates(paths, projectId);
+  await Bun.write(destPath, content);
+  await Bun.write(file, CANDIDATES_HEADER);
+  return { drained: candidates.length, destPath };
+}
