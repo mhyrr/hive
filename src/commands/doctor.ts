@@ -269,19 +269,6 @@ function checkTaste(): Check[] {
     });
   }
 
-  if (existsSync(paths.applicationsDir)) {
-    try {
-      const entries = readdirSync(paths.applicationsDir).filter((f) => f.endsWith(".md"));
-      if (entries.length > 0) {
-        const domains = entries.map((f) => f.replace(/\.md$/, "")).sort().join(", ");
-        checks.push({ status: "pass", label: `taste/applications: ${domains}` });
-      } else {
-        checks.push({ status: "warn", label: "taste/applications/ empty" });
-      }
-    } catch {
-      checks.push({ status: "warn", label: "taste/applications/ unreadable" });
-    }
-  }
 
   return checks;
 }
@@ -371,7 +358,6 @@ function checkScheduler(): Check[] {
     "com.hive.heartbeat",
     "com.hive.nightly",
     "com.hive.sync",
-    "com.hive.morning",
     "com.hive.dashboard",
   ];
 

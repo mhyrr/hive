@@ -1,9 +1,17 @@
 # Taste — Design
 
-**Status:** Draft (V0 shipped; V1 unbuilt)
+**Status:** V1 collapsed to principles-only (2026-04-27). V0 shipped.
 **Date:** 2026-04-26
 **Author:** Maya (with Greg)
 **Ticket:** TK-063
+
+> **2026-04-27 update — V1 scope collapse.** During the memory V1 cutover,
+> the per-domain `applications/` tree, `exemplars/`, `source-material.md`,
+> `pending.md`, and the `--taste <domain>` flag were all removed. Taste
+> now lives at one altitude: `~/.hive/taste/principles.md` loads in the
+> identity prefix and Pass V (Opus verify) reads the same principles during
+> the nightly run. The original mining/applications design below is kept
+> as historical record but is not what's running.
 
 ## Summary
 

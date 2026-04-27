@@ -37,11 +37,10 @@ async function seedHive(hiveDir: string, projectId: string, projectPath: string)
   await mkdir(memDir, { recursive: true });
   await writeFile(join(memDir, "_index.md"), "# project-memory-marker\n");
 
-  // Taste layer (principles always loads)
+  // Taste layer — principles.md is the only artifact in V1.
   const tasteDir = join(hiveDir, "taste");
-  await mkdir(join(tasteDir, "applications"), { recursive: true });
+  await mkdir(tasteDir, { recursive: true });
   await writeFile(join(tasteDir, "principles.md"), "# taste-principles-marker\n");
-  await writeFile(join(tasteDir, "applications", "prose.md"), "# taste-prose-marker\n");
 }
 
 beforeEach(async () => {
@@ -99,15 +98,8 @@ describe("assembleIdentity", () => {
     expect(tail.trim()).toBe("");
   });
 
-  test("loads taste application slice when domain hint provided", async () => {
-    const out = await assembleIdentity({ tasteDomainHint: "prose" });
-    expect(out).toContain("taste-prose-marker");
-    expect(out).toContain("taste-principles-marker");
-  });
-
-  test("omits taste application slice when no domain hint", async () => {
+  test("loads only principles.md — no per-domain applications layer in V1", async () => {
     const out = await assembleIdentity();
-    expect(out).not.toContain("taste-prose-marker");
     expect(out).toContain("taste-principles-marker");
   });
 });

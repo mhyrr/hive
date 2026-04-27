@@ -18,7 +18,6 @@ import { stackCommand } from "./commands/stack";
 import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
 import { writeIdentityTempFile, cleanupIdentityTempFile, getIdentityName } from "./lib/identity";
-import { TASTE_DOMAIN_RE, listTasteDomains } from "./lib/taste";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: initCommand,
@@ -63,46 +62,8 @@ HIVE Commands:
 ${name} (Claude with identity):
   hive                       Interactive ${name} session
   hive "fix the auth bug"    ${name} with a prompt
-  hive --taste prose "..."   Load the taste layer for the named domain
   hive --agent maya-coder    ${name} with a specific agent
   hive [any claude flags]    Passed through to claude with identity`;
-}
-
-/**
- * Extract the HIVE-specific `--taste <domain>` flag from args.
- * Returns the parsed domain (or null) and the remaining args (claude-only).
- * Throws UsageError on missing/invalid value.
- */
-function extractTasteFlag(args: string[]): { domain: string | null; remainingArgs: string[] } {
-  const remaining: string[] = [];
-  let domain: string | null = null;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (arg === "--taste") {
-      const next = args[i + 1];
-      if (!next || next.startsWith("-")) {
-        throw new UsageError("--taste requires a domain (e.g. --taste prose)");
-      }
-      if (!TASTE_DOMAIN_RE.test(next)) {
-        throw new UsageError(`Invalid taste domain '${next}'. Use lowercase letters, digits, and hyphens.`);
-      }
-      domain = next;
-      i++;
-      continue;
-    }
-    if (arg.startsWith("--taste=")) {
-      const value = arg.slice("--taste=".length);
-      if (!TASTE_DOMAIN_RE.test(value)) {
-        throw new UsageError(`Invalid taste domain '${value}'. Use lowercase letters, digits, and hyphens.`);
-      }
-      domain = value;
-      continue;
-    }
-    remaining.push(arg);
-  }
-
-  return { domain, remainingArgs: remaining };
 }
 
 function findClaude(): string {
@@ -115,8 +76,8 @@ function findClaude(): string {
   }
 }
 
-async function launchClaude(args: string[], opts: { tasteDomainHint?: string | null } = {}): Promise<void> {
-  const identityFile = await writeIdentityTempFile(opts);
+async function launchClaude(args: string[]): Promise<void> {
+  const identityFile = await writeIdentityTempFile();
 
   // Clean up on exit
   process.on("exit", cleanupIdentityTempFile);
@@ -179,25 +140,7 @@ async function main(): Promise<void> {
   }
 
   // Everything else → pass through to claude with identity.
-  // Strip and parse the HIVE-specific --taste flag here; everything else
-  // forwards to claude untouched.
-  let domain: string | null = null;
-  let remainingArgs = args;
-  try {
-    ({ domain, remainingArgs } = extractTasteFlag(args));
-  } catch (error) {
-    if (error instanceof UsageError) {
-      console.error(error.message);
-      const available = await listTasteDomains();
-      if (available.length > 0) {
-        console.error(`Available domains: ${available.join(", ")}`);
-      }
-      process.exit(1);
-    }
-    throw error;
-  }
-
-  await launchClaude(remainingArgs, { tasteDomainHint: domain });
+  await launchClaude(args);
 }
 
 main().catch((error) => {

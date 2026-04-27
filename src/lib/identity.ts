@@ -14,10 +14,6 @@ interface CanonicalIdentityOpts {
   projectId?: string | null;
   /** Include the project's memory index/knowledge. Heartbeat sets false for cache stability. */
   includeProjectMemory: boolean;
-  /** Domain hint for the taste layer. principles.md always loads when present;
-   * applications/<domain>.md loads only when a valid hint is supplied AND the
-   * file exists. Null/undefined = no application slice. */
-  tasteDomainHint?: string | null;
 }
 
 /**
@@ -28,7 +24,7 @@ interface CanonicalIdentityOpts {
  *      (Session-reflection discipline lives in AGENTS.md, not as a separate section)
  *   2. Project memory — index (lightweight) else full knowledge (skipped if !includeProjectMemory)
  *   3. Stack hint — per-project skill trigger (stable per project)
- *   4. Taste layer — principles.md + optional applications/<domain>.md (last = loudest)
+ *   4. Taste layer — principles.md (last = loudest)
  *
  * Byte-stability: with `includeProjectMemory: false`, the output is stable
  * across invocations for a fixed projectId (soul files + stack hint mutate
@@ -71,7 +67,7 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
   }
 
   // 4. Taste layer — LAST so it carries the most weight in interpretation ties
-  const taste = await buildTasteLayer(opts.tasteDomainHint);
+  const taste = await buildTasteLayer();
   if (taste) {
     parts.push("\n---\n");
     parts.push(taste);
@@ -81,17 +77,10 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
   return parts.join("\n");
 }
 
-export type AssembleIdentityOpts = {
-  /** Domain for the taste layer. Loads applications/<domain>.md alongside
-   * principles.md. Null/undefined loads only principles.md. */
-  tasteDomainHint?: string | null;
-};
-
-export async function assembleIdentity(opts: AssembleIdentityOpts = {}): Promise<string> {
+export async function assembleIdentity(): Promise<string> {
   return buildCanonicalIdentity({
     projectId: resolveProjectFromCwd(),
     includeProjectMemory: true,
-    tasteDomainHint: opts.tasteDomainHint ?? null,
   });
 }
 
@@ -123,8 +112,8 @@ export function getIdentityName(): string {
   }
 }
 
-export async function writeIdentityTempFile(opts: AssembleIdentityOpts = {}): Promise<string> {
-  const content = await assembleIdentity(opts);
+export async function writeIdentityTempFile(): Promise<string> {
+  const content = await assembleIdentity();
   const tempPath = join(tmpdir(), `hive-identity-${process.pid}.md`);
   await Bun.write(tempPath, content);
   return tempPath;
