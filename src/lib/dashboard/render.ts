@@ -18,6 +18,9 @@ import type {
   RunEntry,
   TicketBuckets,
   TicketCitation,
+  OpenQuestion,
+  RecentMemoryEntry,
+  RunUsageSnapshot,
 } from "./collect";
 import { DASHBOARD_CSS } from "./styles";
 import { DASHBOARD_JS } from "./script";
@@ -571,6 +574,140 @@ ${rows}
 </section>`;
 }
 
+// ---------------------------------------------------------------------------
+// V1 cross-cutting widgets — Group 7 of the memory redesign.
+// ---------------------------------------------------------------------------
+
+export function renderOpenQuestions(questions: OpenQuestion[] | undefined): string {
+  if (!questions || questions.length === 0) {
+    return `
+<section class="section" id="section-open-questions">
+  <div class="section-head"><h2>Open Questions</h2><span class="kicker">None</span></div>
+  <hr class="amber"/>
+  <p>No open questions across projects.</p>
+</section>`;
+  }
+  // Group by project for readable scanning.
+  const byProject = new Map<string, OpenQuestion[]>();
+  for (const q of questions) {
+    if (!byProject.has(q.projectId)) byProject.set(q.projectId, []);
+    byProject.get(q.projectId)!.push(q);
+  }
+  const blocks = [...byProject.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([projectId, items]) => {
+      const rows = items
+        .map((q) => {
+          const tagSpan = q.tags.length > 0
+            ? ` <span class="tag-list">${q.tags.map((t) => `<code>${escapeHtml(t)}</code>`).join(" ")}</span>`
+            : "";
+          return `<li>${escapeHtml(q.text)}${tagSpan}</li>`;
+        })
+        .join("\n");
+      return `<div class="project-block" data-project="${escapeHtml(projectId)}">
+  <h3>${escapeHtml(projectId)} <span class="status-tag ready">${items.length}</span></h3>
+  <ul class="bare">${rows}</ul>
+</div>`;
+    })
+    .join("\n");
+
+  return `
+<section class="section" id="section-open-questions">
+  <div class="section-head">
+    <h2>Open Questions</h2>
+    <span class="kicker">${questions.length} across ${byProject.size} project${byProject.size === 1 ? "" : "s"}</span>
+  </div>
+  <hr class="amber"/>
+  <div class="open-questions">
+${blocks}
+  </div>
+</section>`;
+}
+
+export function renderRecentMemory(entries: RecentMemoryEntry[] | undefined): string {
+  if (!entries || entries.length === 0) {
+    return `
+<section class="section" id="section-recent-memory">
+  <div class="section-head"><h2>Recent Memory</h2><span class="kicker">Quiet week</span></div>
+  <hr class="amber"/>
+  <p>No memory activity in the last 7 days.</p>
+</section>`;
+  }
+  const rows = entries
+    .map((e) => {
+      const tagSpan = e.tags.length > 0
+        ? ` <span class="tag-list">${e.tags.map((t) => `<code>${escapeHtml(t)}</code>`).join(" ")}</span>`
+        : "";
+      const recentLabel = e.lastRecalled ? `recalled ${e.lastRecalled}` : `created ${e.createdAt}`;
+      return `<li class="memory-row" data-project="${escapeHtml(e.projectId)}">
+  <span class="meta"><strong>${escapeHtml(e.projectId)}</strong> · ${escapeHtml(e.section)} · str ${e.strength.toFixed(2)} · ${escapeHtml(recentLabel)}</span>
+  <span class="text">${escapeHtml(e.text)}${tagSpan}</span>
+</li>`;
+    })
+    .join("\n");
+
+  return `
+<section class="section" id="section-recent-memory">
+  <div class="section-head">
+    <h2>Recent Memory</h2>
+    <span class="kicker">${entries.length} entries · last 7 days, by strength</span>
+  </div>
+  <hr class="amber"/>
+  <ul class="memory-list">
+${rows}
+  </ul>
+</section>`;
+}
+
+export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
+  if (!usage || !usage.available) {
+    const date = usage?.date ?? new Date().toISOString().slice(0, 10);
+    return `
+<section class="section" id="section-run-usage">
+  <div class="section-head"><h2>Run cost</h2><span class="kicker">${escapeHtml(date)}</span></div>
+  <hr class="amber"/>
+  <p>No nightly run on file for ${escapeHtml(date)}.</p>
+</section>`;
+  }
+  const rows = usage.passes
+    .map((p) => {
+      const projectLabel = p.project ? ` · ${escapeHtml(p.project)}` : "";
+      const duration = p.durationMs ? `${(p.durationMs / 1000).toFixed(1)}s` : "—";
+      return `<tr>
+  <td><strong>Pass ${escapeHtml(p.pass)}</strong>${projectLabel}</td>
+  <td>${escapeHtml(p.model)}</td>
+  <td class="num">${p.inputTokens.toLocaleString()}</td>
+  <td class="num">${p.outputTokens.toLocaleString()}</td>
+  <td class="num">${duration}</td>
+  <td class="num"><strong>${escapeHtml(p.usdFormatted)}</strong></td>
+</tr>`;
+    })
+    .join("\n");
+
+  return `
+<section class="section" id="section-run-usage">
+  <div class="section-head">
+    <h2>Run cost</h2>
+    <span class="kicker">${escapeHtml(usage.date)} · ${usage.passes.length} pass${usage.passes.length === 1 ? "" : "es"}</span>
+  </div>
+  <hr class="amber"/>
+  <div class="run-usage">
+    <p class="run-usage-total">
+      <strong>${escapeHtml(usage.totalUsdFormatted)}</strong>
+      &nbsp;·&nbsp; ${usage.totalInputTokens.toLocaleString()} input + ${usage.totalOutputTokens.toLocaleString()} output tokens
+    </p>
+    <table class="run-usage-table">
+      <thead>
+        <tr><th>Pass</th><th>Model</th><th>In</th><th>Out</th><th>Time</th><th>Cost</th></tr>
+      </thead>
+      <tbody>
+${rows}
+      </tbody>
+    </table>
+  </div>
+</section>`;
+}
+
 export function renderRuns(runs: RunEntry[], c: RenderContext): string {
   if (runs.length === 0) return "";
 
@@ -663,6 +800,9 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     renderProjects(data, c),
     renderInboxes(data.inboxes, c),
     renderTickets(data.tickets, c),
+    renderOpenQuestions(data.openQuestions),
+    renderRecentMemory(data.recentMemory),
+    renderRunUsage(data.runUsage),
     renderRuns(data.runs, c),
     renderArchive(data, c),
     renderFooter(data),

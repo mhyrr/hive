@@ -13,6 +13,15 @@ import { join } from "node:path";
 import { type HivePaths, listProjects, getProjectPaths } from "../paths";
 import { parseFrontmatter } from "../frontmatter";
 import { listTickets, type Ticket, type TicketPriority } from "../ticket";
+import {
+  readProjectMemorySnapshot,
+  readMeta,
+  entryHash,
+  entryStrength,
+  daysBetween as daysBetweenStrings,
+  type MemorySection,
+} from "../memory";
+import { loadUsageSummary, formatUsd } from "../pricing";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,6 +87,54 @@ export type BriefingEntry = {
   headline: string;         // first H1/H2 or first meaningful line
 };
 
+export type PromotionCandidate = {
+  projectId: string;
+  text: string;              // entry text
+  section: "convention" | "fact";
+  strength: number;          // current entryStrength score
+  recallCount: number;
+  ageDays: number;           // days since createdAt
+  createdAt: string;         // YYYY-MM-DD
+};
+
+export type OpenQuestion = {
+  projectId: string;
+  text: string;
+  tags: string[];
+};
+
+export type RecentMemoryEntry = {
+  projectId: string;
+  section: MemorySection;
+  text: string;
+  tags: string[];
+  createdAt: string;
+  lastRecalled: string | null;
+  strength: number;
+};
+
+export type RunUsagePassEntry = {
+  pass: "B" | "C" | "V";
+  project: string | null;
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  usd: number;
+  usdFormatted: string;
+  durationMs: number | null;
+};
+
+export type RunUsageSnapshot = {
+  date: string;
+  available: boolean;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalUsd: number;
+  totalUsdFormatted: string;
+  passes: RunUsagePassEntry[];
+};
+
 export type DashboardData = {
   generatedAt: string;
   volumeNumber: number;     // count of briefings (proxy for "days since install")
@@ -89,6 +146,11 @@ export type DashboardData = {
   runs: RunEntry[];
   briefings: BriefingEntry[];
   todayBriefing: BriefingEntry | null;
+  promotionCandidates: PromotionCandidate[];
+  // V1 cross-cutting widgets — Group 7.
+  openQuestions: OpenQuestion[];
+  recentMemory: RecentMemoryEntry[];
+  runUsage: RunUsageSnapshot;
 };
 
 // ---------------------------------------------------------------------------
@@ -392,17 +454,197 @@ export async function collectBriefings(paths: HivePaths): Promise<BriefingEntry[
 }
 
 // ---------------------------------------------------------------------------
+// Promotion candidates — memory entries that have earned a look for CLAUDE.md
+// ---------------------------------------------------------------------------
+
+/**
+ * Conventions (and high-strength facts) that have persisted long enough and
+ * been recalled enough to be worth promoting to a project's CLAUDE.md.
+ *
+ * Criteria (V1):
+ *   - section === "convention" (start narrow; facts can be added later)
+ *   - ageDays >= 14 (created at least two weeks ago — past the impulsive-write zone)
+ *   - strength >= 2.0 (means recalled at least once and not heavily decayed)
+ *
+ * Returns sorted by strength descending. No marking/dismiss state in V1 —
+ * humans copy what they want into CLAUDE.md; entries that don't get used
+ * keep getting recalled (and stay candidates) or fade naturally.
+ */
+const PROMOTION_MIN_AGE_DAYS = 14;
+const PROMOTION_MIN_STRENGTH = 2.0;
+const PROMOTION_PER_PROJECT_CAP = 10;
+
+export async function collectPromotionCandidates(paths: HivePaths): Promise<PromotionCandidate[]> {
+  const projectIds = await listProjects(paths);
+  const today = new Date().toISOString().slice(0, 10);
+  const all: PromotionCandidate[] = [];
+
+  for (const projectId of projectIds) {
+    let snapshot;
+    let meta;
+    try {
+      snapshot = await readProjectMemorySnapshot(paths, projectId);
+      meta = await readMeta(paths, projectId);
+    } catch {
+      continue; // Project has no memory yet, or unreadable
+    }
+
+    const conventions = snapshot.conventions.filter((c) => !c.superseded);
+    const candidates: PromotionCandidate[] = [];
+
+    for (const c of conventions) {
+      const entryMeta = meta.entries[entryHash(c.text)];
+      const strength = entryStrength(entryMeta);
+      const ageDays = entryMeta ? daysBetween(entryMeta.createdAt, today) : 0;
+
+      if (ageDays < PROMOTION_MIN_AGE_DAYS) continue;
+      if (strength < PROMOTION_MIN_STRENGTH) continue;
+
+      candidates.push({
+        projectId,
+        text: c.text,
+        section: "convention",
+        strength,
+        recallCount: entryMeta?.recallCount ?? 0,
+        ageDays,
+        createdAt: entryMeta?.createdAt ?? "unknown",
+      });
+    }
+
+    candidates.sort((a, b) => b.strength - a.strength);
+    all.push(...candidates.slice(0, PROMOTION_PER_PROJECT_CAP));
+  }
+
+  // Cross-project sort by strength so the dashboard surfaces the strongest first.
+  all.sort((a, b) => b.strength - a.strength);
+  return all;
+}
+
+// ---------------------------------------------------------------------------
+// V1 cross-cutting widgets — open questions, recent memory, run usage.
+// ---------------------------------------------------------------------------
+
+const RECENT_MEMORY_WINDOW_DAYS = 7;
+const RECENT_MEMORY_LIMIT = 25;
+
+export async function collectOpenQuestions(paths: HivePaths): Promise<OpenQuestion[]> {
+  const ids = await listProjects(paths.projectsDir);
+  const out: OpenQuestion[] = [];
+  for (const projectId of ids) {
+    let snap;
+    try {
+      snap = await readProjectMemorySnapshot(paths, projectId);
+    } catch {
+      continue;
+    }
+    for (const q of snap.questions) {
+      if (q.superseded) continue;
+      out.push({ projectId, text: q.text, tags: q.tags });
+    }
+  }
+  return out;
+}
+
+export async function collectRecentMemory(
+  paths: HivePaths,
+  options: { windowDays?: number; limit?: number } = {},
+): Promise<RecentMemoryEntry[]> {
+  const windowDays = options.windowDays ?? RECENT_MEMORY_WINDOW_DAYS;
+  const limit = options.limit ?? RECENT_MEMORY_LIMIT;
+  const today = new Date().toISOString().slice(0, 10);
+  const ids = await listProjects(paths.projectsDir);
+  const out: RecentMemoryEntry[] = [];
+
+  for (const projectId of ids) {
+    let snap;
+    let meta;
+    try {
+      snap = await readProjectMemorySnapshot(paths, projectId);
+      meta = await readMeta(paths, projectId);
+    } catch {
+      continue;
+    }
+
+    const sections: Array<{ section: MemorySection; entries: { text: string; tags: string[]; superseded?: boolean }[] }> = [
+      { section: "fact", entries: snap.facts },
+      { section: "convention", entries: snap.conventions },
+      { section: "decision", entries: snap.decisions },
+      { section: "question", entries: snap.questions },
+    ];
+
+    for (const { section, entries } of sections) {
+      for (const e of entries) {
+        if (e.superseded) continue;
+        const m = meta.entries[entryHash(e.text)];
+        if (!m) continue;
+
+        // Active in the last N days: created OR recalled within the window.
+        const ageCreated = daysBetweenStrings(m.createdAt, today);
+        const ageRecalled = m.lastRecalled ? daysBetweenStrings(m.lastRecalled, today) : Infinity;
+        const recencyAge = Math.min(ageCreated, ageRecalled);
+        if (recencyAge > windowDays) continue;
+
+        out.push({
+          projectId,
+          section,
+          text: e.text,
+          tags: e.tags,
+          createdAt: m.createdAt,
+          lastRecalled: m.lastRecalled,
+          strength: entryStrength(m),
+        });
+      }
+    }
+  }
+
+  out.sort((a, b) => b.strength - a.strength);
+  return out.slice(0, limit);
+}
+
+export async function collectRunUsage(
+  paths: HivePaths,
+  date: string = new Date().toISOString().slice(0, 10),
+): Promise<RunUsageSnapshot> {
+  const summary = await loadUsageSummary(paths, date);
+  const available = summary.records.length > 0;
+  const passes: RunUsagePassEntry[] = summary.records.map((r) => ({
+    pass: r.pass,
+    project: r.project ?? null,
+    provider: r.provider,
+    model: r.model,
+    inputTokens: r.inputTokens,
+    outputTokens: r.outputTokens,
+    usd: r.cost.totalUsd,
+    usdFormatted: formatUsd(r.cost.totalUsd),
+    durationMs: r.durationMs,
+  }));
+  return {
+    date,
+    available,
+    totalInputTokens: summary.totals.inputTokens,
+    totalOutputTokens: summary.totals.outputTokens,
+    totalUsd: summary.totals.totalUsd,
+    totalUsdFormatted: formatUsd(summary.totals.totalUsd),
+    passes,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Top-level
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
     collectTickets(paths),
     collectRuns(paths),
     collectBriefings(paths),
+    collectPromotionCandidates(paths),
+    collectOpenQuestions(paths),
+    collectRecentMemory(paths),
+    collectRunUsage(paths),
   ]);
 
   const today = briefings[0]?.date ?? new Date().toISOString().slice(0, 10);
@@ -419,5 +661,9 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     runs,
     briefings,
     todayBriefing,
+    promotionCandidates,
+    openQuestions,
+    recentMemory,
+    runUsage,
   };
 }
