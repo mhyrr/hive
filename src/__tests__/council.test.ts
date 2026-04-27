@@ -20,10 +20,9 @@ const testConfig = `# Test Config
 ## Model Pool
 - opus: claude, claude-opus-4-6, frontier deep work
 - sonnet: claude, claude-sonnet-4-6, general workhorse
+- gpt54: codex, gpt-5.4, OpenAI frontier
+- gemini: gemini-cli, gemini-2.5-pro, Google frontier
 - qwen: ollama, qwen3:4b, local fast triage
-
-pi-provider-claude: anthropic
-pi-auth-anthropic: oauth-only
 `;
 
 // ---------------------------------------------------------------------------
@@ -39,6 +38,27 @@ describe("resolveCouncilMembers", () => {
     expect(members[1]!.model.name).toBe("sonnet");
   });
 
+  test("resolves claude runtime models", () => {
+    const { members } = resolveCouncilMembers(testConfig, ["opus"]);
+    expect(members.length).toBe(1);
+    expect(members[0]!.runtime).toBe("claude");
+    expect(members[0]!.modelId).toBe("claude-opus-4-6");
+  });
+
+  test("resolves codex runtime models", () => {
+    const { members } = resolveCouncilMembers(testConfig, ["gpt54"]);
+    expect(members.length).toBe(1);
+    expect(members[0]!.runtime).toBe("codex");
+    expect(members[0]!.modelId).toBe("gpt-5.4");
+  });
+
+  test("resolves gemini runtime models", () => {
+    const { members } = resolveCouncilMembers(testConfig, ["gemini"]);
+    expect(members.length).toBe(1);
+    expect(members[0]!.runtime).toBe("gemini");
+    expect(members[0]!.modelId).toBe("gemini-2.5-pro");
+  });
+
   test("reports unknown model names", () => {
     const { members, errors } = resolveCouncilMembers(testConfig, ["opus", "nonexistent"]);
     expect(members.length).toBe(1);
@@ -49,7 +69,7 @@ describe("resolveCouncilMembers", () => {
   test("resolves ollama models", () => {
     const { members } = resolveCouncilMembers(testConfig, ["qwen"]);
     expect(members.length).toBe(1);
-    expect(members[0]!.provider).toBe("ollama");
+    expect(members[0]!.runtime).toBe("ollama");
     expect(members[0]!.modelId).toBe("qwen3:4b");
   });
 
@@ -183,7 +203,7 @@ describe("clampRounds", () => {
 describe("assignCamps", () => {
   const makeMember = (name: string): CouncilMember => ({
     model: { name, runtime: "claude", model: `model-${name}`, description: "" },
-    provider: "anthropic",
+    runtime: "claude",
     modelId: `model-${name}`,
   });
 
@@ -245,7 +265,7 @@ describe("assignCamps", () => {
 describe("buildDialecticPrompt", () => {
   const makeMember = (name: string): CouncilMember => ({
     model: { name, runtime: "claude", model: `model-${name}`, description: "" },
-    provider: "anthropic",
+    runtime: "claude",
     modelId: `model-${name}`,
   });
 

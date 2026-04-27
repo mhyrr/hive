@@ -8,15 +8,12 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { ModelTextCompletion } from "./model";
 
-export interface ClaudeTextCompletion {
+export type { ModelTextCompletion };
+
+export interface ClaudeTextCompletion extends ModelTextCompletion {
   provider: "anthropic";
-  model: string;
-  text: string;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  totalTokens: number | null;
-  durationMs: number | null;
 }
 
 interface ClaudeJsonEnvelope {

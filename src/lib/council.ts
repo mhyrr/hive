@@ -9,9 +9,10 @@
 
 import { extractConfigValue, extractConfigValueAlias } from "./config";
 import { type ModelPoolEntry, parseModelPool } from "./project";
-import { completePiText, isPiProviderSupported, type PiTextCompletion } from "./pi";
-import { resolvePiRuntimeRoute } from "./runtime-routes";
-import { resolvePiApiKey } from "./auth";
+import { completeClaudeText } from "./claude";
+import { completeCodexText } from "./codex";
+import { completeGeminiText } from "./gemini";
+import type { ModelTextCompletion } from "./model";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,9 +20,9 @@ import { resolvePiApiKey } from "./auth";
 
 export type CouncilMember = {
   model: ModelPoolEntry;
-  provider: string;
+  /** Canonical runtime: "claude" | "codex" | "gemini" | "ollama" */
+  runtime: string;
   modelId: string;
-  authPolicy?: "oauth-only" | "env" | null;
 };
 
 export type CouncilPosition = {
@@ -77,7 +78,37 @@ export type DialecticResult = {
 };
 
 // ---------------------------------------------------------------------------
-// Ollama direct call (for local models not in pi-ai)
+// Runtime aliases → canonical name
+// ---------------------------------------------------------------------------
+
+const RUNTIME_ALIASES: Record<string, string> = {
+  claude: "claude",
+  "claude-code": "claude",
+  codex: "codex",
+  openai: "codex",
+  gemini: "gemini",
+  "gemini-cli": "gemini",
+  google: "gemini",
+  ollama: "ollama",
+  local: "ollama",
+  oss: "ollama",
+};
+
+function normalizeRuntime(runtime: string): string {
+  return RUNTIME_ALIASES[runtime.trim().toLowerCase()] ?? runtime.trim().toLowerCase();
+}
+
+function runtimeToProvider(runtime: string): string {
+  const r = normalizeRuntime(runtime);
+  if (r === "claude") return "anthropic";
+  if (r === "codex") return "openai";
+  if (r === "gemini") return "google";
+  if (r === "ollama") return "ollama";
+  return r;
+}
+
+// ---------------------------------------------------------------------------
+// Ollama direct call (for local models)
 // ---------------------------------------------------------------------------
 
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
@@ -152,6 +183,8 @@ export function resolveCouncilMembers(
   const members: CouncilMember[] = [];
   const errors: string[] = [];
 
+  const supportedRuntimes = ["claude", "codex", "gemini", "ollama"];
+
   for (const name of modelNames) {
     const entry = pool.find((e) => e.name === name);
 
@@ -163,32 +196,21 @@ export function resolveCouncilMembers(
       continue;
     }
 
-    // Resolve pi provider for this runtime
-    const piRoute = resolvePiRuntimeRoute({ globalConfig, runtime: entry.runtime });
-    const isOllama =
-      entry.runtime === "ollama" ||
-      entry.runtime === "local" ||
-      entry.runtime === "oss";
+    const runtime = normalizeRuntime(entry.runtime);
 
-    if (isOllama) {
-      members.push({
-        model: entry,
-        provider: "ollama",
-        modelId: entry.model,
-      });
-    } else if (piRoute.provider && isPiProviderSupported(piRoute.provider)) {
-      members.push({
-        model: entry,
-        provider: piRoute.provider,
-        modelId: piRoute.model ?? entry.model,
-        authPolicy: piRoute.authPolicy,
-      });
-    } else {
+    if (!supportedRuntimes.includes(runtime)) {
       errors.push(
-        `No provider route for model '${name}' (runtime: ${entry.runtime}). ` +
-          `Configure pi-provider-${entry.runtime} in ~/.hive/config.md.`,
+        `Unsupported runtime '${entry.runtime}' for model '${name}'. ` +
+          `Supported: ${supportedRuntimes.join(", ")}.`,
       );
+      continue;
     }
+
+    members.push({
+      model: entry,
+      runtime,
+      modelId: entry.model,
+    });
   }
 
   return { members, errors };
@@ -198,20 +220,39 @@ export function resolveCouncilMembers(
 // Call a single council member
 // ---------------------------------------------------------------------------
 
+async function callCliProvider(
+  runtime: string,
+  modelId: string,
+  systemPrompt: string,
+  userContent: string,
+): Promise<ModelTextCompletion> {
+  switch (runtime) {
+    case "claude":
+      return completeClaudeText({ modelId, systemPrompt, userContent });
+    case "codex":
+      return completeCodexText({ modelId, systemPrompt, userContent });
+    case "gemini":
+      return completeGeminiText({ modelId, systemPrompt, userContent });
+    default:
+      throw new Error(`No CLI driver for runtime '${runtime}'.`);
+  }
+}
+
 async function callCouncilMember(
   member: CouncilMember,
   systemPrompt: string,
   question: string,
   globalConfig: string,
 ): Promise<CouncilPosition> {
+  const provider = runtimeToProvider(member.runtime);
   const base: Omit<CouncilPosition, "text" | "durationMs" | "error" | "inputTokens" | "outputTokens"> = {
     modelName: member.model.name,
     modelId: member.modelId,
-    provider: member.provider,
+    provider,
   };
 
   try {
-    if (member.provider === "ollama") {
+    if (member.runtime === "ollama") {
       const baseUrl = resolveOllamaBaseUrl(globalConfig);
       const result = await callOllama({
         baseUrl,
@@ -230,27 +271,8 @@ async function callCouncilMember(
       };
     }
 
-    // Pi-supported provider — respect the config's auth policy (e.g. oauth-only for subscriptions)
-    const resolved = await resolvePiApiKey(member.provider, { authPolicy: member.authPolicy ?? null });
-
-    if (!resolved) {
-      return {
-        ...base,
-        text: "",
-        durationMs: 0,
-        inputTokens: null,
-        outputTokens: null,
-        error: `No API credentials for provider '${member.provider}'.`,
-      };
-    }
-
-    const result: PiTextCompletion = await completePiText({
-      provider: member.provider,
-      modelId: member.modelId,
-      systemPrompt,
-      userContent: question,
-      apiKey: resolved.token,
-    });
+    // CLI-backed provider — each driver handles its own auth natively
+    const result = await callCliProvider(member.runtime, member.modelId, systemPrompt, question);
 
     return {
       ...base,
