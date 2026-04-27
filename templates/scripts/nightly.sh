@@ -1,6 +1,12 @@
 #!/bin/bash
 # HIVE nightly maintenance — installed by `hive init`
 # launchd: 2am daily
+#
+# V1 pipeline: condition → extract (B + C) → verify → apply → dashboard.
+# Default mode is --dry-run during the V1 shakedown window. Once Greg has read
+# 3-5 nights of runs/{DATE}/briefing.md and likes the shape, set
+# HIVE_NIGHTLY_DRY_RUN=0 to flip; Pass F + dashboard rebuild then own the live
+# artifacts.
 
 set -euo pipefail
 
@@ -12,14 +18,6 @@ echo "=== HIVE nightly: $DATE $(date +%H:%M:%S) ==="
 
 HIVE="${HIVE_BIN:-$(which hive 2>/dev/null || echo "$HOME/.local/bin/hive")}"
 
-# Step 1: Promote unprocessed reflections to project memory + inbox
-echo "--- Promoting reflections ---"
-"$HIVE" memory promote 2>&1 || echo "Reflection promotion failed (non-fatal)"
-
-# Step 2: Condense raw JSONL session transcripts into readable markdown
-echo "--- Extracting sessions ---"
-"$HIVE" memory extract-sessions 2>&1 || echo "Session extraction failed (non-fatal)"
-
 # Pick a GNU-compatible timeout (coreutils). macOS doesn't ship one by default.
 TIMEOUT_BIN=""
 if command -v gtimeout >/dev/null 2>&1; then
@@ -30,23 +28,22 @@ fi
 
 TIMEOUT_DURATION="${HIVE_NIGHTLY_TIMEOUT:-25m}"
 
-# Step 3: Dispatch maya-nightly to review and extract durable learnings.
-# Wall-clock capped so a hung Anthropic stream surfaces as a launchd failure
-# instead of a multi-hour silent wedge.
-echo "--- Nightly extraction ---"
+# Dry-run is the default during V1 shakedown. Flip with HIVE_NIGHTLY_DRY_RUN=0.
+DRY_RUN_FLAG="--dry-run"
+if [ "${HIVE_NIGHTLY_DRY_RUN:-1}" = "0" ]; then
+  DRY_RUN_FLAG=""
+  echo "--- Running memory nightly orchestrator (LIVE) ---"
+else
+  echo "--- Running memory nightly orchestrator (dry-run) ---"
+fi
+
 set +e
 if [ -n "$TIMEOUT_BIN" ]; then
-  "$TIMEOUT_BIN" "$TIMEOUT_DURATION" "$HIVE" --agent maya-nightly \
-    --max-turns 40 \
-    "Run nightly extraction for $DATE." \
-    2>&1
+  "$TIMEOUT_BIN" "$TIMEOUT_DURATION" "$HIVE" memory nightly $DRY_RUN_FLAG 2>&1
   NIGHTLY_RC=$?
 else
   echo "WARN: no timeout binary found (gtimeout/timeout); running unbounded"
-  "$HIVE" --agent maya-nightly \
-    --max-turns 40 \
-    "Run nightly extraction for $DATE." \
-    2>&1
+  "$HIVE" memory nightly $DRY_RUN_FLAG 2>&1
   NIGHTLY_RC=$?
 fi
 set -e

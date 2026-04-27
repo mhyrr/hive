@@ -21,6 +21,7 @@ import {
 import { runVerifier } from "../lib/verify";
 import { formatUsd, loadUsageSummary } from "../lib/pricing";
 import { applyDecisions } from "../lib/apply";
+import { runNightly, type PassReport } from "../lib/orchestrator";
 
 function parseFlagsAndArgs(args: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -63,6 +64,8 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory verify [--date YYYY-MM-DD]   Pass V: Opus verifies + writes briefing
   hive memory apply [--date YYYY-MM-DD] [--dry-run]
                                            Pass F: applies decisions to canon
+  hive memory nightly [--date YYYY-MM-DD] [--dry-run]
+                                           Run the full V1 pipeline (A → B → C → V → F)
   hive memory --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
@@ -71,6 +74,64 @@ export async function memoryCommand(args: string[]): Promise<void> {
   const subcommand = positional[0];
 
   // Cross-project subcommands — don't require a project context.
+  if (subcommand === "nightly") {
+    let date = new Date().toISOString().slice(0, 10);
+    let dryRun = false;
+    const rest = positional.slice(1);
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--date") date = rest[++i] ?? date;
+      else if (rest[i] === "--dry-run") dryRun = true;
+    }
+
+    console.log(
+      `=== HIVE memory nightly · ${date}${dryRun ? " · DRY RUN" : ""} ===`,
+    );
+    const result = await runNightly({ paths, date, dryRun });
+
+    const fmt = (p: PassReport): string => {
+      const dur = p.durationMs !== undefined ? ` (${(p.durationMs / 1000).toFixed(1)}s)` : "";
+      const detail = p.detail ? ` — ${p.detail}` : p.error ? ` — ${p.error}` : "";
+      return `[${p.status.toUpperCase().padEnd(8)}] ${p.pass}${dur}${detail}`;
+    };
+
+    console.log(fmt(result.passes.A));
+    if (result.passes.B.length === 0) {
+      console.log("[SKIPPED ] B (no projects with signal)");
+    } else {
+      for (const p of result.passes.B) console.log(fmt(p));
+    }
+    console.log(fmt(result.passes.C));
+    console.log(fmt(result.passes.V));
+    console.log(fmt(result.passes.F));
+    console.log(fmt(result.passes.dashboard));
+
+    // Cost summary
+    const usage = await loadUsageSummary(paths, date);
+    if (usage.records.length > 0) {
+      console.log(
+        `Cost: ${usage.totals.inputTokens.toLocaleString()} in / ` +
+          `${usage.totals.outputTokens.toLocaleString()} out tokens · ${formatUsd(usage.totals.totalUsd)}`,
+      );
+    }
+
+    if (result.briefingPath) {
+      console.log(`Briefing → ${result.briefingPath}`);
+    } else if (dryRun) {
+      console.log(`Briefing draft → ${result.artifactsDir}/briefing.md (dry-run, not landed)`);
+    }
+
+    if (result.errors.length > 0) {
+      console.log(`\nErrors (${result.errors.length}):`);
+      for (const e of result.errors) console.log(`  ! ${e}`);
+      process.exitCode = 1;
+    } else {
+      console.log(
+        `\nDone. ${(result.totalDurationMs / 1000).toFixed(1)}s total.${dryRun ? " (artifacts in runs/, V0 still owns canon)" : ""}`,
+      );
+    }
+    return;
+  }
+
   if (subcommand === "condition") {
     const rest = positional.slice(1);
     let hours = 24;
