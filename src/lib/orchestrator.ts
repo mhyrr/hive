@@ -142,11 +142,18 @@ async function copyStubToBriefings(
 // Top-level
 // ---------------------------------------------------------------------------
 
+export type ProgressEvent =
+  | { type: "pass-start"; pass: string; detail?: string }
+  | { type: "pass-complete"; report: PassReport }
+  | { type: "pass-skipped"; report: PassReport }
+  | { type: "pass-failed"; report: PassReport };
+
 export interface RunNightlyOptions {
   paths: HivePaths;
   date?: string;
   dryRun?: boolean;
   caller?: ModelCaller;
+  onProgress?: (event: ProgressEvent) => void;
 }
 
 export async function runNightly(options: RunNightlyOptions): Promise<NightlyResult> {
@@ -154,6 +161,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   const date = options.date ?? new Date().toISOString().slice(0, 10);
   const dryRun = options.dryRun ?? false;
   const caller = options.caller;
+  const emit = options.onProgress ?? (() => {});
   const startedAt = new Date().toISOString();
   const startMs = nowMs();
 
@@ -181,6 +189,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   };
 
   // ---- Pass A ---------------------------------------------------------------
+  emit({ type: "pass-start", pass: "A", detail: "scanning sessions, git, tickets" });
   let condition: ConditionReport;
   try {
     const { value, durationMs } = await timed(async () => {
@@ -195,9 +204,11 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       detail: `${value.totals.projectCount} projects · ${value.totals.exchangeCount} exchanges · ${value.totals.commitCount} commits`,
       durationMs,
     };
+    emit({ type: "pass-complete", report: result.passes.A });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     result.passes.A = { pass: "A", status: "failed", error: msg };
+    emit({ type: "pass-failed", report: result.passes.A });
     result.errors.push(`Pass A: ${msg}`);
     result.finishedAt = new Date().toISOString();
     result.totalDurationMs = nowMs() - startMs;
@@ -208,6 +219,10 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   if (condition.trivial) {
     result.trivial = true;
     result.trivialReason = condition.trivialReason;
+    emit({
+      type: "pass-skipped",
+      report: { pass: "B/C/V", status: "skipped", detail: `trivial day — ${condition.trivialReason}` },
+    });
     const stub = await writeStubBriefing(paths, date, condition.trivialReason);
     result.passes.B = [{ pass: "B", status: "skipped", detail: "trivial day" }];
     result.passes.C = { pass: "C", status: "skipped", detail: "trivial day" };
@@ -234,29 +249,39 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
 
   // ---- Pass B (per project with signal) -------------------------------------
   const targets = condition.projects.filter(projectHasSignal);
-  // Run extractors in parallel — each is a single LLM call, max ~30s each.
+  emit({
+    type: "pass-start",
+    pass: "B",
+    detail: `${targets.length} project${targets.length === 1 ? "" : "s"} with signal — Sonnet calls in parallel`,
+  });
   const bPromises = targets.map(async (p) => {
     const projectId = p.projectName;
+    emit({ type: "pass-start", pass: `B.${projectId}` });
     try {
       const { value, durationMs } = await timed(() =>
         runProjectExtractor({ paths, projectId, date, caller }),
       );
       result.candidateCounts.bByProject[projectId] = value.result.candidates.length;
-      return {
+      const r: PassReport = {
         pass: `B.${projectId}`,
-        status: "complete" as const,
+        status: "complete",
         detail: `${value.result.candidates.length} candidate(s), ${value.result.rejected} rejected`,
         durationMs,
       };
+      emit({ type: "pass-complete", report: r });
+      return r;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       result.errors.push(`Pass B (${projectId}): ${msg}`);
-      return { pass: `B.${projectId}`, status: "failed" as const, error: msg };
+      const r: PassReport = { pass: `B.${projectId}`, status: "failed", error: msg };
+      emit({ type: "pass-failed", report: r });
+      return r;
     }
   });
   result.passes.B = await Promise.all(bPromises);
 
   // ---- Pass C (cross-project reflections) -----------------------------------
+  emit({ type: "pass-start", pass: "C", detail: "Sonnet — cross-project reflections" });
   try {
     const { value, durationMs } = await timed(() =>
       runReflectionExtractor({ paths, date, caller }),
@@ -268,15 +293,18 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       detail: `${value.result.candidates.length} reflection(s), ${value.result.rejected} rejected`,
       durationMs,
     };
+    emit({ type: "pass-complete", report: result.passes.C });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     result.passes.C = { pass: "C", status: "failed", error: msg };
+    emit({ type: "pass-failed", report: result.passes.C });
     result.errors.push(`Pass C: ${msg}`);
   }
 
   // ---- Pass V (Opus verify) -------------------------------------------------
   // V is the only pass whose failure is fatal — without decisions there's
   // nothing for F to apply and no briefing to land.
+  emit({ type: "pass-start", pass: "V", detail: "Opus — verify + brief (this can take 30-60s)" });
   let verifyOK = false;
   try {
     const { value, durationMs } = await timed(() =>
@@ -292,10 +320,12 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       detail: `${value.output.decisions.length} decision(s), ${value.output.gaps.length} gap(s)`,
       durationMs,
     };
+    emit({ type: "pass-complete", report: result.passes.V });
     verifyOK = true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     result.passes.V = { pass: "V", status: "failed", error: msg };
+    emit({ type: "pass-failed", report: result.passes.V });
     result.errors.push(`Pass V: ${msg}`);
   }
 
@@ -314,7 +344,10 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   } else if (dryRun) {
     result.passes.F = { pass: "F", status: "skipped", detail: "dry-run" };
     result.passes.dashboard = { pass: "dashboard", status: "skipped", detail: "dry-run" };
+    emit({ type: "pass-skipped", report: result.passes.F });
+    emit({ type: "pass-skipped", report: result.passes.dashboard });
   } else {
+    emit({ type: "pass-start", pass: "F", detail: "applying decisions to canon" });
     try {
       const { value, durationMs } = await timed(() =>
         applyDecisions({ paths, date }),
@@ -326,19 +359,24 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
         detail: `+${value.totals.accepted} ~${value.totals.superseded} ⊕${value.totals.merged} ✗${value.totals.rejected}`,
         durationMs,
       };
+      emit({ type: "pass-complete", report: result.passes.F });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       result.passes.F = { pass: "F", status: "failed", error: msg };
+      emit({ type: "pass-failed", report: result.passes.F });
       result.errors.push(`Pass F: ${msg}`);
     }
 
     // Dashboard rebuild — never fatal.
+    emit({ type: "pass-start", pass: "dashboard" });
     try {
       const { durationMs } = await timed(() => buildDashboard(paths));
       result.passes.dashboard = { pass: "dashboard", status: "complete", durationMs };
+      emit({ type: "pass-complete", report: result.passes.dashboard });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       result.passes.dashboard = { pass: "dashboard", status: "failed", error: msg };
+      emit({ type: "pass-failed", report: result.passes.dashboard });
       result.errors.push(`dashboard: ${msg}`);
     }
   }

@@ -86,7 +86,6 @@ export async function memoryCommand(args: string[]): Promise<void> {
     console.log(
       `=== HIVE memory nightly · ${date}${dryRun ? " · DRY RUN" : ""} ===`,
     );
-    const result = await runNightly({ paths, date, dryRun });
 
     const fmt = (p: PassReport): string => {
       const dur = p.durationMs !== undefined ? ` (${(p.durationMs / 1000).toFixed(1)}s)` : "";
@@ -94,16 +93,19 @@ export async function memoryCommand(args: string[]): Promise<void> {
       return `[${p.status.toUpperCase().padEnd(8)}] ${p.pass}${dur}${detail}`;
     };
 
-    console.log(fmt(result.passes.A));
-    if (result.passes.B.length === 0) {
-      console.log("[SKIPPED ] B (no projects with signal)");
-    } else {
-      for (const p of result.passes.B) console.log(fmt(p));
-    }
-    console.log(fmt(result.passes.C));
-    console.log(fmt(result.passes.V));
-    console.log(fmt(result.passes.F));
-    console.log(fmt(result.passes.dashboard));
+    const result = await runNightly({
+      paths,
+      date,
+      dryRun,
+      onProgress: (event) => {
+        if (event.type === "pass-start") {
+          const detail = event.detail ? ` — ${event.detail}` : "";
+          console.log(`[STARTING] ${event.pass}${detail}`);
+        } else {
+          console.log(fmt(event.report));
+        }
+      },
+    });
 
     // Cost summary
     const usage = await loadUsageSummary(paths, date);
