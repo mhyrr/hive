@@ -88,6 +88,119 @@ export async function parseReflectionFile(
   return { date, path: filePath, entries, promoted };
 }
 
+// ---------------------------------------------------------------------------
+// V1 landing — Pass F appends accepted reflection candidates to today's file
+// at ~/.hive/reflections/YYYY-MM-DD.md, in the same "## About Subject" format
+// the V0 promoter understands.
+// ---------------------------------------------------------------------------
+
+export interface ReflectionLanding {
+  subject: ReflectionSection;
+  content: string;
+  tags: string[];
+  provenance: string;
+}
+
+const SUBJECT_HEADERS: Record<ReflectionSection, string> = {
+  greg: "## About Greg",
+  maya: "## About Maya",
+  system: "## About the System",
+};
+
+function reflectionLine(landing: ReflectionLanding): string {
+  const tagSuffix = landing.tags.length > 0 ? ` [${landing.tags.join(", ")}]` : "";
+  return `- ${landing.content}${tagSuffix}  \n  _provenance:_ ${landing.provenance}`;
+}
+
+function reflectionFilePath(paths: HivePaths, date: string): string {
+  return join(paths.reflectionsDir, `${date}.md`);
+}
+
+export async function appendReflectionsToDay(
+  paths: HivePaths,
+  date: string,
+  landings: ReflectionLanding[],
+): Promise<{ filePath: string; written: number; perSubject: Record<ReflectionSection, number> }> {
+  const filePath = reflectionFilePath(paths, date);
+  const perSubject: Record<ReflectionSection, number> = { greg: 0, maya: 0, system: 0 };
+  if (landings.length === 0) {
+    return { filePath, written: 0, perSubject };
+  }
+
+  const grouped: Record<ReflectionSection, ReflectionLanding[]> = {
+    greg: [],
+    maya: [],
+    system: [],
+  };
+  for (const l of landings) grouped[l.subject].push(l);
+
+  let existing = "";
+  try {
+    existing = await Bun.file(filePath).text();
+  } catch {
+    // file doesn't exist — we'll create
+  }
+
+  if (!existing.trim()) {
+    const lines: string[] = [
+      "---",
+      `generated: ${toIsoTimestamp()}`,
+      `pass: V`,
+      "---",
+      "",
+      `# Reflections — ${date}`,
+      "",
+      "Pass V landings — ratified by the verifier from the day's signal.",
+      "",
+    ];
+    for (const subject of ["greg", "maya", "system"] as ReflectionSection[]) {
+      const items = grouped[subject];
+      if (items.length === 0) continue;
+      lines.push(SUBJECT_HEADERS[subject]);
+      lines.push("");
+      for (const l of items) {
+        lines.push(reflectionLine(l));
+        perSubject[subject]++;
+      }
+      lines.push("");
+    }
+    await Bun.write(filePath, lines.join("\n"));
+    return {
+      filePath,
+      written: perSubject.greg + perSubject.maya + perSubject.system,
+      perSubject,
+    };
+  }
+
+  // File exists — append to matching sections, create missing ones at the end.
+  let updated = existing.trimEnd();
+  for (const subject of ["greg", "maya", "system"] as ReflectionSection[]) {
+    const items = grouped[subject];
+    if (items.length === 0) continue;
+    const header = SUBJECT_HEADERS[subject];
+    const idx = updated.indexOf(header);
+    const block = items.map(reflectionLine).join("\n");
+    if (idx === -1) {
+      updated = `${updated}\n\n${header}\n\n${block}\n`;
+    } else {
+      const after = idx + header.length;
+      const nextHeading = updated.slice(after).search(/\n## /);
+      const sectionEnd = nextHeading === -1 ? updated.length : after + nextHeading;
+      const before = updated.slice(0, sectionEnd).trimEnd();
+      const rest = updated.slice(sectionEnd);
+      updated = `${before}\n${block}${rest}`;
+    }
+    perSubject[subject] += items.length;
+  }
+  await Bun.write(filePath, updated.endsWith("\n") ? updated : updated + "\n");
+
+  return {
+    filePath,
+    written: perSubject.greg + perSubject.maya + perSubject.system,
+    perSubject,
+  };
+}
+
 export async function readUnprocessedReflections(
   paths: HivePaths,
 ): Promise<ReflectionFile[]> {

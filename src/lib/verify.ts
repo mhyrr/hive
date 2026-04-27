@@ -571,6 +571,7 @@ export interface RunVerifierResult {
     gapsPath: string;
     tastePath: string;
     briefingPath: string;
+    verifierOutputPath: string;
     usagePath: string;
   };
   usage: PassUsageRecord;
@@ -621,11 +622,15 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   const gapsPath = join(runDir, "gaps.md");
   const tastePath = join(runDir, "taste.md");
   const briefingPath = join(runDir, "briefing.md");
+  const fullOutputPath = join(runDir, "verifier-output.json");
 
   await Bun.write(decisionsPath, JSON.stringify({ decisions: result.output.decisions }, null, 2));
   await Bun.write(gapsPath, formatGapsMarkdown(result.output.gaps));
   await Bun.write(tastePath, formatTasteMarkdown(result.output.taste));
   await Bun.write(briefingPath, result.output.briefing_markdown);
+  // Full structured output — Pass F (Apply) consumes this for gap-landing
+  // and taste-readout. Markdown files above are for humans.
+  await Bun.write(fullOutputPath, JSON.stringify(result.output, null, 2));
 
   const usageRecord: Omit<PassUsageRecord, "recordedAt"> = {
     pass: "V",
@@ -645,6 +650,7 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
       gapsPath,
       tastePath,
       briefingPath,
+      verifierOutputPath: fullOutputPath,
       usagePath: usagePath(opts.paths, opts.date),
     },
     usage: summary.records[summary.records.length - 1]!,

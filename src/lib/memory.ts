@@ -616,6 +616,159 @@ export async function supersedeEntry(
 }
 
 // ---------------------------------------------------------------------------
+// Hash-based mutations — Pass F (Apply) needs to operate by entryHash since
+// the verifier (Opus) returns target_hash for supersede / merge decisions.
+// ---------------------------------------------------------------------------
+
+interface HashedEntryHit {
+  lineIndex: number;
+  rawLine: string;
+  coreText: string;     // text used for entryHash (no ts, no tags)
+  tags: string[];
+  ts: string | null;    // decision timestamp if any
+}
+
+function findActiveEntryLineByHash(content: string, header: string, targetHash: string): HashedEntryHit | null {
+  const idx = content.indexOf(header);
+  if (idx === -1) return null;
+  const after = idx + header.length;
+  const nextHeading = content.slice(after).search(/\n## /);
+  const end = nextHeading === -1 ? content.length : after + nextHeading;
+  const sectionStart = after;
+
+  const lines = content.split("\n");
+  let runningOffset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const lineStart = runningOffset;
+    runningOffset += line.length + 1; // +1 for newline
+    if (lineStart < sectionStart || lineStart >= end) continue;
+
+    if (!line.startsWith("- ")) continue;
+    const raw = line.slice(2).trim();
+    if (!raw || isSuperseded(raw)) continue;
+
+    // Strip optional decision timestamp prefix.
+    const tsMatch = raw.match(/^\[([^\]]+)\]\s+(.*)$/);
+    const ts = tsMatch ? tsMatch[1]!.trim() : null;
+    const afterTs = tsMatch ? tsMatch[2]! : raw;
+
+    const { text, tags } = parseTags(afterTs);
+    if (entryHash(text) === targetHash) {
+      return { lineIndex: i, rawLine: line, coreText: text, tags, ts };
+    }
+  }
+  return null;
+}
+
+export async function supersedeEntryByHash(
+  paths: HivePaths,
+  projectId: string,
+  section: MemorySection,
+  targetHash: string,
+  newText: string,
+  newTags: string[] = [],
+): Promise<{ supersededText: string; newHash: string }> {
+  const cleanedNew = validateMemoryEntry(newText);
+  await ensureProjectMemoryDir(paths, projectId);
+  const filePath = knowledgePath(paths, projectId);
+  const header = sectionToHeader[section];
+
+  let supersededText = "";
+  let newHash = "";
+
+  await enqueue(filePath, async () => {
+    let content = await Bun.file(filePath).text();
+    const hit = findActiveEntryLineByHash(content, header, targetHash);
+    if (!hit) {
+      throw new Error(`No active ${section} entry with hash ${targetHash} in ${projectId}`);
+    }
+
+    const lines = content.split("\n");
+    // Recompose the original raw entry (with ts + tags) so the strikethrough
+    // preserves what was there, not just the core text.
+    const original = hit.ts
+      ? `[${hit.ts}] ${hit.coreText}${formatTags(hit.tags)}`
+      : `${hit.coreText}${formatTags(hit.tags)}`;
+    lines[hit.lineIndex] = `- ${formatSuperseded(original)}`;
+    supersededText = hit.coreText;
+    content = lines.join("\n");
+
+    const tagStr = formatTags(newTags);
+    const entry =
+      section === "decision"
+        ? `- [${toIsoTimestamp().slice(0, 10)}] ${cleanedNew}${tagStr}`
+        : `- ${cleanedNew}${tagStr}`;
+    const updated = appendToSection(content, header, entry);
+
+    const check = validateMemoryStructure(updated);
+    if (!check.valid) {
+      throw new Error(`Memory write would corrupt file: ${check.error}`);
+    }
+    await Bun.write(filePath, updated);
+
+    // Meta — drop old, create new.
+    const meta = await readMeta(paths, projectId);
+    delete meta.entries[targetHash];
+    newHash = entryHash(cleanedNew);
+    meta.entries[newHash] = createEntryMeta();
+    await writeMeta(paths, projectId, meta);
+  });
+
+  return { supersededText, newHash };
+}
+
+export async function mergeTagsIntoEntry(
+  paths: HivePaths,
+  projectId: string,
+  section: MemorySection,
+  targetHash: string,
+  addedTags: string[],
+): Promise<{ mergedTags: string[]; addedTags: string[] }> {
+  await ensureProjectMemoryDir(paths, projectId);
+  const filePath = knowledgePath(paths, projectId);
+  const header = sectionToHeader[section];
+  const normalized = addedTags.map((t) => t.trim().toLowerCase()).filter(Boolean);
+
+  let resultMerged: string[] = [];
+  let resultAdded: string[] = [];
+
+  await enqueue(filePath, async () => {
+    let content = await Bun.file(filePath).text();
+    const hit = findActiveEntryLineByHash(content, header, targetHash);
+    if (!hit) {
+      throw new Error(`No active ${section} entry with hash ${targetHash} in ${projectId}`);
+    }
+
+    const existingSet = new Set(hit.tags);
+    const additions = normalized.filter((t) => !existingSet.has(t));
+    if (additions.length === 0) {
+      // No-op merge — return without touching the file.
+      resultMerged = hit.tags;
+      resultAdded = [];
+      return;
+    }
+
+    const merged = [...hit.tags, ...additions];
+    const lines = content.split("\n");
+    const tsPart = hit.ts ? `[${hit.ts}] ` : "";
+    lines[hit.lineIndex] = `- ${tsPart}${hit.coreText}${formatTags(merged)}`;
+    content = lines.join("\n");
+
+    const check = validateMemoryStructure(content);
+    if (!check.valid) {
+      throw new Error(`Memory write would corrupt file: ${check.error}`);
+    }
+    await Bun.write(filePath, content);
+
+    resultMerged = merged;
+    resultAdded = additions;
+  });
+
+  return { mergedTags: resultMerged, addedTags: resultAdded };
+}
+
+// ---------------------------------------------------------------------------
 // Read section (formatted output)
 // ---------------------------------------------------------------------------
 

@@ -20,6 +20,7 @@ import {
 } from "../lib/extract";
 import { runVerifier } from "../lib/verify";
 import { formatUsd, loadUsageSummary } from "../lib/pricing";
+import { applyDecisions } from "../lib/apply";
 
 function parseFlagsAndArgs(args: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -60,6 +61,8 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory extract-reflections [--date YYYY-MM-DD]
                                            Pass C: Sonnet extracts cross-project reflections
   hive memory verify [--date YYYY-MM-DD]   Pass V: Opus verifies + writes briefing
+  hive memory apply [--date YYYY-MM-DD] [--dry-run]
+                                           Pass F: applies decisions to canon
   hive memory --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
@@ -155,6 +158,48 @@ export async function memoryCommand(args: string[]): Promise<void> {
         `tokens in/out: ${u.inputTokens ?? "?"}/${u.outputTokens ?? "?"} · ` +
         `${u.durationMs ? `${u.durationMs}ms` : "duration ?"}`,
     );
+    return;
+  }
+
+  if (subcommand === "apply") {
+    let date = new Date().toISOString().slice(0, 10);
+    let dryRun = false;
+    const rest = positional.slice(1);
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--date") date = rest[++i] ?? date;
+      else if (rest[i] === "--dry-run") dryRun = true;
+    }
+
+    console.log(
+      `Pass F (Apply) — ${dryRun ? "dry-run" : "applying"} decisions for ${date}…`,
+    );
+    const result = await applyDecisions({ paths, date, dryRun });
+    console.log(
+      `Totals: ${result.totals.accepted} accept · ${result.totals.superseded} supersede · ` +
+        `${result.totals.merged} merge · ${result.totals.rejected} reject · ` +
+        `${result.totals.gapsLanded} gap(s) landed · ${result.totals.reflectionsLanded} reflection(s)`,
+    );
+    for (const o of result.perProject) {
+      const drainNote = o.drainedCandidates > 0 ? ` · drained ${o.drainedCandidates}` : "";
+      const inboxNote = o.inboxTruncated ? " · inbox cleared" : "";
+      const indexNote = o.rebuiltIndex ? " · index rebuilt" : "";
+      console.log(
+        `  ${o.projectId}: +${o.accepted} ~${o.superseded} ⊕${o.merged} ✗${o.rejected}${drainNote}${inboxNote}${indexNote}`,
+      );
+      for (const e of o.errors) console.log(`    ! ${e}`);
+    }
+    if (result.briefingPath) {
+      console.log(`Briefing landed → ${result.briefingPath}`);
+    } else if (!dryRun) {
+      console.log(`(no briefing.md found — Pass V didn't run for ${date}?)`);
+    }
+    if (result.reflectionFile) {
+      console.log(`Reflections → ${result.reflectionFile}`);
+    }
+    if (result.errors.length > 0) {
+      console.log(`Errors: ${result.errors.length}`);
+      for (const e of result.errors) console.log(`  ! ${e}`);
+    }
     return;
   }
 
