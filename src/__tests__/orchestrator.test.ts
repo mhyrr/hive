@@ -130,6 +130,106 @@ async function seedActivity(paths: HivePaths, projectId: string): Promise<string
   return entryHash("Existing baseline fact");
 }
 
+// ---------------------------------------------------------------------------
+// P1 — --date flag threading through Pass A (no calendar mismatch)
+// ---------------------------------------------------------------------------
+
+describe("runNightly — explicit --date threads through every pass", () => {
+  test("artifacts land in runs/{date}/ matching the requested date", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    // Pick a deterministic date in the past so today's clock isn't the answer.
+    const date = "2026-04-25";
+    await seedActivity(paths, "alpha");
+
+    const stub = makeStub({
+      bResponses: { alpha: "[]" },
+      cResponse: "[]",
+      vResponse: JSON.stringify({
+        decisions: [],
+        gaps: [],
+        taste: { reinforced: [], corrections: [] },
+        briefing_markdown: `# HIVE — ${date}\n\n## Headline\nDated.`,
+      }),
+    });
+
+    const result = await runNightly({ paths, date, caller: stub });
+    expect(result.date).toBe(date);
+    expect(result.artifactsDir).toContain(`/runs/${date}`);
+
+    const conditionPath = join(paths.memoryRunsDir, date, "condition.json");
+    expect(existsSync(conditionPath)).toBe(true);
+    const cond = JSON.parse(await Bun.file(conditionPath).text());
+    expect(cond.date).toBe(date);
+
+    // Today's runs dir must NOT have leaked condition.json from this call.
+    const today = new Date().toISOString().slice(0, 10);
+    if (today !== date) {
+      expect(existsSync(join(paths.memoryRunsDir, today, "condition.json"))).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2 — Failed extractor reruns must not silently reuse stale artifacts
+// ---------------------------------------------------------------------------
+
+describe("runNightly — stale artifact safety", () => {
+  test("a failed Pass B clears the prior project's candidates.B file", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha");
+
+    // Plant a stale Pass B artifact pretending an earlier run succeeded.
+    await mkdir(paths.memoryRunsDir, { recursive: true });
+    await mkdir(join(paths.memoryRunsDir, date), { recursive: true });
+    const stalePath = join(paths.memoryRunsDir, date, "candidates.B.alpha.json");
+    await writeFile(
+      stalePath,
+      JSON.stringify({ pass: "B", project: "alpha", candidates: [{ stale: true }] }),
+    );
+
+    const stub = makeStub({
+      failProjectsB: new Set(["alpha"]),
+      cResponse: "[]",
+      vResponse: JSON.stringify({
+        decisions: [],
+        gaps: [],
+        taste: { reinforced: [], corrections: [] },
+        briefing_markdown: "# HIVE",
+      }),
+    });
+
+    const result = await runNightly({ paths, date, caller: stub });
+    const alphaB = result.passes.B.find((p) => p.pass === "B.alpha");
+    expect(alphaB?.status).toBe("failed");
+
+    // The stale artifact must be gone — verify must NOT be able to read it.
+    expect(existsSync(stalePath)).toBe(false);
+  });
+
+  test("a failed Pass V clears the prior decisions/briefing artifacts", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha");
+
+    await mkdir(join(paths.memoryRunsDir, date), { recursive: true });
+    const staleBriefing = join(paths.memoryRunsDir, date, "briefing.md");
+    const staleDecisions = join(paths.memoryRunsDir, date, "decisions.json");
+    await writeFile(staleBriefing, "# Stale briefing from yesterday's run");
+    await writeFile(staleDecisions, JSON.stringify({ decisions: [{ stale: true }] }));
+
+    const stub = makeStub({
+      bResponses: { alpha: "[]" },
+      cResponse: "[]",
+      failV: true,
+    });
+    await runNightly({ paths, date, caller: stub });
+
+    expect(existsSync(staleBriefing)).toBe(false);
+    expect(existsSync(staleDecisions)).toBe(false);
+  });
+});
+
 describe("runNightly — full pipeline (A → B → C → V → F)", () => {
   test("walks every pass, lands canon mutations + briefing", async () => {
     const paths = await freshHomeWith(["alpha"]);

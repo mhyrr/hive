@@ -193,7 +193,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   let condition: ConditionReport;
   try {
     const { value, durationMs } = await timed(async () => {
-      const report = await buildConditionReport(paths);
+      const report = await buildConditionReport(paths, { date });
       await writeConditionReport(paths, report);
       return report;
     });

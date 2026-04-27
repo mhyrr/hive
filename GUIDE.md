@@ -158,12 +158,15 @@ names are derived from your IDENTITY.md name:
 | `maya-planner` | Architecture and planning | `read_hive_memory`, `convene_council`, `create_ticket` |
 | `maya-coder` | Implementation in isolated worktrees | `read_hive_memory`, `write_hive_memory` |
 | `maya-reviewer` | Code review against project conventions | `read_hive_memory` |
-| `maya-nightly` | Nightly maintenance and knowledge extraction | `reflect_session`, `list_tickets` |
 
 Each agent reads the identity stack and project memory via CLAUDE.md
 references. The planner reads memory and tickets before architecting.
 The coder reads conventions before writing code. The reviewer checks
 work against accumulated standards.
+
+Nightly memory extraction is no longer agent-driven — it runs as a
+deterministic five-pass pipeline (see `hive memory nightly` and the
+"Scheduled Tasks" table below).
 
 ### Scheduled Tasks Use HIVE Tools
 
@@ -171,13 +174,13 @@ Cron jobs installed by `hive init` drive recurring automation:
 
 | Schedule | Script | What It Does |
 |----------|--------|-------------|
-| 2:00 AM | `nightly.sh` | Runs `maya-nightly` — reviews git activity across all projects, extracts durable learnings to HIVE memory, updates tickets |
+| 2:00 AM | `nightly.sh` | Runs `hive memory nightly` — five-pass pipeline (condition → Sonnet extract per project → Sonnet reflections → Opus verify + brief → apply to canon → rebuild dashboard). Lands the morning briefing at `~/.hive/briefings/{DATE}.md`. |
 | 2:30 AM | `hive-sync.sh` | Commits and pushes `~/.hive/` changes to git remote |
-| 7:00 AM | `morning.sh` | Runs `maya-morning` — scans projects for priorities, open tickets, uncommitted work, writes daily briefing |
 
-The nightly agent has `permissionMode: bypassPermissions` because it runs
-unattended. It uses `reflect_session` to batch-write learnings and
-`list_tickets` to check project state.
+The nightly pipeline is deterministic plumbing plus three LLM calls
+(two Sonnet, one Opus). All run-state lives at
+`~/.hive/memory/runs/{DATE}/` for restartability and audit. Cost
+typically $1–3/night, recorded in `usage.json` for the dashboard.
 
 ### Hooks Enforce Trust Boundaries
 
@@ -219,9 +222,9 @@ cd ~/work/hive   # or wherever you cloned this repo
 This builds the binaries and creates:
 - `~/.hive/` with identity templates (SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md)
 - `~/.hive/config.md` with model pool configuration
-- `~/.hive/scripts/` with nightly, morning, and sync scripts
-- `~/.claude/agents/` with HIVE agent definitions (maya-planner, maya-coder, maya-reviewer, maya-nightly)
-- Launchd jobs for heartbeat, nightly extraction, morning briefing, and state sync
+- `~/.hive/scripts/` with nightly, heartbeat, and sync scripts
+- `~/.claude/agents/` with HIVE agent definitions (maya-planner, maya-coder, maya-reviewer)
+- Launchd jobs for heartbeat, nightly extraction, dashboard, and state sync
 - MCP server registration in `~/.claude.json`
 - `hive` and `hive-mcp` binaries symlinked to `~/.local/bin/`
 
@@ -272,31 +275,35 @@ project memory, and has access to HIVE MCP tools.
 
 ## 6. Workflow Patterns
 
-### Morning Briefing
+### Nightly Memory Extraction (V1 pipeline)
 
-The `morning.sh` script runs the `maya-morning` agent at 7 AM:
-
-```bash
-claude --agent maya-morning --print --max-turns 30 \
-  "Generate morning briefing for $(date +%Y-%m-%d)."
-```
-
-It scans all registered projects for: recent commits, open tickets,
-uncommitted work, pending decisions. Writes a briefing to
-`~/.hive/briefings/`. Greg reads it with coffee.
-
-### Nightly Knowledge Extraction
-
-The `nightly.sh` script runs `maya-nightly` at 2 AM:
+The `nightly.sh` script runs `hive memory nightly` at 2 AM. The morning
+briefing falls out as one of its artifacts; there is no separate 7am job.
 
 ```bash
-claude --agent maya-nightly --print --max-turns 40 \
-  "Run nightly extraction for $(date +%Y-%m-%d)."
+hive memory nightly        # default LIVE; HIVE_NIGHTLY_DRY_RUN=1 to suppress canon writes
 ```
 
-Reviews the day's git activity across all projects. Extracts durable
-learnings to HIVE memory via `reflect_session`. Updates ticket status
-where appropriate. Runs unattended with `permissionMode: bypassPermissions`.
+Five passes against the last 24 hours of activity:
+
+1. **Pass A — condition.** Rank session exchanges (token count × novelty
+   against canon, plus always-include markers). Survey git, tickets,
+   heartbeat. Skip-if-trivial early exit emits a stub briefing.
+2. **Pass B — Sonnet, per project.** Extract candidates (decisions,
+   conventions, durable facts, open questions) with provenance.
+3. **Pass C — Sonnet, cross-project.** Extract reflections about Greg,
+   Maya, and the system itself.
+4. **Pass V — Opus.** One call decides accept/supersede/merge/reject per
+   candidate, surfaces gaps Sonnet missed, reads taste principles, and
+   writes the morning briefing.
+5. **Pass F — apply.** Mechanical: land accepted entries to canon,
+   supersede by hash, merge tags, drop rejected. Drain mid-session
+   `candidates.md`. Truncate inbox. Rebuild dashboard. Copy briefing.
+
+All run-state lives at `~/.hive/memory/runs/{DATE}/`: `condition.json`,
+`candidates.B.{name}.json`, `candidates.C.json`, `decisions.json`,
+`gaps.md`, `taste.md`, `briefing.md`, `verifier-output.json`,
+`usage.json`. Cost typically $1–3/night.
 
 Thirty minutes later, `hive-sync.sh` commits and pushes `~/.hive/` so
 the knowledge survives.
@@ -366,8 +373,9 @@ hive ticket ready    # shows unblocked open tickets
 hive ticket blocked  # shows dependency-blocked tickets
 ```
 
-Tickets persist across sessions. The morning briefing includes ticket
-status. The nightly extraction can update tickets based on git activity.
+Tickets persist across sessions. The morning briefing (produced by the
+nightly verify pass) ranks open tickets across projects under "What
+needs your attention."
 
 ---
 
@@ -423,16 +431,19 @@ multi-model deliberation.
 ├── TRUST.md             # Action classification and boundaries
 ├── config.md            # Model pool, provider auth, defaults
 ├── scripts/
-│   ├── morning.sh       # 7am briefing via maya-morning agent
-│   ├── nightly.sh       # 2am extraction via maya-nightly agent
-│   └── hive-sync.sh     # 2:30am git commit + push
+│   ├── nightly.sh       # 2am — runs `hive memory nightly` pipeline
+│   ├── heartbeat.sh     # 30-min ticks — per-project heartbeat
+│   └── hive-sync.sh     # 2:30am — git commit + push
 ├── memory/
-│   └── projects/
-│       └── <name>/
-│           ├── knowledge.md  # Compiled facts, conventions, decisions
-│           ├── _index.md     # Auto-generated summary
-│           ├── _meta.json    # Search metadata (decay, recall counts)
-│           └── log/          # Daily session log entries
+│   ├── projects/
+│   │   └── <name>/
+│   │       ├── knowledge.md     # Compiled facts, conventions, decisions
+│   │       ├── _index.md        # Auto-generated summary
+│   │       ├── _meta.json       # Search metadata (decay, recall counts)
+│   │       ├── candidates.md    # Mid-session writes pending nightly admission
+│   │       └── log/             # Daily session log entries
+│   └── runs/
+│       └── {DATE}/              # Nightly pipeline artifacts (see GUIDE §6)
 ├── projects/
 │   └── <name>/
 │       ├── config.md    # Project path registration
@@ -442,15 +453,14 @@ multi-model deliberation.
 │       └── tickets/
 │           └── TK-001.md  # Individual ticket files
 ├── logs/                # Script execution logs
-└── briefings/           # Morning briefing output
+└── briefings/           # Morning briefing output (landed by Pass F)
 
 ~/.claude.json               # MCP server registration (includes HIVE)
 ~/.claude/
 ├── agents/
 │   ├── maya-planner.md  # Architecture and planning agent
 │   ├── maya-coder.md    # Implementation agent (worktree-isolated)
-│   ├── maya-reviewer.md # Code review agent
-│   └── maya-nightly.md  # Nightly maintenance agent
+│   └── maya-reviewer.md # Code review agent
 ```
 
 ---

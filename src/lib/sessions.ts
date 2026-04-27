@@ -64,11 +64,11 @@ function encodeProjectPath(p: string): string {
 /**
  * Find all session transcripts modified in the last N hours.
  */
-function findRecentSessions(hoursAgo: number = 24): Map<string, string[]> {
+function findRecentSessions(hoursAgo: number = 24, now: Date = new Date()): Map<string, string[]> {
   const claudeDir = join(homedir(), ".claude", "projects");
   if (!existsSync(claudeDir)) return new Map();
 
-  const cutoff = Date.now() - hoursAgo * 60 * 60 * 1000;
+  const cutoff = now.getTime() - hoursAgo * 60 * 60 * 1000;
   const result = new Map<string, string[]>();
 
   const projectDirs = readdirSync(claudeDir, { withFileTypes: true })
@@ -437,8 +437,9 @@ export interface ProjectExchanges {
  */
 export async function extractAllRecentExchanges(
   hoursAgo: number = 24,
+  now: Date = new Date(),
 ): Promise<ProjectExchanges[]> {
-  const recentByProject = findRecentSessions(hoursAgo);
+  const recentByProject = findRecentSessions(hoursAgo, now);
   const result: ProjectExchanges[] = [];
 
   for (const [encodedPath, jsonlFiles] of recentByProject) {

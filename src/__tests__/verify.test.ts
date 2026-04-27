@@ -424,6 +424,30 @@ Quiet day.
     expect(out).toContain("- **system** — Heartbeat slow");
   });
 
+  test("rewrites a stale 'Verifier flags: 3 gaps' line to deterministic value", () => {
+    const briefing = `# HIVE\n\n## Memory + verifier\n- Added: 0 entries. Superseded: 0. Reflections: 0.\n- Verifier flags: 3 gaps`;
+    const out = refineBriefing(briefing, [], []);
+    expect(out).toContain("- Verifier flags: none");
+    expect(out).not.toContain("- Verifier flags: 3 gaps");
+  });
+
+  test("rewrites stale flags line and injects section when gaps exist", () => {
+    const briefing = `# HIVE\n\n## Memory + verifier\n- Added: 1 entries. Superseded: 0. Reflections: 0.\n- Verifier flags: none`;
+    const out = refineBriefing(briefing, [{ candidate_id: "B.a[0]", action: "accept" }], [
+      { subject: "alpha", observation: "missed X", source: "topRanked[5]" },
+    ]);
+    expect(out).toContain("- Verifier flags: 1 (see section below)");
+    expect(out).toContain("## Verifier flags");
+    expect(out).toContain("- **alpha** — missed X");
+    expect(out).not.toContain("- Verifier flags: none");
+  });
+
+  test("inserts flags line when missing", () => {
+    const briefing = `# HIVE\n\n## Memory + verifier\n- Added: 0 entries. Superseded: 0. Reflections: 0.`;
+    const out = refineBriefing(briefing, [], []);
+    expect(out).toContain("- Verifier flags: none");
+  });
+
   test("does not duplicate Verifier flags section if briefing already has one", () => {
     const briefing = `${baseBriefing}\n\n## Verifier flags\n- existing flag`;
     const out = refineBriefing(briefing, [], [

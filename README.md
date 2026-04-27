@@ -67,8 +67,8 @@ architecture decisions and tradeoff analysis.
 
 **Nightly extraction.**
 
-- A launchd job runs at 2am nightly. It condenses every Claude Code session transcript from the last 24 hours — the raw JSONL files Claude Code writes during every conversation — into readable markdown, then dispatches the maya-nightly agent to review them alongside git activity. The agent extracts reasoning, rejected approaches, and key decisions that don't show up in git logs or code comments, and promotes durable learnings into project memory. Memory compounds from actual work, not just what someone remembers to write down.
-- This means corrections and preferences you give during any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — get picked up by the nightly, distilled into memory, and applied in every future session. Tell the AI once, it sticks forever.
+- A launchd job runs at 2am nightly. It walks a five-pass pipeline against the last 24 hours of activity: condition (rank session exchanges by signal × novelty), Sonnet extracts per-project candidates, Sonnet extracts cross-project reflections, Opus verifies and writes the morning briefing, then mechanical apply lands accepted decisions to canon and rebuilds the dashboard. Cost typically $1–3/night; everything is auditable in `~/.hive/memory/runs/{DATE}/`.
+- This means corrections and preferences you give during any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — flow as candidates to the night, get verified, and apply in every future session. Tell the AI once, it sticks forever.
 
 **Language stacks.**
 
@@ -90,14 +90,13 @@ installs agents and scripts, registers the MCP server, and sets up
 launchd jobs. It will prompt for your name to personalize templates
 (or pass `--name="Your Name"`).
 
-The installer registers four launchd jobs:
+The installer registers three launchd jobs:
 
 | Job | Schedule | What it does |
 | --- | --- | --- |
 | `com.hive.heartbeat` | Polls every 30 minutes, per-project interval configurable (default 12h) | Checks project state, dispatches autonomous work, consolidates memory |
-| `com.hive.nightly` | 2:00am daily | Extracts session transcripts, promotes learnings to project memory |
+| `com.hive.nightly` | 2:00am daily | Runs the V1 memory pipeline: condition → Sonnet extract → Opus verify → apply → rebuild dashboard. Lands the morning briefing. |
 | `com.hive.sync` | 2:30am daily | Commits and pushes `~/.hive/` to git |
-| `com.hive.morning` | 7:00am daily | Writes a daily briefing across all projects |
 
 All jobs log to `~/.hive/logs/`. Manage with `launchctl`:
 ```bash
@@ -321,7 +320,7 @@ Don't tag anything that needs human judgment on approach.
 │       └── tickets/
 │           └── TK-001.md
 ├── scripts/             # launchd entry points
-└── logs/                # nightly, morning, heartbeat logs
+└── logs/                # nightly, heartbeat, sync logs
 ```
 
 ## Requirements

@@ -4,7 +4,7 @@
 // docs/specs/2026-04-26-memory-design.md §Pass V
 
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { completePiText, type PiTextCompletion } from "./pi";
@@ -613,6 +613,7 @@ export function tallyBriefingCounts(decisions: VerifierDecision[]): BriefingFoot
 }
 
 const ADDED_LINE_RE = /^\s*-\s*Added:.*$/m;
+const VERIFIER_FLAGS_LINE_RE = /^\s*-\s*Verifier flags:.*$/m;
 
 export function refineBriefing(
   briefing: string,
@@ -629,6 +630,19 @@ export function refineBriefing(
     // Briefing didn't include the canonical footer line — append a footer block.
     const footer = `\n\n## Memory + verifier\n${accurateLine}\n`;
     out = out.trimEnd() + footer;
+  }
+
+  // Rewrite or set the Verifier flags footer line so it always agrees with
+  // the section below. Opus has historically hallucinated counts here.
+  const flagsLine =
+    gaps.length === 0
+      ? "- Verifier flags: none"
+      : `- Verifier flags: ${gaps.length} (see section below)`;
+  if (VERIFIER_FLAGS_LINE_RE.test(out)) {
+    out = out.replace(VERIFIER_FLAGS_LINE_RE, flagsLine);
+  } else {
+    // Inject after the Added line so the footer reads as a coherent block.
+    out = out.replace(ADDED_LINE_RE, (m) => `${m}\n${flagsLine}`);
   }
 
   // Inject Verifier flags section when gaps exist and one isn't already there.
@@ -677,10 +691,6 @@ function formatTasteMarkdown(taste: VerifierTaste): string {
 }
 
 export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifierResult> {
-  const bundle = await loadVerifierBundle(opts.paths, opts.date);
-  const userContent = buildVerifierUserContent(bundle);
-  const result = await callVerifier(VERIFIER_SYSTEM_PROMPT, userContent, opts.caller);
-
   const runDir = join(opts.paths.memoryRunsDir, opts.date);
   await mkdir(runDir, { recursive: true });
 
@@ -689,6 +699,17 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   const tastePath = join(runDir, "taste.md");
   const briefingPath = join(runDir, "briefing.md");
   const fullOutputPath = join(runDir, "verifier-output.json");
+
+  // Clear any stale artifacts from a prior run on this date before the LLM
+  // call. If Opus fails, downstream sees absence (correct) rather than
+  // yesterday's success masquerading as today's.
+  for (const p of [decisionsPath, gapsPath, tastePath, briefingPath, fullOutputPath]) {
+    await rm(p, { force: true });
+  }
+
+  const bundle = await loadVerifierBundle(opts.paths, opts.date);
+  const userContent = buildVerifierUserContent(bundle);
+  const result = await callVerifier(VERIFIER_SYSTEM_PROMPT, userContent, opts.caller);
 
   await Bun.write(decisionsPath, JSON.stringify({ decisions: result.output.decisions }, null, 2));
   await Bun.write(gapsPath, formatGapsMarkdown(result.output.gaps));

@@ -232,7 +232,13 @@ function rankedToPreview(
 export interface BuildConditionOptions {
   hoursWindow?: number;
   topK?: number;
-  now?: Date; // testing seam
+  now?: Date; // testing seam — overrides everything
+  /**
+   * Target date in YYYY-MM-DD. When set, anchors `now` to end-of-day UTC for
+   * that date so the 24h window covers the named day and report.date matches.
+   * Used by `hive memory nightly --date X` for retroactive runs.
+   */
+  date?: string;
 }
 
 export async function buildConditionReport(
@@ -240,13 +246,15 @@ export async function buildConditionReport(
   options: BuildConditionOptions = {},
 ): Promise<ConditionReport> {
   const hoursWindow = options.hoursWindow ?? 24;
-  const now = options.now ?? new Date();
+  // `now` precedence: explicit Date > derived from `date` > wall clock.
+  const now = options.now
+    ?? (options.date ? new Date(`${options.date}T23:59:59.999Z`) : new Date());
   const sinceMs = now.getTime() - hoursWindow * 3600 * 1000;
   const sinceIso = new Date(sinceMs).toISOString();
-  const date = now.toISOString().slice(0, 10);
+  const date = options.date ?? now.toISOString().slice(0, 10);
   const topK = options.topK ?? DEFAULT_TOP_K;
 
-  const allExchanges = await extractAllRecentExchanges(hoursWindow);
+  const allExchanges = await extractAllRecentExchanges(hoursWindow, now);
   const exchangesByProject = new Map(
     allExchanges.map((p) => [p.projectName, p] as const),
   );

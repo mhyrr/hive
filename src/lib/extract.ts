@@ -3,7 +3,7 @@
 //
 // docs/specs/2026-04-26-memory-design.md §Pass B + Pass C
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { completePiText, type PiTextCompletion } from "./pi";
@@ -474,6 +474,16 @@ export async function runProjectExtractor(
       `Project "${opts.projectId}" not present in condition.json for ${opts.date}. Run \`hive memory condition\` first.`,
     );
   }
+  // Clear any stale artifact from a prior run before the LLM call. If the
+  // call fails, downstream sees absence (correct) instead of yesterday's
+  // success masquerading as today's.
+  const outputPath = join(
+    opts.paths.memoryRunsDir,
+    opts.date,
+    `candidates.B.${opts.projectId}.json`,
+  );
+  await rm(outputPath, { force: true });
+
   const knowledgeText = await loadProjectKnowledgeText(opts.paths, opts.projectId);
   const userContent = buildProjectExtractionUserContent({
     projectId: opts.projectId,
@@ -492,11 +502,6 @@ export async function runProjectExtractor(
     inputTokens: result.usage.inputTokens ?? 0,
     outputTokens: result.usage.outputTokens ?? 0,
   });
-  const outputPath = join(
-    opts.paths.memoryRunsDir,
-    opts.date,
-    `candidates.B.${opts.projectId}.json`,
-  );
   await writeJsonArtifact(outputPath, {
     pass: "B",
     project: opts.projectId,
@@ -529,6 +534,9 @@ export interface RunReflectionExtractorOptions {
 export async function runReflectionExtractor(
   opts: RunReflectionExtractorOptions,
 ): Promise<{ outputPath: string; result: ExtractorCallResult<ReflectionCandidate> }> {
+  const outputPath = join(opts.paths.memoryRunsDir, opts.date, "candidates.C.json");
+  await rm(outputPath, { force: true });
+
   const report = await loadConditionReport(opts.paths, opts.date);
   const identityText = await loadIdentityText(opts.paths);
   const userContent = buildReflectionExtractionUserContent({
@@ -547,7 +555,6 @@ export async function runReflectionExtractor(
     inputTokens: result.usage.inputTokens ?? 0,
     outputTokens: result.usage.outputTokens ?? 0,
   });
-  const outputPath = join(opts.paths.memoryRunsDir, opts.date, "candidates.C.json");
   await writeJsonArtifact(outputPath, {
     pass: "C",
     date: opts.date,
