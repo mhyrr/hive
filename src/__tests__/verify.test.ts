@@ -10,6 +10,9 @@ import {
   buildVerifierUserContent,
   callVerifier,
   runVerifier,
+  refineBriefing,
+  tallyBriefingCounts,
+  type VerifierDecision,
 } from "../lib/verify";
 import {
   estimateCost,
@@ -337,6 +340,104 @@ describe("callVerifier", () => {
   test("throws on schema violations with descriptive error", async () => {
     const caller = stubCaller(`{"decisions": "not an array"}`);
     await expect(callVerifier("s", "u", caller)).rejects.toThrow(/Verifier output failed schema/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Briefing refinement — deterministic post-processing
+// ---------------------------------------------------------------------------
+
+describe("tallyBriefingCounts", () => {
+  test("counts accepts as added unless candidate is a reflection (C[*])", () => {
+    const decisions: VerifierDecision[] = [
+      { candidate_id: "B.alpha[0]", action: "accept" },
+      { candidate_id: "B.alpha[1]", action: "accept" },
+      { candidate_id: "B.bravo[0]", action: "accept" },
+      { candidate_id: "candidates.alpha[0]", action: "accept" },
+      { candidate_id: "C[0]", action: "accept" },
+      { candidate_id: "C[1]", action: "accept" },
+      { candidate_id: "C[2]", action: "accept" },
+      { candidate_id: "B.alpha[2]", action: "supersede", target_hash: "abcd1234" },
+      { candidate_id: "C[3]", action: "reject", reason: "duplicate" },
+    ];
+    const counts = tallyBriefingCounts(decisions);
+    expect(counts.added).toBe(4);
+    expect(counts.superseded).toBe(1);
+    expect(counts.reflections).toBe(3);
+  });
+
+  test("merges and rejects don't count toward added", () => {
+    const decisions: VerifierDecision[] = [
+      { candidate_id: "B.alpha[0]", action: "merge", target_hash: "abcd1234" },
+      { candidate_id: "B.alpha[1]", action: "reject", reason: "low_signal" },
+    ];
+    const counts = tallyBriefingCounts(decisions);
+    expect(counts.added).toBe(0);
+    expect(counts.superseded).toBe(0);
+    expect(counts.reflections).toBe(0);
+  });
+});
+
+describe("refineBriefing", () => {
+  const baseBriefing = `# HIVE — 2026-04-27
+
+## Headline
+Quiet day.
+
+## Memory + verifier
+- Added: 11 entries. Superseded: 0. Reflections: 2.
+- Taste: reinforced *foo*
+- Verifier flags: 3 gaps`;
+
+  test("rewrites the Added/Superseded/Reflections line with deterministic counts", () => {
+    const decisions: VerifierDecision[] = [
+      { candidate_id: "B.a[0]", action: "accept" },
+      { candidate_id: "B.a[1]", action: "accept" },
+      { candidate_id: "C[0]", action: "accept" },
+      { candidate_id: "C[1]", action: "accept" },
+      { candidate_id: "C[2]", action: "accept" },
+      { candidate_id: "B.a[2]", action: "supersede", target_hash: "1d2e90e0" },
+    ];
+    const out = refineBriefing(baseBriefing, decisions, []);
+    expect(out).toContain("- Added: 2 entries. Superseded: 1. Reflections: 3.");
+    expect(out).not.toContain("Added: 11 entries");
+  });
+
+  test("appends a Memory + verifier footer when none exists", () => {
+    const briefing = "# HIVE\n\n## Headline\nNo footer here.";
+    const out = refineBriefing(briefing, [{ candidate_id: "B.a[0]", action: "accept" }], []);
+    expect(out).toContain("## Memory + verifier");
+    expect(out).toContain("- Added: 1 entries. Superseded: 0. Reflections: 0.");
+  });
+
+  test("injects a Verifier flags section when gaps exist and none is already present", () => {
+    const out = refineBriefing(
+      baseBriefing,
+      [],
+      [
+        { subject: "alpha", observation: "Sonnet missed X", source: "topRanked[5]" },
+        { subject: "system", observation: "Heartbeat slow", source: "inbox" },
+      ],
+    );
+    expect(out).toContain("## Verifier flags");
+    expect(out).toContain("- **alpha** — Sonnet missed X");
+    expect(out).toContain("- **system** — Heartbeat slow");
+  });
+
+  test("does not duplicate Verifier flags section if briefing already has one", () => {
+    const briefing = `${baseBriefing}\n\n## Verifier flags\n- existing flag`;
+    const out = refineBriefing(briefing, [], [
+      { subject: "alpha", observation: "ignored", source: "x" },
+    ]);
+    const matches = out.match(/^## Verifier flags/gm);
+    expect(matches?.length).toBe(1);
+    expect(out).toContain("- existing flag");
+    expect(out).not.toContain("Sonnet missed X");
+  });
+
+  test("no gaps → no Verifier flags section appended", () => {
+    const out = refineBriefing(baseBriefing, [], []);
+    expect(out).not.toContain("## Verifier flags");
   });
 });
 

@@ -3,10 +3,9 @@
 # launchd: 2am daily
 #
 # V1 pipeline: condition → extract (B + C) → verify → apply → dashboard.
-# Default mode is --dry-run during the V1 shakedown window. Once Greg has read
-# 3-5 nights of runs/{DATE}/briefing.md and likes the shape, set
-# HIVE_NIGHTLY_DRY_RUN=0 to flip; Pass F + dashboard rebuild then own the live
-# artifacts.
+# LIVE: Pass F lands decisions to canon and the dashboard rebuilds. Set
+# HIVE_NIGHTLY_DRY_RUN=1 to revert to dry-run if you want to test prompt
+# changes without touching canon.
 
 set -euo pipefail
 
@@ -28,13 +27,13 @@ fi
 
 TIMEOUT_DURATION="${HIVE_NIGHTLY_TIMEOUT:-25m}"
 
-# Dry-run is the default during V1 shakedown. Flip with HIVE_NIGHTLY_DRY_RUN=0.
-DRY_RUN_FLAG="--dry-run"
-if [ "${HIVE_NIGHTLY_DRY_RUN:-1}" = "0" ]; then
-  DRY_RUN_FLAG=""
-  echo "--- Running memory nightly orchestrator (LIVE) ---"
-else
+# Live by default. Set HIVE_NIGHTLY_DRY_RUN=1 to suppress canon writes.
+DRY_RUN_FLAG=""
+if [ "${HIVE_NIGHTLY_DRY_RUN:-0}" = "1" ]; then
+  DRY_RUN_FLAG="--dry-run"
   echo "--- Running memory nightly orchestrator (dry-run) ---"
+else
+  echo "--- Running memory nightly orchestrator (LIVE) ---"
 fi
 
 set +e

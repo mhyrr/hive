@@ -578,6 +578,72 @@ export interface RunVerifierResult {
   cost: CostBreakdown;
 }
 
+// ---------------------------------------------------------------------------
+// Briefing refinement — deterministic post-processing of the Opus prose.
+//
+// Opus is good at the headline, the per-project bullets, and the taste read.
+// It's flaky on counting (last run had "Reflections: 2" when 3 reflections
+// landed). And it sometimes treats gaps as a footer count when they earn a
+// section. Pass V owns the briefing's accuracy, so we touch up the prose
+// before persisting:
+//   - Replace the "Added/Superseded/Reflections" line with deterministic counts
+//   - Inject a `## Verifier flags` section listing each gap, if any
+// ---------------------------------------------------------------------------
+
+interface BriefingFooterCounts {
+  added: number;
+  superseded: number;
+  reflections: number;
+}
+
+export function tallyBriefingCounts(decisions: VerifierDecision[]): BriefingFooterCounts {
+  let added = 0;
+  let superseded = 0;
+  let reflections = 0;
+  for (const d of decisions) {
+    const isReflection = d.candidate_id.startsWith("C[");
+    if (d.action === "accept") {
+      if (isReflection) reflections++;
+      else added++;
+    } else if (d.action === "supersede") {
+      superseded++;
+    }
+  }
+  return { added, superseded, reflections };
+}
+
+const ADDED_LINE_RE = /^\s*-\s*Added:.*$/m;
+
+export function refineBriefing(
+  briefing: string,
+  decisions: VerifierDecision[],
+  gaps: VerifierGap[],
+): string {
+  const counts = tallyBriefingCounts(decisions);
+  const accurateLine = `- Added: ${counts.added} entries. Superseded: ${counts.superseded}. Reflections: ${counts.reflections}.`;
+
+  let out = briefing;
+  if (ADDED_LINE_RE.test(out)) {
+    out = out.replace(ADDED_LINE_RE, accurateLine);
+  } else {
+    // Briefing didn't include the canonical footer line — append a footer block.
+    const footer = `\n\n## Memory + verifier\n${accurateLine}\n`;
+    out = out.trimEnd() + footer;
+  }
+
+  // Inject Verifier flags section when gaps exist and one isn't already there.
+  if (gaps.length > 0 && !/^## Verifier flags/m.test(out)) {
+    const lines = ["", "## Verifier flags"];
+    for (const g of gaps) {
+      lines.push(`- **${g.subject}** — ${g.observation}`);
+    }
+    lines.push("");
+    out = out.trimEnd() + "\n" + lines.join("\n");
+  }
+
+  return out;
+}
+
 function formatGapsMarkdown(gaps: VerifierGap[]): string {
   if (gaps.length === 0) return "# Verifier gaps\n\nNo gaps surfaced.\n";
   const lines = ["# Verifier gaps", ""];
@@ -627,7 +693,14 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   await Bun.write(decisionsPath, JSON.stringify({ decisions: result.output.decisions }, null, 2));
   await Bun.write(gapsPath, formatGapsMarkdown(result.output.gaps));
   await Bun.write(tastePath, formatTasteMarkdown(result.output.taste));
-  await Bun.write(briefingPath, result.output.briefing_markdown);
+  // Refine Opus's prose before landing — fixes flaky footer counts and surfaces
+  // gaps as a section instead of just a count.
+  const refined = refineBriefing(
+    result.output.briefing_markdown,
+    result.output.decisions,
+    result.output.gaps,
+  );
+  await Bun.write(briefingPath, refined);
   // Full structured output — Pass F (Apply) consumes this for gap-landing
   // and taste-readout. Markdown files above are for humans.
   await Bun.write(fullOutputPath, JSON.stringify(result.output, null, 2));
