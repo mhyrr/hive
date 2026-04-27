@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { completePiText, type PiTextCompletion } from "./pi";
+import { completeClaudeText } from "./claude";
 import type { HivePaths } from "./paths";
 import { listProjects } from "./paths";
 import {
@@ -528,7 +528,12 @@ export interface VerifierCallResult {
   cost: CostBreakdown;
 }
 
-const defaultCaller: ModelCaller = (input) => completePiText(input);
+const defaultCaller: ModelCaller = (input) =>
+  completeClaudeText({
+    modelId: input.modelId,
+    systemPrompt: input.systemPrompt,
+    userContent: input.userContent,
+  });
 
 export async function callVerifier(
   systemPrompt: string,

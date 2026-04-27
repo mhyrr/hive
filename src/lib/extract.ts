@@ -6,7 +6,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { completePiText, type PiTextCompletion } from "./pi";
+import { completeClaudeText } from "./claude";
 import type { HivePaths } from "./paths";
 import { readProjectMemorySnapshot } from "./memory";
 import type { ConditionReport, ProjectSignal } from "./condition";
@@ -322,14 +322,31 @@ export interface ExtractorCallResult<T> {
   };
 }
 
+// Harness-agnostic completion shape. `provider` is kept in the contract for
+// usage accounting even though Claude Code is anthropic-only — pricing tables
+// key off it.
+export interface ModelTextCompletion {
+  provider: string;
+  model: string;
+  text: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  durationMs: number | null;
+}
+
 export type ModelCaller = (input: {
   provider: string;
   modelId: string;
   systemPrompt: string;
   userContent: string;
-}) => Promise<PiTextCompletion>;
+}) => Promise<ModelTextCompletion>;
 
-const defaultCaller: ModelCaller = (input) => completePiText(input);
+const defaultCaller: ModelCaller = (input) =>
+  completeClaudeText({
+    modelId: input.modelId,
+    systemPrompt: input.systemPrompt,
+    userContent: input.userContent,
+  });
 
 export async function callProjectExtractor(
   systemPrompt: string,

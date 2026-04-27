@@ -218,6 +218,17 @@ hr.amber {
   color: var(--ink-soft);
 }
 
+/* Lede paragraph — full-width across all columns, like a newspaper standfirst */
+.briefing > h2:first-of-type + p,
+.briefing > h1 + p,
+.briefing > p:first-of-type {
+  column-span: all;
+  -webkit-column-span: all;
+  font-size: 17px;
+  line-height: 1.45;
+  margin: 0 0 14px;
+}
+
 /* Drop cap on the first paragraph after the lede heading */
 .briefing > p:first-of-type::first-letter,
 .briefing > h1 + p::first-letter,
