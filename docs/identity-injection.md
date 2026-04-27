@@ -10,18 +10,23 @@ interactive, dispatched, and heartbeat.
 │ 1. Soul stack     ~/.hive/{SOUL,IDENTITY,SELF,AGENTS,TRUST}.md     │  always
 │ 2. Project memory ~/.hive/memory/projects/<p>/_index.md            │  interactive + dispatch
 │ 3. Stack hint     derived from repo markers (mix.exs → elixir)     │  per-project
-│ 4. Reflection     session-end discipline                           │  always
-│ 5. Taste          ~/.hive/taste/principles.md (+ applications/<d>) │  always (principles); domain on hint (LAST)
+│ 4. Taste          ~/.hive/taste/principles.md                      │  when present (LAST = loudest)
 └────────────────────────────────────────────────────────────────────┘
 ```
 
 Order is deliberate. Later content wins interpretation ties in the system
 prompt, so the taste layer sits last.
 
-OVERRIDES.md (the old 6th tier) was retired once Claude Code's harness
-behavior settled. The single piece of OVERRIDES that was verifiably
-load-bearing — the MCP tool pre-fetch directive that works around
-ToolSearch deferral — moved into AGENTS.md.
+Reflection discipline lives inside AGENTS.md (no longer a separate emission
+block). OVERRIDES.md (the old 6th tier) was retired once Claude Code's
+harness behavior settled — the only verifiably load-bearing piece, the MCP
+tool pre-fetch directive that works around ToolSearch deferral, moved into
+AGENTS.md.
+
+V1 cutover (2026-04-27) collapsed the taste layer to `principles.md` only.
+The previous per-domain `applications/<d>.md` + `--taste <domain>` flag were
+removed; Pass V now reads the same `principles.md` during the nightly run
+so taste lives at one altitude across session-time and verify-time.
 
 ## Single Source of Truth
 
@@ -76,7 +81,7 @@ The full add-checklist when introducing a new section to the prefix:
 5. Extend `checkIdentity()` in `src/commands/doctor.ts` with a presence check
 6. Update `src/__tests__/identity.test.ts`:
    - Seed the new file in the fixture
-   - Add a marker assertion in the "emits all six sections" test
+   - Add a marker assertion in the "emits all four sections" test
    - Adjust the canonical ordering list
 7. Update the stack diagram in this file
 
@@ -110,7 +115,7 @@ everything is green and Maya still feels off:
    Dispatch and heartbeat pin to `claude-opus-4-6` by default (override
    with `--model` or `HIVE_DISPATCH_MODEL` / `HIVE_HEARTBEAT_MODEL`).
 3. **Dry-run the hook.** `bash ~/.claude/hooks/load-identity.sh | less` —
-   should show soul stack → project memory → stack hint → reflection → taste.
+   should show soul stack → project memory → stack hint → taste.
 4. **Dry-run the command directly.** `hive identity emit | less` — same
    output as the hook. If they differ, the hook drifted (run
    `hive init --force-hook`).

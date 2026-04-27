@@ -1,6 +1,8 @@
 # Memory System — Design
 
-**Status:** Draft (architecture locked; V1 task list defined)
+**Status:** **Shipped** — Groups 1-9 landed 2026-04-27. Live since `dec322c`
+(briefing refinement + nightly.sh flip to LIVE) and `e1ffde6` (P1-P4
+correctness fixes). Doc kept as historical record of the design pass.
 **Date:** 2026-04-26
 **Author:** Maya (with Greg)
 **Ticket:** TK-067

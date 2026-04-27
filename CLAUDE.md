@@ -7,9 +7,9 @@ needed. If identity feels missing, run `hive doctor`.
 HIVE MCP tools (pre-fetched by the hook):
 - `convene_council` — Multi-model deliberation. Standard, analyst, or dialectic modes.
 - `read_hive_memory` — Read project intelligence (full knowledge or lightweight index).
-- `write_hive_memory` — Record new facts, conventions, or decisions.
-- `search_memory` — BM25 search across knowledge and session logs.
-- `reflect_session` — Batch-write session learnings (knowledge + log + index rebuild).
+- `write_hive_memory` — Queue a fact/convention/decision/question as a candidate. Mid-session writes go to `candidates.md`; the nightly verifier (Pass V) admits them to canon.
+- `search_memory` — BM25 search across knowledge and session logs. Bumps recall metadata for retrieval strengthening.
+- `reflect_session` — Batch-queue session learnings as candidates. Raw entries also land in the session log.
 - `create_ticket` — Create a ticket (bug, feature, task, epic, chore) with priority, tags, and dependencies.
 - `list_tickets` — List and filter project tickets by status, type, or tags.
 - `show_ticket` — Show full ticket details including notes.
@@ -29,9 +29,15 @@ HIVE MCP tools (pre-fetched by the hook):
 
 ## Architecture
 
-43 source files, ~11,200 lines. Two entry points:
-- `src/cli.ts` — CLI (init, doctor, project, stack, council, memory, ticket, dispatch, heartbeat, inbox, kill, ps, dashboard)
-- `src/mcp-server.ts` — MCP server (convene_council, read_hive_memory, write_hive_memory, search_memory, reflect_session, create_ticket, list_tickets, show_ticket, update_ticket, add_ticket_note, add_project, hive_status, manage_heartbeat)
+~80 source files, ~22,900 lines. Two entry points:
+- `src/cli.ts` — CLI (init, doctor, identity, project, stack, council, memory, ticket, dispatch, heartbeat, inbox, kill, ps, dashboard). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
+- `src/mcp-server.ts` — MCP server (same tools as the bullet list above).
 
-The crown jewel is `src/lib/council.ts` — parallel multi-model deliberation.
-Identity lives in `~/.hive/`.
+Crown-jewel modules:
+- `src/lib/council.ts` — parallel multi-model deliberation
+- `src/lib/orchestrator.ts` — nightly pipeline (Pass A → B → C → V → F)
+- `src/lib/verify.ts` — Opus verifier; the only path into `knowledge.md`
+- `src/lib/memory.ts` — storage layer: BM25, decay, hashed supersede/merge primitives, candidates queue
+
+Identity lives in `~/.hive/`. Nightly artifacts at `~/.hive/memory/runs/{DATE}/`.
+See `docs/memory-architecture.md` for the read/write paths and pipeline diagram.

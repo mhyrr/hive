@@ -7,6 +7,13 @@ a filing cabinet. Useful things should get stronger over time, unused
 things should fade, and search should rank by relevance, not just
 substring matching.
 
+> **2026-04-27 — V1 nightly pipeline.** The storage layer (BM25, decay,
+> the three-layer model) below is unchanged. The V1 cutover added a
+> verifier in front of canon: agents write to a `candidates.md` queue
+> mid-session, and the nightly pipeline (Pass A → B → C → V → F) decides
+> what becomes canonical. See "V1 Nightly Pipeline" below for the write
+> path. Read paths (`searchMemory`, `read_hive_memory`) are unchanged.
+
 ## Three-Layer Model
 
 Memory flows from raw capture to compiled intelligence to navigational
@@ -40,13 +47,25 @@ everything.
 
 ```
 ~/.hive/memory/projects/<name>/
-├── knowledge.md      # Compiled intelligence (human-editable)
+├── knowledge.md      # Compiled intelligence (human-editable). Only Pass F writes here.
+├── candidates.md     # Mid-session writes pending nightly admission (JSONL).
 ├── _meta.json        # Strength/decay metadata (engine state)
 ├── _index.md         # Auto-generated session-start summary
 └── log/
     ├── 2026-04-10.md
     ├── 2026-04-09.md
     └── ...
+
+~/.hive/memory/runs/<DATE>/
+├── condition.json              # Pass A signal report (sessions/git/tickets/heartbeat)
+├── candidates.B.<project>.json # Sonnet's per-project extractions
+├── candidates.C.json           # Sonnet's cross-project reflections
+├── decisions.json              # Opus's per-candidate verdicts (accept/supersede/merge/reject)
+├── verifier-output.json        # Full Pass V structured output (read by Pass F)
+├── briefing.md                 # Morning briefing (lands in ~/.hive/briefings/)
+├── gaps.md                     # Things Sonnet missed
+├── taste.md                    # Principles reinforced / corrected
+└── usage.json                  # Per-pass tokens + cost (B/C/V aggregate)
 ```
 
 ## BM25 Search
@@ -142,17 +161,28 @@ decision, not an automated one.
 
 ### Retrieval Strengthening
 
-When `searchMemory()` returns an entry in its results, that entry's
-metadata is updated:
+Two paths strengthen entries — explicit search and auto-load. Both update
+metadata, with auto-load damped to avoid drowning out genuine retrieval.
+
+**Explicit search** — when `searchMemory()` returns an entry, its metadata
+is updated:
 
 - `lastRecalled` set to today
-- `recallCount` incremented
+- `recallCount` incremented by 1
 - `halfLife` extended by 7 days (capped at 90)
 
-The intuition: entries you actually use survive longer. An entry
-recalled 7 times has a half-life of 79 days and a strength multiplier
-of ~4x from the recall count factor. It will outlast entries that were
-written once and never referenced.
+**Auto-load (V1, Group 1 fix)** — when `rebuildIndex()` selects an entry
+for the session-start `_index.md`, the entry gets a damped bump:
+
+- `lastRecalled` set to today
+- `recallCount` incremented by 0.25 (fractional)
+- `halfLife` extended by 1 day (capped at 90)
+
+The intuition: entries you actually use survive longer. An entry recalled
+7 times has a half-life of 79 days and a strength multiplier of ~4x from
+the recall count factor. Auto-loaded entries earn smaller bumps but still
+strengthen — closes the original Hippo gap where index-loaded entries went
+un-reinforced even though they were the ones earning a place in the prefix.
 
 ### Strength Examples
 
@@ -189,9 +219,11 @@ relevant log entry from today can outrank a weak knowledge entry.
 | Operation | Metadata effect |
 |-----------|----------------|
 | `appendProjectMemory()` | Creates entry: `createdAt = now`, `halfLife = 30`, `recallCount = 0` |
-| `searchMemory()` | Bumps `lastRecalled`, increments `recallCount`, extends `halfLife` (+7, cap 90) |
-| `supersedeEntry()` | Removes old entry metadata, creates fresh for new entry |
-| `rebuildIndex()` | Reads strength to rank entries in the index |
+| `searchMemory()` | Bumps `lastRecalled`, `recallCount += 1`, `halfLife += 7` (cap 90) |
+| `rebuildIndex()` | Damped bump for indexed entries: `recallCount += 0.25`, `halfLife += 1` (cap 90). Also reads strength to rank entries. |
+| `supersedeEntry()` / `supersedeEntryByHash()` | Removes old entry metadata, creates fresh for new entry |
+| `mergeTagsIntoEntry()` | Adds tags to an existing entry; metadata untouched |
+| `appendCandidate()` | No metadata effect — candidates queue lives outside the strength model until Pass F admits them |
 
 Metadata is engine state, not part of the knowledge document.
 `_meta.json` is not human-edited. If it's deleted or corrupted,
@@ -208,6 +240,60 @@ With strength scoring, the index becomes smarter:
   to use `search_memory` for deeper queries
 - Strength tier indicators (high/medium/low) help the session
   understand which facts are battle-tested vs. recently added
+
+## V1 Nightly Pipeline
+
+Mid-session writes do not ratify directly. Agents calling `write_hive_memory`
+or `reflect_session` append to `candidates.md` (a JSONL queue under the
+project's memory directory). Provenance is auto-attached:
+`session:pid-<pid> — agent-write at HH:MM:SSZ`. Optional `provenance_note`
+input lets the caller add context the verifier can weigh.
+
+The nightly pipeline at 2am is the only path into `knowledge.md`:
+
+```
+Pass A — Conditioning (mechanical, no LLM)
+  ↓ rank session exchanges by tokenCount × novelty + always-include markers
+  ↓ skip-if-trivial early exit emits a stub briefing
+
+Pass B — Sonnet, per project with signal (parallel)
+  ↓ extract decisions, conventions, durable facts, open questions
+  ↓ each candidate carries a free-text provenance string
+
+Pass C — Sonnet, cross-project (single call)
+  ↓ extract reflections about Greg, Maya, the system
+
+Pass V — Opus (single call) — reads B + C + candidates.md + canon
+  ↓ produces decisions (accept | supersede(hash) | merge(hash) | reject)
+  ↓ produces gaps (things Sonnet missed) + taste readout + briefing.md
+
+Pass F — Apply (mechanical)
+  ↓ walk decisions: appendProjectMemory / supersedeEntryByHash /
+  ↓                 mergeTagsIntoEntry / drop rejected
+  ↓ drain candidates.md → runs/{DATE}/candidates.consumed.{name}.md
+  ↓ truncate inbox.md, rebuild _index.md per project touched
+  ↓ land accepted reflections + project-scoped gaps as questions
+  ↓ copy briefing.md → ~/.hive/briefings/{DATE}.md
+```
+
+**Provenance discipline.** Every candidate carries a provenance string the
+verifier checks against the day's signal. If the cited source can't be
+found, Opus can reject with reason `cite_unverifiable`. This is the gate
+that keeps the system honest — facts in canon trace back to actual
+exchanges or commits, not to plausible hallucinations.
+
+**Run state is durable.** Each pass writes its artifact to
+`~/.hive/memory/runs/{DATE}/` before the next pass consumes. Failures
+localize: a Pass B failure on one project doesn't block others; a Pass V
+failure cleanly skips F with the upstream artifacts intact for inspection.
+
+**Cost.** Three LLM calls per night (two Sonnet, one Opus). Per-pass
+token + USD recorded in `runs/{DATE}/usage.json`. Typical cost: $1–3.
+
+**Restartability.** Each `run*` function deletes its target artifact at
+the start of an attempt. Failure leaves absence (correct); success writes
+fresh. Re-running on the same date overwrites cleanly without leaving
+stale outputs from a prior attempt.
 
 ## Design Influences
 
