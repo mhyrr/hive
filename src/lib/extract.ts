@@ -10,6 +10,7 @@ import { completePiText, type PiTextCompletion } from "./pi";
 import type { HivePaths } from "./paths";
 import { readProjectMemorySnapshot } from "./memory";
 import type { ConditionReport, ProjectSignal } from "./condition";
+import { estimateCost, appendUsageRecord } from "./pricing";
 
 const DEFAULT_PROVIDER = "anthropic";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -485,6 +486,12 @@ export async function runProjectExtractor(
     userContent,
     opts.caller,
   );
+  const cost = estimateCost({
+    provider: result.usage.provider,
+    model: result.usage.model,
+    inputTokens: result.usage.inputTokens ?? 0,
+    outputTokens: result.usage.outputTokens ?? 0,
+  });
   const outputPath = join(
     opts.paths.memoryRunsDir,
     opts.date,
@@ -498,6 +505,17 @@ export async function runProjectExtractor(
     candidates: result.candidates,
     rejected: result.rejected,
     usage: result.usage,
+    cost,
+  });
+  await appendUsageRecord(opts.paths, opts.date, {
+    pass: "B",
+    project: opts.projectId,
+    provider: result.usage.provider,
+    model: result.usage.model,
+    inputTokens: result.usage.inputTokens ?? 0,
+    outputTokens: result.usage.outputTokens ?? 0,
+    durationMs: result.usage.durationMs,
+    cost,
   });
   return { outputPath, result };
 }
@@ -523,6 +541,12 @@ export async function runReflectionExtractor(
     userContent,
     opts.caller,
   );
+  const cost = estimateCost({
+    provider: result.usage.provider,
+    model: result.usage.model,
+    inputTokens: result.usage.inputTokens ?? 0,
+    outputTokens: result.usage.outputTokens ?? 0,
+  });
   const outputPath = join(opts.paths.memoryRunsDir, opts.date, "candidates.C.json");
   await writeJsonArtifact(outputPath, {
     pass: "C",
@@ -531,6 +555,16 @@ export async function runReflectionExtractor(
     candidates: result.candidates,
     rejected: result.rejected,
     usage: result.usage,
+    cost,
+  });
+  await appendUsageRecord(opts.paths, opts.date, {
+    pass: "C",
+    provider: result.usage.provider,
+    model: result.usage.model,
+    inputTokens: result.usage.inputTokens ?? 0,
+    outputTokens: result.usage.outputTokens ?? 0,
+    durationMs: result.usage.durationMs,
+    cost,
   });
   return { outputPath, result };
 }

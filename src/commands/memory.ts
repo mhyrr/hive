@@ -18,6 +18,8 @@ import {
   runProjectExtractor,
   runReflectionExtractor,
 } from "../lib/extract";
+import { runVerifier } from "../lib/verify";
+import { formatUsd, loadUsageSummary } from "../lib/pricing";
 
 function parseFlagsAndArgs(args: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -57,6 +59,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
                                            Pass B: Sonnet extracts candidates per project
   hive memory extract-reflections [--date YYYY-MM-DD]
                                            Pass C: Sonnet extracts cross-project reflections
+  hive memory verify [--date YYYY-MM-DD]   Pass V: Opus verifies + writes briefing
   hive memory --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
@@ -151,6 +154,43 @@ export async function memoryCommand(args: string[]): Promise<void> {
       `  Model: ${u.provider}/${u.model} · ` +
         `tokens in/out: ${u.inputTokens ?? "?"}/${u.outputTokens ?? "?"} · ` +
         `${u.durationMs ? `${u.durationMs}ms` : "duration ?"}`,
+    );
+    return;
+  }
+
+  if (subcommand === "verify") {
+    let date = new Date().toISOString().slice(0, 10);
+    const rest = positional.slice(1);
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--date") date = rest[++i] ?? date;
+    }
+
+    console.log(`Pass V (Opus) — verifying + drafting briefing (${date})…`);
+    const result = await runVerifier({ paths, date });
+    const u = result.usage;
+    const accepts = result.output.decisions.filter((d) => d.action === "accept").length;
+    const supersedes = result.output.decisions.filter((d) => d.action === "supersede").length;
+    const merges = result.output.decisions.filter((d) => d.action === "merge").length;
+    const rejects = result.output.decisions.filter((d) => d.action === "reject").length;
+
+    console.log(`Wrote artifacts:`);
+    console.log(`  decisions → ${result.artifacts.decisionsPath}`);
+    console.log(`  gaps      → ${result.artifacts.gapsPath}`);
+    console.log(`  taste     → ${result.artifacts.tastePath}`);
+    console.log(`  briefing  → ${result.artifacts.briefingPath}`);
+    console.log(
+      `Decisions: ${accepts} accept · ${supersedes} supersede · ${merges} merge · ${rejects} reject`,
+    );
+    console.log(
+      `  Model: ${u.provider}/${u.model} · ` +
+        `tokens in/out: ${u.inputTokens}/${u.outputTokens} · ` +
+        `${u.durationMs ? `${u.durationMs}ms` : "duration ?"} · cost ${formatUsd(result.cost.totalUsd)}`,
+    );
+
+    const totals = await loadUsageSummary(paths, date);
+    console.log(
+      `Run total: ${totals.totals.inputTokens} input + ${totals.totals.outputTokens} output tokens · ` +
+        `${formatUsd(totals.totals.totalUsd)} (${totals.records.length} pass${totals.records.length === 1 ? "" : "es"})`,
     );
     return;
   }
