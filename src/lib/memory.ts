@@ -199,7 +199,7 @@ export function metaPath(paths: HivePaths, projectId: string): string {
   return join(memoryProjectDir(paths, projectId), "_meta.json");
 }
 
-async function readMeta(paths: HivePaths, projectId: string): Promise<MetaSidecar> {
+export async function readMeta(paths: HivePaths, projectId: string): Promise<MetaSidecar> {
   const file = Bun.file(metaPath(paths, projectId));
   try {
     if (await file.exists()) {

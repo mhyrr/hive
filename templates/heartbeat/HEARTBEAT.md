@@ -34,7 +34,7 @@ marked ✅ READY.
 - Merge PRs
 - Deploy anything
 - Delete branches or data
-- Anything in TRUST.md's external-gated or forbidden categories
+- Anything that violates TRUST.md (external actions or the hard limit)
 
 ## Health Checks
 
