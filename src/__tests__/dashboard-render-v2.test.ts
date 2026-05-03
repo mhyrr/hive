@@ -160,19 +160,13 @@ describe("Today's Three Things", () => {
   });
 });
 
-describe("Projects at a Glance — collapsed per-project", () => {
-  test("renders a <details> per project with one-line summary", () => {
-    const html = renderProjects(baseData(), { interactive: true });
-    expect(html).toContain('<details class="per-project-section" data-project="alpha">');
-    expect(html).toContain('<details class="per-project-section" data-project="beta">');
-    // summary contains health one-liner
-    expect(html).toMatch(/ticket/); // "N ticket(s)"
-  });
-
-  test("table rows carry data-project for filter targeting", () => {
+describe("Projects at a Glance — ledger only", () => {
+  test("renders the summary table without per-project expandables", () => {
     const html = renderProjects(baseData(), { interactive: true });
     expect(html).toContain('<tr data-project="alpha">');
     expect(html).toContain('<tr data-project="beta">');
+    expect(html).not.toContain("per-project-section");
+    expect(html).not.toContain("project-details");
   });
 });
 

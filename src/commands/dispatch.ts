@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 import { UsageError } from "../lib/errors";
+import { parseFrontmatter } from "../lib/frontmatter";
 import { ensureDirectory, getHivePaths } from "../lib/paths";
 import { readTicket, formatTicketDetail } from "../lib/ticket";
 import { assembleIdentity } from "../lib/identity";
@@ -148,7 +149,11 @@ unset ANTHROPIC_API_KEY
 
 cd "${projectPath}"
 
-timeout ${timeoutMin * 60} "${claude}" \\
+# Portable timeout: background claude + watchdog. Avoids GNU coreutils
+# timeout(1), which isn't on macOS by default.
+TIMEOUT_SEC=${timeoutMin * 60}
+
+"${claude}" \\
   --model "${model}" \\
   --append-system-prompt-file "${identityPath}" \\
   --add-dir "${hiveHome}" \\
@@ -157,12 +162,27 @@ timeout ${timeoutMin * 60} "${claude}" \\
   --worktree \\
   --name "${runId}" \\
   "$(cat "${messagePath}")" \\
-  > "${logPath}" 2>&1
+  > "${logPath}" 2>&1 &
+CLAUDE_PID=$!
 
-EXIT_CODE=$?
+(
+  sleep "$TIMEOUT_SEC"
+  if kill -0 "$CLAUDE_PID" 2>/dev/null; then
+    touch "${runDir}/.timed_out"
+    kill -TERM "$CLAUDE_PID" 2>/dev/null
+    sleep 5
+    kill -KILL "$CLAUDE_PID" 2>/dev/null || true
+  fi
+) &
+WATCHDOG_PID=$!
 
-# timeout exits 124 when the command times out
-if [ "$EXIT_CODE" = "124" ]; then
+EXIT_CODE=0
+wait "$CLAUDE_PID" || EXIT_CODE=$?
+
+kill "$WATCHDOG_PID" 2>/dev/null || true
+wait "$WATCHDOG_PID" 2>/dev/null || true
+
+if [ -f "${runDir}/.timed_out" ]; then
   echo "timed_out" > "${runDir}/status"
   osascript -e "display notification \\"Run ${runId} timed out after ${timeoutMin}m\\" with title \\"HIVE\\" sound name \\"Glass\\"" 2>/dev/null || true
   exit 0

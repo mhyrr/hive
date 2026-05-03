@@ -17,7 +17,12 @@ import { psCommand } from "./commands/ps";
 import { stackCommand } from "./commands/stack";
 import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
-import { writeIdentityTempFile, cleanupIdentityTempFile, getIdentityName } from "./lib/identity";
+import { resolveHarness, type Harness } from "./lib/harness";
+import {
+  writeIdentityTempFile,
+  cleanupIdentityTempFile,
+  getIdentityName,
+} from "./lib/identity";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: initCommand,
@@ -63,7 +68,11 @@ ${name} (Claude with identity):
   hive                       Interactive ${name} session
   hive "fix the auth bug"    ${name} with a prompt
   hive --agent maya-coder    ${name} with a specific agent
-  hive [any claude flags]    Passed through to claude with identity`;
+  hive [any claude flags]    Passed through to claude with identity
+
+Alt harness:
+  hive -x [prompt]           Route through Codex CLI (ChatGPT subscription)
+  HIVE_HARNESS=codex hive    Same, via env (use --claude to override)`;
 }
 
 function findClaude(): string {
@@ -75,6 +84,18 @@ function findClaude(): string {
     throw new Error("Could not find claude CLI. Is it installed?");
   }
 }
+
+function findCodex(): string {
+  if (process.env.HIVE_CODEX_BIN) return process.env.HIVE_CODEX_BIN;
+  try {
+    return execSync("which codex", { encoding: "utf-8" }).trim();
+  } catch {
+    const fallback = join(process.env.HOME || "", ".local", "bin", "codex");
+    if (existsSync(fallback)) return fallback;
+    throw new Error("Could not find codex CLI. Is it installed?");
+  }
+}
+
 
 async function launchClaude(args: string[]): Promise<void> {
   const identityFile = await writeIdentityTempFile();
@@ -108,13 +129,43 @@ async function launchClaude(args: string[]): Promise<void> {
   process.exit(result.exitCode ?? 0);
 }
 
+async function launchCodex(args: string[]): Promise<void> {
+  const codex = findCodex();
+
+  // Identity flows through ~/.codex/AGENTS.md (written by `hive init` and
+  // refreshed by the SessionStart hook at ~/.hive/codex-load-identity.sh).
+  // Codex auto-loads AGENTS.md natively — no per-invocation injection needed,
+  // which preserves Codex's prefix cache across sessions.
+
+  const result = Bun.spawnSync([codex, ...args], {
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    env: {
+      ...process.env,
+      OPENAI_API_KEY: undefined, // force ChatGPT subscription
+    },
+  });
+
+  process.exit(result.exitCode ?? 0);
+}
+
+async function launchAgent(harness: Harness, args: string[]): Promise<void> {
+  if (harness === "codex") {
+    await launchCodex(args);
+    return;
+  }
+  await launchClaude(args);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
 
-  // No args → interactive session
+  // No args → interactive session via default harness
   if (!command) {
-    await launchClaude([]);
+    const { harness, remainingArgs } = resolveHarness([]);
+    await launchAgent(harness, remainingArgs);
     return;
   }
 
@@ -139,8 +190,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Everything else → pass through to claude with identity.
-  await launchClaude(args);
+  // Everything else → pass through to a harness with identity.
+  const { harness, remainingArgs } = resolveHarness(args);
+  await launchAgent(harness, remainingArgs);
 }
 
 main().catch((error) => {

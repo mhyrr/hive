@@ -731,58 +731,6 @@ body.filtered-by-actions .row-less:not(.has-action) {
 .top-three-list li { margin-bottom: 4px; }
 .top-three-list li:last-child { margin-bottom: 0; }
 
-/* ---------- Per-project collapsed details ---------- */
-
-.project-details { margin-top: 22px; }
-.per-project-section {
-  margin: 0 0 6px;
-  padding: 0;
-  border-bottom: 1px solid var(--faint);
-}
-.per-project-section > summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 8px 0;
-  font-family: var(--serif);
-  font-size: 13.5px;
-  color: var(--ink);
-  letter-spacing: 0.01em;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-.per-project-section > summary::-webkit-details-marker { display: none; }
-.per-project-section > summary::before {
-  content: "▸";
-  font-size: 10px;
-  color: var(--amber);
-  margin-right: 8px;
-}
-.per-project-section[open] > summary::before { content: "▾"; }
-.per-project-section > summary .project-name {
-  font-weight: 800;
-  font-variant: small-caps;
-  letter-spacing: var(--smallcaps-tracking);
-}
-.per-project-section .warn { color: var(--rust); font-style: italic; }
-.project-body { padding: 6px 0 14px 22px; }
-.project-kv {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  column-gap: 18px;
-  row-gap: 2px;
-  font-size: 12.5px;
-  margin: 0;
-}
-.project-kv dt {
-  color: var(--muted);
-  font-variant: small-caps;
-  letter-spacing: var(--smallcaps-tracking);
-  font-size: 11px;
-}
-.project-kv dd { margin: 0; }
-
 /* ---------- Action buttons — typographic [ label ] ---------- */
 
 .action {

@@ -157,21 +157,6 @@ export const DASHBOARD_JS = `
     applyFilter(activeFilter());
   });
 
-  // ---------- Per-project collapse persistence ----------
-  document.querySelectorAll("details.per-project-section").forEach(function (d) {
-    var id = d.getAttribute("data-project");
-    if (!id) return;
-    var key = "proj-open:" + id;
-    // v2 default: collapsed. Respect explicit open state in storage.
-    if (state[key]) d.setAttribute("open", "");
-    else d.removeAttribute("open");
-    d.addEventListener("toggle", function () {
-      if (d.open) state[key] = true;
-      else delete state[key];
-      saveState();
-    });
-  });
-
   // ---------- Needs-Action toggle ----------
   var needsBtn = document.querySelector("[data-needs-action-toggle]");
   if (needsBtn) {

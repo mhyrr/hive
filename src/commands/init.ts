@@ -3,6 +3,8 @@ import { chmod, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { execSync } from "node:child_process";
 
+import { wireCodex } from "../lib/codex-wire";
+import { assembleIdentity } from "../lib/identity";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
 
 type SettingsHookEntry = { hooks?: Array<{ type?: string; command?: string }> };
@@ -282,5 +284,33 @@ export async function initCommand(args: string[]): Promise<void> {
   } catch {
     console.log();
     console.log(`Note: Could not register MCP server automatically. Add manually to ${mcpConfigPath}`);
+  }
+
+  // Codex CLI integration: register MCP, emit AGENTS.md, install SessionStart hook.
+  // Best-effort — silent skip if codex isn't installed.
+  try {
+    const codexMcpBin = join(localBin, "hive-mcp");
+    const identity = await assembleIdentity();
+    const codex = await wireCodex({ identity, mcpBinPath: codexMcpBin });
+
+    if (codex.detected) {
+      console.log();
+      if (codex.mcpAdded) {
+        console.log("Registered HIVE MCP server in ~/.codex/config.toml");
+      } else if (codex.mcpAlreadyRegistered) {
+        console.log("HIVE MCP already registered in ~/.codex/config.toml");
+      }
+      if (codex.agentsMdWritten) {
+        console.log("Wrote ~/.codex/AGENTS.md from current identity");
+      }
+      if (codex.hookScriptInstalled) {
+        console.log("Installed Codex identity hook at ~/.hive/codex-load-identity.sh");
+      }
+      if (codex.hookWired) {
+        console.log("Wired SessionStart hook in ~/.codex/hooks.json");
+      }
+    }
+  } catch {
+    // non-fatal — codex integration is optional
   }
 }

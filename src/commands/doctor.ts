@@ -2,6 +2,11 @@ import { existsSync, statSync, readdirSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 
+import {
+  getCodexHome,
+  getRegisteredCodexHiveMcp,
+  isCodexInstalled,
+} from "../lib/codex-wire";
 import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
 import { getHivePaths, listProjects } from "../lib/paths";
 import { resolveProjectFromCwd } from "../lib/project";
@@ -55,11 +60,70 @@ function checkCore(): Check[] {
     checks.push({ status: "warn", label: "hive-mcp not found", detail: `Expected binary at ${mcpBin} or source at ${mcpSource}` });
   }
 
-  // timeout (used by dispatch)
-  const timeoutPath = run("which timeout") ?? run("which gtimeout");
-  checks.push(timeoutPath
-    ? { status: "pass", label: "timeout" }
-    : { status: "warn", label: "timeout not found", detail: "Dispatch needs it. Install: brew install coreutils" });
+  // codex (optional — alt harness for `hive -x`)
+  const codexV = binaryVersion("codex");
+  if (codexV) {
+    checks.push({ status: "pass", label: `codex ${codexV}` });
+  }
+
+  return checks;
+}
+
+async function checkCodex(): Promise<Check[]> {
+  const checks: Check[] = [];
+
+  if (!isCodexInstalled()) {
+    checks.push({ status: "pass", label: "codex CLI not installed (skipping)", detail: "Optional alt harness; install codex to use `hive -x`." });
+    return checks;
+  }
+
+  const codexHome = getCodexHome();
+  if (!existsSync(codexHome)) {
+    checks.push({ status: "warn", label: "~/.codex/ not found", detail: "Run `codex login` once to initialize, then `hive init`." });
+    return checks;
+  }
+
+  // MCP registration
+  const registered = await getRegisteredCodexHiveMcp();
+  if (registered) {
+    const cmdExists = existsSync(registered) || run(`which ${registered}`) !== null;
+    checks.push(cmdExists
+      ? { status: "pass", label: "hive registered in ~/.codex/config.toml" }
+      : { status: "fail", label: `Codex MCP command missing: ${registered}` });
+  } else {
+    checks.push({ status: "warn", label: "hive not registered in ~/.codex/config.toml", detail: "Run: hive init" });
+  }
+
+  // AGENTS.md
+  const agentsPath = join(codexHome, "AGENTS.md");
+  if (existsSync(agentsPath) && statSync(agentsPath).size > 0) {
+    checks.push({ status: "pass", label: "~/.codex/AGENTS.md present" });
+  } else {
+    checks.push({ status: "warn", label: "~/.codex/AGENTS.md missing or empty", detail: "Run: hive init" });
+  }
+
+  // Hook script + wiring
+  const hookScript = join(process.env.HOME || "", ".hive", "codex-load-identity.sh");
+  const hooksJson = join(codexHome, "hooks.json");
+
+  if (!existsSync(hookScript)) {
+    checks.push({ status: "warn", label: "Codex identity hook script missing", detail: `Expected at ${hookScript}` });
+  } else if (!existsSync(hooksJson)) {
+    checks.push({ status: "warn", label: "~/.codex/hooks.json missing", detail: "Run: hive init" });
+  } else {
+    try {
+      const config = JSON.parse(readFileSync(hooksJson, "utf-8"));
+      const sessionStart = config.hooks?.SessionStart ?? [];
+      const wired = sessionStart.some((entry: { hooks?: Array<{ command?: string }> }) =>
+        entry.hooks?.some((h) => h.command === hookScript),
+      );
+      checks.push(wired
+        ? { status: "pass", label: "SessionStart hook wired in ~/.codex/hooks.json" }
+        : { status: "warn", label: "Codex SessionStart hook not wired", detail: "Run: hive init" });
+    } catch {
+      checks.push({ status: "fail", label: "~/.codex/hooks.json is malformed" });
+    }
+  }
 
   return checks;
 }
@@ -527,6 +591,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
     { heading: "Identity", checks: checkIdentity() },
     { heading: "Taste", checks: checkTaste() },
     { heading: "MCP", checks: checkMcp() },
+    { heading: "Codex", checks: await checkCodex() },
     { heading: "Models", checks: checkModels() },
     { heading: "Scheduler", checks: checkScheduler() },
     { heading: "Registered CLAUDE.md", checks: await checkStaleClaudeMd() },

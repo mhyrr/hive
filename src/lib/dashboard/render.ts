@@ -226,9 +226,9 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     ["#section-briefing", "Briefing"],
     ["#section-projects", "Projects"],
     ["#section-inboxes", "Inbox"],
-    ["#section-tickets", "Tickets"],
     ["#section-runs", "Dispatch"],
     ["#section-archive", "Archive"],
+    ["#section-tickets", "Tickets"],
   ]
     .map(([href, label]) => `<a href="${href}">${label}</a>`)
     .join("");
@@ -361,12 +361,7 @@ export function renderBriefings(data: DashboardData): string {
 </section>`;
 }
 
-/**
- * Projects section: v2 collapsed-by-default per-project `<details>`
- * blocks with one-line summaries. The classic ledger table is kept
- * as a summary view above the expandables.
- */
-export function renderProjects(data: DashboardData, c: RenderContext): string {
+export function renderProjects(data: DashboardData, _c: RenderContext): string {
   const projects = data.projects;
   if (projects.length === 0) return "";
 
@@ -388,10 +383,6 @@ export function renderProjects(data: DashboardData, c: RenderContext): string {
   <td class="num">${escapeHtml(relativeTime(p.inboxMtime))}</td>
 </tr>`;
     })
-    .join("\n");
-
-  const details = projects
-    .map((p: ProjectCard) => renderProjectDetail(p, c))
     .join("\n");
 
   return `
@@ -419,43 +410,7 @@ export function renderProjects(data: DashboardData, c: RenderContext): string {
 ${summaryRows}
     </tbody>
   </table>
-  <div class="project-details">
-${details}
-  </div>
 </section>`;
-}
-
-function renderProjectDetail(p: ProjectCard, c: RenderContext): string {
-  const redFlags: string[] = [];
-  if (p.ticketCounts.byPriority[0]) redFlags.push(`${p.ticketCounts.byPriority[0]} P0`);
-  if (p.inboxMtime && Date.now() - new Date(p.inboxMtime).getTime() > 72 * 3600 * 1000) {
-    redFlags.push("stale inbox");
-  }
-  const warn = redFlags.length > 0 ? ` · <span class="warn">${escapeHtml(redFlags.join(" · "))}</span>` : "";
-  const ticketTotal = p.ticketCounts.open + p.ticketCounts.inProgress;
-  const oneLine = `
-    <span class="project-name">${escapeHtml(p.id)}</span>
-    · ${ticketTotal} ticket${ticketTotal === 1 ? "" : "s"}
-    · heartbeat ${escapeHtml(relativeTime(p.lastHeartbeat))}${warn}
-  `.trim();
-  const filterButton = actionButton(c, "filter", {
-    "data-project-filter-shortcut": p.id,
-  });
-
-  return `<details class="per-project-section" data-project="${escapeHtml(p.id)}">
-  <summary>${oneLine} ${filterButton}</summary>
-  <div class="project-body">
-    <dl class="project-kv">
-      <dt>Path</dt><dd class="mono">${escapeHtml(p.path ?? "—")}</dd>
-      <dt>Open</dt><dd>${p.ticketCounts.open}</dd>
-      <dt>In progress</dt><dd>${p.ticketCounts.inProgress}</dd>
-      <dt>P0–1</dt><dd>${(p.ticketCounts.byPriority[0] || 0) + (p.ticketCounts.byPriority[1] || 0)}</dd>
-      <dt>P2–3</dt><dd>${(p.ticketCounts.byPriority[2] || 0) + (p.ticketCounts.byPriority[3] || 0)}</dd>
-      <dt>Ticks</dt><dd>${p.tickCount}</dd>
-      <dt>Last result</dt><dd>${escapeHtml(p.lastResult ?? "—")}</dd>
-    </dl>
-  </div>
-</details>`;
 }
 
 export function renderInboxes(inboxes: InboxEntry[], c: RenderContext): string {
@@ -709,9 +664,10 @@ ${rows}
 }
 
 export function renderRuns(runs: RunEntry[], c: RenderContext): string {
-  if (runs.length === 0) return "";
+  const visible = runs.slice(0, 10);
+  if (visible.length === 0) return "";
 
-  const rows = runs
+  const rows = visible
     .map((r: RunEntry) => {
       const statusClass = `status-${(r.status || "unknown").toLowerCase()}`;
       const ticketCell = r.ticketId ? escapeHtml(r.ticketId) : "—";
@@ -737,7 +693,7 @@ export function renderRuns(runs: RunEntry[], c: RenderContext): string {
 <section class="section" id="section-runs">
   <div class="section-head">
     <h2>Dispatch Log</h2>
-    <span class="kicker">${runs.length} Most recent</span>
+    <span class="kicker">${visible.length} Most recent</span>
   </div>
   <hr class="amber"/>
   <ul class="dispatch-list">
@@ -799,12 +755,12 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     renderBriefings(data),
     renderProjects(data, c),
     renderInboxes(data.inboxes, c),
-    renderTickets(data.tickets, c),
     renderOpenQuestions(data.openQuestions),
     renderRecentMemory(data.recentMemory),
     renderRunUsage(data.runUsage),
     renderRuns(data.runs, c),
     renderArchive(data, c),
+    renderTickets(data.tickets, c),
     renderFooter(data),
     c.interactive ? `<div class="snackbar" id="snackbar" role="status" aria-live="polite"></div>` : "",
     `</main>`,
