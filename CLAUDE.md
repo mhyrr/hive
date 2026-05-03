@@ -4,6 +4,11 @@ Identity, project memory, and the reflection protocol load via the user-level
 SessionStart hook at `~/.claude/hooks/load-identity.sh` — no per-repo wiring
 needed. If identity feels missing, run `hive doctor`.
 
+Codex is the optional interactive harness: `hive -x` / `hive --codex`.
+`hive init` wires `~/.codex/AGENTS.md`, `[mcp_servers.hive]`, and a Codex
+SessionStart hook when Codex is installed. The old `-3` Pi route is not
+supported by the current launcher on `main`.
+
 HIVE MCP tools (pre-fetched by the hook):
 - `convene_council` — Multi-model deliberation. Standard, analyst, or dialectic modes.
 - `read_hive_memory` — Read project intelligence (full knowledge or lightweight index).
@@ -22,19 +27,20 @@ HIVE MCP tools (pre-fetched by the hook):
 ## Development
 
 - Runtime: Bun + TypeScript
-- Build: `bun build src/cli.ts --compile --outfile hive-bin`
-- MCP server: `bun build src/mcp-server.ts --compile --outfile hive-mcp`
+- Build: `bun build src/cli.ts --target bun --outfile hive-bin`
+- MCP server: `bun build src/mcp-server.ts --target bun --outfile hive-mcp`
 - Run CLI directly: `bun run src/cli.ts <command>`
 - Test MCP server: `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}' | bun src/mcp-server.ts`
 
 ## Architecture
 
 ~80 source files, ~22,900 lines. Two entry points:
-- `src/cli.ts` — CLI (init, doctor, identity, project, stack, council, memory, ticket, dispatch, heartbeat, inbox, kill, ps, dashboard). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
+- `src/cli.ts` — CLI (init, doctor, identity, project, stack, council, memory, ticket, dispatch, heartbeat, inbox, kill, ps, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -x` -> Codex). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
 - `src/mcp-server.ts` — MCP server (same tools as the bullet list above).
 
 Crown-jewel modules:
 - `src/lib/council.ts` — parallel multi-model deliberation
+- `src/lib/harness.ts` / `src/lib/codex-wire.ts` — interactive harness selection and Codex wiring
 - `src/lib/orchestrator.ts` — nightly pipeline (Pass A → B → C → V → F)
 - `src/lib/verify.ts` — Opus verifier; the only path into `knowledge.md`
 - `src/lib/memory.ts` — storage layer: BM25, decay, hashed supersede/merge primitives, candidates queue

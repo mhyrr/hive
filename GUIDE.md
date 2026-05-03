@@ -1,22 +1,23 @@
-# HIVE + Claude Code Integration Guide
+# HIVE Runtime Integration Guide
 
-How the pieces fit together — what HIVE provides, what Claude Code provides
-natively, and how they compose into a persistent AI development partner.
+How the pieces fit together: what HIVE provides, what Claude Code provides
+as the default harness, what Codex provides as an opt-in harness, and how
+they compose into a persistent AI development partner.
 
 ---
 
 ## 1. Architecture Overview
 
-HIVE is an identity, memory, and council layer that sits on top of Claude
-Code's runtime. Claude Code handles orchestration — subagents, tools, loops,
-file I/O, hooks, worktrees. HIVE provides what Claude Code doesn't have
-natively:
+HIVE is an identity, memory, and council layer for CLI coding agents.
+Claude Code is the default runtime. Codex is available for interactive
+sessions through `hive -x`. HIVE provides what neither harness remembers
+on its own:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                  Claude Code                     │
-│  Orchestration · Subagents · Hooks · Worktrees   │
-│  Loops · Schedules · Dispatch · MCP Integration  │
+│              CLI Coding Harnesses                │
+│  Claude Code (default) · Codex CLI (-x opt-in)   │
+│  Tools · File I/O · Hooks · MCP Integration      │
 ├─────────────────────────────────────────────────┤
 │                     HIVE                         │
 │  Identity Stack · Project Memory · Multi-Model   │
@@ -27,8 +28,8 @@ natively:
 └───────────────────────────────────────────────────┘
 ```
 
-The boundary is clean: Claude Code is the engine, HIVE is the soul.
-Claude Code doesn't know who it is between sessions. HIVE makes it
+The boundary is clean: the harness is the engine, HIVE is the soul.
+The harness does not know who it is between sessions. HIVE makes it
 remember.
 
 ---
@@ -47,10 +48,11 @@ Five files in `~/.hive/` define who the AI is and how it operates:
 | `AGENTS.md` | Operational doctrine — how sessions work, memory discipline, council protocol |
 | `TRUST.md` | Action classification — what the AI may do freely vs. what needs approval |
 
-These are loaded at session start via the `hive` CLI wrapper, which
-assembles the stack and passes it to Claude Code via
-`--append-system-prompt-file`. Projects also reference the identity
-files in their CLAUDE.md for sessions started directly via `claude`.
+These are emitted by `hive identity emit`, the single canonical identity
+builder. Claude Code consumes that prefix through the user-level
+SessionStart hook and, when launched through `hive`, a temp
+`--append-system-prompt-file`. Codex consumes the same prefix through
+`~/.codex/AGENTS.md`, refreshed by a Codex SessionStart hook.
 
 ### Project Memory
 
@@ -101,10 +103,10 @@ execution, add notes with findings.
 
 ---
 
-## 3. What Claude Code Handles
+## 3. What The Harness Handles
 
-These are native Claude Code features that HIVE deliberately does not
-replicate:
+These are runtime features that HIVE deliberately does not replicate.
+Claude Code has the richest surface today, so it remains the default:
 
 | Feature | What It Does |
 |---------|-------------|
@@ -124,29 +126,39 @@ layer wastes effort and creates version skew. HIVE adds what Claude Code
 structurally can't provide — persistent identity across sessions, accumulated
 project intelligence, and multi-vendor model deliberation.
 
+Codex is intentionally narrower in HIVE today: it is an interactive harness
+selected with `hive -x` / `hive --codex`, backed by Codex's native
+`AGENTS.md`, `config.toml`, and `hooks.json` files. Dispatch and heartbeat
+still run through Claude Code by default.
+
 ---
 
 ## 4. How They Compose
 
 ### The `hive` CLI Wrapper
 
-The core integration point. The `hive` command wraps Claude Code with
-identity injection. When you run `hive` (with or without arguments),
-it assembles the full identity stack into a temp file and launches
-Claude Code with `--append-system-prompt-file`:
+The core integration point. When you run `hive` with no HIVE command, it
+launches an agent harness with identity attached:
 
 1. Loads the identity stack: SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md
 2. Resolves the current project by matching `$PWD` against registered project paths
 3. Loads the matched project's memory index (`_index.md`)
-4. Appends the session reflection protocol
+4. Adds the stack hint and optional taste layer
 
-Any arguments you pass to `hive` are forwarded to Claude Code. So
-`hive --agent maya-coder "implement TK-005"` becomes a Claude Code
-session with identity prepended.
+Current routing:
 
-For sessions started directly via `claude` (not through the `hive`
-wrapper), projects include a HIVE block in their CLAUDE.md that
-tells the agent to read the identity files and use MCP tools.
+| Invocation | Runtime | Notes |
+| ---------- | ------- | ----- |
+| `hive` / `hive "<prompt>"` | Claude Code | Default. Arguments pass through to `claude` with identity prepended. |
+| `hive -x "<prompt>"` / `hive --codex "<prompt>"` | Codex CLI | Optional interactive path. Uses `~/.codex/AGENTS.md` and HIVE MCP registration. |
+| `HIVE_HARNESS=codex hive "<prompt>"` | Codex CLI | Env-var default; `--claude` or `--claude-code` overrides it. |
+
+`-3` / Pi was an experimental route. It is not supported by the current
+`main` launcher; use `-x` for the supported non-Claude harness.
+
+Known HIVE commands (`hive doctor`, `hive memory`, `hive ticket`, etc.)
+run inside HIVE itself. Harness flags are for agent sessions, not local
+management commands.
 
 ### Custom Agents
 
@@ -159,10 +171,10 @@ names are derived from your IDENTITY.md name:
 | `maya-coder` | Implementation in isolated worktrees | `read_hive_memory`, `write_hive_memory` |
 | `maya-reviewer` | Code review against project conventions | `read_hive_memory` |
 
-Each agent reads the identity stack and project memory via CLAUDE.md
-references. The planner reads memory and tickets before architecting.
-The coder reads conventions before writing code. The reviewer checks
-work against accumulated standards.
+Each agent receives the identity stack and project memory from the same
+canonical identity path as interactive sessions. The planner reads memory
+and tickets before architecting. The coder reads conventions before writing
+code. The reviewer checks work against accumulated standards.
 
 Nightly memory extraction is no longer agent-driven — it runs as a
 deterministic five-pass pipeline (see `hive memory nightly` and the
@@ -226,6 +238,7 @@ This builds the binaries and creates:
 - `~/.claude/agents/` with HIVE agent definitions (maya-planner, maya-coder, maya-reviewer)
 - Launchd jobs for heartbeat, nightly extraction, dashboard, and state sync
 - MCP server registration in `~/.claude.json`
+- Codex MCP + identity wiring in `~/.codex/` when Codex is installed
 - `hive` and `hive-mcp` binaries symlinked to `~/.local/bin/`
 
 ### Step 2: Customize Your Identity
@@ -249,7 +262,7 @@ Edit these files (most important first):
 ### Step 3: Register a Project
 
 ```bash
-bun run src/cli.ts project add myapp ~/work/myapp
+hive project add myapp ~/work/myapp
 ```
 
 This:
@@ -257,19 +270,25 @@ This:
 - Creates `~/.hive/memory/projects/myapp/knowledge.md` with empty memory sections
 - Creates `~/.hive/projects/myapp/HEARTBEAT.md` with default standing orders
 
-Then add the HIVE reference block to your project's CLAUDE.md manually
-(see the README template).
+No per-project CLAUDE.md block is required for HIVE identity. Keep
+project CLAUDE.md files for project-specific rules only.
 
 ### Step 4: Start Working
 
 ```bash
 cd ~/work/myapp
-claude
+hive
 ```
 
-Claude Code starts with HIVE identity loaded (either via the `hive`
-wrapper or via CLAUDE.md references). The agent knows who it is, reads
-project memory, and has access to HIVE MCP tools.
+Claude Code starts with HIVE identity loaded. To run the same project
+through Codex instead:
+
+```bash
+hive -x
+```
+
+The agent knows who it is, reads project memory, and has access to HIVE
+MCP tools in either supported harness.
 
 ---
 
@@ -412,11 +431,12 @@ Both systems agree on core principles:
 - **Many short sessions** — Ralph loops / focused sessions beat marathons
 
 The divergence is strategic: OpenClaw builds a standalone agent framework.
-HIVE rides Claude Code as the runtime and adds the layers it's missing.
-The bet is that Claude Code's orchestration improves faster than we could
-maintain our own, so we should focus our energy on what it structurally
-can't provide — persistent identity, accumulated intelligence, and
-multi-model deliberation.
+HIVE rides Claude Code as the default runtime and adds the layers it is
+missing. The bet is that Claude Code's orchestration improves faster than
+we could maintain our own, so HIVE focuses on what the harness structurally
+cannot provide — persistent identity, accumulated intelligence, and
+multi-model deliberation. Codex is a second interactive lane, not a second
+orchestration stack.
 
 ---
 
@@ -430,6 +450,9 @@ multi-model deliberation.
 ├── AGENTS.md            # Operational doctrine
 ├── TRUST.md             # Action classification and boundaries
 ├── config.md            # Model pool, provider auth, defaults
+├── codex-load-identity.sh # Codex SessionStart identity refresher
+├── taste/
+│   └── principles.md    # Optional final identity layer
 ├── scripts/
 │   ├── nightly.sh       # 2am — runs `hive memory nightly` pipeline
 │   ├── heartbeat.sh     # 30-min ticks — per-project heartbeat
@@ -479,6 +502,8 @@ multi-model deliberation.
 | Show unblocked work | `hive ticket ready` |
 | Start a ticket | `hive ticket start TK-005` |
 | Close a ticket | `hive ticket close TK-005` |
+| Start default session | `hive` |
+| Start Codex session | `hive -x` |
 | Run planner agent | `claude --agent maya-planner "Design X"` |
 | Run coder agent | `claude --agent maya-coder "Implement TK-005"` |
 | Run reviewer agent | `claude --agent maya-reviewer "Review recent changes"` |

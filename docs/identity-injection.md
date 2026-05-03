@@ -1,7 +1,7 @@
 # HIVE Identity Injection
 
-How HIVE gets its persistent identity into every Claude Code session —
-interactive, dispatched, and heartbeat.
+How HIVE gets its persistent identity into Claude Code and Codex sessions.
+Claude Code remains the default harness; Codex is opt-in through `hive -x`.
 
 ## The Stack
 
@@ -31,23 +31,26 @@ so taste lives at one altitude across session-time and verify-time.
 ## Single Source of Truth
 
 `buildCanonicalIdentity()` in `src/lib/identity.ts` is the only program that
-assembles the identity prefix. All three consumers route through it:
+assembles the identity prefix. All consumers route through it:
 
-| Consumer            | How it gets the prefix                                       |
+| Consumer | How it gets the prefix |
 | ------------------- | ------------------------------------------------------------ |
-| Interactive session | `~/.claude/hooks/load-identity.sh` → `hive identity emit`    |
-| Dispatch (`hive dispatch`)         | `--append-system-prompt-file` → `assembleIdentity()`          |
-| Heartbeat (`hive heartbeat tick`)  | `--append-system-prompt-file` → `assembleHeartbeatIdentity()` |
+| Claude Code direct session | `~/.claude/hooks/load-identity.sh` -> `hive identity emit` |
+| Claude Code via `hive` | temp `--append-system-prompt-file` -> `assembleIdentity()` |
+| Codex via `hive -x` | `~/.codex/AGENTS.md`, refreshed by `~/.hive/codex-load-identity.sh` -> `hive identity emit` |
+| Dispatch (`hive dispatch`) | `--append-system-prompt-file` -> `assembleIdentity()` |
+| Heartbeat (`hive heartbeat tick`) | `--append-system-prompt-file` -> `assembleHeartbeatIdentity()` |
 
-The SessionStart hook is a thin shell wrapper that delegates to the
-`hive identity emit` command. Drift between the shell and TypeScript
-paths is structurally impossible: there is only one program that builds
-the prefix.
+The Claude Code and Codex SessionStart hooks are thin shell wrappers that
+delegate to `hive identity emit`. Drift between shell and TypeScript paths
+is structurally limited: there is only one program that builds the prefix.
 
 Heartbeat skips project memory (TK-024 cache stability) — same code path,
 different option (`includeProjectMemory: false`).
 
 ## Wiring
+
+### Claude Code
 
 The canonical user-level hook is at `~/.claude/hooks/load-identity.sh`.
 It's wired in `~/.claude/settings.json`:
@@ -68,6 +71,26 @@ If the doctor flags drift, run `hive init --force-hook` to restore the
 canonical wrapper. (User customization belongs in `~/.hive/*.md` files,
 not in the hook.)
 
+### Codex
+
+Codex uses native files under `~/.codex/`:
+
+| File | Purpose |
+| ---- | ------- |
+| `~/.codex/AGENTS.md` | Persistent identity prefix Codex auto-loads |
+| `~/.codex/config.toml` | `[mcp_servers.hive]` registration |
+| `~/.codex/hooks.json` | SessionStart hook registration |
+| `~/.hive/codex-load-identity.sh` | Hook script that refreshes `AGENTS.md` from `hive identity emit` |
+
+`hive init` wires these when Codex is installed and `~/.codex/` exists.
+`hive doctor` reports Codex issues as warnings because Codex is optional.
+`hive -x` and `hive --codex` route an interactive session through Codex;
+`HIVE_HARNESS=codex hive` makes that the default for interactive launches.
+Use `--claude` or `--claude-code` to override the env var.
+
+`-3` / Pi was an experimental route and is not supported by the current
+launcher on `main`.
+
 ## Adding a New Identity Section
 
 The full add-checklist when introducing a new section to the prefix:
@@ -85,9 +108,9 @@ The full add-checklist when introducing a new section to the prefix:
    - Adjust the canonical ordering list
 7. Update the stack diagram in this file
 
-The bash hook does NOT need updating — it always delegates to
-`hive identity emit`, which calls `assembleIdentity()`, which calls
-`buildCanonicalIdentity()`. The hook is generic plumbing.
+The shell hooks do NOT need updating — they delegate to `hive identity
+emit`, which calls `assembleIdentity()`, which calls
+`buildCanonicalIdentity()`. The hooks are generic plumbing.
 
 ## Drift Detection
 
@@ -122,7 +145,8 @@ everything is green and Maya still feels off:
 5. **Inspect what actually loaded.** In Claude Code, the SessionStart hook
    output appears in the system prompt. If your session shows the base
    prompt but not the HIVE stack, the hook didn't fire. Check settings.json
-   wiring.
+   wiring. In Codex, inspect `~/.codex/AGENTS.md`; if it is stale, run
+   `hive init` and check `~/.codex/hooks.json`.
 
 ## Related
 
