@@ -32,10 +32,29 @@ describe("resolveHarness", () => {
     expect(r.remainingArgs).toEqual(["fix the bug"]);
   });
 
+  test("-3 selects pi", () => {
+    const r = resolveHarness(["-3", "think this through"]);
+    expect(r.harness).toBe("pi");
+    expect(r.remainingArgs).toEqual(["think this through"]);
+  });
+
+  test("--pi selects pi", () => {
+    const r = resolveHarness(["--pi", "think this through"]);
+    expect(r.harness).toBe("pi");
+    expect(r.remainingArgs).toEqual(["think this through"]);
+  });
+
   test("HIVE_HARNESS=codex sets codex as default", () => {
     process.env.HIVE_HARNESS = "codex";
     const r = resolveHarness(["hello"]);
     expect(r.harness).toBe("codex");
+    expect(r.remainingArgs).toEqual(["hello"]);
+  });
+
+  test("HIVE_HARNESS=pi sets pi as default", () => {
+    process.env.HIVE_HARNESS = "pi";
+    const r = resolveHarness(["hello"]);
+    expect(r.harness).toBe("pi");
     expect(r.remainingArgs).toEqual(["hello"]);
   });
 
@@ -62,6 +81,12 @@ describe("resolveHarness", () => {
   test("-x position-independent (last wins for harness)", () => {
     const r = resolveHarness(["a", "-x", "b", "--claude", "c"]);
     expect(r.harness).toBe("claude-code");
+    expect(r.remainingArgs).toEqual(["a", "b", "c"]);
+  });
+
+  test("-3 position-independent (last wins for harness)", () => {
+    const r = resolveHarness(["a", "-3", "b", "-x", "c"]);
+    expect(r.harness).toBe("codex");
     expect(r.remainingArgs).toEqual(["a", "b", "c"]);
   });
 

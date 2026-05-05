@@ -9,6 +9,12 @@ import {
 } from "../lib/codex-wire";
 import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
 import { getHivePaths, listProjects } from "../lib/paths";
+import {
+  getPiMcpConfigPath,
+  getRegisteredPiHiveMcp,
+  hasPiMcpAdapterConfigured,
+  isPiInstalled,
+} from "../lib/pi-wire";
 import { resolveProjectFromCwd } from "../lib/project";
 import { getTastePaths } from "../lib/taste";
 
@@ -64,6 +70,47 @@ function checkCore(): Check[] {
   const codexV = binaryVersion("codex");
   if (codexV) {
     checks.push({ status: "pass", label: `codex ${codexV}` });
+  }
+
+  // pi (optional — alt harness for `hive -3`)
+  const piV = binaryVersion("pi");
+  if (piV) {
+    checks.push({ status: "pass", label: `pi ${piV}` });
+  }
+
+  return checks;
+}
+
+async function checkPi(): Promise<Check[]> {
+  const checks: Check[] = [];
+
+  if (!isPiInstalled()) {
+    checks.push({ status: "pass", label: "pi CLI not installed (skipping)", detail: "Optional alt harness; install pi to use `hive -3`." });
+    return checks;
+  }
+
+  const registered = await getRegisteredPiHiveMcp();
+  if (registered) {
+    const cmdExists = existsSync(registered.command) || run(`which ${registered.command}`) !== null;
+    checks.push(cmdExists
+      ? { status: "pass", label: "hive registered in ~/.pi/agent/mcp.json" }
+      : { status: "fail", label: `Pi MCP command missing: ${registered.command}` });
+  } else {
+    checks.push({
+      status: "warn",
+      label: "hive not registered in ~/.pi/agent/mcp.json",
+      detail: `Run: hive init. Config path: ${getPiMcpConfigPath()}`,
+    });
+  }
+
+  if (await hasPiMcpAdapterConfigured()) {
+    checks.push({ status: "pass", label: "pi-mcp-adapter configured" });
+  } else {
+    checks.push({
+      status: "warn",
+      label: "pi-mcp-adapter not configured",
+      detail: "Run: pi install npm:pi-mcp-adapter",
+    });
   }
 
   return checks;
@@ -551,7 +598,7 @@ function checkBuild(): Check[] {
     checks.push({
       status: "warn",
       label: `hive-bin is stale (source newer by ${unit})`,
-      detail: `Newest: ${newestFile.replace(process.cwd() + "/", "")}. Run: bun build src/cli.ts --compile --outfile hive-bin`,
+      detail: `Newest: ${newestFile.replace(process.cwd() + "/", "")}. Run: bun build src/cli.ts --target bun --outfile hive-bin`,
     });
   } else {
     checks.push({ status: "pass", label: "hive-bin up to date" });
@@ -592,6 +639,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
     { heading: "Taste", checks: checkTaste() },
     { heading: "MCP", checks: checkMcp() },
     { heading: "Codex", checks: await checkCodex() },
+    { heading: "Pi", checks: await checkPi() },
     { heading: "Models", checks: checkModels() },
     { heading: "Scheduler", checks: checkScheduler() },
     { heading: "Registered CLAUDE.md", checks: await checkStaleClaudeMd() },

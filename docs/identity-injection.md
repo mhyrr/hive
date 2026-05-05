@@ -1,7 +1,8 @@
 # HIVE Identity Injection
 
-How HIVE gets its persistent identity into Claude Code and Codex sessions.
-Claude Code remains the default harness; Codex is opt-in through `hive -x`.
+How HIVE gets its persistent identity into Claude Code, Pi, and Codex
+sessions. Claude Code remains the default harness; Pi and Codex are opt-in
+through `hive -3` and `hive -x`.
 
 ## The Stack
 
@@ -37,13 +38,15 @@ assembles the identity prefix. All consumers route through it:
 | ------------------- | ------------------------------------------------------------ |
 | Claude Code direct session | `~/.claude/hooks/load-identity.sh` -> `hive identity emit` |
 | Claude Code via `hive` | temp `--append-system-prompt-file` -> `assembleIdentity()` |
+| Pi via `hive -3` | generated `pi -e <tempfile>` extension -> `assembleIdentity()` |
 | Codex via `hive -x` | `~/.codex/AGENTS.md`, refreshed by `~/.hive/codex-load-identity.sh` -> `hive identity emit` |
 | Dispatch (`hive dispatch`) | `--append-system-prompt-file` -> `assembleIdentity()` |
 | Heartbeat (`hive heartbeat tick`) | `--append-system-prompt-file` -> `assembleHeartbeatIdentity()` |
 
 The Claude Code and Codex SessionStart hooks are thin shell wrappers that
-delegate to `hive identity emit`. Drift between shell and TypeScript paths
-is structurally limited: there is only one program that builds the prefix.
+delegate to `hive identity emit`. Pi gets a runtime-generated extension
+because its launch API supports prompt mutation directly. Drift is
+structurally limited: there is only one program that builds the prefix.
 
 Heartbeat skips project memory (TK-024 cache stability) — same code path,
 different option (`includeProjectMemory: false`).
@@ -71,6 +74,59 @@ If the doctor flags drift, run `hive init --force-hook` to restore the
 canonical wrapper. (User customization belongs in `~/.hive/*.md` files,
 not in the hook.)
 
+### Pi
+
+`hive -3` and `hive --pi` route an interactive session through Pi. HIVE
+generates a temporary TypeScript extension that embeds the canonical
+identity prefix and prepends it in Pi's `before_agent_start` hook:
+
+```bash
+pi -e /tmp/hive-pi-ext-*/identity.ts [...args]
+```
+
+All user args after `-3` pass through unchanged. Pi owns provider and model
+selection through its normal flags/config.
+
+`hive init` registers HIVE MCP in `~/.pi/agent/mcp.json` when Pi is
+installed. That config is consumed by `pi-mcp-adapter`; install/register the
+adapter on the Pi side if MCP tools do not appear.
+
+Scratch setup for a new machine:
+
+1. Install and initialize Pi.
+2. Install Pi's MCP bridge:
+
+   ```bash
+   pi install npm:pi-mcp-adapter
+   ```
+
+3. Install HIVE from this repo (`./install.sh`), then run:
+
+   ```bash
+   hive init
+   ```
+
+4. Verify wiring:
+
+   ```bash
+   hive doctor --verbose
+   ```
+
+5. Launch through Pi:
+
+   ```bash
+   hive -3
+   ```
+
+There is no static template for `~/.pi/agent/mcp.json` because the HIVE MCP
+command path is machine-specific. `hive init` writes the local path while
+preserving any existing Pi MCP servers. Inside Pi, adapter-exposed tools are
+prefixed; use names like `hive_hive_status` rather than bare
+`hive_status`.
+
+Pi is an opt-in research lane while the subscription-OAuth policy question
+remains open. Claude Code stays the default.
+
 ### Codex
 
 Codex uses native files under `~/.codex/`:
@@ -87,9 +143,6 @@ Codex uses native files under `~/.codex/`:
 `hive -x` and `hive --codex` route an interactive session through Codex;
 `HIVE_HARNESS=codex hive` makes that the default for interactive launches.
 Use `--claude` or `--claude-code` to override the env var.
-
-`-3` / Pi was an experimental route and is not supported by the current
-launcher on `main`.
 
 ## Adding a New Identity Section
 
@@ -145,8 +198,9 @@ everything is green and Maya still feels off:
 5. **Inspect what actually loaded.** In Claude Code, the SessionStart hook
    output appears in the system prompt. If your session shows the base
    prompt but not the HIVE stack, the hook didn't fire. Check settings.json
-   wiring. In Codex, inspect `~/.codex/AGENTS.md`; if it is stale, run
-   `hive init` and check `~/.codex/hooks.json`.
+   wiring. In Pi, launch with `hive -3` and verify the generated extension
+   loaded before the model starts. In Codex, inspect `~/.codex/AGENTS.md`;
+   if it is stale, run `hive init` and check `~/.codex/hooks.json`.
 
 ## Related
 

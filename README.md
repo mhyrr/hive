@@ -1,8 +1,8 @@
 # <img src="logo.svg" alt="" width="32" height="32"> Hive
 
 HIVE is an identity, memory, and council layer for CLI coding agents.
-Claude Code is the default runtime; Codex is available as an opt-in
-interactive harness with `hive -x`.
+Claude Code is the default runtime; Pi and Codex are opt-in interactive
+harnesses with `hive -3` and `hive -x`.
 
 The AI agent ecosystem has claws, hippos, and filing cabinets. They want to own your stack with databases and local embedding servers. HIVE takes the best ideas from all of them
 and re-implements them in a lightweight shell around subscription CLIs. No
@@ -22,11 +22,11 @@ what the harness does not remember on its own:
 - **Nightly extraction**: reads Claude Code session transcripts (JSONL), distills key insights, and promotes durable learnings into project memory automatically
 - **Language stacks**: bundles of domain knowledge (Iron Laws, patterns, idioms) packaged as Claude Code skills, auto-detected per project and loaded on demand
 - **Local MCP**: Provides a consistency layer that ties all of this together without a database.
-- **Harness routing**: `hive` launches Claude Code by default; `hive -x`
-  launches Codex with the same HIVE identity and MCP surface.
+- **Harness routing**: `hive` launches Claude Code by default; `hive -3`
+  launches Pi and `hive -x` launches Codex with HIVE identity and MCP reach.
 
 _Runs on subscription CLIs directly. Claude Code covers the default path;
-Codex uses your ChatGPT subscription path._
+Pi and Codex use whatever provider/model configuration those CLIs own._
 
 ## What It Does
 
@@ -117,9 +117,9 @@ cd ~/work/myapp
 hive
 ```
 
-`hive` launches Claude Code with HIVE identity. `hive -x` launches Codex
-instead. Direct `claude` sessions still receive HIVE identity through the
-Claude Code SessionStart hook after `hive init`.
+`hive` launches Claude Code with HIVE identity. `hive -3` launches Pi and
+`hive -x` launches Codex instead. Direct `claude` sessions still receive
+HIVE identity through the Claude Code SessionStart hook after `hive init`.
 
 ## Interactive Harnesses
 
@@ -130,12 +130,13 @@ inside HIVE itself.
 | Invocation | Runtime | Identity path |
 | --- | --- | --- |
 | `hive` / `hive "<prompt>"` | Claude Code | Per-invocation `--append-system-prompt-file` plus `~/.claude` SessionStart hook |
+| `hive -3 "<prompt>"` / `hive --pi "<prompt>"` | Pi CLI | Runtime-generated `-e` identity extension; Pi owns provider/model selection |
 | `hive -x "<prompt>"` / `hive --codex "<prompt>"` | Codex CLI | `~/.codex/AGENTS.md`, refreshed by `~/.hive/codex-load-identity.sh` |
+| `HIVE_HARNESS=pi hive "<prompt>"` | Pi CLI | Same as `-3`; override with `--claude` or `--claude-code` |
 | `HIVE_HARNESS=codex hive "<prompt>"` | Codex CLI | Same as `-x`; override with `--claude` or `--claude-code` |
 
-`-3` / Pi was an experimental harness route. It is not supported by the
-current launcher on `main`; older design notes may still mention it. The
-supported opt-in non-Claude path today is `-x` / `--codex`.
+`-3` / Pi is an opt-in research lane while the subscription-OAuth policy
+question remains open. Claude Code stays the default.
 
 After init, customize these files:
 
@@ -168,9 +169,9 @@ After `hive init`, identity injection is automatic for every project.
 The user-level SessionStart hook (`~/.claude/hooks/load-identity.sh`,
 wired in `~/.claude/settings.json`) loads the soul stack, the project's
 memory index (if registered), stack hint, and optional taste layer at every
-session start. Codex gets the same prefix through `~/.codex/AGENTS.md` when
-Codex is installed and `hive init` has wired it. No per-project `CLAUDE.md`
-block required.
+session start. Pi gets the same prefix through a generated launch extension;
+Codex gets it through `~/.codex/AGENTS.md` when Codex is installed and
+`hive init` has wired it. No per-project `CLAUDE.md` block required.
 
 Register the project so its memory and tickets work:
 
@@ -247,19 +248,26 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive stack sync <name>` | Copy stack skills into `~/.claude/skills/<name>-*` |
 | `hive stack init <name>` | Scaffold an empty stack source tree |
 | `hive stack bind <project> <stack>` | Bind project to a stack (name, `auto`, or `none`) |
+| `hive -3 "<prompt>"` | Launch Pi CLI with HIVE identity; Pi chooses provider/model |
 | `hive -x "<prompt>"` | Launch Codex CLI with HIVE identity |
-| `hive --claude "<prompt>"` | Force Claude Code when `HIVE_HARNESS=codex` is set |
+| `hive --claude "<prompt>"` | Force Claude Code when `HIVE_HARNESS=pi` or `HIVE_HARNESS=codex` is set |
 
 ## How Identity Works
 
 Identity lives in `~/.hive/` and is emitted by one program:
-`hive identity emit`. Claude Code and Codex consume that same canonical
+`hive identity emit`. Claude Code, Pi, and Codex consume that same canonical
 prefix through different native integration points.
 
 Claude Code loads the prefix through the user-level SessionStart hook at
 `~/.claude/hooks/load-identity.sh`, wired into `~/.claude/settings.json`.
 The `hive` wrapper also passes a temp identity file with
 `--append-system-prompt-file` when it launches Claude Code directly.
+
+Pi gets a generated identity extension at launch time via `pi -e <tempfile>`;
+all remaining args pass through unchanged so Pi owns provider/model choice.
+`hive init` also registers HIVE MCP in `~/.pi/agent/mcp.json` for
+`pi-mcp-adapter` when Pi is installed. Fresh Pi setup is documented in
+`docs/identity-injection.md`.
 
 Codex loads the prefix from `~/.codex/AGENTS.md`. `hive init` writes that
 file, registers HIVE MCP in `~/.codex/config.toml`, and wires a Codex
@@ -291,15 +299,17 @@ are named as first reach, first-turn schema pre-fetch is explicit, and voice
 is treated as part of the task rather than decoration. SOUL.md and
 IDENTITY.md templates lead with positive voice examples.
 
-Codex has a different loading surface: persistent `AGENTS.md`, MCP servers
-in `config.toml`, and hooks in `hooks.json`. HIVE uses those native files
+Pi uses an ephemeral extension because its runtime lets HIVE prepend the
+system prompt directly while still letting Pi choose the model. Codex has a
+different loading surface: persistent `AGENTS.md`, MCP servers in
+`config.toml`, and hooks in `hooks.json`. HIVE uses those native files
 instead of per-invocation prompt injection, which preserves Codex's prefix
-cache across sessions. `hive doctor` checks both Claude Code and Codex
-wiring; Codex checks are warnings because the harness is optional.
+cache across sessions. `hive doctor` checks Claude Code, Pi, and Codex
+wiring; Pi/Codex checks are warnings because both harnesses are optional.
 
 `hive dispatch` and `hive heartbeat tick` still run through Claude Code by
-default for autonomous work. `-x` is for interactive Codex sessions, not a
-replacement for dispatch or heartbeat.
+default for autonomous work. `-3` and `-x` are interactive harness routes,
+not replacements for dispatch or heartbeat.
 
 See `docs/identity-injection.md` for the full architecture — emit order,
 cache stability guarantees, the "Maya feels cold" debug runbook, and how

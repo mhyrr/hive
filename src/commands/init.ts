@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import { wireCodex } from "../lib/codex-wire";
 import { assembleIdentity } from "../lib/identity";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
+import { wirePi } from "../lib/pi-wire";
 
 type SettingsHookEntry = { hooks?: Array<{ type?: string; command?: string }> };
 type SettingsShape = { hooks?: Record<string, SettingsHookEntry[]> };
@@ -312,5 +313,23 @@ export async function initCommand(args: string[]): Promise<void> {
     }
   } catch {
     // non-fatal — codex integration is optional
+  }
+
+  // Pi CLI integration: register HIVE MCP for pi-mcp-adapter.
+  // Best-effort — silent skip if Pi isn't installed.
+  try {
+    const piMcpBin = join(localBin, "hive-mcp");
+    const pi = await wirePi({ mcpBinPath: piMcpBin });
+
+    if (pi.detected) {
+      console.log();
+      if (pi.mcpAdded) {
+        console.log("Registered HIVE MCP server in ~/.pi/agent/mcp.json");
+      } else if (pi.mcpAlreadyRegistered) {
+        console.log("HIVE MCP already registered in ~/.pi/agent/mcp.json");
+      }
+    }
+  } catch {
+    // non-fatal — Pi integration is optional
   }
 }
