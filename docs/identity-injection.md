@@ -39,12 +39,12 @@ assembles the identity prefix. All consumers route through it:
 | Claude Code direct session | `~/.claude/hooks/load-identity.sh` -> `hive identity emit` |
 | Claude Code via `hive` | temp `--append-system-prompt-file` -> `assembleIdentity()` |
 | Pi via `hive -3` | generated `pi -e <tempfile>` extension -> `assembleIdentity()` |
-| Codex via `hive -x` | `~/.codex/AGENTS.md`, refreshed by `~/.hive/codex-load-identity.sh` -> `hive identity emit` |
+| Codex via `hive -x` | `~/.codex/AGENTS.md`, refreshed before launch and by `~/.hive/codex-load-identity.sh` -> `hive identity emit` |
 | Dispatch (`hive dispatch`) | `--append-system-prompt-file` -> `assembleIdentity()` |
 | Heartbeat (`hive heartbeat tick`) | `--append-system-prompt-file` -> `assembleHeartbeatIdentity()` |
 
-The Claude Code and Codex SessionStart hooks are thin shell wrappers that
-delegate to `hive identity emit`. Pi gets a runtime-generated extension
+The Claude Code SessionStart hook and Codex's direct-session hook are thin
+shell wrappers that delegate to `hive identity emit`. Pi gets a runtime-generated extension
 because its launch API supports prompt mutation directly. Drift is
 structurally limited: there is only one program that builds the prefix.
 
@@ -139,10 +139,13 @@ Codex uses native files under `~/.codex/`:
 | `~/.hive/codex-load-identity.sh` | Hook script that refreshes `AGENTS.md` from `hive identity emit` |
 
 `hive init` wires these when Codex is installed and `~/.codex/` exists.
-`hive doctor` reports Codex issues as warnings because Codex is optional.
-`hive -x` and `hive --codex` route an interactive session through Codex;
+`hive -x` and `hive --codex` refresh AGENTS.md from the current cwd before
+spawning Codex, then route the interactive session through Codex;
 `HIVE_HARNESS=codex hive` makes that the default for interactive launches.
 Use `--claude` or `--claude-code` to override the env var.
+`hive doctor` reports Codex issues as warnings because Codex is optional, and
+it checks whether AGENTS.md matches the current HIVE identity rather than only
+checking that the file exists.
 
 ## Adding a New Identity Section
 
@@ -200,7 +203,8 @@ everything is green and Maya still feels off:
    prompt but not the HIVE stack, the hook didn't fire. Check settings.json
    wiring. In Pi, launch with `hive -3` and verify the generated extension
    loaded before the model starts. In Codex, inspect `~/.codex/AGENTS.md`;
-   if it is stale, run `hive init` and check `~/.codex/hooks.json`.
+   if it is stale, run `hive -x` from the target project or `hive init`, then
+   check `~/.codex/hooks.json`.
 
 ## Related
 

@@ -60,8 +60,8 @@ bun install
 
 # --- Build binaries ---
 info "Building binaries..."
-bun build src/cli.ts --target bun --outfile hive-bin
-bun build src/mcp-server.ts --target bun --outfile hive-mcp
+bun build src/cli.ts --compile --outfile hive-bin
+bun build src/mcp-server.ts --compile --outfile hive-mcp
 chmod +x hive-bin hive-mcp
 
 # --- Run hive init ---

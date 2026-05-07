@@ -3,11 +3,13 @@ import { execSync } from "node:child_process";
 import { join } from "node:path";
 
 import {
+  getCodexAgentsMdStatus,
   getCodexHome,
   getRegisteredCodexHiveMcp,
   isCodexInstalled,
 } from "../lib/codex-wire";
 import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
+import { assembleIdentity } from "../lib/identity";
 import { getHivePaths, listProjects } from "../lib/paths";
 import {
   getPiMcpConfigPath,
@@ -141,12 +143,22 @@ async function checkCodex(): Promise<Check[]> {
     checks.push({ status: "warn", label: "hive not registered in ~/.codex/config.toml", detail: "Run: hive init" });
   }
 
-  // AGENTS.md
-  const agentsPath = join(codexHome, "AGENTS.md");
-  if (existsSync(agentsPath) && statSync(agentsPath).size > 0) {
-    checks.push({ status: "pass", label: "~/.codex/AGENTS.md present" });
+  // AGENTS.md freshness. Codex uses a single global AGENTS.md, while HIVE's
+  // prefix is cwd/project-sensitive, so presence alone is not enough.
+  const identity = await assembleIdentity();
+  const agents = await getCodexAgentsMdStatus(identity);
+  if (!agents.exists) {
+    checks.push({ status: "warn", label: "~/.codex/AGENTS.md missing", detail: "Run: hive init or launch with hive -x" });
+  } else if (agents.empty) {
+    checks.push({ status: "warn", label: "~/.codex/AGENTS.md empty", detail: "Run: hive init or launch with hive -x" });
+  } else if (agents.current) {
+    checks.push({ status: "pass", label: "~/.codex/AGENTS.md matches current HIVE identity" });
   } else {
-    checks.push({ status: "warn", label: "~/.codex/AGENTS.md missing or empty", detail: "Run: hive init" });
+    checks.push({
+      status: "warn",
+      label: "~/.codex/AGENTS.md stale for current project",
+      detail: "Run: hive init or launch with hive -x to refresh from hive identity emit",
+    });
   }
 
   // Hook script + wiring

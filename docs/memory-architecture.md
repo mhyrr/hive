@@ -253,6 +253,8 @@ The nightly pipeline at 2am is the only path into `knowledge.md`:
 
 ```
 Pass A — Conditioning (mechanical, no LLM)
+  ↓ read Claude Code transcripts from ~/.claude/projects and Codex transcripts from ~/.codex/sessions
+  ↓ resolve each transcript to a registered HIVE project by project path / cwd
   ↓ rank session exchanges by tokenCount × novelty + always-include markers
   ↓ skip-if-trivial early exit emits a stub briefing
 

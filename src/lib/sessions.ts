@@ -1,6 +1,15 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  statSync,
+  type Dirent,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join, basename } from "node:path";
+import { join, basename, resolve as resolvePath } from "node:path";
 
 import { getHivePaths, listProjects } from "./paths";
 import { parseFrontmatter } from "./frontmatter";
@@ -34,8 +43,17 @@ interface SessionSummary {
   name: string;
   project: string;
   projectPath: string;
+  source: SessionSource;
   durationEstimate: string;
   exchanges: ExtractedExchange[];
+}
+
+type SessionSource = "claude" | "codex";
+
+interface RecentSessionBundle {
+  source: SessionSource;
+  locator: string;
+  files: string[];
 }
 
 // Patterns to redact from extracted text
@@ -57,19 +75,34 @@ function redact(text: string): string {
   return result;
 }
 
+function userHome(): string {
+  return process.env.HOME || homedir();
+}
+
 function encodeProjectPath(p: string): string {
   return p.replace(/\//g, "-");
 }
 
+function isWithinPath(candidate: string, root: string): boolean {
+  const normalizedCandidate = resolvePath(candidate);
+  const normalizedRoot = resolvePath(root);
+  return (
+    normalizedCandidate === normalizedRoot ||
+    normalizedCandidate.startsWith(
+      normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`,
+    )
+  );
+}
+
 /**
- * Find all session transcripts modified in the last N hours.
+ * Find Claude Code session transcripts modified in the last N hours.
  */
-function findRecentSessions(hoursAgo: number = 24, now: Date = new Date()): Map<string, string[]> {
-  const claudeDir = join(homedir(), ".claude", "projects");
-  if (!existsSync(claudeDir)) return new Map();
+function findRecentClaudeSessions(hoursAgo: number = 24, now: Date = new Date()): RecentSessionBundle[] {
+  const claudeDir = join(userHome(), ".claude", "projects");
+  if (!existsSync(claudeDir)) return [];
 
   const cutoff = now.getTime() - hoursAgo * 60 * 60 * 1000;
-  const result = new Map<string, string[]>();
+  const result: RecentSessionBundle[] = [];
 
   const projectDirs = readdirSync(claudeDir, { withFileTypes: true })
     .filter((e) => e.isDirectory());
@@ -88,18 +121,142 @@ function findRecentSessions(hoursAgo: number = 24, now: Date = new Date()): Map<
       });
 
     if (jsonlFiles.length > 0) {
-      result.set(dir.name, jsonlFiles);
+      result.push({ source: "claude", locator: dir.name, files: jsonlFiles });
     }
   }
 
   return result;
 }
 
+function collectRecentJsonlFiles(root: string, cutoffMs: number): string[] {
+  if (!existsSync(root)) return [];
+
+  const result: string[] = [];
+  const stack = [root];
+
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) continue;
+
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(path);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+      try {
+        if (statSync(path).mtimeMs > cutoffMs) result.push(path);
+      } catch {
+        /* skip unreadable file */
+      }
+    }
+  }
+
+  return result;
+}
+
+function readFirstLine(path: string, maxBytes = 1_000_000): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const buffer = Buffer.alloc(64 * 1024);
+
+    while (total < maxBytes) {
+      const n = readSync(fd, buffer, 0, Math.min(buffer.length, maxBytes - total), null);
+      if (n <= 0) break;
+      const slice = Buffer.from(buffer.subarray(0, n));
+      const newline = slice.indexOf(10);
+      if (newline !== -1) {
+        chunks.push(slice.subarray(0, newline));
+        return Buffer.concat(chunks).toString("utf-8");
+      }
+      chunks.push(slice);
+      total += n;
+    }
+
+    return chunks.length > 0 ? Buffer.concat(chunks).toString("utf-8") : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* ignore close failure */
+      }
+    }
+  }
+}
+
+function readCodexCwd(jsonlPath: string): string | null {
+  const firstLine = readFirstLine(jsonlPath);
+  if (!firstLine) return null;
+
+  try {
+    const obj = JSON.parse(firstLine);
+    const cwd = obj.payload?.cwd;
+    return typeof cwd === "string" && cwd.trim() ? cwd : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find Codex session transcripts modified in the last N hours.
+ *
+ * Codex stores sessions globally under ~/.codex/sessions/YYYY/MM/DD rather
+ * than under per-project directories. The session_meta record carries cwd,
+ * so we group by cwd and resolve that back to a HIVE project later.
+ */
+function findRecentCodexSessions(
+  hoursAgo: number = 24,
+  now: Date = new Date(),
+): RecentSessionBundle[] {
+  const codexDir = join(userHome(), ".codex", "sessions");
+  const cutoff = now.getTime() - hoursAgo * 60 * 60 * 1000;
+  const files = collectRecentJsonlFiles(codexDir, cutoff);
+  const byCwd = new Map<string, string[]>();
+
+  for (const file of files) {
+    const cwd = readCodexCwd(file);
+    if (!cwd) continue;
+    const existing = byCwd.get(cwd) ?? [];
+    existing.push(file);
+    byCwd.set(cwd, existing);
+  }
+
+  return Array.from(byCwd.entries()).map(([locator, groupedFiles]) => ({
+    source: "codex",
+    locator,
+    files: groupedFiles,
+  }));
+}
+
+/**
+ * Find all supported session transcripts modified in the last N hours.
+ */
+function findRecentSessions(hoursAgo: number = 24, now: Date = new Date()): RecentSessionBundle[] {
+  return [
+    ...findRecentClaudeSessions(hoursAgo, now),
+    ...findRecentCodexSessions(hoursAgo, now),
+  ];
+}
+
 /**
  * Map a Claude projects directory name (e.g. "-Users-mhyrr-work-hive") to
  * a HIVE project name, if registered.
  */
-async function resolveProjectName(encodedPath: string): Promise<string> {
+async function resolveClaudeProjectName(encodedPath: string): Promise<string> {
   const paths = getHivePaths();
   const projects = await listProjects(paths.projectsDir);
 
@@ -119,11 +276,80 @@ async function resolveProjectName(encodedPath: string): Promise<string> {
   return encodedPath.replace(/^-Users-[^-]+-/, "").replace(/-/g, "/");
 }
 
+async function resolveCodexProjectName(cwd: string): Promise<string> {
+  const paths = getHivePaths();
+  const projects = await listProjects(paths.projectsDir);
+  const matches: Array<{ projectId: string; projectPath: string }> = [];
+
+  for (const projectId of projects) {
+    try {
+      const configPath = join(paths.projectsDir, projectId, "config.md");
+      const raw = readFileSync(configPath, "utf-8");
+      const parsed = parseFrontmatter(raw);
+      const projectPath = parsed.attributes?.path as string | undefined;
+      if (projectPath && isWithinPath(cwd, projectPath)) {
+        matches.push({ projectId, projectPath });
+      }
+    } catch {
+      /* skip */
+    }
+  }
+
+  matches.sort((a, b) => b.projectPath.length - a.projectPath.length);
+  return matches[0]?.projectId ?? cwd;
+}
+
+async function resolveProjectName(bundle: RecentSessionBundle): Promise<string> {
+  if (bundle.source === "codex") {
+    return resolveCodexProjectName(bundle.locator);
+  }
+  return resolveClaudeProjectName(bundle.locator);
+}
+
+function extractTextFromContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+
+  const textParts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const type = (block as { type?: unknown }).type;
+    const text = (block as { text?: unknown }).text;
+    if (
+      typeof text === "string" &&
+      (type === "text" || type === "input_text" || type === "output_text")
+    ) {
+      textParts.push(text);
+    }
+  }
+
+  return textParts.join("\n");
+}
+
+function shouldSkipUserText(text: string): boolean {
+  // Codex persists AGENTS.md as a user-role instruction block at session start.
+  if (text.startsWith("# AGENTS.md instructions")) return true;
+
+  // Skip tool results that show up as user messages
+  if (text.startsWith("<tool_result>")) return true;
+  // Skip system reminders embedded in user messages
+  if (text.startsWith("<system-reminder>") && !text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim()) return true;
+  // Skip local command scaffolding (slash commands, their expansions)
+  if (text.startsWith("<command-name>")) return true;
+  if (text.startsWith("<command-message>")) return true;
+  if (text.startsWith("<local-command-")) return true;
+  // Skip skill expansions (long injected prompts like /ultra, /brainstorm)
+  if (text.startsWith("**ultrathink**")) return true;
+  if (text.startsWith("<EXTREMELY_IMPORTANT>")) return true;
+
+  return false;
+}
+
 /**
  * Extract user and assistant text from a session JSONL file.
  * Skips: tool_use, tool_result, thinking, system, file-history-snapshot, progress, queue-operation
  */
-function extractExchanges(jsonlPath: string): ExtractedExchange[] {
+export function extractExchanges(jsonlPath: string): ExtractedExchange[] {
   const exchanges: ExtractedExchange[] = [];
 
   let content: string;
@@ -143,43 +369,30 @@ function extractExchanges(jsonlPath: string): ExtractedExchange[] {
       continue;
     }
 
+    let role: "user" | "assistant" | undefined;
+    let msgContent: unknown;
+
     const type = obj.type;
-    if (type !== "user" && type !== "assistant") continue;
+    if (type === "user" || type === "assistant") {
+      role = obj.message?.role as "user" | "assistant" | undefined;
+      msgContent = obj.message?.content;
+    } else if (type === "response_item" && obj.payload?.type === "message") {
+      role = obj.payload?.role as "user" | "assistant" | undefined;
+      msgContent = obj.payload?.content;
+    } else {
+      continue;
+    }
 
-    const role = obj.message?.role as "user" | "assistant" | undefined;
     if (!role) continue;
+    if (role !== "user" && role !== "assistant") continue;
 
-    const msgContent = obj.message?.content;
     if (!msgContent) continue;
 
-    let text = "";
-
-    if (typeof msgContent === "string") {
-      text = msgContent;
-    } else if (Array.isArray(msgContent)) {
-      // Extract only text blocks, skip tool_use, tool_result, thinking
-      const textParts: string[] = [];
-      for (const block of msgContent) {
-        if (block.type === "text" && block.text) {
-          textParts.push(block.text);
-        }
-      }
-      text = textParts.join("\n");
-    }
+    let text = extractTextFromContent(msgContent);
 
     if (!text.trim()) continue;
 
-    // Skip tool results that show up as user messages
-    if (role === "user" && text.startsWith("<tool_result>")) continue;
-    // Skip system reminders embedded in user messages
-    if (role === "user" && text.startsWith("<system-reminder>") && !text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim()) continue;
-    // Skip local command scaffolding (slash commands, their expansions)
-    if (role === "user" && text.startsWith("<command-name>")) continue;
-    if (role === "user" && text.startsWith("<command-message>")) continue;
-    if (role === "user" && text.startsWith("<local-command-")) continue;
-    // Skip skill expansions (long injected prompts like /ultra, /brainstorm)
-    if (role === "user" && text.startsWith("**ultrathink**")) continue;
-    if (role === "user" && text.startsWith("<EXTREMELY_IMPORTANT>")) continue;
+    if (role === "user" && shouldSkipUserText(text)) continue;
     // Strip system-reminder tags from messages that also contain real content
     if (role === "user") {
       text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
@@ -236,7 +449,7 @@ function estimateDuration(jsonlPath: string): string {
  * Truncates long messages and limits total output.
  */
 function formatSession(summary: SessionSummary, maxChars: number = 8000): string {
-  const header = `## ${summary.project} (${summary.sessionId.slice(0, 8)}) — "${summary.name}" — ${summary.durationEstimate}`;
+  const header = `## ${summary.project} / ${summary.source} (${summary.sessionId.slice(0, 8)}) — "${summary.name}" — ${summary.durationEstimate}`;
   const lines: string[] = [header, "### Key exchanges"];
 
   let totalChars = header.length;
@@ -263,9 +476,9 @@ function formatSession(summary: SessionSummary, maxChars: number = 8000): string
  * Main entry point: extract sessions from last 24h, write condensed markdown.
  */
 export async function extractDailySessions(hoursAgo: number = 24): Promise<string> {
-  const recentByProject = findRecentSessions(hoursAgo);
+  const recentBundles = findRecentSessions(hoursAgo);
 
-  if (recentByProject.size === 0) {
+  if (recentBundles.length === 0) {
     return "No sessions found in the last 24 hours.";
   }
 
@@ -274,11 +487,11 @@ export async function extractDailySessions(hoursAgo: number = 24): Promise<strin
   let totalSize = 0;
   const maxTotalSize = 50000; // 50KB target
 
-  for (const [encodedPath, jsonlFiles] of recentByProject) {
-    const projectName = await resolveProjectName(encodedPath);
+  for (const bundle of recentBundles) {
+    const projectName = await resolveProjectName(bundle);
 
     // Sort by modification time, most recent first
-    const sorted = jsonlFiles.sort((a, b) => {
+    const sorted = bundle.files.sort((a, b) => {
       try {
         return statSync(b).mtimeMs - statSync(a).mtimeMs;
       } catch {
@@ -299,13 +512,14 @@ export async function extractDailySessions(hoursAgo: number = 24): Promise<strin
         sessionId,
         name: sessionId.slice(0, 8),
         project: projectName,
-        projectPath: encodedPath,
+        projectPath: bundle.locator,
+        source: bundle.source,
         durationEstimate: estimateDuration(file),
         exchanges,
       };
 
       // Try to get session name from index files
-      const sessionsDir = join(homedir(), ".claude", "sessions");
+      const sessionsDir = join(userHome(), ".claude", "sessions");
       if (existsSync(sessionsDir)) {
         const indexFiles = readdirSync(sessionsDir).filter((f) => f.endsWith(".json"));
         for (const idx of indexFiles) {
@@ -439,22 +653,29 @@ export async function extractAllRecentExchanges(
   hoursAgo: number = 24,
   now: Date = new Date(),
 ): Promise<ProjectExchanges[]> {
-  const recentByProject = findRecentSessions(hoursAgo, now);
-  const result: ProjectExchanges[] = [];
+  const recentBundles = findRecentSessions(hoursAgo, now);
+  const result = new Map<string, ProjectExchanges>();
 
-  for (const [encodedPath, jsonlFiles] of recentByProject) {
-    const projectName = await resolveProjectName(encodedPath);
+  for (const bundle of recentBundles) {
+    const projectName = await resolveProjectName(bundle);
     const allExchanges: ExtractedExchange[] = [];
-    for (const file of jsonlFiles) {
+    for (const file of bundle.files) {
       allExchanges.push(...extractExchanges(file));
     }
     if (allExchanges.length === 0) continue;
-    result.push({
-      projectName,
-      exchanges: allExchanges,
-      sessionCount: jsonlFiles.length,
-    });
+
+    const existing = result.get(projectName);
+    if (existing) {
+      existing.exchanges.push(...allExchanges);
+      existing.sessionCount += bundle.files.length;
+    } else {
+      result.set(projectName, {
+        projectName,
+        exchanges: allExchanges,
+        sessionCount: bundle.files.length,
+      });
+    }
   }
 
-  return result;
+  return Array.from(result.values());
 }

@@ -1,12 +1,18 @@
 import { describe, test, expect } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
+  extractAllRecentExchanges,
+  extractExchanges,
   rankExchanges,
   noveltyScore,
   hasAlwaysIncludeMarker,
   estimateTokens,
   type ExtractedExchange,
 } from "../lib/sessions";
+import { ensureHiveScaffold } from "../lib/paths";
 
 // ---------------------------------------------------------------------------
 // estimateTokens
@@ -150,5 +156,148 @@ describe("rankExchanges", () => {
     const b: ExtractedExchange = { role: "user", text: "this is a longer message" };
     const [first] = rankExchanges([a, b], []);
     expect(first?.exchange).toBe(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex transcript extraction
+// ---------------------------------------------------------------------------
+
+describe("Codex session extraction", () => {
+  test("extracts Codex response_item user/assistant messages and skips AGENTS.md", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-sessions-codex-"));
+    const file = join(home, "codex.jsonl");
+
+    await writeFile(
+      file,
+      [
+        JSON.stringify({
+          timestamp: "2026-05-05T14:00:00.000Z",
+          type: "session_meta",
+          payload: { cwd: "/tmp/project" },
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-05T14:00:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>hidden</INSTRUCTIONS>",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-05T14:00:02.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "remember this: Codex sessions feed nightly memory",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-05-05T14:00:03.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Codex transcript extraction is wired." }],
+          },
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const exchanges = extractExchanges(file);
+    expect(exchanges).toEqual([
+      { role: "user", text: "remember this: Codex sessions feed nightly memory" },
+      { role: "assistant", text: "Codex transcript extraction is wired." },
+    ]);
+
+    await rm(home, { recursive: true, force: true });
+  });
+
+  test("groups recent Codex sessions by registered HIVE project from cwd", async () => {
+    const originalHome = process.env.HOME;
+    const originalHiveHome = process.env.HIVE_HOME;
+    const home = await mkdtemp(join(tmpdir(), "hive-sessions-home-"));
+    const hiveHome = join(home, ".hive");
+    const repoPath = join(home, "work", "hive");
+    const subdir = join(repoPath, "src");
+
+    process.env.HOME = home;
+    process.env.HIVE_HOME = hiveHome;
+
+    try {
+      await ensureHiveScaffold(hiveHome);
+      await mkdir(join(hiveHome, "projects", "hive"), { recursive: true });
+      await mkdir(subdir, { recursive: true });
+      await writeFile(
+        join(hiveHome, "projects", "hive", "config.md"),
+        `---\nname: hive\npath: ${repoPath}\n---\n`,
+      );
+
+      const sessionDir = join(home, ".codex", "sessions", "2026", "05", "05");
+      await mkdir(sessionDir, { recursive: true });
+      const sessionPath = join(sessionDir, "rollout-2026-05-05T10-00-00-test.jsonl");
+      await writeFile(
+        sessionPath,
+        [
+          JSON.stringify({
+            timestamp: "2026-05-05T14:00:00.000Z",
+            type: "session_meta",
+            payload: { cwd: subdir },
+          }),
+          JSON.stringify({
+            timestamp: "2026-05-05T14:00:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: "take note: Codex cwd maps by project containment",
+                },
+              ],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-05-05T14:00:02.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [
+                { type: "output_text", text: "Mapped to the hive project." },
+              ],
+            },
+          }),
+        ].join("\n") + "\n",
+      );
+
+      const projects = await extractAllRecentExchanges(24, new Date());
+      expect(projects).toHaveLength(1);
+      expect(projects[0]?.projectName).toBe("hive");
+      expect(projects[0]?.sessionCount).toBe(1);
+      expect(projects[0]?.exchanges.map((e) => e.text)).toEqual([
+        "take note: Codex cwd maps by project containment",
+        "Mapped to the hive project.",
+      ]);
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      if (originalHiveHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = originalHiveHome;
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

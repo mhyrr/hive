@@ -124,15 +124,33 @@ export async function writeCodexAgentsMd(identity: string): Promise<{ written: b
   return { written: true, reason: "wrote ~/.codex/AGENTS.md" };
 }
 
+export async function getCodexAgentsMdStatus(identity: string): Promise<{
+  exists: boolean;
+  empty: boolean;
+  current: boolean;
+}> {
+  const agentsPath = join(getCodexHome(), "AGENTS.md");
+  if (!existsSync(agentsPath)) {
+    return { exists: false, empty: true, current: false };
+  }
+
+  const content = await Bun.file(agentsPath).text();
+  return {
+    exists: true,
+    empty: content.length === 0,
+    current: content === identity,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Hook installation
 // ---------------------------------------------------------------------------
 
 const CODEX_HOOK_SCRIPT = `#!/bin/bash
-# HIVE Codex identity refresher — runs on SessionStart, writes the canonical
-# identity prefix into ~/.codex/AGENTS.md so Codex picks it up natively.
-# Belt-and-suspenders: the eager write happens at \`hive init\` time too, so
-# first sessions on a clean install also have identity.
+# HIVE Codex identity refresher — runs on SessionStart and writes the
+# canonical identity prefix into ~/.codex/AGENTS.md so Codex picks it up
+# natively. The hive -x launcher refreshes the file before spawning Codex;
+# this hook keeps direct codex sessions on the same path.
 
 if command -v hive >/dev/null 2>&1; then
   HIVE_BIN="hive"

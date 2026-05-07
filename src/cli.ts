@@ -21,6 +21,7 @@ import { stackCommand } from "./commands/stack";
 import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
 import { resolveHarness, type Harness } from "./lib/harness";
+import { writeCodexAgentsMd } from "./lib/codex-wire";
 import {
   writeIdentityTempFile,
   cleanupIdentityTempFile,
@@ -176,10 +177,14 @@ async function launchClaude(args: string[]): Promise<void> {
 async function launchCodex(args: string[]): Promise<void> {
   const codex = findCodex();
 
-  // Identity flows through ~/.codex/AGENTS.md (written by `hive init` and
-  // refreshed by the SessionStart hook at ~/.hive/codex-load-identity.sh).
-  // Codex auto-loads AGENTS.md natively — no per-invocation injection needed,
-  // which preserves Codex's prefix cache across sessions.
+  // Codex auto-loads ~/.codex/AGENTS.md natively. Refresh it from the current
+  // cwd before spawning so project memory/stack context cannot lag behind the
+  // last direct Codex session.
+  const identity = await assembleIdentity();
+  const agents = await writeCodexAgentsMd(identity);
+  if (!agents.written && agents.reason !== "unchanged") {
+    console.error(`hive: could not refresh Codex AGENTS.md (${agents.reason})`);
+  }
 
   const result = Bun.spawnSync([codex, ...args], {
     stdin: "inherit",

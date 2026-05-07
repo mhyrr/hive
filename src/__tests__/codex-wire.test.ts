@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  getCodexAgentsMdStatus,
   getCodexHome,
   getRegisteredCodexHiveMcp,
   installCodexIdentityHook,
@@ -99,6 +100,25 @@ describe("writeCodexAgentsMd", () => {
     const result = await writeCodexAgentsMd("anything");
     expect(result.written).toBe(false);
     expect(result.reason).toContain("codex not installed");
+  });
+});
+
+describe("getCodexAgentsMdStatus", () => {
+  test("reports missing AGENTS.md", async () => {
+    const result = await getCodexAgentsMdStatus("identity");
+    expect(result).toEqual({ exists: false, empty: true, current: false });
+  });
+
+  test("reports byte-current AGENTS.md", async () => {
+    await writeFile(join(scratch, ".codex", "AGENTS.md"), "identity");
+    const result = await getCodexAgentsMdStatus("identity");
+    expect(result).toEqual({ exists: true, empty: false, current: true });
+  });
+
+  test("reports stale AGENTS.md", async () => {
+    await writeFile(join(scratch, ".codex", "AGENTS.md"), "old identity");
+    const result = await getCodexAgentsMdStatus("new identity");
+    expect(result).toEqual({ exists: true, empty: false, current: false });
   });
 });
 

@@ -33,7 +33,7 @@ Pi and Codex use whatever provider/model configuration those CLIs own._
 
 **Persistent identity.** 
 
-- SOUL.md, IDENTITY.md, and SELF.md live in `~/.hive/` and define who your AI is, what it values, and how it works with you. Claude Code gets this through the user-level SessionStart hook; Codex gets it through `~/.codex/AGENTS.md`, refreshed by its own SessionStart hook. Identity persists across projects and sessions.
+- SOUL.md, IDENTITY.md, and SELF.md live in `~/.hive/` and define who your AI is, what it values, and how it works with you. Claude Code gets this through the user-level SessionStart hook; Codex gets it through `~/.codex/AGENTS.md`, refreshed eagerly by `hive -x` and by its own SessionStart hook. Identity persists across projects and sessions.
 - Inspired by [OpenClaw](https://openclaw.ai/)
 
 **Project memory.** 
@@ -80,7 +80,7 @@ architecture decisions and tradeoff analysis.
 
 **Nightly extraction.**
 
-- A launchd job runs at 2am nightly. It walks a five-pass pipeline against the last 24 hours of activity: condition (rank session exchanges by signal × novelty), Sonnet extracts per-project candidates, Sonnet extracts cross-project reflections, Opus verifies and writes the morning briefing, then mechanical apply lands accepted decisions to canon and rebuilds the dashboard. Cost typically $1–3/night; everything is auditable in `~/.hive/memory/runs/{DATE}/`.
+- A launchd job runs at 2am nightly. It walks a five-pass pipeline against the last 24 hours of activity: condition (rank Claude Code + Codex session exchanges by signal × novelty), Sonnet extracts per-project candidates, Sonnet extracts cross-project reflections, Opus verifies and writes the morning briefing, then mechanical apply lands accepted decisions to canon and rebuilds the dashboard. Cost typically $1–3/night; everything is auditable in `~/.hive/memory/runs/{DATE}/`.
 - This means corrections and preferences you give during any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — flow as candidates to the night, get verified, and apply in every future session. Tell the AI once, it sticks forever.
 
 **Language stacks.**
@@ -139,7 +139,7 @@ inside HIVE itself.
 | --- | --- | --- |
 | `hive` / `hive "<prompt>"` | Claude Code | Per-invocation `--append-system-prompt-file` plus `~/.claude` SessionStart hook |
 | `hive -3 "<prompt>"` / `hive --pi "<prompt>"` | Pi CLI | Runtime-generated `-e` identity extension; Pi owns provider/model selection |
-| `hive -x "<prompt>"` / `hive --codex "<prompt>"` | Codex CLI | `~/.codex/AGENTS.md`, refreshed by `~/.hive/codex-load-identity.sh` |
+| `hive -x "<prompt>"` / `hive --codex "<prompt>"` | Codex CLI | `~/.codex/AGENTS.md`, refreshed before launch and by `~/.hive/codex-load-identity.sh` |
 | `HIVE_HARNESS=pi hive "<prompt>"` | Pi CLI | Same as `-3`; override with `--claude` or `--claude-code` |
 | `HIVE_HARNESS=codex hive "<prompt>"` | Codex CLI | Same as `-x`; override with `--claude` or `--claude-code` |
 
@@ -178,7 +178,8 @@ The user-level SessionStart hook (`~/.claude/hooks/load-identity.sh`,
 wired in `~/.claude/settings.json`) loads the soul stack, the project's
 memory index (if registered), stack hint, and optional taste layer at every
 session start. Pi gets the same prefix through a generated launch extension;
-Codex gets it through `~/.codex/AGENTS.md` when Codex is installed and
+Codex gets it through `~/.codex/AGENTS.md`, refreshed before every `hive -x`
+launch and by the Codex SessionStart hook when Codex is installed and
 `hive init` has wired it. No per-project `CLAUDE.md` block required.
 
 Register the project so its memory and tickets work:
@@ -283,7 +284,9 @@ all remaining args pass through unchanged so Pi owns provider/model choice.
 Codex loads the prefix from `~/.codex/AGENTS.md`. `hive init` writes that
 file, registers HIVE MCP in `~/.codex/config.toml`, and wires a Codex
 SessionStart hook at `~/.hive/codex-load-identity.sh` to refresh
-`AGENTS.md` from `hive identity emit`.
+`AGENTS.md` from `hive identity emit`. The `hive -x` launcher also refreshes
+AGENTS before spawning Codex, which keeps project-sensitive memory and stack
+context current even if the last direct Codex session was in another project.
 
 Every session picks up the same stack in deliberate emit order (later
 sections carry more weight in system-prompt interpretation):
@@ -411,8 +414,8 @@ For multi-model council:
 ## Development
 
 ```bash
-bun build src/cli.ts --target bun --outfile hive-bin
-bun build src/mcp-server.ts --target bun --outfile hive-mcp
+bun build src/cli.ts --compile --outfile hive-bin
+bun build src/mcp-server.ts --compile --outfile hive-mcp
 bun test
 ```
 
