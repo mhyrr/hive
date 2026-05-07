@@ -232,8 +232,6 @@ export function parseVerifierJson(raw: string): unknown {
 
 const VERIFIER_SYSTEM_PROMPT = `You are the verifier for HIVE's nightly memory pipeline. Sonnet (in Pass B and C) extracted candidates from the day's signal; you decide what becomes canon and write the morning briefing.
 
-You serve a craftsman named Greg. Tone: sharp, warm, dry. Lead with the insight, not the preamble. No filler ("Absolutely", "Great"). Honest about uncertainty.
-
 # Your four jobs (one call, one JSON object out)
 
 ## 1) Per-candidate decisions
@@ -258,7 +256,7 @@ Read the taste principles in the input. Surface:
 One or two of each, max. Skip if no clear signal.
 
 ## 4) Morning briefing
-A single user-facing markdown document Greg reads at 7am. Write in HIVE voice — terse, opinionated, warm. Match the template below verbatim for sections, but vary the prose.
+A single user-facing markdown document Greg reads at 7am. Write in HIVE voice per the SOUL preamble above. Match the template below verbatim for sections, but vary the prose — voice belongs in the headline and per-project bullets, not in section names.
 
 Template:
 
@@ -310,6 +308,22 @@ Return ONE JSON object, no fences, no prose around it:
 }
 
 Schema discipline: every candidate listed in the inputs MUST appear in decisions[] exactly once. No silent drops, no duplicate decisions.`;
+
+/**
+ * Assemble the verifier's system prompt with the HIVE soul prepended as
+ * voice context. SOUL.md is the single source of truth for HIVE voice
+ * across every surface (CLI sessions, dispatch, briefing) — Pass V reads
+ * the same file rather than carrying its own duplicated voice instructions.
+ *
+ * If SOUL is empty or missing, the verifier instructions stand alone and
+ * the briefing comes back neutral. That's the desired failure mode —
+ * silent voice loss is better than fabricated personality.
+ */
+export function buildVerifierSystemPrompt(soulText: string): string {
+  const soul = soulText.trim();
+  if (!soul) return VERIFIER_SYSTEM_PROMPT;
+  return `${soul}\n\n---\n\n${VERIFIER_SYSTEM_PROMPT}`;
+}
 
 // ---------------------------------------------------------------------------
 // User content assembly
@@ -714,7 +728,11 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
 
   const bundle = await loadVerifierBundle(opts.paths, opts.date);
   const userContent = buildVerifierUserContent(bundle);
-  const result = await callVerifier(VERIFIER_SYSTEM_PROMPT, userContent, opts.caller);
+  const soulText = existsSync(opts.paths.soul)
+    ? readFileSync(opts.paths.soul, "utf-8")
+    : "";
+  const systemPrompt = buildVerifierSystemPrompt(soulText);
+  const result = await callVerifier(systemPrompt, userContent, opts.caller);
 
   await Bun.write(decisionsPath, JSON.stringify({ decisions: result.output.decisions }, null, 2));
   await Bun.write(gapsPath, formatGapsMarkdown(result.output.gaps));

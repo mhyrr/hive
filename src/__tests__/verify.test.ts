@@ -7,6 +7,7 @@ import {
   parseVerifierJson,
   validateVerifierOutput,
   serializeProjectCanon,
+  buildVerifierSystemPrompt,
   buildVerifierUserContent,
   callVerifier,
   runVerifier,
@@ -504,5 +505,78 @@ describe("runVerifier (end-to-end with synthetic home)", () => {
     expect(usage.records.length).toBe(1);
     expect(usage.records[0]?.pass).toBe("V");
     expect(usage.totals.totalUsd).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SOUL injection — voice flows from ~/.hive/SOUL.md, not hardcoded adjectives
+// ---------------------------------------------------------------------------
+
+describe("buildVerifierSystemPrompt", () => {
+  test("returns the bare verifier prompt when SOUL is empty", () => {
+    const prompt = buildVerifierSystemPrompt("");
+    expect(prompt).toContain("You are the verifier for HIVE's nightly memory pipeline");
+    expect(prompt).not.toContain("---\n\n");
+  });
+
+  test("trims and prepends SOUL with a separator before the verifier instructions", () => {
+    const soul = "  # HIVE Soul\n\nWe are craftsmen.\n  ";
+    const prompt = buildVerifierSystemPrompt(soul);
+    expect(prompt.startsWith("# HIVE Soul\n\nWe are craftsmen.")).toBe(true);
+    expect(prompt).toContain("\n\n---\n\n");
+    expect(prompt).toContain("You are the verifier for HIVE's nightly memory pipeline");
+    expect(prompt.indexOf("HIVE Soul")).toBeLessThan(prompt.indexOf("You are the verifier"));
+  });
+
+  test("does not duplicate hardcoded voice adjectives — voice lives in SOUL only", () => {
+    // Regression: earlier the verifier prompt carried inline voice copy
+    // ("Tone: sharp, warm, dry"). Voice now lives in SOUL.md so the prompt
+    // doesn't drift from the canonical doc.
+    const prompt = buildVerifierSystemPrompt("");
+    expect(prompt).not.toContain("Tone: sharp, warm, dry");
+    expect(prompt).not.toContain("Write in HIVE voice — terse");
+  });
+});
+
+describe("runVerifier — SOUL injection", () => {
+  test("reads paths.soul and passes the assembled prompt to the caller", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-verify-soul-"));
+    const paths = await ensureHiveScaffold(home);
+
+    const soulMarker = "## Voice\n\n- **Dry humor when it's natural.**";
+    await writeFile(paths.soul, `# HIVE Soul\n\n${soulMarker}\n`);
+
+    await mkdir(join(home, "projects", "alpha"), { recursive: true });
+    await writeFile(
+      join(home, "projects", "alpha", "config.md"),
+      "---\nname: alpha\npath: /tmp/nope\n---\n",
+    );
+    await appendProjectMemory(paths, "alpha", "fact", "existing fact", ["a"]);
+
+    const report = await buildConditionReport(paths);
+    await writeConditionReport(paths, report);
+
+    let capturedSystemPrompt = "";
+    const capturingCaller: ModelCaller = async (input) => {
+      capturedSystemPrompt = input.systemPrompt;
+      return {
+        provider: "anthropic",
+        model: "claude-opus-4-6",
+        text: JSON.stringify(validOutput),
+        inputTokens: 5000,
+        outputTokens: 800,
+        totalTokens: 5800,
+        durationMs: 1234,
+        raw: { content: [{ type: "text", text: JSON.stringify(validOutput) }] } as never,
+      };
+    };
+
+    const today = new Date().toISOString().slice(0, 10);
+    await runVerifier({ paths, date: today, caller: capturingCaller });
+
+    expect(capturedSystemPrompt).toContain(soulMarker);
+    expect(capturedSystemPrompt.indexOf(soulMarker)).toBeLessThan(
+      capturedSystemPrompt.indexOf("You are the verifier"),
+    );
   });
 });
