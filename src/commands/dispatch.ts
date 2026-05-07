@@ -21,6 +21,145 @@ async function nextRunId(runsDir: string): Promise<string> {
 }
 
 
+export interface RunWrapperOpts {
+  projectPath: string;
+  timeoutMin: number;
+  claude: string;
+  model: string;
+  identityPath: string;
+  hiveHome: string;
+  runId: string;
+  messagePath: string;
+  logPath: string;
+  runDir: string;
+  runsDir: string;
+}
+
+export function buildRunWrapper(opts: RunWrapperOpts): string {
+  const {
+    projectPath,
+    timeoutMin,
+    claude,
+    model,
+    identityPath,
+    hiveHome,
+    runId,
+    messagePath,
+    logPath,
+    runDir,
+    runsDir,
+  } = opts;
+  return `#!/bin/bash
+set -euo pipefail
+
+# Unset API key to force subscription OAuth
+unset ANTHROPIC_API_KEY
+
+cd "${projectPath}"
+
+# Portable timeout: background claude + watchdog. Avoids GNU coreutils
+# timeout(1), which isn't on macOS by default.
+TIMEOUT_SEC=${timeoutMin * 60}
+
+"${claude}" \\
+  --model "${model}" \\
+  --append-system-prompt-file "${identityPath}" \\
+  --add-dir "${hiveHome}" \\
+  --agent maya-executor \\
+  --permission-mode bypassPermissions \\
+  --worktree \\
+  --name "${runId}" \\
+  "$(cat "${messagePath}")" \\
+  > "${logPath}" 2>&1 &
+CLAUDE_PID=$!
+
+(
+  sleep "$TIMEOUT_SEC"
+  if kill -0 "$CLAUDE_PID" 2>/dev/null; then
+    touch "${runDir}/.timed_out"
+    kill -TERM "$CLAUDE_PID" 2>/dev/null
+    sleep 5
+    kill -KILL "$CLAUDE_PID" 2>/dev/null || true
+  fi
+) &
+WATCHDOG_PID=$!
+
+EXIT_CODE=0
+wait "$CLAUDE_PID" || EXIT_CODE=$?
+
+kill "$WATCHDOG_PID" 2>/dev/null || true
+wait "$WATCHDOG_PID" 2>/dev/null || true
+
+if [ -f "${runDir}/.timed_out" ]; then
+  echo "timed_out" > "${runDir}/status"
+  osascript -e "display notification \\"Run ${runId} timed out after ${timeoutMin}m\\" with title \\"HIVE\\" sound name \\"Glass\\"" 2>/dev/null || true
+  exit 0
+fi
+
+# Determine status from evidence of work, not exit code
+# Claude can exit non-zero even when all work completed (context exhaustion, etc.)
+if [ -f "${runDir}/plan.md" ]; then
+  CHECKED=$(grep -c '\\- \\[x\\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
+  UNCHECKED=$(grep -c '\\- \\[ \\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
+  if [ "$UNCHECKED" = "0" ] && [ "$CHECKED" -gt "0" ]; then
+    echo "complete" > "${runDir}/status"
+  elif grep -q "blocked" "${runDir}/plan.md" 2>/dev/null; then
+    echo "blocked" > "${runDir}/status"
+  elif [ "$CHECKED" -gt "0" ]; then
+    echo "partial" > "${runDir}/status"
+  else
+    echo "failed" > "${runDir}/status"
+  fi
+else
+  # No plan file — check if there are commits on the worktree branch
+  COMMITS=$(git log main..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$COMMITS" -gt "0" ] || [ "$EXIT_CODE" = "0" ]; then
+    echo "complete" > "${runDir}/status"
+  else
+    echo "failed" > "${runDir}/status"
+  fi
+fi
+
+# Clean up worktree if claude left one behind.
+# TK-045: Skip cleanup entirely if any other run is still active — a sibling
+# run's worktree can be transiently AHEAD=0 with clean diff (e.g. right after
+# a ff-only merge from main) and our prune would delete its live working dir.
+OTHER_RUNNING=0
+for rd in "${runsDir}"/RUN-*/; do
+  [ -d "$rd" ] || continue
+  [ "$rd" = "${runDir}/" ] && continue
+  ST=$(cat "$rd/status" 2>/dev/null || echo "")
+  if [ "$ST" = "running" ]; then
+    OTHER_RUNNING=1
+    break
+  fi
+done
+
+if [ "$OTHER_RUNNING" = "0" ]; then
+  cd "${projectPath}"
+  for wt in .claude/worktrees/*/; do
+    if [ -d "$wt" ]; then
+      # Check if worktree has unmerged changes
+      BRANCH=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+      if [ -n "$BRANCH" ]; then
+        DIFF=$(git -C "$wt" diff --stat HEAD 2>/dev/null || echo "")
+        AHEAD=$(git log "main..$BRANCH" --oneline 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$AHEAD" = "0" ] && [ -z "$DIFF" ]; then
+          # No changes — safe to remove
+          git worktree remove "$wt" 2>/dev/null || true
+        fi
+        # If there are commits, leave the worktree for review
+      fi
+    fi
+  done
+fi
+
+# Notify
+STATUS=$(cat "${runDir}/status")
+osascript -e "display notification \\"Run ${runId} \$STATUS\\" with title \\"HIVE\\" sound name \\"Glass\\"" 2>/dev/null || true
+`;
+}
+
 function findClaude(): string {
   try {
     return require("child_process").execSync("which claude", { encoding: "utf-8" }).trim();
@@ -141,115 +280,19 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   const wrapperPath = join(runDir, "run.sh");
   const logPath = join(runDir, "output.log");
   const hiveHome = join(process.env.HOME || "", ".hive");
-  await Bun.write(wrapperPath, `#!/bin/bash
-set -euo pipefail
-
-# Unset API key to force subscription OAuth
-unset ANTHROPIC_API_KEY
-
-cd "${projectPath}"
-
-# Portable timeout: background claude + watchdog. Avoids GNU coreutils
-# timeout(1), which isn't on macOS by default.
-TIMEOUT_SEC=${timeoutMin * 60}
-
-"${claude}" \\
-  --model "${model}" \\
-  --append-system-prompt-file "${identityPath}" \\
-  --add-dir "${hiveHome}" \\
-  --agent maya-executor \\
-  --permission-mode bypassPermissions \\
-  --worktree \\
-  --name "${runId}" \\
-  "$(cat "${messagePath}")" \\
-  > "${logPath}" 2>&1 &
-CLAUDE_PID=$!
-
-(
-  sleep "$TIMEOUT_SEC"
-  if kill -0 "$CLAUDE_PID" 2>/dev/null; then
-    touch "${runDir}/.timed_out"
-    kill -TERM "$CLAUDE_PID" 2>/dev/null
-    sleep 5
-    kill -KILL "$CLAUDE_PID" 2>/dev/null || true
-  fi
-) &
-WATCHDOG_PID=$!
-
-EXIT_CODE=0
-wait "$CLAUDE_PID" || EXIT_CODE=$?
-
-kill "$WATCHDOG_PID" 2>/dev/null || true
-wait "$WATCHDOG_PID" 2>/dev/null || true
-
-if [ -f "${runDir}/.timed_out" ]; then
-  echo "timed_out" > "${runDir}/status"
-  osascript -e "display notification \\"Run ${runId} timed out after ${timeoutMin}m\\" with title \\"HIVE\\" sound name \\"Glass\\"" 2>/dev/null || true
-  exit 0
-fi
-
-# Determine status from evidence of work, not exit code
-# Claude can exit non-zero even when all work completed (context exhaustion, etc.)
-if [ -f "${runDir}/plan.md" ]; then
-  CHECKED=$(grep -c '\\- \\[x\\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
-  UNCHECKED=$(grep -c '\\- \\[ \\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
-  if [ "$UNCHECKED" = "0" ] && [ "$CHECKED" -gt "0" ]; then
-    echo "complete" > "${runDir}/status"
-  elif grep -q "blocked" "${runDir}/plan.md" 2>/dev/null; then
-    echo "blocked" > "${runDir}/status"
-  elif [ "$CHECKED" -gt "0" ]; then
-    echo "partial" > "${runDir}/status"
-  else
-    echo "failed" > "${runDir}/status"
-  fi
-else
-  # No plan file — check if there are commits on the worktree branch
-  COMMITS=$(git log main..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$COMMITS" -gt "0" ] || [ "$EXIT_CODE" = "0" ]; then
-    echo "complete" > "${runDir}/status"
-  else
-    echo "failed" > "${runDir}/status"
-  fi
-fi
-
-# Clean up worktree if claude left one behind.
-# TK-045: Skip cleanup entirely if any other run is still active — a sibling
-# run's worktree can be transiently AHEAD=0 with clean diff (e.g. right after
-# a ff-only merge from main) and our prune would delete its live working dir.
-OTHER_RUNNING=0
-for rd in "${paths.runsDir}"/RUN-*/; do
-  [ -d "$rd" ] || continue
-  [ "$rd" = "${runDir}/" ] && continue
-  ST=$(cat "$rd/status" 2>/dev/null || echo "")
-  if [ "$ST" = "running" ]; then
-    OTHER_RUNNING=1
-    break
-  fi
-done
-
-if [ "$OTHER_RUNNING" = "0" ]; then
-  cd "${projectPath}"
-  for wt in .claude/worktrees/*/; do
-    if [ -d "$wt" ]; then
-      # Check if worktree has unmerged changes
-      BRANCH=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-      if [ -n "$BRANCH" ]; then
-        DIFF=$(git -C "$wt" diff --stat HEAD 2>/dev/null || echo "")
-        AHEAD=$(git log "main..$BRANCH" --oneline 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$AHEAD" = "0" ] && [ -z "$DIFF" ]; then
-          # No changes — safe to remove
-          git worktree remove "$wt" 2>/dev/null || true
-        fi
-        # If there are commits, leave the worktree for review
-      fi
-    fi
-  done
-fi
-
-# Notify
-STATUS=$(cat "${runDir}/status")
-osascript -e "display notification \\"Run ${runId} \$STATUS\\" with title \\"HIVE\\" sound name \\"Glass\\"" 2>/dev/null || true
-`);
+  await Bun.write(wrapperPath, buildRunWrapper({
+    projectPath,
+    timeoutMin,
+    claude,
+    model,
+    identityPath,
+    hiveHome,
+    runId,
+    messagePath,
+    logPath,
+    runDir,
+    runsDir: paths.runsDir,
+  }));
   const { chmod } = await import("node:fs/promises");
   await chmod(wrapperPath, 0o755);
 

@@ -25,6 +25,24 @@ HIVE MCP tools (pre-fetched by the hook):
 - `hive_status` — Full system dashboard (identity, projects, tickets, runs, agents).
 - `manage_heartbeat` — Enable, disable, or check project heartbeat status.
 
+## Auth
+
+HIVE defaults to **subscription OAuth** for spawned claude runs (dispatch,
+heartbeat). API key auth is supported for users who don't have a Claude
+subscription, but the default is OAuth — the dispatch wrapper unsets
+`ANTHROPIC_API_KEY` before launch to enforce that default. If subscription
+OAuth fails, the run fails — surface the failure, don't silently fall back.
+
+On macOS the OAuth token lives in Keychain (`Claude Code-credentials` in
+`login.keychain-db`). Detached subprocesses without a GUI session can hit
+Keychain access errors, which claude surfaces as `ConnectionRefused`. That's
+a real failure to expose, not paper over with an API key fallback.
+
+To opt into API key auth (e.g. forks running on machines without a
+subscription), edit the `unset ANTHROPIC_API_KEY` line out of the wrapper
+in `src/commands/dispatch.ts`. A proper opt-in env var (`HIVE_ALLOW_API_KEY`)
+is a future TK if it becomes a recurring ask.
+
 ## Development
 
 - Runtime: Bun + TypeScript
