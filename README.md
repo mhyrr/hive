@@ -19,6 +19,7 @@ what the harness does not remember on its own:
 - **Per-project ticket tracking** in markdown
 - **Heartbeat**: a stateless agent that wakes periodically, checks project state, and dispatches work within defined trust boundaries
 - **Autonomous dispatch**: background goal execution with timeout, kill, and status tracking
+- **Morning Edition dashboard**: a single-page broadsheet at `~/.hive/dashboard/index.html` (or live at `127.0.0.1:7777`) that pulls health, tickets, runs, memory, and the morning briefing into one glanceable surface
 - **Nightly extraction**: reads Claude Code session transcripts (JSONL), distills key insights, and promotes durable learnings into project memory automatically
 - **Language stacks**: bundles of domain knowledge (Iron Laws, patterns, idioms) packaged as Claude Code skills, auto-detected per project and loaded on demand
 - **Local MCP**: Provides a consistency layer that ties all of this together without a database.
@@ -69,6 +70,13 @@ architecture decisions and tradeoff analysis.
 - It can autonomously dispatch standalone tasks (docs, chores), close completed tickets, consolidate memory, and surface recommendations. Trust boundaries are defined per project in the standing orders file.
 - `hive dispatch "<goal>"` spawns a background Claude session with the maya-executor agent in a git worktree. The executor plans, builds, tests, and merges. Configurable timeout (default 30m). `hive kill` to stop, `hive ps` for status with failure details. The heartbeat can trigger dispatches on its own for authorized work categories.
 - Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw)
+
+**Morning Edition dashboard.**
+
+- A single-page broadsheet that pulls everything HIVE knows into one surface. Per-project health (heartbeat status, last tick, dispatch results), ticket buckets (ready / in-progress / blocked, sorted by priority and age), recent dispatch runs with status and duration, recent memory writes (facts, conventions, decisions, open questions), the morning briefing from the nightly verifier, and the previous night's pipeline cost breakdown by pass.
+- Two surfaces, one renderer: `hive dashboard build` writes a static `~/.hive/dashboard/index.html` (rebuilt by the nightly job at 2am); `hive dashboard serve` runs an interactive server on `127.0.0.1:7777` with action buttons for closing tickets, dispatching, and memory writes. Both backed by pure data collectors in `src/lib/dashboard/collect.ts` — easy to test, easy to extend.
+- Inline CSS, system fonts, no framework, no network requests. Looks like a financial broadsheet and reads like one — designed to be glanced at over coffee, not navigated.
+- See [docs/dashboard.md](docs/dashboard.md) for the full reference.
 
 **Nightly extraction.**
 
@@ -231,8 +239,11 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive heartbeat reset` | Reset heartbeat counters |
 | `hive identity emit` | Print the canonical identity prefix used by hooks and harness launchers |
 | `hive inbox` | Show the current project's heartbeat inbox (`hive inbox clear` clears it) |
-| `hive dashboard build` | Build the Morning Edition dashboard |
-| `hive dashboard open` | Open the Morning Edition dashboard |
+| `hive dashboard` | Open the dashboard (server if running, else static build) |
+| `hive dashboard build` | Regenerate the static dashboard at `~/.hive/dashboard/index.html` |
+| `hive dashboard serve [--port N] [--open]` | Start the interactive server on `127.0.0.1:7777` |
+| `hive dashboard open` | Open the existing static dashboard in browser |
+| `hive dashboard path` | Print the dashboard file path |
 | `hive ticket create <title>` | Create a ticket (`--type`, `--priority`, `--tags`, `--depends`) |
 | `hive ticket list` | List tickets (`--status`, `--type`, `--tags`) |
 | `hive ticket show <id>` | Show ticket details (partial IDs work: `1` matches `TK-001`) |
