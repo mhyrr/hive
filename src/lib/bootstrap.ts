@@ -1,17 +1,19 @@
 /**
- * bootstrap.ts — Mechanical repo scanner for project bootstrap.
+ * bootstrap.ts — Repo scanner + LLM inference for project bootstrap.
  *
- * Scans a repo root and produces structured facts that can be emitted as
- * candidates for the V1 memory pipeline. No LLM calls. Deterministic.
- * Designed to run in <2s on a typical repo.
+ * Two passes:
+ *   1. Mechanical scan (TK-032) — deterministic, <2s, no LLM.
+ *   2. Inference pass (TK-072) — single LLM call via claude --print.
+ *      Reads representative files + stack skill content, produces
+ *      conventions, architecture summary, and key dependencies as candidates.
  *
- * TK-032
+ * Both passes emit CandidateInput[] for the V1 memory pipeline (Pass V admits).
  */
 
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
-import { join, relative, extname } from "node:path";
+import { join, relative, extname, basename } from "node:path";
 
-import { autoDetectStack, resolveProjectStack } from "./stack";
+import { autoDetectStack, resolveProjectStack, getStackPaths } from "./stack";
 import {
   appendCandidates,
   readCandidates,
@@ -19,6 +21,7 @@ import {
   type CandidateInput,
 } from "./memory";
 import { type HivePaths } from "./paths";
+import { completeClaudeText } from "./claude";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -844,6 +847,590 @@ export function formatScanReport(scan: BootstrapScanResult): string {
       .join(", ");
     lines.push(`**Files:** ${scan.fileStats.totalFiles} source files — ${extSummary}`);
     lines.push(`**Directories:** ${scan.fileStats.topDirs.join(", ")}`);
+  }
+
+  return lines.join("\n");
+}
+
+// ===========================================================================
+// Phase 2 — LLM inference (TK-072)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Representative file selection
+// ---------------------------------------------------------------------------
+
+/**
+ * File categories for inference. We want one file from each bucket.
+ * The order matters — first match in each category wins.
+ */
+type FileCategory = "entrypoint" | "core" | "test" | "config";
+
+export type RepresentativeFile = {
+  category: FileCategory;
+  path: string;       // relative to repo root
+  content: string;
+  truncated: boolean;
+};
+
+/** Max bytes per file. ~400 lines of code ≈ 16KB — generous enough for context,
+ *  small enough that 5 files stay under the prompt limit. */
+const MAX_FILE_BYTES = 16_384;
+
+/** Patterns to find a "core module" — the first non-entrypoint source file that
+ *  looks like real business logic. Ordered by informativeness. */
+const CORE_MODULE_PATTERNS: Record<string, string[]> = {
+  elixir: [
+    "lib/**/contexts/**/*.ex",
+    "lib/**/*_live.ex",
+    "lib/**/*_controller.ex",
+    "lib/**/*.ex",
+  ],
+  typescript: [
+    "src/lib/**/*.ts",
+    "src/components/**/*.tsx",
+    "src/pages/**/*.tsx",
+    "src/**/*.ts",
+    "lib/**/*.ts",
+  ],
+  rust: ["src/lib.rs", "src/**/*.rs"],
+  python: ["src/**/*.py", "app/**/*.py", "**/*.py"],
+};
+
+const TEST_PATTERNS: Record<string, string[]> = {
+  elixir: ["test/**/*_test.exs"],
+  typescript: [
+    "src/__tests__/**/*.test.ts",
+    "__tests__/**/*.test.ts",
+    "test/**/*.test.ts",
+    "tests/**/*.test.ts",
+  ],
+  rust: ["tests/**/*.rs"],
+  python: ["tests/test_*.py", "tests/**/test_*.py", "test/test_*.py"],
+};
+
+const CONFIG_FILES: string[] = [
+  "tsconfig.json",
+  ".eslintrc.json", ".eslintrc.js", "eslint.config.js",
+  "biome.json",
+  ".prettierrc",
+  "mix.exs",
+  ".formatter.exs",
+  "Cargo.toml",
+  "pyproject.toml",
+  "package.json",
+];
+
+function readFileTruncated(fullPath: string): { content: string; truncated: boolean } | null {
+  try {
+    if (!existsSync(fullPath)) return null;
+    const stat = statSync(fullPath);
+    if (!stat.isFile()) return null;
+    if (stat.size === 0) return null;
+
+    const raw = readFileSync(fullPath, "utf-8");
+    if (raw.length <= MAX_FILE_BYTES) {
+      return { content: raw, truncated: false };
+    }
+    return { content: raw.slice(0, MAX_FILE_BYTES) + "\n... [truncated]", truncated: true };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Simple glob-like matcher: supports `**` (any nested dirs) and `*` (one segment).
+ * Not a full glob engine — just enough for our patterns.
+ */
+function miniGlob(root: string, pattern: string, maxResults = 3): string[] {
+  const results: string[] = [];
+  const parts = pattern.split("/");
+
+  function walk(dir: string, partIndex: number) {
+    if (results.length >= maxResults) return;
+    if (partIndex >= parts.length) return;
+
+    const part = parts[partIndex]!;
+    let entries: ReturnType<typeof readdirSync>;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    if (part === "**") {
+      // Match zero or more directories
+      // Try matching the next part at this level
+      walk(dir, partIndex + 1);
+      // And recurse into subdirectories
+      for (const entry of entries) {
+        if (entry.isDirectory() && !IGNORE_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
+          walk(join(dir, entry.name), partIndex); // stay on **
+        }
+      }
+      return;
+    }
+
+    const isLast = partIndex === parts.length - 1;
+    const regex = new RegExp(
+      "^" + part.replace(/\./g, "\\.").replace(/\*/g, "[^/]*") + "$"
+    );
+
+    for (const entry of entries) {
+      if (results.length >= maxResults) return;
+      if (regex.test(entry.name)) {
+        const full = join(dir, entry.name);
+        if (isLast && entry.isFile()) {
+          results.push(relative(root, full));
+        } else if (entry.isDirectory() && !IGNORE_DIRS.has(entry.name)) {
+          walk(full, partIndex + 1);
+        }
+      }
+    }
+  }
+
+  walk(root, 0);
+  return results;
+}
+
+/**
+ * Select 3-5 representative files from a scanned repo.
+ * Returns files in deterministic category order: entrypoint, core, test, config.
+ */
+export function selectRepresentativeFiles(
+  repoPath: string,
+  scan: BootstrapScanResult,
+): RepresentativeFile[] {
+  const files: RepresentativeFile[] = [];
+  const usedPaths = new Set<string>();
+
+  function tryAdd(category: FileCategory, relPath: string): boolean {
+    if (usedPaths.has(relPath)) return false;
+    const result = readFileTruncated(join(repoPath, relPath));
+    if (!result) return false;
+    usedPaths.add(relPath);
+    files.push({ category, path: relPath, content: result.content, truncated: result.truncated });
+    return true;
+  }
+
+  // 1. Entrypoint — from scan results
+  for (const ep of scan.entrypoints) {
+    if (tryAdd("entrypoint", ep)) break;
+  }
+
+  // 2. Core module — use stack-specific patterns
+  const stack = scan.stack ?? "typescript"; // default patterns if unknown
+  const corePatterns = CORE_MODULE_PATTERNS[stack] ?? CORE_MODULE_PATTERNS.typescript!;
+  outer_core:
+  for (const pattern of corePatterns) {
+    const matches = miniGlob(repoPath, pattern, 5);
+    for (const match of matches) {
+      // Skip if it's an entrypoint we already have
+      if (usedPaths.has(match)) continue;
+      // Skip test files
+      if (match.includes("test") || match.includes("spec")) continue;
+      if (tryAdd("core", match)) break outer_core;
+    }
+  }
+
+  // 3. Test file — use stack-specific patterns
+  const testPatterns = TEST_PATTERNS[stack] ?? TEST_PATTERNS.typescript!;
+  outer_test:
+  for (const pattern of testPatterns) {
+    const matches = miniGlob(repoPath, pattern, 3);
+    for (const match of matches) {
+      if (tryAdd("test", match)) break outer_test;
+    }
+  }
+
+  // 4. Config file — first match from the standard list
+  for (const cfg of CONFIG_FILES) {
+    if (tryAdd("config", cfg)) break;
+  }
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
+// Stack skill reading
+// ---------------------------------------------------------------------------
+
+/**
+ * Read relevant skill content for the detected stack.
+ * Returns concatenated content from stack-specific skill files,
+ * or empty string if no skills are installed.
+ */
+export function readStackSkillContent(stack: string | null): string {
+  if (!stack) return "";
+
+  const { userSkillsDir } = getStackPaths();
+  if (!existsSync(userSkillsDir)) return "";
+
+  const prefix = `${stack}-`;
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(userSkillsDir, { withFileTypes: true });
+  } catch {
+    return "";
+  }
+
+  const skillDirs = entries
+    .filter(e => e.isDirectory() && e.name.startsWith(prefix))
+    .map(e => e.name)
+    .sort();
+
+  if (skillDirs.length === 0) return "";
+
+  const chunks: string[] = [];
+  let totalBytes = 0;
+  const MAX_SKILL_BYTES = 12_000; // cap total skill content
+
+  for (const dir of skillDirs) {
+    if (totalBytes >= MAX_SKILL_BYTES) break;
+    const skillFile = join(userSkillsDir, dir, "SKILL.md");
+    const result = readFileTruncated(skillFile);
+    if (result) {
+      const remaining = MAX_SKILL_BYTES - totalBytes;
+      const content = result.content.length > remaining
+        ? result.content.slice(0, remaining) + "\n... [truncated]"
+        : result.content;
+      chunks.push(`### Skill: ${dir}\n\n${content}`);
+      totalBytes += content.length;
+    }
+  }
+
+  return chunks.join("\n\n---\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// Inference prompt construction
+// ---------------------------------------------------------------------------
+
+export type InferencePromptParts = {
+  systemPrompt: string;
+  userPrompt: string;
+};
+
+/**
+ * Build the system + user prompts for the inference LLM call.
+ * Deterministic — depends only on scan, files, and skill content.
+ */
+export function buildInferencePrompt(
+  scan: BootstrapScanResult,
+  representativeFiles: RepresentativeFile[],
+  skillContent: string,
+): InferencePromptParts {
+  const systemPrompt = `You are a senior software architect analyzing a codebase to extract conventions, architecture patterns, and key dependencies.
+
+Your output must be valid JSON matching this schema:
+{
+  "conventions": [
+    { "text": "...", "confidence": "high" | "medium" }
+  ],
+  "architecture_summary": "3-5 sentences describing what this codebase does and how it's organized",
+  "key_dependencies": [
+    { "name": "...", "role": "..." }
+  ]
+}
+
+Rules:
+- Extract 2-4 conventions that a new developer needs to know. Focus on patterns that are non-obvious from the config alone. Examples: "Controllers delegate to context modules, never call Repo directly", "Tests use factory functions from test/support/factory.ex", "Components follow container/presenter split".
+- Only include conventions you can see evidence for in the provided files. "medium" confidence if you see one example; "high" if you see it consistently or it's enforced by config.
+- The architecture summary should answer: what does this project do, what's the main tech stack, and how is the code organized? Write for someone who will work in this codebase tomorrow.
+- Key dependencies are libraries/frameworks that shape how you write code in this repo — not utilities. Phoenix, Ecto, React, Next.js yes. leftpad, uuid no. Include their role (e.g. "ORM", "web framework", "state management").
+- Output ONLY the JSON object. No markdown fences, no explanation.`;
+
+  // Build user prompt with all the context
+  const sections: string[] = [];
+
+  // Mechanical scan summary
+  sections.push("## Mechanical Scan Results\n");
+  sections.push(formatScanReport(scan));
+
+  // Skill context (if available)
+  if (skillContent) {
+    sections.push("\n\n## Stack-Specific Knowledge\n");
+    sections.push("Use these patterns as reference when identifying conventions:\n");
+    sections.push(skillContent);
+  }
+
+  // Representative files
+  sections.push("\n\n## Representative Files\n");
+  for (const file of representativeFiles) {
+    sections.push(`\n### ${file.category}: ${file.path}\n`);
+    sections.push("```");
+    sections.push(file.content);
+    sections.push("```");
+    if (file.truncated) {
+      sections.push("_(file truncated for brevity)_");
+    }
+  }
+
+  return {
+    systemPrompt,
+    userPrompt: sections.join("\n"),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Inference output parsing
+// ---------------------------------------------------------------------------
+
+export type InferenceConvention = {
+  text: string;
+  confidence: "high" | "medium";
+};
+
+export type InferenceDependency = {
+  name: string;
+  role: string;
+};
+
+export type InferenceResult = {
+  conventions: InferenceConvention[];
+  architectureSummary: string;
+  keyDependencies: InferenceDependency[];
+};
+
+/**
+ * Parse the LLM's JSON output into a typed result.
+ * Tolerates markdown fences and leading/trailing whitespace.
+ */
+export function parseInferenceOutput(raw: string): InferenceResult {
+  // Strip markdown fences if present
+  let cleaned = raw.trim();
+  if (cleaned.startsWith("```json")) {
+    cleaned = cleaned.slice(7);
+  } else if (cleaned.startsWith("```")) {
+    cleaned = cleaned.slice(3);
+  }
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.slice(0, -3);
+  }
+  cleaned = cleaned.trim();
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error(`Failed to parse inference output as JSON: ${(e as Error).message}\nRaw (first 500 chars): ${raw.slice(0, 500)}`);
+  }
+
+  // Validate structure
+  const conventions = Array.isArray(parsed.conventions)
+    ? (parsed.conventions as Array<{ text?: string; confidence?: string }>)
+        .filter(c => typeof c.text === "string" && c.text.length > 0)
+        .map(c => ({
+          text: c.text!,
+          confidence: (c.confidence === "high" ? "high" : "medium") as "high" | "medium",
+        }))
+    : [];
+
+  const architectureSummary = typeof parsed.architecture_summary === "string"
+    ? parsed.architecture_summary
+    : "";
+
+  const keyDependencies = Array.isArray(parsed.key_dependencies)
+    ? (parsed.key_dependencies as Array<{ name?: string; role?: string }>)
+        .filter(d => typeof d.name === "string" && d.name.length > 0)
+        .map(d => ({
+          name: d.name!,
+          role: typeof d.role === "string" ? d.role : "unknown",
+        }))
+    : [];
+
+  if (conventions.length === 0 && !architectureSummary && keyDependencies.length === 0) {
+    throw new Error("Inference output contained no usable data.");
+  }
+
+  return { conventions, architectureSummary, keyDependencies };
+}
+
+// ---------------------------------------------------------------------------
+// Inference candidates
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert parsed inference results into CandidateInput[].
+ */
+export function inferenceToCandidates(result: InferenceResult): CandidateInput[] {
+  const candidates: CandidateInput[] = [];
+  const tags = ["bootstrap", "inference"];
+
+  // Conventions
+  for (const conv of result.conventions) {
+    candidates.push({
+      type: "convention",
+      content: conv.text,
+      tags: [...tags, "convention"],
+      provenanceNote: `bootstrap inference (confidence: ${conv.confidence})`,
+    });
+  }
+
+  // Architecture summary
+  if (result.architectureSummary) {
+    candidates.push({
+      type: "fact",
+      content: `Architecture: ${result.architectureSummary}`,
+      tags: [...tags, "architecture"],
+      provenanceNote: "bootstrap inference — architecture summary",
+    });
+  }
+
+  // Key dependencies
+  if (result.keyDependencies.length > 0) {
+    const depLines = result.keyDependencies
+      .map(d => `${d.name} (${d.role})`)
+      .join(", ");
+    candidates.push({
+      type: "fact",
+      content: `Key dependencies: ${depLines}.`,
+      tags: [...tags, "dependencies"],
+      provenanceNote: "bootstrap inference — dependency analysis",
+    });
+  }
+
+  return candidates;
+}
+
+// ---------------------------------------------------------------------------
+// Main inference orchestrator
+// ---------------------------------------------------------------------------
+
+export type InferenceEmitResult = {
+  written: number;
+  skipped: number;
+  candidates: CandidateInput[];
+  inference: InferenceResult;
+  durationMs: number;
+  model: string;
+};
+
+const INFERENCE_MODEL = "claude-sonnet-4-5-20250514";
+
+/**
+ * Run the inference pass: select files, build prompt, call LLM, parse output,
+ * and emit candidates. The single public entry point for Phase 2 bootstrap.
+ */
+export async function inferConventions(
+  repoPath: string,
+  scan: BootstrapScanResult,
+  paths: HivePaths,
+  projectId: string,
+  options: {
+    model?: string;
+    dryRun?: boolean;
+  } = {},
+): Promise<InferenceEmitResult> {
+  const model = options.model ?? INFERENCE_MODEL;
+  const startTime = Date.now();
+
+  // 1. Select representative files
+  const files = selectRepresentativeFiles(repoPath, scan);
+
+  // 2. Read stack skill content
+  const skillContent = readStackSkillContent(scan.stack);
+
+  // 3. Build prompt
+  const { systemPrompt, userPrompt } = buildInferencePrompt(scan, files, skillContent);
+
+  // 4. Call LLM
+  const completion = await completeClaudeText({
+    modelId: model,
+    systemPrompt,
+    userContent: userPrompt,
+  });
+
+  // 5. Parse output
+  const inference = parseInferenceOutput(completion.text);
+
+  // 6. Convert to candidates
+  const candidates = inferenceToCandidates(inference);
+
+  if (options.dryRun || candidates.length === 0) {
+    return {
+      written: 0,
+      skipped: candidates.length,
+      candidates,
+      inference,
+      durationMs: Date.now() - startTime,
+      model,
+    };
+  }
+
+  // 7. Dedup and emit
+  const existingCandidates = await readCandidates(paths, projectId);
+  const existingTexts = new Set(existingCandidates.map(c => c.content));
+
+  let snapshot;
+  try {
+    snapshot = await readProjectMemorySnapshot(paths, projectId);
+  } catch {
+    snapshot = null;
+  }
+
+  const existingKnowledge = new Set<string>();
+  if (snapshot) {
+    for (const f of snapshot.facts) existingKnowledge.add(f.text);
+    for (const c of snapshot.conventions) existingKnowledge.add(c.text);
+  }
+
+  const newCandidates = candidates.filter(c =>
+    !existingTexts.has(c.content) && !existingKnowledge.has(c.content)
+  );
+
+  if (newCandidates.length > 0) {
+    await appendCandidates(paths, projectId, newCandidates, {
+      provenanceOverride: "bootstrap:inference",
+    });
+  }
+
+  return {
+    written: newCandidates.length,
+    skipped: candidates.length - newCandidates.length,
+    candidates: newCandidates,
+    inference,
+    durationMs: Date.now() - startTime,
+    model,
+  };
+}
+
+/**
+ * Format inference results for human-readable output.
+ */
+export function formatInferenceReport(result: InferenceResult, emitResult?: InferenceEmitResult): string {
+  const lines: string[] = ["## Inference Results", ""];
+
+  if (result.architectureSummary) {
+    lines.push("**Architecture:**");
+    lines.push(result.architectureSummary);
+    lines.push("");
+  }
+
+  if (result.conventions.length > 0) {
+    lines.push("**Conventions:**");
+    for (const conv of result.conventions) {
+      const badge = conv.confidence === "high" ? "[high]" : "[med]";
+      lines.push(`  ${badge} ${conv.text}`);
+    }
+    lines.push("");
+  }
+
+  if (result.keyDependencies.length > 0) {
+    lines.push("**Key Dependencies:**");
+    for (const dep of result.keyDependencies) {
+      lines.push(`  - ${dep.name} — ${dep.role}`);
+    }
+    lines.push("");
+  }
+
+  if (emitResult) {
+    lines.push(`Model: ${emitResult.model} | Duration: ${emitResult.durationMs}ms`);
+    if (emitResult.written > 0) {
+      lines.push(`Wrote ${emitResult.written} candidate(s) (${emitResult.skipped} skipped as duplicates).`);
+    } else if (emitResult.skipped > 0) {
+      lines.push(`All ${emitResult.skipped} candidates already exist — nothing new.`);
+    }
   }
 
   return lines.join("\n");

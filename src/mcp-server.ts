@@ -745,6 +745,54 @@ server.registerTool("hive_status", {
   return { content: [{ type: "text" as const, text: lines.join("\n") }] };
 });
 
+// Tool 12: Bootstrap inference — convention + architecture extraction
+server.registerTool("bootstrap_infer_conventions", {
+  description:
+    "Run LLM inference on a project to extract conventions, architecture summary, and key dependencies. " +
+    "Requires the project to be registered. Reads 3-5 representative files and the mechanical scan, " +
+    "then makes a single LLM call. Results are written as candidates (Pass V admits or rejects). " +
+    "Use after initial project registration or when you suspect the codebase has evolved significantly.",
+  inputSchema: {
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    dry_run: z.boolean().optional().describe("If true, runs inference but does not write candidates — just returns results."),
+  },
+}, async ({ project, dry_run }) => {
+  const paths = getHivePaths();
+  const projectId = project || resolveProjectFromCwd();
+  if (!projectId) {
+    return { content: [{ type: "text" as const, text: "No project found. Specify a project name or run from a registered project directory." }] };
+  }
+
+  const projectDir = join(paths.projectsDir, projectId);
+  const configPath = join(projectDir, "config.md");
+  if (!existsSync(configPath)) {
+    return { content: [{ type: "text" as const, text: `Project '${projectId}' is not registered. Run: hive project add ${projectId} <path>` }] };
+  }
+
+  // Resolve repo path
+  const configContent = await Bun.file(configPath).text();
+  const parsed = parseFrontmatter(configContent);
+  const repoPath = (parsed.attributes?.path as string) ?? null;
+
+  if (!repoPath || !existsSync(repoPath)) {
+    return { content: [{ type: "text" as const, text: `Project '${projectId}' has no valid repo path.` }] };
+  }
+
+  // Import bootstrap functions
+  const { scanRepo, inferConventions, formatInferenceReport } = await import("./lib/bootstrap");
+
+  // Run mechanical scan (needed as context for inference)
+  const scan = scanRepo(repoPath);
+
+  // Run inference
+  const result = await inferConventions(repoPath, scan, paths, projectId, {
+    dryRun: dry_run ?? false,
+  });
+
+  const report = formatInferenceReport(result.inference, result);
+  return { content: [{ type: "text" as const, text: report }] };
+});
+
 // Heartbeat management
 server.tool(
   "manage_heartbeat",

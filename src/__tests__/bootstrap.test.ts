@@ -8,7 +8,15 @@ import {
   scanToCandidates,
   emitBootstrapCandidates,
   formatScanReport,
+  selectRepresentativeFiles,
+  readStackSkillContent,
+  buildInferencePrompt,
+  parseInferenceOutput,
+  inferenceToCandidates,
+  formatInferenceReport,
   type BootstrapScanResult,
+  type RepresentativeFile,
+  type InferenceResult,
 } from "../lib/bootstrap";
 import { readCandidates } from "../lib/memory";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
@@ -417,5 +425,396 @@ describe("formatScanReport", () => {
     expect(report).toContain("Bootstrap Scan Results");
     // Should not crash, just show minimal info
     expect(report).not.toContain("undefined");
+  });
+});
+
+// ===========================================================================
+// Phase 2 — Inference (TK-072)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// selectRepresentativeFiles tests
+// ---------------------------------------------------------------------------
+
+describe("selectRepresentativeFiles", () => {
+  test("selects files from a TypeScript project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-infer-ts-"));
+    await makeTypescriptProject(root);
+
+    const scan = scanRepo(root);
+    const files = selectRepresentativeFiles(root, scan);
+
+    expect(files.length).toBeGreaterThanOrEqual(3);
+    expect(files.length).toBeLessThanOrEqual(5);
+
+    const categories = files.map(f => f.category);
+    expect(categories).toContain("entrypoint");
+    expect(categories).toContain("test");
+    expect(categories).toContain("config");
+
+    // Every file should have content
+    for (const f of files) {
+      expect(f.content.length).toBeGreaterThan(0);
+      expect(f.path.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("selects files from an Elixir project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-infer-ex-"));
+    await makeElixirProject(root);
+
+    const scan = scanRepo(root);
+    const files = selectRepresentativeFiles(root, scan);
+
+    expect(files.length).toBeGreaterThanOrEqual(2);
+
+    const categories = files.map(f => f.category);
+    expect(categories).toContain("entrypoint");
+    expect(categories).toContain("config");
+
+    // The entrypoint should be the application.ex
+    const entrypoint = files.find(f => f.category === "entrypoint");
+    expect(entrypoint?.path).toContain("application.ex");
+  });
+
+  test("handles empty project gracefully", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-infer-empty-"));
+    const scan = scanRepo(root);
+    const files = selectRepresentativeFiles(root, scan);
+
+    // Should not crash, just return what it can find
+    expect(files.length).toBe(0);
+  });
+
+  test("truncates large files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-infer-large-"));
+    await mkdir(join(root, "src"), { recursive: true });
+
+    // Create a file larger than MAX_FILE_BYTES (16KB)
+    const largeContent = "x".repeat(20_000);
+    await writeFile(join(root, "src", "index.ts"), largeContent);
+    await writeFile(join(root, "package.json"), '{"name":"test","main":"src/index.ts"}');
+    await writeFile(join(root, "bun.lockb"), "fake");
+    await writeFile(join(root, "tsconfig.json"), "{}");
+
+    const scan = scanRepo(root);
+    const files = selectRepresentativeFiles(root, scan);
+
+    const entrypoint = files.find(f => f.category === "entrypoint");
+    expect(entrypoint).toBeDefined();
+    expect(entrypoint!.truncated).toBe(true);
+    expect(entrypoint!.content).toContain("[truncated]");
+    expect(entrypoint!.content.length).toBeLessThan(largeContent.length);
+  });
+
+  test("uses stack-specific patterns for Rust", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-infer-rs-"));
+    await makeRustProject(root);
+
+    const scan = scanRepo(root);
+    const files = selectRepresentativeFiles(root, scan);
+
+    const categories = files.map(f => f.category);
+    expect(categories).toContain("entrypoint");
+    expect(categories).toContain("config");
+
+    const entrypoint = files.find(f => f.category === "entrypoint");
+    expect(entrypoint?.path).toBe("src/main.rs");
+
+    const config = files.find(f => f.category === "config");
+    expect(config?.path).toBe("Cargo.toml");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readStackSkillContent tests
+// ---------------------------------------------------------------------------
+
+describe("readStackSkillContent", () => {
+  test("returns empty for null stack", () => {
+    const content = readStackSkillContent(null);
+    expect(content).toBe("");
+  });
+
+  test("returns empty for non-existent stack", () => {
+    // Set HOME to a temp dir with no skills
+    const originalHome = process.env.HOME;
+    process.env.HOME = "/tmp/nonexistent-hive-test";
+    try {
+      const content = readStackSkillContent("rust");
+      expect(content).toBe("");
+    } finally {
+      process.env.HOME = originalHome;
+    }
+  });
+
+  // Note: Testing actual skill reading requires skills installed at
+  // ~/.claude/skills/, which is environment-dependent. The function
+  // is integration-tested by the real bootstrap --infer run.
+});
+
+// ---------------------------------------------------------------------------
+// buildInferencePrompt tests
+// ---------------------------------------------------------------------------
+
+describe("buildInferencePrompt", () => {
+  test("includes scan results and files in the prompt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-infer-prompt-"));
+    await makeTypescriptProject(root);
+
+    const scan = scanRepo(root);
+    const files = selectRepresentativeFiles(root, scan);
+    const { systemPrompt, userPrompt } = buildInferencePrompt(scan, files, "");
+
+    // System prompt has the JSON schema
+    expect(systemPrompt).toContain("conventions");
+    expect(systemPrompt).toContain("architecture_summary");
+    expect(systemPrompt).toContain("key_dependencies");
+    expect(systemPrompt).toContain("valid JSON");
+
+    // User prompt has scan results
+    expect(userPrompt).toContain("Mechanical Scan Results");
+    expect(userPrompt).toContain("typescript");
+
+    // User prompt has representative files
+    expect(userPrompt).toContain("Representative Files");
+    for (const f of files) {
+      expect(userPrompt).toContain(f.path);
+    }
+  });
+
+  test("includes skill content when provided", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-infer-prompt-skill-"));
+    await makeTypescriptProject(root);
+
+    const scan = scanRepo(root);
+    const files = selectRepresentativeFiles(root, scan);
+    const skillContent = "### Skill: typescript-react\n\nAlways use functional components.";
+    const { userPrompt } = buildInferencePrompt(scan, files, skillContent);
+
+    expect(userPrompt).toContain("Stack-Specific Knowledge");
+    expect(userPrompt).toContain("typescript-react");
+    expect(userPrompt).toContain("functional components");
+  });
+
+  test("omits skill section when no skills available", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-infer-prompt-noskill-"));
+    await makeTypescriptProject(root);
+
+    const scan = scanRepo(root);
+    const files = selectRepresentativeFiles(root, scan);
+    const { userPrompt } = buildInferencePrompt(scan, files, "");
+
+    expect(userPrompt).not.toContain("Stack-Specific Knowledge");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseInferenceOutput tests
+// ---------------------------------------------------------------------------
+
+describe("parseInferenceOutput", () => {
+  test("parses valid JSON output", () => {
+    const raw = JSON.stringify({
+      conventions: [
+        { text: "Controllers delegate to context modules", confidence: "high" },
+        { text: "Tests use factory pattern", confidence: "medium" },
+      ],
+      architecture_summary: "A Phoenix web app that manages deals.",
+      key_dependencies: [
+        { name: "Phoenix", role: "web framework" },
+        { name: "Ecto", role: "ORM" },
+      ],
+    });
+
+    const result = parseInferenceOutput(raw);
+
+    expect(result.conventions.length).toBe(2);
+    expect(result.conventions[0]!.text).toBe("Controllers delegate to context modules");
+    expect(result.conventions[0]!.confidence).toBe("high");
+    expect(result.architectureSummary).toContain("Phoenix web app");
+    expect(result.keyDependencies.length).toBe(2);
+    expect(result.keyDependencies[0]!.name).toBe("Phoenix");
+  });
+
+  test("strips markdown fences", () => {
+    const raw = "```json\n" + JSON.stringify({
+      conventions: [{ text: "Uses repository pattern", confidence: "high" }],
+      architecture_summary: "A REST API.",
+      key_dependencies: [],
+    }) + "\n```";
+
+    const result = parseInferenceOutput(raw);
+    expect(result.conventions.length).toBe(1);
+    expect(result.conventions[0]!.text).toBe("Uses repository pattern");
+  });
+
+  test("handles plain ``` fences", () => {
+    const raw = "```\n" + JSON.stringify({
+      conventions: [],
+      architecture_summary: "A CLI tool.",
+      key_dependencies: [{ name: "clap", role: "argument parsing" }],
+    }) + "\n```";
+
+    const result = parseInferenceOutput(raw);
+    expect(result.architectureSummary).toBe("A CLI tool.");
+    expect(result.keyDependencies.length).toBe(1);
+  });
+
+  test("throws on completely invalid JSON", () => {
+    expect(() => parseInferenceOutput("not json at all")).toThrow("Failed to parse");
+  });
+
+  test("throws on empty result", () => {
+    const raw = JSON.stringify({
+      conventions: [],
+      architecture_summary: "",
+      key_dependencies: [],
+    });
+    expect(() => parseInferenceOutput(raw)).toThrow("no usable data");
+  });
+
+  test("filters out malformed conventions", () => {
+    const raw = JSON.stringify({
+      conventions: [
+        { text: "Valid one", confidence: "high" },
+        { text: "", confidence: "high" },     // empty text — skip
+        { confidence: "high" },                 // no text — skip
+        { text: "Valid two", confidence: "invalid" }, // bad confidence → default to medium
+      ],
+      architecture_summary: "Something.",
+      key_dependencies: [],
+    });
+
+    const result = parseInferenceOutput(raw);
+    expect(result.conventions.length).toBe(2);
+    expect(result.conventions[0]!.text).toBe("Valid one");
+    expect(result.conventions[1]!.text).toBe("Valid two");
+    expect(result.conventions[1]!.confidence).toBe("medium");
+  });
+
+  test("handles missing key_dependencies gracefully", () => {
+    const raw = JSON.stringify({
+      conventions: [{ text: "Test", confidence: "high" }],
+      architecture_summary: "Thing.",
+    });
+    const result = parseInferenceOutput(raw);
+    expect(result.keyDependencies).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inferenceToCandidates tests
+// ---------------------------------------------------------------------------
+
+describe("inferenceToCandidates", () => {
+  const sampleResult: InferenceResult = {
+    conventions: [
+      { text: "Controllers stay thin, delegate to contexts", confidence: "high" },
+      { text: "Tests use ExMachina factories", confidence: "medium" },
+    ],
+    architectureSummary: "A Phoenix 1.7 web app with Ecto for persistence.",
+    keyDependencies: [
+      { name: "Phoenix", role: "web framework" },
+      { name: "Ecto", role: "database wrapper" },
+    ],
+  };
+
+  test("generates convention candidates", () => {
+    const candidates = inferenceToCandidates(sampleResult);
+
+    const conventions = candidates.filter(c => c.type === "convention");
+    expect(conventions.length).toBe(2);
+    expect(conventions[0]!.content).toBe("Controllers stay thin, delegate to contexts");
+    expect(conventions[0]!.tags).toContain("bootstrap");
+    expect(conventions[0]!.tags).toContain("inference");
+    expect(conventions[0]!.tags).toContain("convention");
+  });
+
+  test("generates architecture fact", () => {
+    const candidates = inferenceToCandidates(sampleResult);
+
+    const archFact = candidates.find(c => c.content.startsWith("Architecture:"));
+    expect(archFact).toBeDefined();
+    expect(archFact!.type).toBe("fact");
+    expect(archFact!.content).toContain("Phoenix 1.7");
+  });
+
+  test("generates dependency fact", () => {
+    const candidates = inferenceToCandidates(sampleResult);
+
+    const depFact = candidates.find(c => c.content.startsWith("Key dependencies:"));
+    expect(depFact).toBeDefined();
+    expect(depFact!.type).toBe("fact");
+    expect(depFact!.content).toContain("Phoenix (web framework)");
+    expect(depFact!.content).toContain("Ecto (database wrapper)");
+  });
+
+  test("total candidate count matches expected", () => {
+    const candidates = inferenceToCandidates(sampleResult);
+    // 2 conventions + 1 architecture + 1 dependencies = 4
+    expect(candidates.length).toBe(4);
+  });
+
+  test("handles empty result", () => {
+    const empty: InferenceResult = {
+      conventions: [],
+      architectureSummary: "",
+      keyDependencies: [],
+    };
+    const candidates = inferenceToCandidates(empty);
+    expect(candidates.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatInferenceReport tests
+// ---------------------------------------------------------------------------
+
+describe("formatInferenceReport", () => {
+  test("formats a full result", () => {
+    const result: InferenceResult = {
+      conventions: [
+        { text: "Uses repository pattern", confidence: "high" },
+        { text: "Tests use mocks", confidence: "medium" },
+      ],
+      architectureSummary: "A REST API built with Express.",
+      keyDependencies: [
+        { name: "Express", role: "HTTP framework" },
+      ],
+    };
+
+    const report = formatInferenceReport(result);
+
+    expect(report).toContain("Inference Results");
+    expect(report).toContain("Architecture:");
+    expect(report).toContain("REST API");
+    expect(report).toContain("[high]");
+    expect(report).toContain("[med]");
+    expect(report).toContain("repository pattern");
+    expect(report).toContain("Express");
+    expect(report).toContain("HTTP framework");
+  });
+
+  test("includes emit stats when provided", () => {
+    const result: InferenceResult = {
+      conventions: [{ text: "Test", confidence: "high" }],
+      architectureSummary: "Thing.",
+      keyDependencies: [],
+    };
+
+    const report = formatInferenceReport(result, {
+      written: 2,
+      skipped: 1,
+      candidates: [],
+      inference: result,
+      durationMs: 3500,
+      model: "claude-sonnet-4-5-20250514",
+    });
+
+    expect(report).toContain("claude-sonnet-4-5-20250514");
+    expect(report).toContain("3500ms");
+    expect(report).toContain("Wrote 2 candidate(s)");
+    expect(report).toContain("1 skipped");
   });
 });

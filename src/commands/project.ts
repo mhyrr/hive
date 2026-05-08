@@ -10,6 +10,8 @@ import {
   scanRepo,
   emitBootstrapCandidates,
   formatScanReport,
+  inferConventions,
+  formatInferenceReport,
 } from "../lib/bootstrap";
 
 export async function projectCommand(args: string[]): Promise<void> {
@@ -74,14 +76,19 @@ async function addCommand(args: string[]): Promise<void> {
   console.log(`Use \`hive\` from ${repoPath} to start a ${name} session with project context.`);
 
   if (doBootstrap) {
+    const doInfer = args.includes("--infer");
     console.log();
-    await runBootstrap(projectId, repoPath);
+    await runBootstrap(projectId, repoPath, { infer: doInfer });
   }
 }
 
 async function bootstrapCommand(args: string[]): Promise<void> {
+  const doInfer = args.includes("--infer");
+  const dryRun = args.includes("--dry-run");
+  const positionalArgs = args.filter(a => !a.startsWith("--"));
+
   // Resolve project: explicit name or from CWD
-  let projectId = args[0] || null;
+  let projectId = positionalArgs[0] || null;
   let repoPath: string | null = null;
 
   if (!projectId) {
@@ -113,10 +120,14 @@ async function bootstrapCommand(args: string[]): Promise<void> {
     );
   }
 
-  await runBootstrap(projectId, repoPath);
+  await runBootstrap(projectId, repoPath, { infer: doInfer, dryRun });
 }
 
-async function runBootstrap(projectId: string, repoPath: string): Promise<void> {
+async function runBootstrap(
+  projectId: string,
+  repoPath: string,
+  options: { infer?: boolean; dryRun?: boolean } = {},
+): Promise<void> {
   const startTime = Date.now();
 
   console.log(`Scanning ${repoPath}...`);
@@ -128,7 +139,7 @@ async function runBootstrap(projectId: string, repoPath: string): Promise<void> 
   console.log(formatScanReport(scan));
   console.log();
 
-  // Emit candidates
+  // Emit mechanical scan candidates
   const paths = await ensureHiveScaffold();
   const result = await emitBootstrapCandidates(paths, projectId, scan);
   const totalMs = Date.now() - startTime;
@@ -142,5 +153,18 @@ async function runBootstrap(projectId: string, repoPath: string): Promise<void> 
     console.log("No facts could be derived from this repo.");
   }
 
-  console.log(`Done in ${totalMs}ms (scan: ${scanMs}ms).`);
+  console.log(`Mechanical scan done in ${totalMs}ms (scan: ${scanMs}ms).`);
+
+  // Phase 2: LLM inference (opt-in)
+  if (options.infer) {
+    console.log();
+    console.log("Running inference pass (single LLM call)...");
+
+    const inferResult = await inferConventions(repoPath, scan, paths, projectId, {
+      dryRun: options.dryRun,
+    });
+
+    console.log();
+    console.log(formatInferenceReport(inferResult.inference, inferResult));
+  }
 }
