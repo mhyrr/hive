@@ -20,6 +20,7 @@ import type {
   TicketCitation,
   OpenQuestion,
   RecentMemoryEntry,
+  ReflectionDay,
   RunUsageSnapshot,
 } from "./collect";
 import { DASHBOARD_CSS } from "./styles";
@@ -226,6 +227,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     ["#section-briefing", "Briefing"],
     ["#section-projects", "Projects"],
     ["#section-inboxes", "Inbox"],
+    ["#section-reflections", "Reflections"],
     ["#section-runs", "Dispatch"],
     ["#section-archive", "Archive"],
     ["#section-tickets", "Tickets"],
@@ -533,6 +535,33 @@ ${rows}
 // V1 cross-cutting widgets — Group 7 of the memory redesign.
 // ---------------------------------------------------------------------------
 
+export function renderReflections(reflection: ReflectionDay | null | undefined): string {
+  if (!reflection || !reflection.body) {
+    return `
+<section class="section" id="section-reflections">
+  <div class="section-head"><h2>Reflections</h2><span class="kicker">No reflections on file</span></div>
+  <hr class="amber"/>
+  <p>Pass V hasn&rsquo;t landed any reflections yet. They appear after the nightly verifier accepts a Pass C candidate.</p>
+</section>`;
+  }
+  const ageLabel =
+    reflection.ageDays === 0 ? "today"
+    : reflection.ageDays === 1 ? "yesterday"
+    : `${reflection.ageDays} days ago`;
+  const staleNote = reflection.ageDays >= 3
+    ? ` <span class="kicker-warn">· stale (${reflection.ageDays}d)</span>`
+    : "";
+  return `
+<section class="section" id="section-reflections">
+  <div class="section-head">
+    <h2>Reflections</h2>
+    <span class="kicker">${escapeHtml(longDate(reflection.date))} &middot; ${escapeHtml(ageLabel)}${staleNote}</span>
+  </div>
+  <hr class="amber"/>
+  <div class="reflections">${md(reflection.body)}</div>
+</section>`;
+}
+
 export function renderOpenQuestions(questions: OpenQuestion[] | undefined): string {
   if (!questions || questions.length === 0) {
     return `
@@ -755,6 +784,7 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     renderBriefings(data),
     renderProjects(data, c),
     renderInboxes(data.inboxes, c),
+    renderReflections(data.latestReflection),
     renderOpenQuestions(data.openQuestions),
     renderRecentMemory(data.recentMemory),
     renderRunUsage(data.runUsage),

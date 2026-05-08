@@ -113,6 +113,12 @@ export type RecentMemoryEntry = {
   strength: number;
 };
 
+export type ReflectionDay = {
+  date: string;             // YYYY-MM-DD parsed from filename
+  body: string;             // markdown body, frontmatter stripped
+  ageDays: number;          // days between `date` and today
+};
+
 export type RunUsagePassEntry = {
   pass: "B" | "C" | "V";
   project: string | null;
@@ -151,6 +157,7 @@ export type DashboardData = {
   openQuestions: OpenQuestion[];
   recentMemory: RecentMemoryEntry[];
   runUsage: RunUsageSnapshot;
+  latestReflection: ReflectionDay | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -601,6 +608,23 @@ export async function collectRecentMemory(
   return out.slice(0, limit);
 }
 
+export async function collectLatestReflection(paths: HivePaths): Promise<ReflectionDay | null> {
+  if (!existsSync(paths.reflectionsDir)) return null;
+  const files = (await readdir(paths.reflectionsDir).catch(() => [] as string[]))
+    .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+    .sort()
+    .reverse();
+  if (files.length === 0) return null;
+
+  const file = files[0]!;
+  const date = file.replace(/\.md$/, "");
+  const raw = (await safeReadFile(join(paths.reflectionsDir, file))) ?? "";
+  const { body } = parseFrontmatter(raw);
+  const today = new Date().toISOString().slice(0, 10);
+  const ageDays = daysBetweenStrings(date, today);
+  return { date, body: body.trim(), ageDays };
+}
+
 export async function collectRunUsage(
   paths: HivePaths,
   date: string = new Date().toISOString().slice(0, 10),
@@ -634,7 +658,7 @@ export async function collectRunUsage(
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, latestReflection] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -645,6 +669,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectOpenQuestions(paths),
     collectRecentMemory(paths),
     collectRunUsage(paths),
+    collectLatestReflection(paths),
   ]);
 
   const today = briefings[0]?.date ?? new Date().toISOString().slice(0, 10);
@@ -665,5 +690,6 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     openQuestions,
     recentMemory,
     runUsage,
+    latestReflection,
   };
 }
