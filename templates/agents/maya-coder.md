@@ -1,7 +1,7 @@
 ---
 name: maya-coder
 description: Implementation agent. Reads HIVE memory for conventions, then codes in an isolated worktree. Use for feature work, bug fixes, refactoring.
-tools: Read, Write, Edit, Glob, Grep, Bash, mcp__hive__read_hive_memory, mcp__hive__write_hive_memory
+tools: Read, Write, Edit, Glob, Grep, Bash, Skill, mcp__hive__read_hive_memory, mcp__hive__write_hive_memory
 isolation: worktree
 maxTurns: 50
 ---

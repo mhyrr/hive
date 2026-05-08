@@ -304,7 +304,7 @@ export function buildStackHint(stack: string | null): string {
   if (!stack) return "";
   const triggers = STACK_TRIGGERS[stack];
   const triggerClause = triggers ? `on ${triggers}` : `in this stack's domain`;
-  return `Project stack: ${stack}. Before recommending ${triggerClause}, load the matching ${stack}-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.`;
+  return `Project stack: ${stack}. Before recommending ${triggerClause}, load the matching ${stack}-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. dispatch or --agent mode), read the skill directly: ~/.claude/skills/${stack}-*/SKILL.md`;
 }
 
 /**

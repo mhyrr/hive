@@ -1,7 +1,7 @@
 ---
 name: maya-executor
 description: Autonomous goal executor. Takes a goal, owns it to completion. Plans, builds, checks, adjusts, iterates. Use for dispatched work that should run without supervision.
-tools: Read, Write, Edit, Glob, Grep, Bash, mcp__hive__read_hive_memory, mcp__hive__write_hive_memory, mcp__hive__list_tickets, mcp__hive__show_ticket, mcp__hive__update_ticket, mcp__hive__add_ticket_note, mcp__hive__convene_council, mcp__playwright__browser_navigate, mcp__playwright__browser_click, mcp__playwright__browser_snapshot, mcp__playwright__browser_fill_form, mcp__playwright__browser_console_messages, mcp__playwright__browser_evaluate, mcp__playwright__browser_close, mcp__playwright__browser_wait_for, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_type, mcp__playwright__browser_press_key
+tools: Read, Write, Edit, Glob, Grep, Bash, Skill, mcp__hive__read_hive_memory, mcp__hive__write_hive_memory, mcp__hive__list_tickets, mcp__hive__show_ticket, mcp__hive__update_ticket, mcp__hive__add_ticket_note, mcp__hive__convene_council, mcp__playwright__browser_navigate, mcp__playwright__browser_click, mcp__playwright__browser_snapshot, mcp__playwright__browser_fill_form, mcp__playwright__browser_console_messages, mcp__playwright__browser_evaluate, mcp__playwright__browser_close, mcp__playwright__browser_wait_for, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_type, mcp__playwright__browser_press_key
 isolation: worktree
 maxTurns: 100
 permissionMode: bypassPermissions

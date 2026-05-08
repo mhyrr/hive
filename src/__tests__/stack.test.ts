@@ -402,14 +402,14 @@ describe("buildStackHint", () => {
   test("elixir hint names Phoenix/Ecto/LiveView/OTP/security as triggers", () => {
     const hint = buildStackHint("elixir");
     expect(hint).toBe(
-      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
+      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. dispatch or --agent mode), read the skill directly: ~/.claude/skills/elixir-*/SKILL.md",
     );
   });
 
   test("typescript hint names React/Next.js/types as triggers", () => {
     const hint = buildStackHint("typescript");
     expect(hint).toBe(
-      "Project stack: typescript. Before recommending on React components, Next.js routing, or TypeScript types, load the matching typescript-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
+      "Project stack: typescript. Before recommending on React components, Next.js routing, or TypeScript types, load the matching typescript-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. dispatch or --agent mode), read the skill directly: ~/.claude/skills/typescript-*/SKILL.md",
     );
   });
 
@@ -418,7 +418,7 @@ describe("buildStackHint", () => {
     // direct instruction so the discipline applies, just without specifics.
     const hint = buildStackHint("rust");
     expect(hint).toBe(
-      "Project stack: rust. Before recommending in this stack's domain, load the matching rust-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
+      "Project stack: rust. Before recommending in this stack's domain, load the matching rust-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. dispatch or --agent mode), read the skill directly: ~/.claude/skills/rust-*/SKILL.md",
     );
   });
 
