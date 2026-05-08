@@ -325,9 +325,11 @@ wiring; Pi/Codex checks are warnings because both harnesses are optional.
 default for autonomous work. `-3` and `-x` are interactive harness routes,
 not replacements for dispatch or heartbeat.
 
-See `docs/identity-injection.md` for the full architecture — emit order,
-cache stability guarantees, the "Maya feels cold" debug runbook, and how
-to add a new file to the stack.
+See `docs/hive-reach.md` for the runtime reach matrix (identity, MCP
+tools, project scope per harness) and `docs/identity-injection.md` for
+the identity architecture deep dive — emit order, cache stability
+guarantees, the "Maya feels cold" debug runbook, and how to add a new
+file to the stack.
 
 ## Memory
 

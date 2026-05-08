@@ -208,6 +208,7 @@ everything is green and Maya still feels off:
 
 ## Related
 
+- `docs/hive-reach.md` — reach matrix across runtimes (identity is one row)
 - Tickets TK-047 through TK-053 (the identity-reconsolidation epic)
 - TK-024 — heartbeat cache stability discipline (why heartbeat skips memory)
 - `docs/memory-architecture.md` — how project memory works
