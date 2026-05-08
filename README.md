@@ -39,6 +39,7 @@ Pi and Codex use whatever provider/model configuration those CLIs own._
 **Project memory.** 
 
 - Facts, conventions, decisions, and open questions accumulate in `~/.hive/memory/projects/<name>/`. Agents read and write this through MCP tools. Knowledge compounds over time instead of starting fresh every session.
+- New projects skip the cold start: `hive project bootstrap [--infer]` scans a registered repo and seeds candidate facts (stack, build/test/CI, conventions, architecture summary). The nightly verifier admits what's canon-worthy. See `docs/memory-architecture.md` for the candidate-writer paths.
 - Inspired by [Hippo](https://github.com/kitfunso/hippo-memory): memory
 decay and retrieval strengthening — entries you actually use get
 stronger, everything else fades. Biological memory dynamics without

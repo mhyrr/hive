@@ -241,13 +241,31 @@ With strength scoring, the index becomes smarter:
 - Strength tier indicators (high/medium/low) help the session
   understand which facts are battle-tested vs. recently added
 
-## V1 Nightly Pipeline
+## Candidate Writers
 
-Mid-session writes do not ratify directly. Agents calling `write_hive_memory`
-or `reflect_session` append to `candidates.md` (a JSONL queue under the
-project's memory directory). Provenance is auto-attached:
-`session:pid-<pid> — agent-write at HH:MM:SSZ`. Optional `provenance_note`
-input lets the caller add context the verifier can weigh.
+Three paths land entries in `candidates.md` (a JSONL queue under the
+project's memory directory). None ratify directly — the nightly verifier
+admits, supersedes, merges, or rejects.
+
+| Writer | Source | Provenance prefix |
+| --- | --- | --- |
+| `write_hive_memory` | Mid-session agent write (a fact, convention, decision, or question the agent wants to capture) | `session:pid-<pid> — agent-write at HH:MM:SSZ` |
+| `reflect_session` | End-of-session batch write (durable learnings the agent wants the next session to inherit) | `session:pid-<pid> — reflect_session at HH:MM:SSZ` |
+| `hive project bootstrap` | One-shot scan of a registered project — mechanical (`bootstrap:mechanical-scan`) and optionally LLM-inferred (`bootstrap:inference`) | `bootstrap:<mode>` |
+
+`bootstrap` is a project-onboarding primitive. The mechanical mode (no
+LLM, <2s) emits stack/build/test/CI/lint facts derived from config files
+and entrypoints. The `--infer` mode adds one Sonnet call that reads 3-5
+representative files plus the active stack skill (`~/.claude/skills/{stack}-*/SKILL.md`)
+and emits 2-4 inferred conventions, an architecture summary, and key
+dependencies. CLI: `hive project bootstrap [--infer] [--dry-run]`. MCP:
+`bootstrap_infer_conventions`. Idempotent — re-running deduplicates against
+existing canon and outstanding candidates.
+
+Optional `provenance_note` on `write_hive_memory` lets the caller add
+context the verifier can weigh.
+
+## V1 Nightly Pipeline
 
 The nightly pipeline at 2am is the only path into `knowledge.md`:
 
