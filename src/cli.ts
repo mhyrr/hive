@@ -57,7 +57,8 @@ When called with anything else (or no args), launches an interactive harness as 
 HIVE Commands:
   init                       Set up ~/.hive and register MCP server
   doctor                     Validate installation health
-  project add <name> <path>  Register a project
+  project add <name> <path>  Register a project (--bootstrap to scan)
+  project bootstrap [name]   Scan repo and seed candidate facts
   stack list|install|sync    Manage language/framework skill stacks
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
