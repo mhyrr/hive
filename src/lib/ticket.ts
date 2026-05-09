@@ -25,6 +25,7 @@ export type Ticket = {
   closed: string | null; // timestamp when closed
   ref: string | null; // external reference (github issue, etc.)
   depends: string[]; // ticket IDs this depends on
+  parentEpic: string | null; // ticket ID of the epic this is a child of
 };
 
 export type TicketWithBody = Ticket & { body: string };
@@ -94,6 +95,7 @@ function parseTicketFile(raw: string, id: string): TicketWithBody {
     closed: attributes.closed || null,
     ref: attributes.ref || null,
     depends: attributes.depends ? attributes.depends.split(",").map((d) => d.trim()).filter(Boolean) : [],
+    parentEpic: attributes.parent_epic || null,
     body,
   };
 }
@@ -112,6 +114,7 @@ function serializeTicket(ticket: TicketWithBody): string {
   if (ticket.closed) attrs.closed = ticket.closed;
   if (ticket.ref) attrs.ref = ticket.ref;
   if (ticket.depends.length > 0) attrs.depends = ticket.depends.join(", ");
+  if (ticket.parentEpic) attrs.parent_epic = ticket.parentEpic;
 
   return stringifyFrontmatter(attrs, ticket.body);
 }
@@ -128,6 +131,7 @@ export type CreateTicketInput = {
   tags?: string[];
   ref?: string;
   depends?: string[];
+  parentEpic?: string;
 };
 
 export async function createTicket(
@@ -163,6 +167,7 @@ export async function createTicket(
     closed: null,
     ref: input.ref ?? null,
     depends: input.depends ?? [],
+    parentEpic: input.parentEpic ?? null,
     body: input.body?.trim() || "",
   };
 
@@ -188,7 +193,7 @@ export async function updateTicket(
   paths: HivePaths,
   projectId: string,
   id: string,
-  updates: Partial<Pick<Ticket, "status" | "title" | "type" | "priority" | "tags" | "ref" | "depends">>,
+  updates: Partial<Pick<Ticket, "status" | "title" | "type" | "priority" | "tags" | "ref" | "depends" | "parentEpic">>,
 ): Promise<TicketWithBody | null> {
   const ticket = await readTicket(paths, projectId, id);
   if (!ticket) return null;
@@ -204,6 +209,7 @@ export async function updateTicket(
   if (updates.tags !== undefined) ticket.tags = updates.tags;
   if (updates.ref !== undefined) ticket.ref = updates.ref;
   if (updates.depends !== undefined) ticket.depends = updates.depends;
+  if (updates.parentEpic !== undefined) ticket.parentEpic = updates.parentEpic;
   ticket.updated = toIsoTimestamp();
 
   await Bun.write(ticketFilePath(ticketsDir(paths, projectId), ticket.id), serializeTicket(ticket));
