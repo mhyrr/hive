@@ -549,15 +549,27 @@ function renderTicketCard(t: TicketCitation, opts: { showBlockedBy?: boolean } =
     opts.showBlockedBy && t.depends.length > 0
       ? `<div class="blocked-by">&#8627; ${t.depends.map((d) => escapeHtml(d)).join(", ")}</div>`
       : "";
-  return `<article class="ticket-card" data-ticket-id="${escapeHtml(t.id)}" data-project="${escapeHtml(t.projectId)}">
-    <a href="#" class="card-id">${escapeHtml(t.id)}</a>
-    <span class="card-title">${escapeHtml(t.title)}</span>
-    <div class="card-byline">
-      <span class="project">${escapeHtml(t.projectId)}</span>
-      <span class="prio-${priority}">${priority}</span>
-      <span class="age">${ageLabel}</span>
+  // Inline detail panel — pre-rendered, hidden until expanded.
+  const bodyHtml = t.body && t.body.trim()
+    ? `<div class="card-body" hidden>${md(t.body)}</div>`
+    : "";
+  const tagsLine = t.tags.length > 0
+    ? `<div class="card-tags">${t.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>`
+    : "";
+  return `<article class="ticket-card" data-ticket-id="${escapeHtml(t.id)}" data-project="${escapeHtml(t.projectId)}" tabindex="0" role="button" aria-expanded="false">
+    <div class="card-summary">
+      <span class="card-id">${escapeHtml(t.id)}</span>
+      <span class="card-title">${escapeHtml(t.title)}</span>
+      <div class="card-byline">
+        <span class="project">${escapeHtml(t.projectId)}</span>
+        <span class="prio-${priority}">${priority}</span>
+        <span class="age">${ageLabel}</span>
+        <span class="card-chevron" aria-hidden="true">+</span>
+      </div>
+      ${blockedBy}
     </div>
-    ${blockedBy}
+    ${bodyHtml}
+    ${bodyHtml ? tagsLine : ""}
   </article>`;
 }
 

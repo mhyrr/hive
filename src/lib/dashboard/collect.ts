@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { type HivePaths, listProjects, getProjectPaths } from "../paths";
 import { parseFrontmatter } from "../frontmatter";
-import { listTickets, type Ticket, type TicketPriority } from "../ticket";
+import { listTickets, readTicket, type Ticket, type TicketPriority } from "../ticket";
 import {
   readProjectMemorySnapshot,
   readMeta,
@@ -63,6 +63,9 @@ export type TicketCitation = {
   tags: string[];
   depends: string[];
   ageDays: number;
+  // Optional. Populated by collectTicketsPage so cards can expand inline.
+  // Empty / unset for collectors that only need summary citations.
+  body?: string;
 };
 
 export type TicketBuckets = {
@@ -89,6 +92,22 @@ export type TicketsPageData = {
   totalActive: number;
   projectCount: number;
 };
+
+// Internal helper for tickets-page collector: read tickets WITH bodies.
+async function listTicketsWithBodies(
+  paths: HivePaths,
+  projectId: string,
+): Promise<Array<Ticket & { body: string }>> {
+  // listTickets currently returns Ticket[] without bodies; we need readTicket
+  // for each. The N reads are bounded by ticket count — fine on localhost.
+  const summaries = await listTickets(paths, projectId);
+  const out: Array<Ticket & { body: string }> = [];
+  for (const t of summaries) {
+    const full = await readTicket(paths, projectId, t.id);
+    if (full) out.push({ ...t, body: full.body });
+  }
+  return out;
+}
 
 export type RunEntry = {
   id: string;               // "RUN-009"
@@ -411,12 +430,12 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
   const projectIds = await listProjects(paths.projectsDir);
   const now = new Date();
 
-  type Indexed = { projectId: string; ticket: Ticket };
+  type Indexed = { projectId: string; ticket: Ticket & { body: string } };
   const all: Indexed[] = [];
   const projectsWithTickets = new Set<string>();
 
   for (const id of projectIds) {
-    const tickets = await listTickets(paths, id).catch(() => [] as Ticket[]);
+    const tickets = await listTicketsWithBodies(paths, id).catch(() => []);
     if (tickets.length > 0) projectsWithTickets.add(id);
     for (const ticket of tickets) all.push({ projectId: id, ticket });
   }
@@ -436,6 +455,7 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
     tags: it.ticket.tags,
     depends: it.ticket.depends,
     ageDays: daysBetween(new Date(it.ticket.created), now),
+    body: it.ticket.body,
   });
 
   const bucketize = (items: Indexed[]): TicketBuckets => {

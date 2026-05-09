@@ -295,6 +295,56 @@ export const DASHBOARD_JS = `
 
   document.querySelectorAll(".action[data-action]").forEach(wireAction);
 
+  // ---------- Tickets-page card expand/collapse ----------
+  function ticketCardKey(card) {
+    var id = card.getAttribute("data-ticket-id") || "";
+    var proj = card.getAttribute("data-project") || "";
+    return "card-expanded:" + proj + "/" + id;
+  }
+
+  function setCardExpanded(card, expanded) {
+    var body = card.querySelector(".card-body");
+    if (!body) return; // no body content to toggle
+    if (expanded) {
+      card.classList.add("expanded");
+      body.removeAttribute("hidden");
+      card.setAttribute("aria-expanded", "true");
+      state[ticketCardKey(card)] = 1;
+    } else {
+      card.classList.remove("expanded");
+      body.setAttribute("hidden", "");
+      card.setAttribute("aria-expanded", "false");
+      delete state[ticketCardKey(card)];
+    }
+    saveState();
+  }
+
+  function wireTicketCard(card) {
+    if (!card.querySelector(".card-body")) return; // nothing to expand
+    // Restore prior state
+    if (state[ticketCardKey(card)]) setCardExpanded(card, true);
+
+    card.addEventListener("click", function (e) {
+      // Don't toggle when clicking inside the body itself (so links/text
+      // selection in the body work normally).
+      var t = e.target;
+      while (t && t !== card) {
+        if (t.classList && t.classList.contains("card-body")) return;
+        t = t.parentNode;
+      }
+      setCardExpanded(card, !card.classList.contains("expanded"));
+    });
+
+    card.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setCardExpanded(card, !card.classList.contains("expanded"));
+      }
+    });
+  }
+
+  document.querySelectorAll(".ticket-card[role='button']").forEach(wireTicketCard);
+
   // ---------- Keyboard ----------
   var focusables = function () { return Array.prototype.slice.call(document.querySelectorAll(".ticket-row, .dispatch-row, .inbox-entry:not(.empty)")); };
   var focusIdx = -1;
