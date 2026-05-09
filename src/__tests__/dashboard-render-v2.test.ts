@@ -83,7 +83,8 @@ describe("Sticky nav", () => {
     const html = renderStickyNav(baseData(), { interactive: true });
     expect(html).toContain('class="sticky-nav"');
     expect(html).toContain('href="#section-briefing"');
-    expect(html).toContain('href="#section-tickets"');
+    // Tickets is now its own page (TK-036 dashboard tickets-page redesign).
+    expect(html).toContain('href="/tickets"');
     expect(html).toContain('href="#section-archive"');
     expect(html).toContain('data-project-filter="ALL"');
     expect(html).toContain('data-project-filter="alpha"');

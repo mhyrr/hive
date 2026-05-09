@@ -22,6 +22,8 @@ import type {
   RecentMemoryEntry,
   ReflectionDay,
   RunUsageSnapshot,
+  TicketsPageData,
+  EpicBoard,
 } from "./collect";
 import { DASHBOARD_CSS } from "./styles";
 import { DASHBOARD_JS } from "./script";
@@ -230,7 +232,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     ["#section-reflections", "Reflections"],
     ["#section-runs", "Dispatch"],
     ["#section-archive", "Archive"],
-    ["#section-tickets", "Tickets"],
+    ["/tickets", "Tickets"],
   ]
     .map(([href, label]) => `<a href="${href}">${label}</a>`)
     .join("");
@@ -529,6 +531,170 @@ ${rows}
     ${renderGroup("Blocked", "blocked", buckets.blocked)}
   </div>
 </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Tickets PAGE — dedicated /tickets surface, per-epic mini-kanbans plus a
+// standalone block at the top. docs/specs/2026-05-09-tickets-page-design.md
+// ---------------------------------------------------------------------------
+
+function renderTicketCard(t: TicketCitation, opts: { showBlockedBy?: boolean } = {}): string {
+  const priority = PRIORITY_LABELS[t.priority] ?? "P?";
+  const ageLabel = t.ageDays <= 0
+    ? "today"
+    : t.ageDays === 1
+      ? "1d"
+      : `${t.ageDays}d`;
+  const blockedBy =
+    opts.showBlockedBy && t.depends.length > 0
+      ? `<div class="blocked-by">&#8627; ${t.depends.map((d) => escapeHtml(d)).join(", ")}</div>`
+      : "";
+  return `<article class="ticket-card" data-ticket-id="${escapeHtml(t.id)}" data-project="${escapeHtml(t.projectId)}">
+    <a href="#" class="card-id">${escapeHtml(t.id)}</a>
+    <span class="card-title">${escapeHtml(t.title)}</span>
+    <div class="card-byline">
+      <span class="project">${escapeHtml(t.projectId)}</span>
+      <span class="prio-${priority}">${priority}</span>
+      <span class="age">${ageLabel}</span>
+    </div>
+    ${blockedBy}
+  </article>`;
+}
+
+function renderKanbanColumn(label: string, kind: "ready" | "progress" | "blocked", items: TicketCitation[]): string {
+  const cards = items.length === 0
+    ? `<div class="kanban-col-empty">&mdash;</div>`
+    : items.map((t) => renderTicketCard(t, { showBlockedBy: kind === "blocked" })).join("\n");
+  return `<div class="kanban-col">
+    <h4 class="kanban-col-head ${kind}">
+      <span>${escapeHtml(label)}</span>
+      <span class="col-count">${items.length}</span>
+    </h4>
+    ${cards}
+  </div>`;
+}
+
+function renderKanban(buckets: TicketBuckets): string {
+  return `<div class="kanban">
+    ${renderKanbanColumn("Ready", "ready", buckets.ready)}
+    ${renderKanbanColumn("In Progress", "progress", buckets.inProgress)}
+    ${renderKanbanColumn("Blocked", "blocked", buckets.blocked)}
+  </div>`;
+}
+
+function renderEpicBoard(board: EpicBoard): string {
+  const e = board.epic;
+  const priority = PRIORITY_LABELS[e.priority] ?? "P?";
+  const prioClass = e.priority === 0 ? "p0" : "";
+  const tags = e.tags.length > 0
+    ? `<span class="chip">${e.tags.map((t) => escapeHtml(t)).join(" &middot; ")}</span>`
+    : "";
+  return `<section class="epic-board" data-epic-id="${escapeHtml(e.id)}">
+  <div class="board-head">
+    <div>
+      <span class="board-eyebrow">Epic</span>
+      <span class="board-id mono">${escapeHtml(e.id)}</span>
+      <span class="board-title">${escapeHtml(e.title)}</span>
+    </div>
+    <div class="board-chips">
+      <span class="chip">${escapeHtml(e.projectId)}</span>
+      <span class="chip chip-prio ${prioClass}">${priority}</span>
+      <span class="chip chip-active">${board.childCount} active</span>
+      ${tags}
+    </div>
+  </div>
+  ${renderKanban(board.buckets)}
+</section>`;
+}
+
+function renderStandaloneBoard(buckets: TicketBuckets): string {
+  const total = buckets.ready.length + buckets.inProgress.length + buckets.blocked.length;
+  if (total === 0) return "";
+  return `<section class="standalone-board">
+  <div class="board-head">
+    <div>
+      <span class="board-eyebrow">Standalone</span>
+      <span class="board-title">Unfiled tickets</span>
+    </div>
+    <div class="board-chips">
+      <span class="chip chip-active">${total} active</span>
+    </div>
+  </div>
+  ${renderKanban(buckets)}
+</section>`;
+}
+
+export function renderTicketsPage(data: TicketsPageData, _c: RenderContext): string {
+  const { epics, standalone, totalActive, projectCount } = data;
+
+  if (totalActive === 0) {
+    return `
+<section class="section" id="section-tickets-page">
+  <div class="section-head">
+    <h2>Tickets</h2>
+    <span class="kicker">Clean desk</span>
+  </div>
+  <hr class="amber"/>
+  <div class="tickets-page-empty">No active tickets across any project.</div>
+</section>`;
+  }
+
+  return `
+<section class="section" id="section-tickets-page">
+  <div class="section-head">
+    <h2>Tickets</h2>
+    <span class="kicker">${totalActive} active &middot; ${epics.length} epic${epics.length === 1 ? "" : "s"} &middot; ${projectCount} project${projectCount === 1 ? "" : "s"}</span>
+  </div>
+  <hr class="amber"/>
+  ${renderStandaloneBoard(standalone)}
+  ${epics.map((b) => renderEpicBoard(b)).join("\n")}
+</section>`;
+}
+
+export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOptions = {}): string {
+  const c = ctx(opts);
+  const today = data.generatedAt.slice(0, 10);
+  const navItems: Array<[string, string]> = [
+    ["BRIEFING", "/"],
+    ["PROJECTS", "/#section-projects"],
+    ["INBOX", "/#section-inboxes"],
+    ["REFLECTIONS", "/#section-reflections"],
+    ["DISPATCH", "/#section-dispatch"],
+    ["ARCHIVE", "/#section-archive"],
+    ["TICKETS", "/tickets"],
+  ];
+  const nav = navItems
+    .map(([label, href]) => {
+      const active = href === "/tickets" ? ' class="nav-active"' : "";
+      return `<a href="${href}"${active}>${label}</a>`;
+    })
+    .join(' <span class="nav-sep">·</span> ');
+
+  const scriptBlock = c.interactive ? `<script>${DASHBOARD_JS}</script>` : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>HIVE · Tickets · ${escapeHtml(today)}</title>
+<style>${DASHBOARD_CSS}</style>
+</head>
+<body>
+<div class="page">
+  <nav class="page-nav">${nav}</nav>
+  <header class="masthead">
+    <h1>HIVE</h1>
+    <div class="dateline">
+      <span>Tickets</span>
+      <span class="sep">·</span>
+      <span>${escapeHtml(longDate(today))}</span>
+    </div>
+  </header>
+  ${renderTicketsPage(data, c)}
+</div>
+${scriptBlock}
+</body>
+</html>`;
 }
 
 // ---------------------------------------------------------------------------

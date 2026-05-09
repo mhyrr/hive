@@ -494,6 +494,210 @@ table.ledger td.path { color: var(--muted); font-family: var(--mono); font-size:
 .status-tag.blocked  { color: var(--rust); }
 .status-tag.closed   { color: var(--faint); }
 
+/* ---------- Page-level cross-route nav (used on /tickets) ---------- */
+
+.page-nav {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  text-align: center;
+  padding: 8px 0 14px;
+  border-bottom: 1px solid var(--faint);
+  margin-bottom: 6px;
+}
+.page-nav a {
+  color: var(--ink-soft);
+  border-bottom: none;
+  margin: 0 4px;
+}
+.page-nav a:hover { color: var(--rust); }
+.page-nav a.nav-active {
+  color: var(--ink);
+  font-weight: 700;
+  border-bottom: 1px solid var(--amber);
+  padding-bottom: 1px;
+}
+.page-nav .nav-sep { color: var(--faint); margin: 0 2px; }
+
+/* ---------- Tickets page (per-epic kanbans) ---------- */
+
+.tickets-page-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.tickets-page-empty {
+  text-align: center;
+  font-style: italic;
+  color: var(--muted);
+  padding: 60px 0;
+  border-top: 1px dashed var(--faint);
+  border-bottom: 1px dashed var(--faint);
+  margin-top: 32px;
+}
+
+.epic-board, .standalone-board {
+  margin-top: 30px;
+  border-top: 1px solid var(--ink);
+  padding-top: 12px;
+}
+
+.standalone-board .board-head .board-title {
+  font-style: italic;
+}
+
+.board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.board-head .board-eyebrow {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--amber);
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  margin-right: 8px;
+}
+
+.board-head .board-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-right: 10px;
+}
+
+.board-head .board-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.board-head .board-chips {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.board-head .board-chips .chip {
+  margin-left: 12px;
+}
+.board-head .board-chips .chip-prio { color: var(--amber); font-weight: 700; }
+.board-head .board-chips .chip-prio.p0 { color: var(--rust); }
+.board-head .board-chips .chip-active { color: var(--ink); font-weight: 700; }
+
+.kanban {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  border-top: 1px solid var(--faint);
+  border-bottom: 1px solid var(--faint);
+}
+
+.kanban-col {
+  padding: 10px 14px;
+  border-right: 1px solid var(--faint);
+  min-width: 0;
+}
+.kanban-col:last-child { border-right: 0; }
+
+.kanban-col-head {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  font-weight: 700;
+  margin: 0 0 10px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--ink);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.kanban-col-head .col-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+.kanban-col-head.ready    { color: var(--amber); }
+.kanban-col-head.progress { color: var(--ink); }
+.kanban-col-head.blocked  { color: var(--rust); }
+
+.kanban-col-empty {
+  text-align: center;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 14px;
+  padding: 6px 0;
+}
+
+.ticket-card {
+  padding: 8px 0;
+  border-bottom: 1px dotted var(--faint);
+}
+.ticket-card:last-child { border-bottom: 0; }
+
+.ticket-card .card-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+}
+.ticket-card .card-title {
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 500;
+  display: block;
+  margin-top: 1px;
+}
+.ticket-card .card-byline {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ticket-card .card-byline .project { color: var(--amber); }
+.ticket-card .card-byline .prio-P0 { color: var(--rust); font-weight: 700; }
+.ticket-card .card-byline .prio-P1 { color: var(--amber); font-weight: 700; }
+.ticket-card .card-byline .prio-P2 { color: var(--muted); }
+.ticket-card .card-byline .prio-P3 { color: var(--faint); }
+.ticket-card .card-byline .age { color: var(--faint); }
+.ticket-card .blocked-by {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--rust);
+  font-style: italic;
+}
+
+/* Mobile: kanban collapses to single column. */
+@media (max-width: 720px) {
+  .kanban {
+    grid-template-columns: 1fr;
+  }
+  .kanban-col {
+    border-right: 0;
+    border-bottom: 1px solid var(--faint);
+  }
+  .kanban-col:last-child { border-bottom: 0; }
+}
+
 /* ---------- Dispatch log ---------- */
 
 .dispatch-list { margin: 0; padding: 0; list-style: none; }

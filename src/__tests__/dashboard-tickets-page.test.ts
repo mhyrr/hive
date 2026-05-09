@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 import { createTicket, updateTicket } from "../lib/ticket";
 import { collectTicketsPage } from "../lib/dashboard/collect";
+import { renderTicketsPage, renderTicketsPageDocument } from "../lib/dashboard/render";
 
 let paths: HivePaths;
 
@@ -165,5 +166,105 @@ describe("collectTicketsPage", () => {
 
     const data = await collectTicketsPage(paths);
     expect(data.totalActive).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderTicketsPage / renderTicketsPageDocument — structural assertions
+// ---------------------------------------------------------------------------
+
+const ctx = { interactive: true };
+
+describe("renderTicketsPage", () => {
+  test("empty state when no active tickets", async () => {
+    await registerProject("alpha");
+    const data = await collectTicketsPage(paths);
+    const html = renderTicketsPage(data, ctx);
+    expect(html).toContain("Clean desk");
+    expect(html).toContain("No active tickets across any project.");
+  });
+
+  test("renders one epic-board per epic with kanban columns", async () => {
+    await registerProject("alpha");
+    const epic = await createTicket(paths, "alpha", {
+      title: "Build auth",
+      type: "epic",
+      priority: 1,
+      tags: ["auth"],
+    });
+    const c1 = await createTicket(paths, "alpha", {
+      title: "Session model",
+      type: "task",
+      priority: 1,
+      parentEpic: epic.id,
+    });
+    await createTicket(paths, "alpha", {
+      title: "Login endpoint",
+      type: "feature",
+      priority: 1,
+      depends: [c1.id],
+      parentEpic: epic.id,
+    });
+    const data = await collectTicketsPage(paths);
+    const html = renderTicketsPage(data, ctx);
+
+    expect(html).toContain('class="epic-board"');
+    expect(html).toContain(epic.id);
+    expect(html).toContain("Build auth");
+    expect(html).toContain("Session model");
+    expect(html).toContain("Login endpoint");
+    expect(html).toContain('class="kanban"');
+    expect(html).toContain('class="kanban-col-head ready"');
+    expect(html).toContain('class="kanban-col-head progress"');
+    expect(html).toContain('class="kanban-col-head blocked"');
+  });
+
+  test("blocked cards show ↳ TK-X annotation, ready cards do not", async () => {
+    await registerProject("alpha");
+    const epic = await createTicket(paths, "alpha", { title: "E", type: "epic" });
+    const c1 = await createTicket(paths, "alpha", {
+      title: "first",
+      type: "task",
+      parentEpic: epic.id,
+    });
+    await createTicket(paths, "alpha", {
+      title: "second",
+      type: "task",
+      depends: [c1.id],
+      parentEpic: epic.id,
+    });
+
+    const data = await collectTicketsPage(paths);
+    const html = renderTicketsPage(data, ctx);
+    expect(html).toContain("blocked-by");
+    expect(html).toContain(c1.id); // referenced from the blocked card
+    // Ready card (c1) shouldn't have a blocked-by line itself.
+    const readyMatch = html.match(/<article class="ticket-card"[^>]*data-ticket-id="TK-002"[\s\S]*?<\/article>/);
+    expect(readyMatch?.[0]).not.toContain("blocked-by");
+  });
+
+  test("standalone block renders only when non-empty", async () => {
+    await registerProject("alpha");
+    const epic = await createTicket(paths, "alpha", { title: "E", type: "epic" });
+    await createTicket(paths, "alpha", { title: "c1", type: "task", parentEpic: epic.id });
+
+    const data = await collectTicketsPage(paths);
+    const html = renderTicketsPage(data, ctx);
+    expect(html).not.toContain("standalone-board");
+  });
+});
+
+describe("renderTicketsPageDocument", () => {
+  test("emits a full HTML document with TICKETS active in nav", async () => {
+    await registerProject("alpha");
+    await createTicket(paths, "alpha", { title: "lone", type: "task" });
+    const data = await collectTicketsPage(paths);
+    const html = renderTicketsPageDocument(data);
+
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain("<title>HIVE · Tickets");
+    expect(html).toContain('class="page-nav"');
+    expect(html).toContain('<a href="/tickets" class="nav-active">TICKETS</a>');
+    expect(html).toContain('<a href="/">BRIEFING</a>');
   });
 });
