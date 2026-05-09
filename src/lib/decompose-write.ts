@@ -9,9 +9,12 @@
 // IDs as we create tickets. Topological order ensures createTicket's
 // "deps must exist" guard never fires.
 
+import { join } from "node:path";
+
 import type { HivePaths } from "./paths";
 import {
   createTicket,
+  ticketsDir,
   type TicketPriority,
 } from "./ticket";
 import type { Proposal } from "./decompose";
@@ -131,8 +134,6 @@ export async function writeProposal(
   for (const ref of order) {
     const child = proposal.children.find((c) => c.ref === ref)!;
     const realDeps = child.depends.map((d) => refMap[d]).filter(Boolean) as string[];
-    // For epic-with-children, children also depend on the epic conceptually,
-    // but we only wire explicit deps. The epic body lists the children.
     const ticket = await createTicket(paths, projectId, {
       title: child.title,
       body: child.body,
@@ -140,6 +141,7 @@ export async function writeProposal(
       priority,
       tags: child.tags,
       depends: realDeps,
+      parentEpic: epicId ?? undefined,
     });
     refMap[ref] = ticket.id;
     childIds.push(ticket.id);
@@ -147,7 +149,52 @@ export async function writeProposal(
 
   const edges = collectEdges(proposal, refMap);
 
+  // After all children exist, rewrite the epic body so its Children section
+  // names real TK-NNN ids instead of the placeholder C1/C2 refs.
+  if (epicId) {
+    await substituteEpicBody(paths, projectId, epicId, proposal, refMap);
+  }
+
   return { shape, epicId, refMap, childIds, edges };
+}
+
+// Read the epic ticket back, replace the placeholder-ref Children list with
+// real TK-NNN ids, and write it back. Idempotent — running twice is a no-op.
+async function substituteEpicBody(
+  paths: HivePaths,
+  projectId: string,
+  epicId: string,
+  proposal: Proposal,
+  refMap: Record<string, string>,
+): Promise<void> {
+  const file = Bun.file(join(ticketsDir(paths, projectId), `${epicId}.md`));
+  const raw = await file.text();
+
+  // Build a fresh Children block with real ids.
+  const childList = proposal.children
+    .map((c) => {
+      const realId = refMap[c.ref] ?? c.ref;
+      const realDeps = c.depends
+        .map((d) => refMap[d] ?? d)
+        .join(", ");
+      const depsStr = realDeps ? ` (depends on ${realDeps})` : "";
+      return `- ${realId} — ${c.title}${depsStr}`;
+    })
+    .join("\n");
+
+  // Replace whatever Children section exists, or append if missing.
+  let body: string;
+  const childrenHeaderRe = /(^|\n)## Children\s*\n[\s\S]*?(?=\n## |$)/;
+  if (childrenHeaderRe.test(raw)) {
+    body = raw.replace(
+      childrenHeaderRe,
+      (match, lead) => `${lead}## Children\n${childList}\n`,
+    );
+  } else {
+    body = `${raw.trimEnd()}\n\n## Children\n${childList}\n`;
+  }
+
+  await Bun.write(file, body);
 }
 
 // ---------------------------------------------------------------------------

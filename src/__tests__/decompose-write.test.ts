@@ -202,6 +202,56 @@ describe("writeProposal — live", () => {
     expect(all[0]?.type).toBe("task");
   });
 
+  test("epic-with-children: parent_epic field is set on every child", async () => {
+    const proposal: Proposal = {
+      epic: { title: "An epic", body: "## Goal\nDo it", tags: [] },
+      children: [
+        { ref: "C1", title: "first", body: "", type: "task", tags: [], depends: [] },
+        { ref: "C2", title: "second", body: "", type: "task", tags: [], depends: ["C1"] },
+        { ref: "C3", title: "third", body: "", type: "task", tags: [], depends: ["C2"] },
+      ],
+    };
+    const result = await writeProposal(paths, project, proposal);
+    expect(result.epicId).toBe("TK-001");
+    for (const childId of result.childIds) {
+      const t = await readTicket(paths, project, childId);
+      expect(t?.parentEpic).toBe("TK-001");
+    }
+  });
+
+  test("standalone (1 child) and pair (2 children) do NOT set parent_epic", async () => {
+    const single: Proposal = {
+      epic: { title: "Skipped", body: "", tags: [] },
+      children: [
+        { ref: "C1", title: "lone", body: "", type: "task", tags: [], depends: [] },
+      ],
+    };
+    const r1 = await writeProposal(paths, project, single);
+    const t1 = await readTicket(paths, project, r1.childIds[0]!);
+    expect(t1?.parentEpic).toBeNull();
+  });
+
+  test("epic body has real TK-NNN ids after write, not placeholder refs", async () => {
+    const proposal: Proposal = {
+      epic: { title: "Auth epic", body: "## Goal\nLand auth", tags: [] },
+      children: [
+        { ref: "C1", title: "session model", body: "", type: "task", tags: [], depends: [] },
+        { ref: "C2", title: "login endpoint", body: "", type: "feature", tags: [], depends: ["C1"] },
+        { ref: "C3", title: "ui shell", body: "", type: "feature", tags: [], depends: ["C2"] },
+      ],
+    };
+    const result = await writeProposal(paths, project, proposal);
+    const epic = await readTicket(paths, project, result.epicId!);
+    expect(epic?.body).toContain("## Children");
+    // Real ids present
+    expect(epic?.body).toContain("TK-002 — session model");
+    expect(epic?.body).toContain("TK-003 — login endpoint (depends on TK-002)");
+    expect(epic?.body).toContain("TK-004 — ui shell (depends on TK-003)");
+    // Placeholder refs gone
+    expect(epic?.body).not.toContain("- C1 —");
+    expect(epic?.body).not.toContain("- C2 —");
+  });
+
   test("pair shape: two tickets, no epic", async () => {
     const proposal: Proposal = {
       epic: { title: "Skipped", body: "", tags: [] },
