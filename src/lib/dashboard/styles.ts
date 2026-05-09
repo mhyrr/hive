@@ -55,6 +55,11 @@ code, .mono, .mono * {
   padding: 32px 36px 96px;
 }
 
+/* Tickets page wants horizontal real estate for the 3-col kanbans. */
+.page.page-wide {
+  max-width: 1680px;
+}
+
 /* ---------- Masthead ---------- */
 
 .masthead {

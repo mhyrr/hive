@@ -692,7 +692,7 @@ export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOpt
 <style>${DASHBOARD_CSS}</style>
 </head>
 <body>
-<div class="page">
+<div class="page page-wide">
   <nav class="page-nav">${nav}</nav>
   <header class="masthead">
     <h1>HIVE</h1>
