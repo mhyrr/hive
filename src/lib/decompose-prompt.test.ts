@@ -34,14 +34,26 @@ const baseCtx: DecomposeContext = {
 };
 
 describe("DECOMPOSE_SYSTEM_PROMPT", () => {
-  test("declares JSON-only output", () => {
-    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("JSON only");
+  test("declares plan-then-emit shape with analysis + json blocks", () => {
+    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("<analysis>");
+    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("<json>");
   });
   test("names the count guardrails", () => {
     expect(DECOMPOSE_SYSTEM_PROMPT).toContain("3-10 children");
   });
   test("requires substantive children, no TBD placeholders", () => {
     expect(DECOMPOSE_SYSTEM_PROMPT).toContain("TBD");
+  });
+  test("includes a SELF-CHECK section", () => {
+    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("SELF-CHECK");
+  });
+  test("includes a worked example", () => {
+    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("<example>");
+    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("<input_goal>");
+  });
+  test("frames dedup as coverage-not-filtering", () => {
+    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("COVERAGE, not filtering");
+    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("possibly-covered");
   });
 });
 

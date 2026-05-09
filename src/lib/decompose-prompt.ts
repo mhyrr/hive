@@ -71,20 +71,40 @@ async function readIfExists(file: string): Promise<string> {
 
 // ---------------------------------------------------------------------------
 // Decompose prompt — initial pass
+//
+// Prompt design notes (2026-05-09 revision after landscape survey):
+// 1. Plan-then-emit: model produces <analysis> before the JSON. Anthropic's
+//    orchestrator-workers cookbook + Plan-and-Solve (Wang 2023). Strip post-parse.
+// 2. One worked <example> anchoring the schema, depends syntax, imperative
+//    titles. Anthropic prompt docs + Least-to-Most (Zhou).
+// 3. Pre-emit self-check section. Cheaper than an orient retry.
+// 4. Coverage-not-filtering on dedup: bias toward include + tag uncertain
+//    children rather than asking the model to filter inline. Anthropic guidance
+//    that filtering belongs downstream of generation.
+//
+// Deliberate non-adoptions:
+// - DAG with explicit `depends:[]` (vs phases/ordered-list in Plandex/OpenHands)
+//   — needed for parallel dispatch.
+// - No clarifying-questions affordance (vs Cline/OpenHands PLAN MODE) — async
+//   dispatch contract; orient.abort covers "too vague."
+// - No `Uses:` file list per child (Plandex) — defer until prompt context
+//   carries a file index.
 // ---------------------------------------------------------------------------
 
 export const DECOMPOSE_SYSTEM_PROMPT = `You are HIVE's goal decomposer. You take a rough goal in natural language and produce a tightly-scoped epic plus 3-10 child tickets that an autonomous agent can pick up cold.
 
 PROCESS
 1. Read the project context: project memory index, taste principles, search hits against prior similar work, and the list of currently open tickets.
-2. Check for overlap with open tickets. If the goal is FULLY covered by existing tickets, produce a single child ticket whose body cites the existing tickets — or if the entire goal is covered, return a proposal with one note-style child explaining the overlap.
-3. Decompose the gap (or the full goal if nothing overlaps) into an epic + child tickets. Each child must be:
+2. Decompose the goal into an epic + child tickets. Each child must be:
    - Self-contained — an agent picking it up cold knows what "done" looks like.
    - Sized for one focused session (< 2h of agent work).
    - Titled in imperative form ("Add session model", not "Session model").
-4. Wire dependencies as a DAG. No cycles. A child can depend on another child via its ref placeholder. Independent branches are dispatchable in parallel.
+3. Wire dependencies as a DAG. No cycles. A child can depend on another child via its ref placeholder. Independent branches are dispatchable in parallel.
+4. On dedup: your job at this stage is COVERAGE, not filtering. If a child might overlap an open ticket, INCLUDE the child anyway and add the tag "possibly-covered"; cite the overlapping ticket(s) in that child's Notes section. A downstream step handles final dedup. The exception: if the entire goal is unambiguously covered by existing tickets, return a single child whose body explains the overlap.
 
-OUTPUT — JSON only. No prose, no code fences. Schema:
+OUTPUT — first an <analysis> block where you think out loud about the goal, then a single <json> block. Nothing outside those two blocks.
+
+Schema for the JSON:
 {
   "epic": {
     "title": "…",
@@ -98,7 +118,7 @@ OUTPUT — JSON only. No prose, no code fences. Schema:
       "type": "task" | "feature" | "bug" | "chore",
       "tags": ["…"],
       "depends": [],
-      "body": "## Scope\\n…\\n\\n## Acceptance\\n- [ ] …\\n- [ ] …\\n\\n## Notes\\n(optional — memory citations or file pointers)"
+      "body": "## Scope\\n…\\n\\n## Acceptance\\n- [ ] …\\n- [ ] …\\n\\n## Notes\\n(optional — memory citations or file pointers; tag 'possibly-covered' here if you cited an overlapping ticket above)"
     }
   ]
 }
@@ -106,12 +126,63 @@ OUTPUT — JSON only. No prose, no code fences. Schema:
 CONSTRAINTS
 - 3-10 children. If the goal honestly produces 1-2, return them anyway; the writer handles that case.
 - Refs are short placeholder IDs (C1, C2, …). The system maps them to TK-NNN at write time.
-- Tags must be drawn from the project's existing tag distribution (visible in the index). Don't invent new tags unless the goal genuinely introduces new territory.
+- Tags must be drawn from the project's existing tag distribution (visible in the index). Don't invent new tags unless the goal genuinely introduces new territory. Exception: "possibly-covered" is a reserved tag for the dedup case above.
 - Children inherit the epic's domain. Don't decompose across unrelated domains.
 - Body markdown lines use \\n for line breaks (this is JSON).
 - Do NOT include the epic in children. Do NOT include placeholder children whose bodies say "TBD" — every ticket must be substantive enough to dispatch.
 
-Return ONLY the JSON object. No commentary.`;
+SELF-CHECK (do this in your <analysis> block before emitting the JSON)
+- [ ] Every ref in any "depends" array exists as another child's ref.
+- [ ] No child depends on itself.
+- [ ] No cycles (you can mentally walk each chain to a leaf).
+- [ ] Count is 3-10 (or 1-2 if that's honestly the right size).
+- [ ] Every tag is drawn from the project's existing tag distribution (or is "possibly-covered").
+- [ ] Every child title is imperative ("Add X", "Wire Y", "Fix Z").
+- [ ] Every child body has a Scope and Acceptance section, with checkboxes in Acceptance.
+
+EXAMPLE (illustrative — do not copy verbatim)
+
+<example>
+<input_goal>Add overnight retry for flaky dispatch runs.</input_goal>
+<analysis>The goal is to make dispatch self-heal on transient failures. Project memory mentions dispatch is the atomic primitive and that retries are off by default. Open tickets include TK-040 (hive tail) which is adjacent but not overlapping. Natural decomposition: a retry-policy module, then wire it into the orchestrator, then surface counts on the dashboard. Three children, linear deps. No cycles, count fine, tags drawn from {dispatch, dashboard}.</analysis>
+<json>
+{
+  "epic": {
+    "title": "Add overnight retry for flaky dispatch runs",
+    "body": "## Goal\\nMake dispatch self-heal on transient failures during overnight campaigns.\\n\\n## Why\\nFlakes currently surface as 'partial' status and stall multi-iteration runs. Self-healing buys oxygen for legitimate work.\\n\\n## Children\\n- C1 — retry-policy module\\n- C2 — wire into orchestrator (depends on C1)\\n- C3 — dashboard surface (depends on C2)",
+    "tags": ["dispatch"]
+  },
+  "children": [
+    {
+      "ref": "C1",
+      "title": "Add retry-policy module",
+      "type": "task",
+      "tags": ["dispatch"],
+      "depends": [],
+      "body": "## Scope\\nA pure module that decides retry vs abort given a failure signature. No side effects.\\n\\n## Acceptance\\n- [ ] Decision tree handles transient (timeout, ECONNREFUSED) vs structural (assertion, parse error) failures\\n- [ ] Returns {retry: bool, after_seconds, reason}\\n- [ ] Tested with 6+ failure-signature fixtures"
+    },
+    {
+      "ref": "C2",
+      "title": "Wire retry into dispatch orchestrator",
+      "type": "feature",
+      "tags": ["dispatch"],
+      "depends": ["C1"],
+      "body": "## Scope\\nCall the retry-policy module on each iteration's exit; if retry, schedule the next dispatch with the policy's delay. Cap at 3 retries per iteration.\\n\\n## Acceptance\\n- [ ] Transient failures fire a retry within the cap\\n- [ ] Structural failures bypass retry and exit\\n- [ ] Retry count + reason recorded in run state"
+    },
+    {
+      "ref": "C3",
+      "title": "Surface retry counts on dashboard",
+      "type": "feature",
+      "tags": ["dispatch", "dashboard"],
+      "depends": ["C2"],
+      "body": "## Scope\\nAdd a 'Retries' column to the dispatch run table on the morning dashboard. Show count + last reason on hover.\\n\\n## Acceptance\\n- [ ] Column visible for runs that retried\\n- [ ] Column hidden when no run retried that day"
+    }
+  ]
+}
+</json>
+</example>
+
+Return your <analysis> block, then the <json> block. Nothing else.`;
 
 export function buildDecomposeUserMessage(ctx: DecomposeContext): string {
   const sections: string[] = [];

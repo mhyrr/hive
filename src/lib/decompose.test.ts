@@ -34,6 +34,16 @@ describe("extractJson", () => {
     const raw = `Sure, here's the JSON:\n{"a":1}\n`;
     expect(extractJson(raw)).toBe(`{"a":1}`);
   });
+
+  test("strips <json> tags (plan-then-emit shape)", () => {
+    const raw = `<analysis>thinking…</analysis>\n<json>\n{"a":1}\n</json>`;
+    expect(extractJson(raw)).toBe(`{"a":1}`);
+  });
+
+  test("<json> wins over a stray { in the analysis block", () => {
+    const raw = `<analysis>I considered { foo: 1 } as a shape.</analysis>\n<json>{"a":2}</json>`;
+    expect(extractJson(raw)).toBe(`{"a":2}`);
+  });
 });
 
 // ---------------------------------------------------------------------------

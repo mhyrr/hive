@@ -70,6 +70,10 @@ const VALID_TICKET_TYPES: ReadonlyArray<TicketType> = [
 
 export function extractJson(raw: string): string {
   const trimmed = raw.trim();
+  // <json>{...}</json> — the decompose prompt's preferred wrapper. Lets the
+  // <analysis> block carry plan-then-emit reasoning without contaminating JSON.
+  const tagMatch = trimmed.match(/<json>\s*([\s\S]*?)\s*<\/json>/i);
+  if (tagMatch && tagMatch[1]) return tagMatch[1].trim();
   // Code-fenced: ```json\n{...}\n``` or ```\n{...}\n```
   const fenceMatch = trimmed.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
   if (fenceMatch && fenceMatch[1]) return fenceMatch[1].trim();
