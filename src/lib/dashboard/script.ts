@@ -345,6 +345,49 @@ export const DASHBOARD_JS = `
 
   document.querySelectorAll(".ticket-card[role='button']").forEach(wireTicketCard);
 
+  // ---------- Epic-board head expand/collapse ----------
+  function epicBoardKey(board) {
+    var id = board.getAttribute("data-epic-id") || "";
+    var proj = board.getAttribute("data-project") || "";
+    return "epic-expanded:" + proj + "/" + id;
+  }
+
+  function setBoardExpanded(board, expanded) {
+    var body = board.querySelector(":scope > .epic-body");
+    var head = board.querySelector(":scope > .board-head");
+    if (!body || !head) return;
+    if (expanded) {
+      board.classList.add("expanded");
+      body.removeAttribute("hidden");
+      head.setAttribute("aria-expanded", "true");
+      state[epicBoardKey(board)] = 1;
+    } else {
+      board.classList.remove("expanded");
+      body.setAttribute("hidden", "");
+      head.setAttribute("aria-expanded", "false");
+      delete state[epicBoardKey(board)];
+    }
+    saveState();
+  }
+
+  function wireEpicBoard(board) {
+    var head = board.querySelector(":scope > .board-head[role='button']");
+    if (!head) return;
+    if (state[epicBoardKey(board)]) setBoardExpanded(board, true);
+
+    head.addEventListener("click", function () {
+      setBoardExpanded(board, !board.classList.contains("expanded"));
+    });
+    head.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setBoardExpanded(board, !board.classList.contains("expanded"));
+      }
+    });
+  }
+
+  document.querySelectorAll(".epic-board").forEach(wireEpicBoard);
+
   // ---------- Keyboard ----------
   var focusables = function () { return Array.prototype.slice.call(document.querySelectorAll(".ticket-row, .dispatch-row, .inbox-entry:not(.empty)")); };
   var focusIdx = -1;

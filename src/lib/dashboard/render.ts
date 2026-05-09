@@ -601,9 +601,19 @@ function renderEpicBoard(board: EpicBoard): string {
   const tags = e.tags.length > 0
     ? `<span class="chip">${e.tags.map((t) => escapeHtml(t)).join(" &middot; ")}</span>`
     : "";
-  return `<section class="epic-board" data-epic-id="${escapeHtml(e.id)}">
-  <div class="board-head">
-    <div>
+  const hasBody = !!(e.body && e.body.trim());
+  const headRole = hasBody
+    ? ' role="button" tabindex="0" aria-expanded="false"'
+    : "";
+  const chevron = hasBody
+    ? `<span class="board-chevron" aria-hidden="true">+</span>`
+    : "";
+  const bodyBlock = hasBody
+    ? `<div class="epic-body" hidden>${md(e.body!)}</div>`
+    : "";
+  return `<section class="epic-board" data-epic-id="${escapeHtml(e.id)}" data-project="${escapeHtml(e.projectId)}">
+  <div class="board-head"${headRole}>
+    <div class="board-head-left">
       <span class="board-eyebrow">Epic</span>
       <span class="board-id mono">${escapeHtml(e.id)}</span>
       <span class="board-title">${escapeHtml(e.title)}</span>
@@ -613,8 +623,10 @@ function renderEpicBoard(board: EpicBoard): string {
       <span class="chip chip-prio ${prioClass}">${priority}</span>
       <span class="chip chip-active">${board.childCount} active</span>
       ${tags}
+      ${chevron}
     </div>
   </div>
+  ${bodyBlock}
   ${renderKanban(board.buckets)}
 </section>`;
 }

@@ -603,6 +603,56 @@ table.ledger td.path { color: var(--muted); font-family: var(--mono); font-size:
 .board-head .board-chips .chip-prio { color: var(--amber); font-weight: 700; }
 .board-head .board-chips .chip-prio.p0 { color: var(--rust); }
 .board-head .board-chips .chip-active { color: var(--ink); font-weight: 700; }
+.board-head[role="button"] {
+  cursor: pointer;
+  outline: none;
+}
+.board-head[role="button"]:hover .board-title { color: var(--rust); }
+.board-head[role="button"]:focus-visible { background: rgba(196, 123, 28, 0.04); }
+.board-chevron {
+  font-family: var(--mono);
+  font-size: 16px;
+  color: var(--amber);
+  font-weight: 700;
+  margin-left: 12px;
+  display: inline-block;
+  width: 16px;
+  text-align: center;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+.epic-board.expanded .board-chevron { transform: rotate(45deg); }
+
+.epic-body {
+  margin: 6px 0 14px;
+  padding: 14px 18px;
+  border-left: 3px solid var(--amber);
+  background: rgba(196, 123, 28, 0.04);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.epic-body h1, .epic-body h2, .epic-body h3 {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  color: var(--ink);
+  margin: 16px 0 6px;
+  font-weight: 700;
+}
+.epic-body h1:first-child,
+.epic-body h2:first-child,
+.epic-body h3:first-child { margin-top: 0; }
+.epic-body p { margin: 0 0 10px; }
+.epic-body ul, .epic-body ol { margin: 6px 0 10px; padding-left: 22px; }
+.epic-body code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: rgba(26,26,26,0.06);
+  padding: 1px 4px;
+}
+.epic-body a { color: var(--rust); border-bottom: 1px dotted var(--amber); }
 
 .kanban {
   display: grid;
