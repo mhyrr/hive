@@ -38,8 +38,8 @@ import {
   type ArgvBuild,
 } from "./actions";
 import { resolveHiveBin, HiveBinNotFoundError } from "./hive-bin";
-import { renderDashboard } from "./render";
-import { collectDashboardData } from "./collect";
+import { renderDashboard, renderTicketsPageDocument } from "./render";
+import { collectDashboardData, collectTicketsPage } from "./collect";
 import {
   archivePathForDate,
   isValidArchiveDate,
@@ -109,6 +109,9 @@ export async function handleRequest(req: Request, rctx: RequestCtx): Promise<Res
     if (req.method === "GET" && url.pathname === "/") {
       return serveRoot(rctx);
     }
+    if (req.method === "GET" && url.pathname === "/tickets") {
+      return serveTicketsPage(rctx);
+    }
     if (req.method === "GET" && url.pathname.startsWith("/archive/")) {
       return serveArchive(rctx, url.pathname.slice("/archive/".length));
     }
@@ -132,6 +135,17 @@ export async function handleRequest(req: Request, rctx: RequestCtx): Promise<Res
 async function serveRoot(rctx: RequestCtx): Promise<Response> {
   const data = await collectDashboardData(rctx.paths);
   const html = renderDashboard(data, { interactive: true });
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function serveTicketsPage(rctx: RequestCtx): Promise<Response> {
+  const data = await collectTicketsPage(rctx.paths);
+  const html = renderTicketsPageDocument(data, { interactive: true });
   return new Response(html, {
     headers: {
       "content-type": "text/html; charset=utf-8",

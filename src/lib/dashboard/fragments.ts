@@ -9,10 +9,15 @@
  * Names match the `section-*` DOM ids emitted by render.ts.
  */
 
-import { collectDashboardData, type DashboardData } from "./collect";
+import {
+  collectDashboardData,
+  collectTicketsPage,
+  type DashboardData,
+} from "./collect";
 import {
   renderProjects,
   renderTickets,
+  renderTicketsPage,
   renderInboxes,
   renderRuns,
   renderArchive,
@@ -24,6 +29,7 @@ import type { HivePaths } from "../paths";
 export const FRAGMENT_NAMES = [
   "projects",
   "tickets",
+  "tickets-page",
   "inboxes",
   "runs",
   "archive",
@@ -48,6 +54,12 @@ export async function renderFragment(
   paths: HivePaths,
   name: FragmentName,
 ): Promise<string> {
+  // tickets-page collects independently — its data shape is richer and the
+  // /tickets route doesn't need the rest of the dashboard payload.
+  if (name === "tickets-page") {
+    const data = await collectTicketsPage(paths);
+    return renderTicketsPage(data, { interactive: true });
+  }
   const data = await collectDashboardData(paths);
   return renderFragmentFromData(data, name);
 }
@@ -57,6 +69,10 @@ export function renderFragmentFromData(data: DashboardData, name: FragmentName):
   switch (name) {
     case "projects": return renderProjects(data, c);
     case "tickets":  return renderTickets(data.tickets, c);
+    case "tickets-page":
+      // Should be handled by renderFragment(); fragments-from-data doesn't
+      // have access to the tickets-page data. Throw so the bug surfaces.
+      throw new Error("tickets-page fragment must be rendered via renderFragment, not from DashboardData");
     case "inboxes":  return renderInboxes(data.inboxes, c);
     case "runs":     return renderRuns(data.runs, c);
     case "archive":  return renderArchive(data, c);
