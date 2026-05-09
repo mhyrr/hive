@@ -863,6 +863,95 @@ server.tool(
   }
 );
 
+// Tool: decompose_goal — produce an epic + child DAG from a rough goal (TK-036).
+server.registerTool("decompose_goal", {
+  description:
+    "Decompose a rough natural-language goal into an epic ticket plus 3-10 child tickets " +
+    "with dependencies wired as a DAG. Reads project memory, taste principles, and existing open " +
+    "tickets so the decomposition is project-aware and avoids duplicating work. " +
+    "Use when the user has a goal big enough for an overnight campaign but hasn't yet been broken " +
+    "into dispatchable tickets. For 1-2 child shape, the writer creates standalone tickets without " +
+    "an epic. Use dry_run to preview without writing.",
+  inputSchema: {
+    goal: z.string().describe("The rough goal in natural language."),
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    dry_run: z.boolean().optional().describe("Show the proposal without creating tickets. Default false."),
+    priority: z.number().min(0).max(3).optional().describe("Priority for the epic (children inherit). 0-3. Default 2."),
+    max_attempts: z.number().min(1).max(20).optional().describe("Max OODA-loop attempts. Default 8."),
+    max_cost_usd: z.number().min(0).optional().describe("Hard spend cap in USD. Default 5."),
+  },
+}, async ({ goal, project, dry_run, priority, max_attempts, max_cost_usd }) => {
+  const { gatherDecomposeContext } = await import("./lib/decompose-prompt");
+  const { runDecomposeLoop } = await import("./lib/decompose-loop");
+  const { liveClaudeCaller } = await import("./lib/decompose-run");
+  const { writeProposal, renderWriteResult } = await import("./lib/decompose-write");
+  const { resolvePriority } = await import("./lib/decompose");
+  const { formatUsd } = await import("./lib/pricing");
+
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd();
+  if (!projectId) {
+    return {
+      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
+      isError: true,
+    };
+  }
+
+  const context = await gatherDecomposeContext(paths, projectId, goal);
+  const result = await runDecomposeLoop({
+    context,
+    llm: liveClaudeCaller,
+    maxAttempts: max_attempts,
+    maxCostUsd: max_cost_usd,
+  });
+
+  if (!result.ok) {
+    return {
+      content: [{
+        type: "text" as const,
+        text:
+          `Decomposition aborted: ${result.reason}\n` +
+          `Attempts: ${result.attempts.length}\n` +
+          `Spent: ${formatUsd(result.totalCostUsd)}\n\n` +
+          (result.lastOutput ? `Last decomposer output (first 800 chars):\n${result.lastOutput.slice(0, 800)}` : ""),
+      }],
+      isError: true,
+    };
+  }
+
+  const written = await writeProposal(paths, projectId, result.proposal, {
+    priority: resolvePriority(priority),
+    dryRun: dry_run ?? false,
+  });
+
+  const lines: string[] = [];
+  lines.push(dry_run ? "PROPOSED (dry-run, no writes):" : "CREATED:");
+  lines.push(renderWriteResult(written));
+  if (result.warnings.length > 0) {
+    lines.push("");
+    lines.push("Warnings:");
+    for (const w of result.warnings) lines.push(`  - ${w}`);
+  }
+  lines.push("");
+  lines.push(`${result.attempts.length} attempt(s), ${formatUsd(result.totalCostUsd)}.`);
+
+  return {
+    content: [{ type: "text" as const, text: lines.join("\n") }],
+    structuredContent: {
+      epic_id: written.epicId,
+      child_ids: written.childIds,
+      dag: { edges: written.edges },
+      ref_map: written.refMap,
+      shape: written.shape,
+      attempts: result.attempts.length,
+      spend_usd: result.totalCostUsd,
+      warnings: result.warnings,
+      reframes: result.reframes,
+      dry_run: dry_run ?? false,
+    },
+  };
+});
+
 // Start the server
 const transport = new StdioServerTransport();
 await server.connect(transport);
