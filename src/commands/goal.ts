@@ -129,6 +129,39 @@ export async function goalCommand(args: string[]): Promise<void> {
   }
   console.log(renderWriteResult(written));
 
+  // In dry-run, print the proposal bodies so the operator can judge quality.
+  if (dryRun) {
+    console.log("");
+    console.log("=".repeat(72));
+    console.log(`EPIC ${written.epicId ?? "(none — small decomposition)"}: ${result.proposal.epic.title}`);
+    if (result.proposal.epic.tags.length > 0) {
+      console.log(`tags: ${result.proposal.epic.tags.join(", ")}`);
+    }
+    if (result.proposal.epic.body.trim()) {
+      console.log("");
+      console.log(result.proposal.epic.body.trim());
+    }
+    for (const child of result.proposal.children) {
+      const realId = written.refMap[child.ref] ?? child.ref;
+      console.log("");
+      console.log("-".repeat(72));
+      const depList =
+        child.depends.length > 0
+          ? ` (depends on ${child.depends
+              .map((d) => written.refMap[d] ?? d)
+              .join(", ")})`
+          : "";
+      console.log(`${realId} [${child.type}]: ${child.title}${depList}`);
+      if (child.tags.length > 0) console.log(`tags: ${child.tags.join(", ")}`);
+      if (child.body.trim()) {
+        console.log("");
+        console.log(child.body.trim());
+      }
+    }
+    console.log("");
+    console.log("=".repeat(72));
+  }
+
   if (result.warnings.length > 0) {
     console.log("");
     console.log("Warnings:");
