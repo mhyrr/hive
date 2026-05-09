@@ -71,6 +71,25 @@ export type TicketBuckets = {
   blocked: TicketCitation[];
 };
 
+export type EpicCitation = TicketCitation & {
+  status: "open" | "in_progress" | "closed";
+};
+
+export type EpicBoard = {
+  epic: EpicCitation;
+  buckets: TicketBuckets;
+  childCount: number;          // open + in_progress only
+  lastActivity: string;        // ISO ts of most recent child update (or epic.updated if no children)
+};
+
+export type TicketsPageData = {
+  generatedAt: string;
+  epics: EpicBoard[];
+  standalone: TicketBuckets;
+  totalActive: number;
+  projectCount: number;
+};
+
 export type RunEntry = {
   id: string;               // "RUN-009"
   status: string;           // "complete" | "partial" | "failed" | "crashed" | "running" | "timed_out"
@@ -381,6 +400,131 @@ export async function collectTickets(paths: HivePaths): Promise<TicketBuckets> {
   blocked.sort(sortByPriorityThenAge);
 
   return { ready, inProgress, blocked };
+}
+
+// ---------------------------------------------------------------------------
+// Tickets page (deep view) — per-epic kanbans + standalone block.
+// docs/specs/2026-05-09-tickets-page-design.md
+// ---------------------------------------------------------------------------
+
+export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageData> {
+  const projectIds = await listProjects(paths.projectsDir);
+  const now = new Date();
+
+  type Indexed = { projectId: string; ticket: Ticket };
+  const all: Indexed[] = [];
+  const projectsWithTickets = new Set<string>();
+
+  for (const id of projectIds) {
+    const tickets = await listTickets(paths, id).catch(() => [] as Ticket[]);
+    if (tickets.length > 0) projectsWithTickets.add(id);
+    for (const ticket of tickets) all.push({ projectId: id, ticket });
+  }
+
+  // Open-by-project so the blocked check matches collectTickets' semantics.
+  const openByProject = new Map<string, Set<string>>();
+  for (const { projectId, ticket } of all) {
+    if (!openByProject.has(projectId)) openByProject.set(projectId, new Set());
+    if (ticket.status !== "closed") openByProject.get(projectId)!.add(ticket.id);
+  }
+
+  const toCitation = (it: Indexed): TicketCitation => ({
+    id: it.ticket.id,
+    title: it.ticket.title,
+    projectId: it.projectId,
+    priority: it.ticket.priority,
+    tags: it.ticket.tags,
+    depends: it.ticket.depends,
+    ageDays: daysBetween(new Date(it.ticket.created), now),
+  });
+
+  const bucketize = (items: Indexed[]): TicketBuckets => {
+    const ready: TicketCitation[] = [];
+    const inProgress: TicketCitation[] = [];
+    const blocked: TicketCitation[] = [];
+    for (const it of items) {
+      if (it.ticket.status === "closed") continue;
+      const openSet = openByProject.get(it.projectId)!;
+      const isBlocked =
+        it.ticket.depends.length > 0 &&
+        it.ticket.depends.some((d) => openSet.has(d));
+      const citation = toCitation(it);
+      if (it.ticket.status === "in_progress") inProgress.push(citation);
+      else if (isBlocked) blocked.push(citation);
+      else ready.push(citation);
+    }
+    const sortFn = (a: TicketCitation, b: TicketCitation) =>
+      a.priority - b.priority || a.id.localeCompare(b.id);
+    ready.sort(sortFn);
+    inProgress.sort(sortFn);
+    blocked.sort(sortFn);
+    return { ready, inProgress, blocked };
+  };
+
+  // Group: epic tickets, children-by-epic, and standalone (everything else).
+  const epicTickets = all.filter((it) => it.ticket.type === "epic");
+  const childrenByEpic = new Map<string, Indexed[]>();
+  const standalonePool: Indexed[] = [];
+
+  for (const it of all) {
+    if (it.ticket.type === "epic") continue;
+    const parent = it.ticket.parentEpic;
+    if (parent) {
+      // Match scoped to project — same epic id across projects shouldn't merge.
+      const key = `${it.projectId}::${parent}`;
+      if (!childrenByEpic.has(key)) childrenByEpic.set(key, []);
+      childrenByEpic.get(key)!.push(it);
+    } else {
+      standalonePool.push(it);
+    }
+  }
+
+  const epicBoards: EpicBoard[] = [];
+  for (const epicIt of epicTickets) {
+    const key = `${epicIt.projectId}::${epicIt.ticket.id}`;
+    const kids = childrenByEpic.get(key) ?? [];
+    const buckets = bucketize(kids);
+    const childCount = buckets.ready.length + buckets.inProgress.length + buckets.blocked.length;
+
+    // Skip epics where the epic is closed AND there are no active children.
+    if (epicIt.ticket.status === "closed" && childCount === 0) continue;
+
+    // Activity: most recent child updated, fallback to epic.updated.
+    const updates = kids
+      .map((k) => Date.parse(k.ticket.updated))
+      .filter((n) => !Number.isNaN(n));
+    const epicUpdate = Date.parse(epicIt.ticket.updated);
+    const latest = updates.length > 0 ? Math.max(...updates) : epicUpdate;
+    const lastActivity = new Date(Number.isNaN(latest) ? Date.now() : latest).toISOString();
+
+    epicBoards.push({
+      epic: {
+        ...toCitation(epicIt),
+        status: epicIt.ticket.status,
+      },
+      buckets,
+      childCount,
+      lastActivity,
+    });
+  }
+
+  epicBoards.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
+
+  const standalone = bucketize(standalonePool);
+
+  const totalActive =
+    standalone.ready.length +
+    standalone.inProgress.length +
+    standalone.blocked.length +
+    epicBoards.reduce((sum, e) => sum + e.childCount, 0);
+
+  return {
+    generatedAt: now.toISOString(),
+    epics: epicBoards,
+    standalone,
+    totalActive,
+    projectCount: projectsWithTickets.size,
+  };
 }
 
 export async function collectRuns(paths: HivePaths, limit = 20): Promise<RunEntry[]> {
