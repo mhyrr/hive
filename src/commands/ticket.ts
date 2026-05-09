@@ -51,6 +51,7 @@ export async function ticketCommand(args: string[]): Promise<void> {
   hive ticket dispatch <id>                Tag ticket for auto-dispatch
   hive ticket ready                        Show unblocked tickets
   hive ticket blocked                      Show dependency-blocked tickets
+  hive ticket relink-epics                 Best-effort backfill of parent_epic on children
   hive ticket --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
@@ -203,6 +204,54 @@ export async function ticketCommand(args: string[]): Promise<void> {
       } else {
         for (const t of tickets) console.log(formatTicketSummary(t));
       }
+      break;
+    }
+
+    case "relink-epics": {
+      const all = await listTickets(paths, projectId);
+      const epics = all.filter((t) => t.type === "epic");
+      if (epics.length === 0) {
+        console.log("No epics in this project.");
+        break;
+      }
+
+      const PROXIMITY_MS = 2 * 60 * 1000; // ±2 minutes
+
+      let linked = 0;
+      let skipped = 0;
+      for (const epic of epics) {
+        const epicTime = Date.parse(epic.created);
+        if (Number.isNaN(epicTime)) continue;
+        const epicTags = new Set(epic.tags);
+
+        for (const t of all) {
+          if (t.id === epic.id) continue;
+          if (t.type === "epic") continue;
+          if (t.parentEpic) {
+            // Don't overwrite an existing link, even ours.
+            continue;
+          }
+
+          const tTime = Date.parse(t.created);
+          if (Number.isNaN(tTime)) continue;
+          if (Math.abs(tTime - epicTime) > PROXIMITY_MS) continue;
+
+          // Require shared tag (or epic with no tags trusts proximity alone).
+          const sharesTag =
+            epicTags.size === 0 ||
+            t.tags.some((tag) => epicTags.has(tag));
+          if (!sharesTag) {
+            skipped++;
+            continue;
+          }
+
+          await updateTicket(paths, projectId, t.id, { parentEpic: epic.id });
+          console.log(`Linked ${t.id} → ${epic.id} (${t.title})`);
+          linked++;
+        }
+      }
+
+      console.log(`\nLinked ${linked} ticket(s). Skipped ${skipped} time-proximate but tag-mismatched.`);
       break;
     }
 

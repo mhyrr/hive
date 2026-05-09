@@ -370,6 +370,7 @@ export function formatTicketDetail(t: TicketWithBody): string {
   if (t.closed) lines.push(`**Closed:** ${t.closed}`);
   if (t.ref) lines.push(`**Ref:** ${t.ref}`);
   if (t.depends.length > 0) lines.push(`**Depends on:** ${t.depends.join(", ")}`);
+  if (t.parentEpic) lines.push(`**Epic:** ${t.parentEpic}`);
 
   if (t.body) {
     lines.push("", "---", "", t.body);
