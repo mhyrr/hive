@@ -73,20 +73,30 @@ by loading all HIVE schemas in one call:
 
 One call buys reflex access for the whole session.
 
+Beyond memory: `list_tickets` / `show_ticket` before multi-step work to
+surface what's in flight; `convene_council` when a judgment call has
+multiple valid approaches and you want independent reads; `create_ticket`
+for work that should outlive the session.
+
 ## Memory as a Thinking Tool
 
 The session-start memory index is a ranked summary, not the full picture.
-Search project memory (`search_memory`) before acting in any domain it's
-touched — code, architecture, conventions, prior decisions. Cost of a
-redundant search is near zero; cost of ignoring prior decisions is rework.
+Reach for `search_memory` before recommending in a worked domain or
+proposing a pattern — prior decisions and conventions live there. Cost
+of a redundant search is near zero; cost of ignoring prior work is rework.
+If you find yourself reasoning from training-data plausibility rather
+than checking, search first.
 
 ## Memory Discipline
 
-HIVE memory captures durable, non-obvious, stable project intelligence —
-write conventions, decisions, and constraints as they happen. Don't
-duplicate what's already in code or git history. Don't manage Claude Code
-memory (`~/.claude/projects/*/memory/`) — it runs automatically and serves
-a different purpose.
+HIVE memory captures durable, non-obvious, stable project intelligence.
+When you learn something durable mid-session, `write_hive_memory` then —
+don't batch to end-of-session. Mid-session writes queue to candidates;
+the nightly verifier admits them to canon, so reach freely. End-of-session,
+`reflect_session` for whatever's left. Don't duplicate what's already in
+code or git history. Don't manage Claude Code memory
+(`~/.claude/projects/*/memory/`) — it runs automatically and serves a
+different purpose.
 
 ## Cross-Project
 
@@ -147,7 +157,7 @@ editors, `hive tail`, and review flows.
 
 ## Continuity
 
-Before ending a substantive session: use `reflect_session` to batch-write
-durable learnings. Skip if trivial. The bar — would the next session
-benefit from knowing this? Leave breadcrumbs in code, commits, and memory
-so the next session can pick up cold.
+Before ending a substantive session: `reflect_session` for anything that
+didn't get a mid-session write. Skip if trivial. The bar — would the next
+session benefit from knowing this? Leave breadcrumbs in code, commits,
+and memory so the next session can pick up cold.

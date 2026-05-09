@@ -218,16 +218,6 @@ function checkIdentity(): Check[] {
     });
   }
 
-  // OVERRIDES.md was retired — pre-fetch directive moved into AGENTS.md.
-  // If a stale file is still on disk, surface a one-line cleanup nudge.
-  if (existsSync(paths.overrides)) {
-    checks.push({
-      status: "warn",
-      label: "OVERRIDES.md present but no longer loaded",
-      detail: `Safe to delete: rm ${paths.overrides}`,
-    });
-  }
-
   // Canonical SessionStart hook at user level
   const home = process.env.HOME || "";
   const hookPath = join(home, ".claude", "hooks", "load-identity.sh");

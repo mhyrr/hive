@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 import { getHivePaths } from "./paths";
 import { resolveProjectFromCwd } from "./project";
@@ -110,18 +109,4 @@ export function getIdentityName(): string {
   } catch {
     return "Claude";
   }
-}
-
-export async function writeIdentityTempFile(): Promise<string> {
-  const content = await assembleIdentity();
-  const tempPath = join(tmpdir(), `hive-identity-${process.pid}.md`);
-  await Bun.write(tempPath, content);
-  return tempPath;
-}
-
-export function cleanupIdentityTempFile(): void {
-  const tempPath = join(tmpdir(), `hive-identity-${process.pid}.md`);
-  try {
-    require("fs").unlinkSync(tempPath);
-  } catch { /* already gone */ }
 }

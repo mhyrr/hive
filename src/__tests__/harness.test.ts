@@ -3,20 +3,25 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { resolveHarness } from "../lib/harness";
 
 describe("resolveHarness", () => {
-  const original = process.env.HIVE_HARNESS;
+  const originalHarness = process.env.HIVE_HARNESS;
+  const originalMode = process.env.HIVE_CLAUDE_MODE;
 
   beforeEach(() => {
     delete process.env.HIVE_HARNESS;
+    delete process.env.HIVE_CLAUDE_MODE;
   });
 
   afterEach(() => {
-    if (original === undefined) delete process.env.HIVE_HARNESS;
-    else process.env.HIVE_HARNESS = original;
+    if (originalHarness === undefined) delete process.env.HIVE_HARNESS;
+    else process.env.HIVE_HARNESS = originalHarness;
+    if (originalMode === undefined) delete process.env.HIVE_CLAUDE_MODE;
+    else process.env.HIVE_CLAUDE_MODE = originalMode;
   });
 
   test("defaults to claude-code with no flag and no env", () => {
     const r = resolveHarness(["hello"]);
     expect(r.harness).toBe("claude-code");
+    expect(r.claudeMode).toBe("append");
     expect(r.remainingArgs).toEqual(["hello"]);
   });
 
@@ -100,6 +105,57 @@ describe("resolveHarness", () => {
   test("empty args, no flags, no env → claude-code", () => {
     const r = resolveHarness([]);
     expect(r.harness).toBe("claude-code");
+    expect(r.claudeMode).toBe("append");
     expect(r.remainingArgs).toEqual([]);
+  });
+
+  describe("claude mode flags", () => {
+    test("--owned selects owned mode and is stripped", () => {
+      const r = resolveHarness(["--owned", "hello"]);
+      expect(r.harness).toBe("claude-code");
+      expect(r.claudeMode).toBe("owned");
+      expect(r.remainingArgs).toEqual(["hello"]);
+    });
+
+    test("--bare selects bare mode and is stripped", () => {
+      const r = resolveHarness(["--bare", "hello"]);
+      expect(r.harness).toBe("claude-code");
+      expect(r.claudeMode).toBe("bare");
+      expect(r.remainingArgs).toEqual(["hello"]);
+    });
+
+    test("HIVE_CLAUDE_MODE=owned sets owned mode", () => {
+      process.env.HIVE_CLAUDE_MODE = "owned";
+      const r = resolveHarness(["hello"]);
+      expect(r.claudeMode).toBe("owned");
+      expect(r.remainingArgs).toEqual(["hello"]);
+    });
+
+    test("HIVE_CLAUDE_MODE=bare sets bare mode", () => {
+      process.env.HIVE_CLAUDE_MODE = "bare";
+      const r = resolveHarness(["hello"]);
+      expect(r.claudeMode).toBe("bare");
+      expect(r.remainingArgs).toEqual(["hello"]);
+    });
+
+    test("--bare arg overrides HIVE_CLAUDE_MODE=owned", () => {
+      process.env.HIVE_CLAUDE_MODE = "owned";
+      const r = resolveHarness(["--bare", "hello"]);
+      expect(r.claudeMode).toBe("bare");
+    });
+
+    test("mode flag composes with harness flag", () => {
+      const r = resolveHarness(["--owned", "--agent", "maya-coder", "hello"]);
+      expect(r.harness).toBe("claude-code");
+      expect(r.claudeMode).toBe("owned");
+      expect(r.remainingArgs).toEqual(["--agent", "maya-coder", "hello"]);
+    });
+
+    test("--bare with -3 still routes pi (mode flagged but ignored downstream)", () => {
+      const r = resolveHarness(["--bare", "-3", "hello"]);
+      expect(r.harness).toBe("pi");
+      expect(r.claudeMode).toBe("bare");
+      expect(r.remainingArgs).toEqual(["hello"]);
+    });
   });
 });

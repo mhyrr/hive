@@ -4,7 +4,6 @@ import { join, dirname } from "node:path";
 
 import { UsageError } from "../lib/errors";
 import { getHivePaths, getProjectPaths, listProjects } from "../lib/paths";
-import { writeIdentityTempFile, cleanupIdentityTempFile } from "../lib/identity";
 import { resolveProjectFromCwd } from "../lib/project";
 import {
   readHeartbeatConfig,
