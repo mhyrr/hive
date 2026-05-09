@@ -47,6 +47,23 @@ describe("dashboard server end-to-end", () => {
     expect(body).toContain('id="section-tickets"');
   });
 
+  test("GET /tickets returns the tickets-page document", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/tickets`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<!DOCTYPE html>");
+    expect(body).toContain("HIVE · Tickets");
+    expect(body).toContain('class="page-nav"');
+    expect(body).toContain("nav-active");
+  });
+
+  test("GET /fragment/tickets-page returns the new section fragment", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/fragment/tickets-page`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="section-tickets-page"');
+  });
+
   test("POST /action/ticket/close with wrong Origin is 403", async () => {
     const res = await fetch(`http://127.0.0.1:${port}/action/ticket/close`, {
       method: "POST",
