@@ -9,6 +9,7 @@ import { councilCommand } from "./commands/council";
 import { dashboardCommand } from "./commands/dashboard";
 import { dispatchCommand } from "./commands/dispatch";
 import { doctorCommand } from "./commands/doctor";
+import { goalCommand } from "./commands/goal";
 import { heartbeatCommand } from "./commands/heartbeat";
 import { identityCommand } from "./commands/identity";
 import { inboxCommand } from "./commands/inbox";
@@ -20,14 +21,9 @@ import { psCommand } from "./commands/ps";
 import { stackCommand } from "./commands/stack";
 import { ticketCommand } from "./commands/ticket";
 import { UsageError } from "./lib/errors";
-import { resolveHarness, type Harness } from "./lib/harness";
+import { resolveHarness, type ClaudeMode, type Harness } from "./lib/harness";
 import { writeCodexAgentsMd } from "./lib/codex-wire";
-import {
-  writeIdentityTempFile,
-  cleanupIdentityTempFile,
-  getIdentityName,
-  assembleIdentity,
-} from "./lib/identity";
+import { getIdentityName, assembleIdentity } from "./lib/identity";
 import { findPiBin } from "./lib/pi-wire";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
@@ -38,6 +34,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   council: councilCommand,
   memory: memoryCommand,
   ticket: ticketCommand,
+  goal: goalCommand,
   dispatch: dispatchCommand,
   heartbeat: heartbeatCommand,
   identity: identityCommand,
@@ -63,6 +60,7 @@ HIVE Commands:
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
   ticket [create|list|...]   Project ticket tracker
+  goal "<rough goal>"        Decompose a rough goal into epic + child tickets
   dispatch "<goal>" [opts]   Dispatch autonomous goal execution
   heartbeat start|stop|...   Periodic project awareness
   identity emit              Print canonical identity prefix (used by SessionStart hook)
@@ -76,6 +74,14 @@ ${name} (default: Claude Code with identity):
   hive "fix the auth bug"    ${name} with a prompt
   hive --agent maya-coder    ${name} with a specific agent
   hive [any claude flags]    Passed through to claude with identity
+
+Claude Code identity modes:
+  (default)                  Append HIVE identity after Claude Code's base prompt (OAuth)
+  hive --owned [prompt]      Replace base prompt with HIVE identity; keep hooks/MCP/OAuth
+  hive --bare [prompt]       Full --bare; HIVE owns prompt, MCP rewired explicitly.
+                             Requires ANTHROPIC_API_KEY (no subscription OAuth in --bare).
+  HIVE_CLAUDE_MODE=owned     Set --owned via env
+  HIVE_CLAUDE_MODE=bare      Set --bare via env
 
 Alt harness:
   hive -3 [prompt]          Route through Pi CLI (Pi owns provider/model selection)
@@ -143,35 +149,90 @@ async function cleanupPiIdentityExtensionTempDir(dir: string): Promise<void> {
   }
 }
 
-async function launchClaude(args: string[]): Promise<void> {
-  const identityFile = await writeIdentityTempFile();
+async function writeBareMcpConfigTempFile(): Promise<{ path: string; dir: string }> {
+  // In --bare mode Claude Code skips MCP auto-discovery from ~/.claude.json.
+  // Re-register HIVE MCP (and only HIVE MCP) via --mcp-config so HIVE tools
+  // remain reachable. Path matches the canonical registration in init.ts.
+  const dir = await mkdtemp(join(tmpdir(), `hive-bare-mcp-${process.pid}-`));
+  const repoRoot = join(import.meta.dir, "..");
+  const config = {
+    mcpServers: {
+      hive: {
+        type: "stdio",
+        command: "bun",
+        args: [join(repoRoot, "src", "mcp-server.ts")],
+      },
+    },
+  };
+  const path = join(dir, "mcp.json");
+  await writeFile(path, JSON.stringify(config, null, 2), "utf-8");
+  return { path, dir };
+}
 
-  // Clean up on exit
-  process.on("exit", cleanupIdentityTempFile);
-  process.on("SIGINT", () => { cleanupIdentityTempFile(); process.exit(130); });
-  process.on("SIGTERM", () => { cleanupIdentityTempFile(); process.exit(143); });
+async function launchClaude(mode: ClaudeMode, args: string[]): Promise<void> {
+  const identity = await assembleIdentity();
+
+  let bareMcpDir: string | null = null;
+  const cleanup = () => {
+    if (bareMcpDir) {
+      try { require("fs").rmSync(bareMcpDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  };
+  process.on("exit", cleanup);
+  process.on("SIGINT", () => { cleanup(); process.exit(130); });
+  process.on("SIGTERM", () => { cleanup(); process.exit(143); });
 
   const claude = findClaude();
 
-  // Build claude args: identity injection + user args
-  const claudeArgs = [
-    "--append-system-prompt-file", identityFile,
-    "--add-dir", join(process.env.HOME || "", ".hive"),
-    ...args,
-  ];
+  // Build claude args based on mode.
+  const claudeArgs: string[] = [];
+  const env: Record<string, string | undefined> = { ...process.env };
 
-  // Replace this process with claude
+  if (mode === "bare") {
+    // --bare requires ANTHROPIC_API_KEY (OAuth + keychain are never read).
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error(
+        "hive --bare: ANTHROPIC_API_KEY is required.\n" +
+        "  --bare mode skips OAuth/keychain entirely (Claude Code's design).\n" +
+        "  Set ANTHROPIC_API_KEY or drop --bare to use subscription OAuth."
+      );
+      cleanup();
+      process.exit(1);
+    }
+    const bareMcp = await writeBareMcpConfigTempFile();
+    bareMcpDir = bareMcp.dir;
+    claudeArgs.push(
+      "--bare",
+      "--system-prompt", identity,
+      "--mcp-config", bareMcp.path,
+      "--add-dir", join(process.env.HOME || "", ".hive"),
+    );
+  } else if (mode === "owned") {
+    // Replace the default system prompt; keep hooks/plugins/MCP/OAuth.
+    claudeArgs.push(
+      "--system-prompt", identity,
+      "--add-dir", join(process.env.HOME || "", ".hive"),
+    );
+    env.ANTHROPIC_API_KEY = undefined; // force subscription
+  } else {
+    // append: legacy default — HIVE identity sits AFTER the base system prompt.
+    claudeArgs.push(
+      "--append-system-prompt", identity,
+      "--add-dir", join(process.env.HOME || "", ".hive"),
+    );
+    env.ANTHROPIC_API_KEY = undefined; // force subscription
+  }
+
+  claudeArgs.push(...args);
+
   const result = Bun.spawnSync([claude, ...claudeArgs], {
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
-    env: {
-      ...process.env,
-      ANTHROPIC_API_KEY: undefined, // force subscription
-    },
+    env,
   });
 
-  cleanupIdentityTempFile();
+  cleanup();
   process.exit(result.exitCode ?? 0);
 }
 
@@ -224,16 +285,22 @@ async function launchPi(args: string[]): Promise<void> {
   process.exit(result.exitCode ?? 0);
 }
 
-async function launchAgent(harness: Harness, args: string[]): Promise<void> {
+async function launchAgent(harness: Harness, claudeMode: ClaudeMode, args: string[]): Promise<void> {
   if (harness === "pi") {
+    if (claudeMode !== "append") {
+      console.error("hive: --owned/--bare only apply to Claude Code; ignored for Pi.");
+    }
     await launchPi(args);
     return;
   }
   if (harness === "codex") {
+    if (claudeMode !== "append") {
+      console.error("hive: --owned/--bare only apply to Claude Code; ignored for Codex.");
+    }
     await launchCodex(args);
     return;
   }
-  await launchClaude(args);
+  await launchClaude(claudeMode, args);
 }
 
 async function main(): Promise<void> {
@@ -242,8 +309,8 @@ async function main(): Promise<void> {
 
   // No args → interactive session via default harness
   if (!command) {
-    const { harness, remainingArgs } = resolveHarness([]);
-    await launchAgent(harness, remainingArgs);
+    const { harness, claudeMode, remainingArgs } = resolveHarness([]);
+    await launchAgent(harness, claudeMode, remainingArgs);
     return;
   }
 
@@ -269,8 +336,8 @@ async function main(): Promise<void> {
   }
 
   // Everything else → pass through to a harness with identity.
-  const { harness, remainingArgs } = resolveHarness(args);
-  await launchAgent(harness, remainingArgs);
+  const { harness, claudeMode, remainingArgs } = resolveHarness(args);
+  await launchAgent(harness, claudeMode, remainingArgs);
 }
 
 main().catch((error) => {
