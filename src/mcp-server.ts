@@ -952,6 +952,235 @@ server.registerTool("decompose_goal", {
   };
 });
 
+// ---------------------------------------------------------------------------
+// Campaign tools (TK-080)
+// ---------------------------------------------------------------------------
+
+// Tool: start_campaign — init a campaign and run the orchestrator detached
+server.registerTool("start_campaign", {
+  description:
+    "Start a new campaign: create the campaign directory, git worktree, and spawn the " +
+    "orchestrator loop as a detached background process. Returns the campaign ID and state " +
+    "path immediately — the orchestrator runs autonomously until terminal. " +
+    "Use for multi-iteration, long-horizon work that should proceed unattended.",
+  inputSchema: {
+    goal: z.string().describe("The campaign's prime directive — what it should achieve."),
+    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
+    worktree: z.string().optional().describe("Existing worktree path to use instead of creating a new one."),
+    soft_tokens: z.number().optional().describe("Per-iteration soft token cap. Default 50000."),
+    soft_walltime: z.number().optional().describe("Per-iteration soft walltime in ms. Default 25 minutes."),
+    max_iterations: z.number().optional().describe("Max iterations before campaign terminates. Default 12."),
+    max_cost_usd: z.number().optional().describe("Max total campaign cost in USD. Default 40."),
+  },
+}, async ({ goal, project, worktree, soft_tokens, soft_walltime, max_iterations, max_cost_usd }) => {
+  const { initCampaign } = await import("./lib/campaign/state");
+  const { spawn } = await import("node:child_process");
+
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd();
+
+  if (!projectId) {
+    return {
+      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
+      isError: true,
+    };
+  }
+
+  // Resolve project repo path
+  const projectDir = join(paths.projectsDir, projectId);
+  const configPath = join(projectDir, "config.md");
+  if (!existsSync(configPath)) {
+    return {
+      content: [{ type: "text" as const, text: `Project '${projectId}' is not registered.` }],
+      isError: true,
+    };
+  }
+
+  const configContent = await Bun.file(configPath).text();
+  const parsed = parseFrontmatter(configContent);
+  const repoPath = (parsed.attributes?.path as string) ?? null;
+
+  if (!repoPath || !existsSync(repoPath)) {
+    return {
+      content: [{ type: "text" as const, text: `Project '${projectId}' has no valid repo path.` }],
+      isError: true,
+    };
+  }
+
+  // Init campaign state directory + worktree
+  let campaignId: string;
+  try {
+    campaignId = await initCampaign({ goal, repoPath, hiveHome: paths.home });
+  } catch (err) {
+    return {
+      content: [{ type: "text" as const, text: `Failed to initialize campaign: ${err instanceof Error ? err.message : String(err)}` }],
+      isError: true,
+    };
+  }
+
+  const statePath = join(paths.home, "campaigns", campaignId);
+
+  // Spawn the orchestrator detached
+  const runnerPath = join(dirname(import.meta.dir), "src", "lib", "campaign", "run-detached.ts");
+  const optsPayload = JSON.stringify({
+    soft_tokens: soft_tokens ?? undefined,
+    soft_walltime: soft_walltime ?? undefined,
+    max_iterations: max_iterations ?? undefined,
+    max_cost_usd: max_cost_usd ?? undefined,
+  });
+
+  const logPath = join(statePath, "orchestrator.log");
+  const { openSync } = await import("node:fs");
+  const logFd = openSync(logPath, "a");
+
+  const child = spawn("bun", ["run", runnerPath, campaignId, optsPayload], {
+    cwd: repoPath,
+    detached: true,
+    stdio: ["ignore", logFd, logFd],
+    env: { ...process.env, ANTHROPIC_API_KEY: undefined },
+  });
+
+  child.unref();
+
+  // Write PID for later management
+  await Bun.write(join(statePath, "pid"), String(child.pid));
+
+  return {
+    content: [{
+      type: "text" as const,
+      text: `Campaign started: ${campaignId}\nState: ${statePath}\nPID: ${child.pid}\nGoal: ${goal.slice(0, 120)}`,
+    }],
+    structuredContent: {
+      campaign_id: campaignId,
+      state_path: statePath,
+      pid: child.pid,
+    },
+  };
+});
+
+// Tool: show_campaign — structured data about a single campaign
+server.registerTool("show_campaign", {
+  description:
+    "Show structured data about a campaign — goal, status, iteration count, latest checkpoint, " +
+    "scorecard rows, and total cost. Returns structured JSON so callers can render their own way.",
+  inputSchema: {
+    campaign_id: z.string().describe("Campaign ID (e.g. 'CAMP-001')."),
+  },
+}, async ({ campaign_id }) => {
+  const { readCampaignState, readScorecard } = await import("./lib/campaign/state");
+  const paths = getHivePaths();
+
+  const state = await readCampaignState(campaign_id, paths.home);
+  if (!state) {
+    return {
+      content: [{ type: "text" as const, text: `Campaign not found: ${campaign_id}` }],
+      isError: true,
+    };
+  }
+
+  const scorecard = await readScorecard(campaign_id, paths.home);
+  const totalCostUsd = scorecard.reduce((sum, row) => sum + row.cost_usd, 0);
+  const totalTokens = scorecard.reduce((sum, row) => sum + row.tokens_used, 0);
+
+  // Build structured response
+  const data = {
+    campaign_id,
+    goal: state.frozenPrefix ?? "(no frozen prefix)",
+    status: state.status,
+    iteration_count: state.iterationCount,
+    latest_checkpoint: state.checkpoint,
+    scorecard_rows: scorecard,
+    total_cost_usd: Math.round(totalCostUsd * 1_000_000) / 1_000_000,
+    total_tokens: totalTokens,
+    current_plan: state.plan,
+  };
+
+  // Text representation for display
+  const lines: string[] = [];
+  lines.push(`# Campaign ${campaign_id}`);
+  lines.push(`**Status:** ${state.status}`);
+  lines.push(`**Iterations:** ${state.iterationCount}`);
+  lines.push(`**Cost:** $${data.total_cost_usd.toFixed(4)}`);
+  lines.push(`**Tokens:** ${totalTokens.toLocaleString()}`);
+  lines.push("");
+  lines.push(`## Goal`);
+  lines.push(state.frozenPrefix ?? "(none)");
+  if (state.plan) {
+    lines.push("");
+    lines.push(`## Current Plan`);
+    lines.push(state.plan);
+  }
+  if (state.checkpoint) {
+    lines.push("");
+    lines.push(`## Latest Checkpoint`);
+    lines.push(state.checkpoint);
+  }
+  if (scorecard.length > 0) {
+    lines.push("");
+    lines.push(`## Scorecard (${scorecard.length} rows)`);
+    for (const row of scorecard) {
+      lines.push(`- Iter ${row.iteration_n}: ${row.exit_reason} → ${row.judge_decision} (${row.tokens_used} tok, $${row.cost_usd.toFixed(4)})`);
+    }
+  }
+
+  return {
+    content: [{ type: "text" as const, text: lines.join("\n") }],
+    structuredContent: data,
+  };
+});
+
+// Tool: list_campaigns — list all campaigns with optional status filter
+server.registerTool("list_campaigns", {
+  description:
+    "List all campaigns, optionally filtered by status. Returns an array of campaign summaries.",
+  inputSchema: {
+    status: z.enum(["running", "paused", "done", "aborted", "budget-exhausted"]).optional()
+      .describe("Filter campaigns by status."),
+  },
+}, async ({ status }) => {
+  const { listCampaigns, readCampaignState } = await import("./lib/campaign/state");
+  const paths = getHivePaths();
+
+  const ids = await listCampaigns(paths.home);
+
+  if (ids.length === 0) {
+    return { content: [{ type: "text" as const, text: "No campaigns found." }] };
+  }
+
+  const summaries: Array<{
+    campaign_id: string;
+    goal: string;
+    status: string;
+    iteration_count: number;
+  }> = [];
+
+  for (const id of ids) {
+    const state = await readCampaignState(id, paths.home);
+    if (!state) continue;
+    if (status && state.status !== status) continue;
+
+    summaries.push({
+      campaign_id: id,
+      goal: (state.frozenPrefix ?? "").split("\n")[0]?.slice(0, 100) ?? "",
+      status: state.status,
+      iteration_count: state.iterationCount,
+    });
+  }
+
+  if (summaries.length === 0) {
+    return { content: [{ type: "text" as const, text: `No campaigns with status '${status}'.` }] };
+  }
+
+  const lines = summaries.map(
+    (s) => `- **${s.campaign_id}** [${s.status}] (${s.iteration_count} iter) — ${s.goal}`,
+  );
+
+  return {
+    content: [{ type: "text" as const, text: `${summaries.length} campaign(s):\n\n${lines.join("\n")}` }],
+    structuredContent: { campaigns: summaries },
+  };
+});
+
 // Start the server
 const transport = new StdioServerTransport();
 await server.connect(transport);
