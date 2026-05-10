@@ -177,6 +177,107 @@ describe("dashboard server end-to-end", () => {
     expect(body).toContain("Runs");
   });
 
+  // --- /runs deep content assertions (TK-091) ---
+
+  test("GET /runs contains active panel + timeline section headers", async () => {
+    // Seed a completed run so the timeline section has content
+    const runDir = join(home, "runs", "RUN-050");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "status"), "complete");
+    await writeFile(join(runDir, "goal.md"), "# Goal\n\nBuild the widget");
+    await writeFile(join(runDir, "output.log"), "done.");
+
+    const res = await fetch(`http://127.0.0.1:${port}/runs`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="section-active-runs"');
+    expect(body).toContain('id="section-terminal-runs"');
+    expect(body).toContain("Active Runs");
+    expect(body).toContain("Run History");
+  });
+
+  test("GET /runs with empty fixture renders both empty states", async () => {
+    // No runs, no campaigns seeded — scaffold only
+    const res = await fetch(`http://127.0.0.1:${port}/runs`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("No runs in flight");
+    expect(body).toContain("No completed runs yet");
+    expect(body).toContain('id="section-active-runs"');
+    expect(body).toContain('id="section-terminal-runs"');
+  });
+
+  test("GET /runs/RUN-XXX contains goal text and output.log tail", async () => {
+    const runDir = join(home, "runs", "RUN-042");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "status"), "complete");
+    await writeFile(join(runDir, "goal.md"), "# Goal\n\nRefactor the auth module for clarity");
+    // Write multi-line log to verify tail extraction
+    const logLines = Array.from({ length: 10 }, (_, i) => `[step ${i + 1}] processing...`);
+    logLines.push("All steps complete. Shipped.");
+    await writeFile(join(runDir, "output.log"), logLines.join("\n"));
+
+    const res = await fetch(`http://127.0.0.1:${port}/runs/RUN-042`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    // Goal text rendered
+    expect(body).toContain("Refactor the auth module for clarity");
+    // Log tail section present
+    expect(body).toContain("dispatch-detail-log");
+    expect(body).toContain("log-tail");
+    // Actual log content visible
+    expect(body).toContain("All steps complete. Shipped.");
+    expect(body).toContain("[step 1] processing...");
+    // Section heading
+    expect(body).toContain("Output");
+  });
+
+  test("GET /runs/CAMP-XXX contains scorecard header", async () => {
+    const campDir = join(home, "campaigns", "CAMP-010");
+    await mkdir(campDir, { recursive: true });
+    await writeFile(join(campDir, "status"), "complete");
+    await writeFile(join(campDir, "config.json"), JSON.stringify({ goal: "Run the optimization campaign" }));
+    // Seed a scorecard with one iteration
+    const scorecardRow = {
+      iteration_n: 1,
+      started_at: "2026-05-10T10:00:00Z",
+      ended_at: "2026-05-10T10:30:00Z",
+      exit_reason: "natural",
+      judge_decision: "done",
+      tokens_used: 50000,
+      cost_usd: 0.42,
+    };
+    await writeFile(join(campDir, "scorecard.jsonl"), JSON.stringify(scorecardRow) + "\n");
+
+    const res = await fetch(`http://127.0.0.1:${port}/runs/CAMP-010`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    // Campaign fragment rendered
+    expect(body).toContain("campaign-fragment");
+    expect(body).toContain("Run the optimization campaign");
+    // Scorecard section present
+    expect(body).toContain("Scorecard");
+    expect(body).toContain("scorecard-table");
+    // Scorecard data visible
+    expect(body).toContain("Iter 1");
+    expect(body).toContain("done");
+  });
+
+  test("GET /runs/UNKNOWN-999 returns 404 with styled error, no stack trace", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/runs/UNKNOWN-999`);
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    // Styled 404 page
+    expect(body).toContain("<!DOCTYPE html>");
+    expect(body).toContain("Not Found");
+    // No stack trace leakage
+    expect(body).not.toContain("at Object.");
+    expect(body).not.toContain("at Module.");
+    expect(body).not.toContain("at async ");
+    expect(body).not.toMatch(/\bat \S+\.ts:\d+/);
+    expect(body).not.toContain("Error:");
+  });
+
   // --- No regressions ---
 
   test("GET / still renders (no regression)", async () => {
