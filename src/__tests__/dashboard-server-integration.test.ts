@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -82,6 +82,115 @@ describe("dashboard server end-to-end", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
+  });
+
+  // --- /runs routes (TK-090) ---
+
+  test("GET /runs returns the runs-page document", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/runs`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<!DOCTYPE html>");
+    expect(body).toContain("HIVE · Runs");
+    expect(body).toContain('class="page-nav"');
+    expect(body).toContain("nav-active");
+  });
+
+  test("GET /runs/RUN-999 returns 404 for unknown dispatch", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/runs/RUN-999`);
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).toContain("<!DOCTYPE html>");
+    expect(body).toContain("Not Found");
+    expect(body).toContain("RUN-999");
+    expect(body).toContain("/runs");
+  });
+
+  test("GET /runs/CAMP-999 returns 404 for unknown campaign", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/runs/CAMP-999`);
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).toContain("Not Found");
+    expect(body).toContain("CAMP-999");
+  });
+
+  test("GET /runs/invalid returns 404 for bad ID format", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/runs/invalid`);
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).toContain("Not Found");
+  });
+
+  test("GET /runs/ with empty ID returns 404", async () => {
+    // trailing slash with nothing after it
+    const res = await fetch(`http://127.0.0.1:${port}/runs/`);
+    expect(res.status).toBe(404);
+  });
+
+  test("GET /runs/RUN-001 returns dispatch fragment for known run", async () => {
+    // Seed a fixture run
+    const runDir = join(home, "runs", "RUN-001");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "status"), "complete");
+    await writeFile(join(runDir, "goal.md"), "# Goal\n\nImplement the widget feature");
+    await writeFile(join(runDir, "output.log"), "Starting...\nDone.");
+
+    const res = await fetch(`http://127.0.0.1:${port}/runs/RUN-001`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<!DOCTYPE html>");
+    expect(body).toContain("RUN-001");
+    expect(body).toContain("dispatch-detail");
+    expect(body).toContain("Implement the widget feature");
+  });
+
+  test("GET /runs/CAMP-001 returns campaign fragment for known campaign", async () => {
+    // Seed a fixture campaign
+    const campDir = join(home, "campaigns", "CAMP-001");
+    await mkdir(campDir, { recursive: true });
+    await writeFile(join(campDir, "status"), "running");
+    await writeFile(join(campDir, "config.json"), JSON.stringify({ goal: "Optimize the pipeline" }));
+    await writeFile(join(campDir, "scorecard.jsonl"), "");
+
+    const res = await fetch(`http://127.0.0.1:${port}/runs/CAMP-001`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<!DOCTYPE html>");
+    expect(body).toContain("CAMP-001");
+    expect(body).toContain("campaign-fragment");
+    expect(body).toContain("Optimize the pipeline");
+  });
+
+  // --- Nav link presence ---
+
+  test("/tickets page includes RUNS nav link", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/tickets`);
+    const body = await res.text();
+    expect(body).toContain('href="/runs"');
+    expect(body).toContain("RUNS");
+  });
+
+  test("/ home page includes Runs jump link", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    const body = await res.text();
+    expect(body).toContain('href="/runs"');
+    expect(body).toContain("Runs");
+  });
+
+  // --- No regressions ---
+
+  test("GET / still renders (no regression)", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<!doctype html>");
+  });
+
+  test("GET /tickets still renders (no regression)", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/tickets`);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("HIVE · Tickets");
   });
 
   test("probePort returns true for a listening port", async () => {

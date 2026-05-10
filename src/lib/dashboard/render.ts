@@ -233,6 +233,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     ["#section-runs", "Dispatch"],
     ["#section-archive", "Archive"],
     ["/tickets", "Tickets"],
+    ["/runs", "Runs"],
   ]
     .map(([href, label]) => `<a href="${href}">${label}</a>`)
     .join("");
@@ -686,6 +687,7 @@ export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOpt
     ["DISPATCH", "/#section-dispatch"],
     ["ARCHIVE", "/#section-archive"],
     ["TICKETS", "/tickets"],
+    ["RUNS", "/runs"],
   ];
   const nav = navItems
     .map(([label, href]) => {

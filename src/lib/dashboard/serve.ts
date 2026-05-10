@@ -5,6 +5,9 @@
  *
  * Routes:
  *   GET  /                      → full interactive dashboard
+ *   GET  /tickets               → tickets page
+ *   GET  /runs                  → runs index (active panel + terminal timeline)
+ *   GET  /runs/:id              → per-run fragment (dispatch or campaign)
  *   GET  /archive/:date         → frozen HTML snapshot for a day
  *   GET  /fragment/:name        → one section, fresh data, for optimistic swap
  *   POST /action/:kind/:verb    → run an action, return { ok, message }
@@ -40,6 +43,13 @@ import {
 import { resolveHiveBin, HiveBinNotFoundError } from "./hive-bin";
 import { renderDashboard, renderTicketsPageDocument } from "./render";
 import { collectDashboardData, collectTicketsPage } from "./collect";
+import { collectRuns } from "./runs/collect";
+import { renderRunsPageDocument } from "./runs/render";
+import { collectDispatchDetail } from "./runs/collect-detail";
+import { renderDispatchFragment } from "./render-dispatch";
+import { collectCampaignFragment } from "./runs/collect-campaign";
+import { renderCampaignFragment } from "./runs/campaign-fragment";
+import { DASHBOARD_CSS } from "./styles";
 import {
   archivePathForDate,
   isValidArchiveDate,
@@ -112,6 +122,12 @@ export async function handleRequest(req: Request, rctx: RequestCtx): Promise<Res
     if (req.method === "GET" && url.pathname === "/tickets") {
       return serveTicketsPage(rctx);
     }
+    if (req.method === "GET" && url.pathname === "/runs") {
+      return serveRunsPage(rctx);
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/runs/")) {
+      return serveRunDetail(rctx, url.pathname.slice("/runs/".length));
+    }
     if (req.method === "GET" && url.pathname.startsWith("/archive/")) {
       return serveArchive(rctx, url.pathname.slice("/archive/".length));
     }
@@ -152,6 +168,45 @@ async function serveTicketsPage(rctx: RequestCtx): Promise<Response> {
       "cache-control": "no-store",
     },
   });
+}
+
+async function serveRunsPage(rctx: RequestCtx): Promise<Response> {
+  const data = await collectRuns(rctx.paths);
+  const html = renderRunsPageDocument(data, { interactive: true });
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function serveRunDetail(rctx: RequestCtx, id: string): Promise<Response> {
+  // Validate ID format
+  if (!id || (!id.startsWith("RUN-") && !id.startsWith("CAMP-"))) {
+    return htmlResponse(render404(id), 404);
+  }
+
+  let fragmentHtml: string | null = null;
+
+  if (id.startsWith("RUN-")) {
+    const detail = await collectDispatchDetail(rctx.paths, id, { skipGit: true });
+    if (detail) {
+      fragmentHtml = renderDispatchFragment(detail);
+    }
+  } else if (id.startsWith("CAMP-")) {
+    const data = await collectCampaignFragment(id, rctx.paths);
+    if (data) {
+      fragmentHtml = renderCampaignFragment(data);
+    }
+  }
+
+  if (!fragmentHtml) {
+    return htmlResponse(render404(id), 404);
+  }
+
+  const html = renderRunDetailDocument(id, fragmentHtml);
+  return htmlResponse(html, 200);
 }
 
 async function serveArchive(rctx: RequestCtx, date: string): Promise<Response> {
@@ -311,6 +366,103 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+function htmlResponse(html: string, status = 200): Response {
+  return new Response(html, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Broadsheet-styled 404 page for unknown run IDs. */
+function render404(id: string): string {
+  const navItems: Array<[string, string]> = [
+    ["BRIEFING", "/"],
+    ["TICKETS", "/tickets"],
+    ["RUNS", "/runs"],
+  ];
+  const nav = navItems
+    .map(([label, href]) => `<a href="${href}">${label}</a>`)
+    .join(' <span class="nav-sep">·</span> ');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>HIVE · Not Found</title>
+<style>${DASHBOARD_CSS}</style>
+</head>
+<body>
+<div class="page page-wide">
+  <nav class="page-nav">${nav}</nav>
+  <header class="masthead">
+    <h1>HIVE</h1>
+    <div class="dateline"><span>404 — Not Found</span></div>
+  </header>
+  <section class="section">
+    <hr class="amber"/>
+    <p class="error-message">No run found for <code class="mono">${escapeHtml(id || "(empty)")}</code>.</p>
+    <p><a href="/runs">← Back to runs</a></p>
+  </section>
+</div>
+</body>
+</html>`;
+}
+
+/** Wrap a per-run fragment in a full HTML document shell. */
+function renderRunDetailDocument(id: string, fragmentHtml: string): string {
+  const navItems: Array<[string, string]> = [
+    ["BRIEFING", "/"],
+    ["PROJECTS", "/#section-projects"],
+    ["INBOX", "/#section-inboxes"],
+    ["REFLECTIONS", "/#section-reflections"],
+    ["DISPATCH", "/#section-dispatch"],
+    ["ARCHIVE", "/#section-archive"],
+    ["TICKETS", "/tickets"],
+    ["RUNS", "/runs"],
+  ];
+  const nav = navItems
+    .map(([label, href]) => {
+      const active = href === "/runs" ? ' class="nav-active"' : "";
+      return `<a href="${href}"${active}>${label}</a>`;
+    })
+    .join(' <span class="nav-sep">·</span> ');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>HIVE · ${escapeHtml(id)}</title>
+<style>${DASHBOARD_CSS}</style>
+</head>
+<body>
+<div class="page page-wide">
+  <nav class="page-nav">${nav}</nav>
+  <header class="masthead">
+    <h1>HIVE</h1>
+    <div class="dateline">
+      <span>${escapeHtml(id)}</span>
+      <span class="sep">·</span>
+      <span><a href="/runs">← All Runs</a></span>
+    </div>
+  </header>
+  ${fragmentHtml}
+</div>
+</body>
+</html>`;
 }
 
 async function safeReadJson(req: Request): Promise<any | null> {
