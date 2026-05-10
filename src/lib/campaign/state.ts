@@ -321,6 +321,69 @@ export async function writeStatus(
 }
 
 // ---------------------------------------------------------------------------
+// Stale-status detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a campaign's PID is still alive.
+ * Returns true if the process exists, false if it's gone.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // signal 0 = existence check, no actual signal
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detect and fix stale "running" status.
+ *
+ * If a campaign says "running" but its PID is dead and no result.txt exists,
+ * the orchestrator crashed without a clean exit. Mark it "aborted" so the
+ * dashboard and CLI show the truth.
+ *
+ * Returns the corrected status, or the original if no correction needed.
+ */
+export async function detectAndFixStaleStatus(
+  id: string,
+  hiveHome?: string,
+): Promise<CampaignStatus | null> {
+  const status = await readStatus(id, hiveHome);
+  if (status !== "running") return status;
+
+  const dir = campaignDir(id, hiveHome);
+
+  // Read PID
+  let pid: number | null = null;
+  try {
+    const raw = await readFile(join(dir, "pid"), "utf-8");
+    pid = parseInt(raw.trim(), 10);
+    if (isNaN(pid)) pid = null;
+  } catch {
+    // No PID file — can't check liveness. Leave status as-is.
+    return status;
+  }
+
+  if (pid === null) return status;
+
+  // If process is alive, status is accurate
+  if (isProcessAlive(pid)) return status;
+
+  // Process is dead — check if result.txt exists (clean exit writes this)
+  if (existsSync(join(dir, "result.txt"))) {
+    // Orchestrator finished but status wasn't updated (shouldn't happen, but be safe)
+    await writeStatus(id, "done", hiveHome);
+    return "done";
+  }
+
+  // Dead process, no result.txt → aborted
+  await writeStatus(id, "aborted", hiveHome);
+  return "aborted";
+}
+
+// ---------------------------------------------------------------------------
 // Iterations
 // ---------------------------------------------------------------------------
 
@@ -367,7 +430,8 @@ export async function readCampaignState(
   const dir = campaignDir(id, hiveHome);
   if (!existsSync(dir)) return null;
 
-  const status = await readStatus(id, hiveHome);
+  // Auto-correct stale "running" status before returning state
+  const status = await detectAndFixStaleStatus(id, hiveHome);
   if (!status) return null;
 
   const frozenPrefix = await readFrozenPrefix(id, hiveHome);

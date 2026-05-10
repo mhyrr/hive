@@ -22,6 +22,7 @@ import {
   readCampaignState,
   teardownWorktree,
   listCampaigns,
+  detectAndFixStaleStatus,
   type ScorecardRow,
   type CampaignState,
 } from "../lib/campaign/state";
@@ -394,5 +395,74 @@ describe("listCampaigns", () => {
 
     const list = await listCampaigns(hiveHome);
     expect(list).toEqual(["CAMP-001", "CAMP-002"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stale-status detection
+// ---------------------------------------------------------------------------
+
+describe("detectAndFixStaleStatus", () => {
+  test("returns non-running status unchanged", async () => {
+    const id = await initCampaign({ goal: "Done campaign", repoPath, hiveHome });
+    await writeStatus(id, "done", hiveHome);
+
+    const status = await detectAndFixStaleStatus(id, hiveHome);
+    expect(status).toBe("done");
+  });
+
+  test("returns 'running' when PID is still alive", async () => {
+    const id = await initCampaign({ goal: "Running campaign", repoPath, hiveHome });
+    // Write our own PID (which is obviously alive)
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), String(process.pid));
+
+    const status = await detectAndFixStaleStatus(id, hiveHome);
+    expect(status).toBe("running");
+  });
+
+  test("marks 'aborted' when PID is dead and no result.txt", async () => {
+    const id = await initCampaign({ goal: "Dead campaign", repoPath, hiveHome });
+    // Use a PID that's almost certainly not alive (max int)
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "999999999");
+
+    const status = await detectAndFixStaleStatus(id, hiveHome);
+    expect(status).toBe("aborted");
+
+    // Verify it actually wrote the corrected status
+    const onDisk = await readStatus(id, hiveHome);
+    expect(onDisk).toBe("aborted");
+  });
+
+  test("marks 'done' when PID is dead but result.txt exists", async () => {
+    const id = await initCampaign({ goal: "Finished campaign", repoPath, hiveHome });
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "999999999");
+    await wf(join(hiveHome, "campaigns", id, "result.txt"), "Campaign finished normally");
+
+    const status = await detectAndFixStaleStatus(id, hiveHome);
+    expect(status).toBe("done");
+
+    const onDisk = await readStatus(id, hiveHome);
+    expect(onDisk).toBe("done");
+  });
+
+  test("returns 'running' when no PID file exists", async () => {
+    const id = await initCampaign({ goal: "No pid", repoPath, hiveHome });
+    // Don't write a PID file — detectAndFixStaleStatus can't check liveness
+
+    const status = await detectAndFixStaleStatus(id, hiveHome);
+    expect(status).toBe("running");
+  });
+
+  test("readCampaignState auto-corrects stale status", async () => {
+    const id = await initCampaign({ goal: "Stale state", repoPath, hiveHome });
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "999999999");
+
+    const state = await readCampaignState(id, hiveHome);
+    expect(state).not.toBeNull();
+    expect(state!.status).toBe("aborted");
   });
 });

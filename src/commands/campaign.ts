@@ -7,7 +7,7 @@
  *   show <id>    — print frozen prefix, plan, scorecard table
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, openSync, closeSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -19,9 +19,9 @@ import {
   initCampaign,
   readCampaignState,
   listCampaigns,
-  readStatus,
   readScorecard,
   readFrozenPrefix,
+  detectAndFixStaleStatus,
   type CampaignStatus,
   type ScorecardRow,
 } from "../lib/campaign/state";
@@ -215,12 +215,15 @@ async function runSubcommand(args: string[]): Promise<void> {
   await Bun.write(join(campaignDir, "config.json"), JSON.stringify(config, null, 2));
 
   // Spawn the orchestrator as a detached background process.
-  // The orchestrator script reads config.json and drives the campaign loop.
+  // Redirect stdout/stderr to orchestrator.log so crashes are inspectable.
   const orchestratorScript = join(import.meta.dir, "..", "lib", "campaign", "run-orchestrator.ts");
+  const logPath = join(campaignDir, "orchestrator.log");
+  const logFd = openSync(logPath, "a");
+
   const child = spawn("bun", ["run", orchestratorScript, campaignId], {
     cwd: projectPath,
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     env: {
       ...process.env,
       ANTHROPIC_API_KEY: undefined, // force subscription OAuth
@@ -229,6 +232,7 @@ async function runSubcommand(args: string[]): Promise<void> {
   });
 
   child.unref();
+  closeSync(logFd);
   await Bun.write(join(campaignDir, "pid"), String(child.pid));
 
   console.log(`Campaign ${campaignId} started (${projectId})`);
@@ -274,7 +278,7 @@ async function listSubcommand(args: string[]): Promise<void> {
   }> = [];
 
   for (const id of campaigns) {
-    const status = await readStatus(id);
+    const status = await detectAndFixStaleStatus(id);
     if (!status) continue;
     if (statusFilter && status !== statusFilter) continue;
 
