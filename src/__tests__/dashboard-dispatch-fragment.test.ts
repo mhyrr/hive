@@ -150,10 +150,11 @@ describe("renderDispatchFragment", () => {
 
   // ------ Ticket link ------
 
-  test("shows ticket ID when present", () => {
+  test("shows ticket ID when present, linking to /tickets#TK-NNN", () => {
     const html = renderDispatchFragment(shippedFixture());
     expect(html).toContain("TK-074");
     expect(html).toContain("dispatch-detail-ticket");
+    expect(html).toContain('href="/tickets#TK-074"');
   });
 
   test("omits ticket link when absent", () => {

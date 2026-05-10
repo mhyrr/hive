@@ -268,3 +268,80 @@ describe("renderTicketsPageDocument", () => {
     expect(html).toContain('<a href="/">BRIEFING</a>');
   });
 });
+
+// ---------------------------------------------------------------------------
+// TK-092: Cross-link tickets ↔ runs
+// ---------------------------------------------------------------------------
+
+describe("ticket ↔ run cross-linking", () => {
+  async function createFakeRun(id: string, ticketId: string, status: string): Promise<void> {
+    const runDir = join(paths.runsDir, id);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "goal.md"), `# Goal\n\nImplement ticket ${ticketId}\n`);
+    await writeFile(join(runDir, "status"), status);
+  }
+
+  test("ticket with 2+ runs shows linked run IDs and statuses", async () => {
+    await registerProject("alpha");
+    const tk = await createTicket(paths, "alpha", { title: "Build feature", type: "task" });
+
+    await createFakeRun("RUN-050", tk.id, "complete");
+    await createFakeRun("RUN-051", tk.id, "failed");
+
+    const data = await collectTicketsPage(paths);
+    const html = renderTicketsPage(data, ctx);
+
+    // Should contain the runs line
+    expect(html).toContain("card-runs");
+    expect(html).toContain("Runs:");
+    // Each run linked to /runs/<id>
+    expect(html).toContain('href="/runs/RUN-050"');
+    expect(html).toContain('href="/runs/RUN-051"');
+    // Status shown
+    expect(html).toContain("(shipped)");
+    expect(html).toContain("(failed)");
+  });
+
+  test("ticket with zero runs shows no Runs line", async () => {
+    await registerProject("alpha");
+    await createTicket(paths, "alpha", { title: "Lonely ticket", type: "task" });
+
+    const data = await collectTicketsPage(paths);
+    const html = renderTicketsPage(data, ctx);
+
+    expect(html).not.toContain("card-runs");
+    expect(html).not.toContain("Runs:");
+  });
+
+  test("collectTicketsPage attaches RunRef[] to citations", async () => {
+    await registerProject("beta");
+    const tk = await createTicket(paths, "beta", { title: "Wire API", type: "feature" });
+
+    await createFakeRun("RUN-060", tk.id, "complete");
+    await createFakeRun("RUN-061", tk.id, "partial");
+
+    const data = await collectTicketsPage(paths);
+
+    // Find the citation in the standalone bucket (it's not under an epic)
+    const all = [...data.standalone.ready, ...data.standalone.inProgress, ...data.standalone.blocked];
+    const citation = all.find((c) => c.id === tk.id);
+    expect(citation).toBeDefined();
+    expect(citation!.runs).toBeDefined();
+    expect(citation!.runs!.length).toBe(2);
+    expect(citation!.runs!.map((r) => r.id).sort()).toEqual(["RUN-060", "RUN-061"]);
+  });
+
+  test("run that targets a different ticket does not appear on unrelated ticket", async () => {
+    await registerProject("alpha");
+    const tk1 = await createTicket(paths, "alpha", { title: "First", type: "task" });
+    const tk2 = await createTicket(paths, "alpha", { title: "Second", type: "task" });
+
+    await createFakeRun("RUN-070", tk1.id, "complete");
+
+    const data = await collectTicketsPage(paths);
+    const all = [...data.standalone.ready, ...data.standalone.inProgress, ...data.standalone.blocked];
+    const citation2 = all.find((c) => c.id === tk2.id);
+    expect(citation2).toBeDefined();
+    expect(citation2!.runs).toBeUndefined();
+  });
+});

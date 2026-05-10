@@ -129,7 +129,7 @@ function renderHeader(run: DispatchDetail): string {
   const statusLabel = STATUS_LABELS[run.status] ?? run.status;
   const statusClass = STATUS_CLASSES[run.status] ?? "";
   const ticketLink = run.ticketId
-    ? ` <span class="dispatch-detail-ticket">${escapeHtml(run.ticketId)}</span>`
+    ? ` <a href="/tickets#${escapeHtml(run.ticketId)}" class="dispatch-detail-ticket">${escapeHtml(run.ticketId)}</a>`
     : "";
 
   const branchBlock = run.worktreeBranch

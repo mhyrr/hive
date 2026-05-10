@@ -765,6 +765,29 @@ table.ledger td.path { color: var(--muted); font-family: var(--mono); font-size:
   font-style: italic;
 }
 
+.ticket-card .card-runs {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.ticket-card .card-runs-label {
+  font-weight: 600;
+  color: var(--ink-soft, var(--ink));
+}
+.ticket-card .card-runs .run-link {
+  color: var(--amber);
+  text-decoration: none;
+}
+.ticket-card .card-runs .run-link:hover {
+  text-decoration: underline;
+}
+.ticket-card .card-runs .run-link .run-link-status { color: var(--muted); }
+.ticket-card .card-runs .run-link.run-status-shipped .run-link-status { color: #3a7d44; }
+.ticket-card .card-runs .run-link.run-status-failed .run-link-status,
+.ticket-card .card-runs .run-link.run-status-crashed .run-link-status { color: var(--rust); }
+.ticket-card .card-runs .run-link.run-status-running .run-link-status { color: var(--amber); }
+
 /* Expanded inline detail */
 .ticket-card .card-body {
   margin-top: 10px;
