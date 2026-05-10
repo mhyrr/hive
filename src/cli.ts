@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 
+import { campaignCommand } from "./commands/campaign";
 import { councilCommand } from "./commands/council";
 import { dashboardCommand } from "./commands/dashboard";
 import { dispatchCommand } from "./commands/dispatch";
@@ -31,6 +32,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   doctor: doctorCommand,
   project: projectCommand,
   stack: stackCommand,
+  campaign: campaignCommand,
   council: councilCommand,
   memory: memoryCommand,
   ticket: ticketCommand,
@@ -61,6 +63,7 @@ HIVE Commands:
   memory [view|fact|...]     View or add project memory
   ticket [create|list|...]   Project ticket tracker
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
+  campaign run|list|show     Long-horizon campaign orchestration
   dispatch "<goal>" [opts]   Dispatch autonomous goal execution
   heartbeat start|stop|...   Periodic project awareness
   identity emit              Print canonical identity prefix (used by SessionStart hook)
