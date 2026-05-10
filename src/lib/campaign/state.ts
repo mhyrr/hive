@@ -9,6 +9,7 @@
  *
  *   ~/.hive/campaigns/CAMP-001/
  *     frozen-prefix.md    # byte-stable: prime directive + scope fence + scorecard schema
+ *     goal.md             # raw user-supplied goal text (editable without busting cache)
  *     plan.md             # mutable: current decomposition
  *     checkpoint.md       # latest iteration handoff (replaced each iteration)
  *     scorecard.jsonl     # append-only, one row per iteration
@@ -26,6 +27,7 @@ import { execSync } from "node:child_process";
 
 import { resolveHiveHome } from "../paths";
 import { toIsoTimestamp } from "../time";
+import { buildFrozenPrefix } from "./frozen-prefix";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,6 +79,7 @@ export type CampaignState = {
   workspacePath: string;
   status: CampaignStatus;
   frozenPrefix: string | null;
+  goal: string | null;
   plan: string | null;
   checkpoint: string | null;
   scorecard: ScorecardRow[];
@@ -148,8 +151,12 @@ export async function initCampaign(opts: InitCampaignOpts): Promise<string> {
   // Write initial status
   await writeFile(join(dir, "status"), "running", "utf-8");
 
-  // Write the frozen prefix (prime directive) — this is the initial write
-  await writeFile(join(dir, "frozen-prefix.md"), goal, "utf-8");
+  // Write the raw goal separately (editable without busting cache)
+  await writeFile(join(dir, "goal.md"), goal, "utf-8");
+
+  // Write the frozen prefix — byte-stable, composed in code
+  const prefix = buildFrozenPrefix(goal);
+  await writeFile(join(dir, "frozen-prefix.md"), prefix, "utf-8");
 
   return id;
 }
@@ -189,6 +196,37 @@ export async function readFrozenPrefix(
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Goal (raw user-supplied text, separate from frozen prefix)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the raw goal text. Returns null if not present.
+ */
+export async function readGoal(
+  id: string,
+  hiveHome?: string,
+): Promise<string | null> {
+  const path = join(campaignDir(id, hiveHome), "goal.md");
+  try {
+    return await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the raw goal text.
+ */
+export async function writeGoal(
+  id: string,
+  body: string,
+  hiveHome?: string,
+): Promise<void> {
+  const path = join(campaignDir(id, hiveHome), "goal.md");
+  await writeFile(path, body, "utf-8");
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +409,7 @@ export async function readCampaignState(
   if (!status) return null;
 
   const frozenPrefix = await readFrozenPrefix(id, hiveHome);
+  const goal = await readGoal(id, hiveHome);
   const plan = await latestPlan(id, hiveHome);
   const checkpoint = await readCheckpoint(id, hiveHome);
   const scorecard = await readScorecard(id, hiveHome);
@@ -385,6 +424,7 @@ export async function readCampaignState(
     workspacePath: join(dir, "workspace"),
     status,
     frozenPrefix,
+    goal,
     plan,
     checkpoint,
     scorecard,

@@ -71,10 +71,11 @@ export interface RunIterationOpts {
  * Build the executor prompt for a single iteration.
  *
  * Structure:
- * 1. Frozen prefix (prime directive + scope fence)
- * 2. Current plan
- * 3. Previous checkpoint (if any)
- * 4. Iteration instructions (including soft-cap sentinel check)
+ * 1. Goal (raw user-supplied text)
+ * 2. Scope fence (extracted from frozen prefix, or inline default)
+ * 3. Current plan
+ * 4. Previous checkpoint (if any)
+ * 5. Iteration instructions (including soft-cap sentinel check)
  */
 export function buildExecutorPrompt(
   state: CampaignState,
@@ -83,9 +84,20 @@ export function buildExecutorPrompt(
 ): string {
   const sections: string[] = [];
 
-  // Frozen prefix (prime directive)
-  if (state.frozenPrefix) {
-    sections.push(`# Prime Directive\n\n${state.frozenPrefix}`);
+  // Goal text — prefer the separate goal field, fall back to frozenPrefix for legacy
+  const goalText = state.goal ?? state.frozenPrefix;
+  if (goalText) {
+    sections.push(`# Goal\n\n${goalText}`);
+  }
+
+  // Scope fence — extracted from the structured frozen prefix if available
+  if (state.frozenPrefix && state.frozenPrefix.includes("## Scope Fence")) {
+    const fenceStart = state.frozenPrefix.indexOf("## Scope Fence");
+    const fenceEnd = state.frozenPrefix.indexOf("\n## ", fenceStart + 1);
+    const fence = fenceEnd > -1
+      ? state.frozenPrefix.slice(fenceStart, fenceEnd).trim()
+      : state.frozenPrefix.slice(fenceStart).trim();
+    sections.push(`# ${fence.slice(3)}`); // Convert ## Scope Fence to # Scope Fence
   }
 
   // Current plan

@@ -77,7 +77,8 @@ describe("show_campaign data shape", () => {
     const state = await readCampaignState(id, hiveHome);
     expect(state).not.toBeNull();
     expect(state!.status).toBe("running");
-    expect(state!.frozenPrefix).toBe("Build the widget");
+    expect(state!.frozenPrefix).toContain("Build the widget");
+    expect(state!.goal).toBe("Build the widget");
     expect(state!.plan).toBe("Step 1: scaffold\nStep 2: implement");
     expect(state!.checkpoint).toBe("Completed scaffold");
 
@@ -150,7 +151,9 @@ describe("start_campaign prerequisites", () => {
     const state = await readCampaignState(id, hiveHome);
     expect(state).not.toBeNull();
     expect(state!.status).toBe("running");
-    expect(state!.frozenPrefix).toBe("Test goal");
+    expect(state!.frozenPrefix).toContain("Test goal");
+    expect(state!.frozenPrefix).toContain("## Prime Directive");
+    expect(state!.goal).toBe("Test goal");
   });
 
   test("sequential IDs are assigned", async () => {

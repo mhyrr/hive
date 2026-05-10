@@ -23,6 +23,7 @@ function makeState(overrides?: Partial<CampaignState>): CampaignState {
     workspacePath: "/tmp/hive/campaigns/CAMP-001/workspace",
     status: "running",
     frozenPrefix: "Build a REST API for user management with CRUD endpoints and auth.",
+    goal: "Build a REST API for user management with CRUD endpoints and auth.",
     plan: "## Plan\n1. [x] Set up project structure\n2. [ ] Implement user model\n3. [ ] Add auth middleware",
     checkpoint: "Completed project structure. Express app scaffolded with TypeScript. Tests configured.",
     scorecard: [],
@@ -199,10 +200,10 @@ describe("parseVerdict", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildJudgeUserMessage", () => {
-  test("includes prime directive from frozen prefix", () => {
+  test("includes goal text in user message", () => {
     const state = makeState();
     const msg = buildJudgeUserMessage(state, 1);
-    expect(msg).toContain("## Prime Directive");
+    expect(msg).toContain("## Goal");
     expect(msg).toContain("REST API for user management");
   });
 

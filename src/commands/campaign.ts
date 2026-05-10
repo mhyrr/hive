@@ -22,6 +22,7 @@ import {
   readStatus,
   readScorecard,
   readFrozenPrefix,
+  readGoal,
   type CampaignStatus,
   type ScorecardRow,
 } from "../lib/campaign/state";
@@ -279,9 +280,10 @@ async function listSubcommand(args: string[]): Promise<void> {
     if (statusFilter && status !== statusFilter) continue;
 
     const scorecard = await readScorecard(id);
-    const frozenPrefix = await readFrozenPrefix(id);
+    const goal = await readGoal(id);
+    const frozenPrefix = goal ? null : await readFrozenPrefix(id);
     const totalCost = scorecard.reduce((sum, r) => sum + r.cost_usd, 0);
-    const goalLine = (frozenPrefix ?? "").split("\n")[0]?.slice(0, 50) ?? "—";
+    const goalLine = (goal ?? frozenPrefix ?? "").split("\n")[0]?.slice(0, 50) ?? "—";
 
     rows.push({
       id,
@@ -336,12 +338,13 @@ async function showSubcommand(args: string[]): Promise<void> {
   console.log(`# ${id} [${state.status}]`);
   console.log();
 
-  // Frozen prefix (goal)
-  if (state.frozenPrefix) {
+  // Goal (raw user-supplied text)
+  const goalText = state.goal ?? state.frozenPrefix;
+  if (goalText) {
     console.log("## Goal");
     console.log();
-    // Show first few lines of the frozen prefix
-    const lines = state.frozenPrefix.split("\n");
+    // Show first few lines of the goal
+    const lines = goalText.split("\n");
     const preview = lines.slice(0, 5).join("\n");
     console.log(preview);
     if (lines.length > 5) console.log(`  ... (${lines.length - 5} more lines)`);

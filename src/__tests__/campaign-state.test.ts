@@ -114,12 +114,15 @@ describe("initCampaign", () => {
     expect(id3).toBe("CAMP-003");
   });
 
-  test("writes frozen prefix with the goal text", async () => {
+  test("writes frozen prefix with structured content including the goal", async () => {
     const goal = "# Prime Directive\n\nShip the campaign system.";
     const id = await initCampaign({ goal, repoPath, hiveHome });
 
     const prefix = await readFrozenPrefix(id, hiveHome);
-    expect(prefix).toBe(goal);
+    expect(prefix).toContain("## Prime Directive");
+    expect(prefix).toContain("## Scope Fence");
+    expect(prefix).toContain("## Scorecard Schema");
+    expect(prefix).toContain(goal);
   });
 
   test("sets initial status to running", async () => {
@@ -369,7 +372,9 @@ describe("readCampaignState", () => {
     expect(state).not.toBeNull();
     expect(state!.id).toBe(id);
     expect(state!.status).toBe("running");
-    expect(state!.frozenPrefix).toBe("Full state");
+    expect(state!.frozenPrefix).toContain("Full state");
+    expect(state!.frozenPrefix).toContain("## Prime Directive");
+    expect(state!.goal).toBe("Full state");
     expect(state!.plan).toBe("Step 1\nStep 2");
     expect(state!.checkpoint).toBe("Checkpoint data");
     expect(state!.scorecard).toHaveLength(1);

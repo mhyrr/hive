@@ -398,11 +398,14 @@ describe("runCampaign — frozen prefix discipline", () => {
       hiveHome,
     });
 
-    // All iterations saw the same frozen prefix
+    // All iterations saw the same frozen prefix (byte-stable)
     expect(prefixesSeen.length).toBe(3);
-    expect(prefixesSeen[0]).toBe("Frozen prime directive");
-    expect(prefixesSeen[1]).toBe("Frozen prime directive");
-    expect(prefixesSeen[2]).toBe("Frozen prime directive");
+    expect(prefixesSeen[0]).toContain("Frozen prime directive");
+    expect(prefixesSeen[0]).toContain("## Prime Directive");
+    expect(prefixesSeen[0]).toContain("## Scope Fence");
+    // Byte-stable across iterations
+    expect(prefixesSeen[1]).toBe(prefixesSeen[0]);
+    expect(prefixesSeen[2]).toBe(prefixesSeen[0]);
   });
 });
 

@@ -57,9 +57,12 @@ export const SCORECARD_TAIL_COUNT = 5;
 // ---------------------------------------------------------------------------
 
 /**
- * The system prompt for the judge. This is the frozen prefix — it MUST remain
- * byte-stable across iterations within a campaign so that Anthropic's prompt
- * caching can kick in. All dynamic content goes in the user message.
+ * Legacy system prompt constant — kept for backward compatibility in tests
+ * that reference it directly. New campaigns use state.frozenPrefix (from
+ * buildFrozenPrefix) as the system prompt, which contains the prime directive,
+ * scope fence, and scorecard schema in a single byte-stable document.
+ *
+ * @deprecated Use state.frozenPrefix from buildFrozenPrefix() instead.
  */
 export const JUDGE_SYSTEM_PROMPT = `You are a campaign judge — a stateless evaluator that assesses iteration progress against a frozen prime directive.
 
@@ -93,8 +96,30 @@ You MUST respond with ONLY a JSON object matching this exact schema:
 5. Base your assessment on evidence: commits, test results, checkpoint content. Not optimism.`;
 
 /**
+ * Resolve the system prompt for the judge call.
+ *
+ * If the campaign has a proper frozen prefix (from buildFrozenPrefix), use it.
+ * This is the byte-stable document that enables prompt caching — it contains
+ * the prime directive, scope fence, and scorecard schema all in one.
+ *
+ * Falls back to JUDGE_SYSTEM_PROMPT for campaigns created before this change.
+ */
+export function resolveJudgeSystemPrompt(state: CampaignState): string {
+  // New-style: frozenPrefix contains structured content (starts with # Campaign Frozen Prefix)
+  if (state.frozenPrefix && state.frozenPrefix.startsWith("# Campaign Frozen Prefix")) {
+    return state.frozenPrefix;
+  }
+  // Legacy: frozenPrefix is just the raw goal text — use the old constant
+  return JUDGE_SYSTEM_PROMPT;
+}
+
+/**
  * Build the user message from campaign state. This is the dynamic part that
  * changes each iteration.
+ *
+ * The goal text (not the full frozen prefix) goes here — the structural content
+ * (prime directive role, scope fence, scorecard schema) lives in the system
+ * prompt via the frozen prefix for cache reuse.
  */
 export function buildJudgeUserMessage(
   state: CampaignState,
@@ -102,9 +127,10 @@ export function buildJudgeUserMessage(
 ): string {
   const sections: string[] = [];
 
-  // Prime directive (from frozen prefix)
-  if (state.frozenPrefix) {
-    sections.push(`## Prime Directive\n\n${state.frozenPrefix}`);
+  // Goal text (raw user-supplied, separate from structural frozen prefix)
+  const goalText = state.goal ?? state.frozenPrefix;
+  if (goalText) {
+    sections.push(`## Goal\n\n${goalText}`);
   }
 
   // Current plan
@@ -211,17 +237,18 @@ export type RunJudgeOpts = {
  * Run the judge: assemble prompt, call LLM, parse verdict.
  * Retries once on parse failure. On second failure, returns a safe default.
  *
- * The system prompt is byte-stable (JUDGE_SYSTEM_PROMPT) — it never changes
- * between iterations, enabling prompt caching on the Anthropic side.
+ * The system prompt is the frozen prefix (byte-stable across iterations),
+ * enabling prompt caching on the Anthropic side.
  */
 export async function runJudge(opts: RunJudgeOpts): Promise<JudgeVerdict> {
   const { state, iterationN, caller, modelId } = opts;
   const model = modelId ?? DEFAULT_JUDGE_MODEL;
+  const systemPrompt = resolveJudgeSystemPrompt(state);
   const userMessage = buildJudgeUserMessage(state, iterationN);
 
   // First attempt
   const firstResponse = await caller({
-    systemPrompt: JUDGE_SYSTEM_PROMPT,
+    systemPrompt,
     userMessage,
     modelId: model,
   });
@@ -235,7 +262,7 @@ export async function runJudge(opts: RunJudgeOpts): Promise<JudgeVerdict> {
   const retryMessage = `${userMessage}\n\n---\n\n## IMPORTANT: Your previous response was not valid JSON matching the required schema. Respond with ONLY a JSON object: {"decision": "continue"|"replan"|"done", "reasoning": "...", "second_opinion": "yes"|"no", "plan_diff": "...if replan..."}`;
 
   const retryResponse = await caller({
-    systemPrompt: JUDGE_SYSTEM_PROMPT,
+    systemPrompt,
     userMessage: retryMessage,
     modelId: model,
   });
