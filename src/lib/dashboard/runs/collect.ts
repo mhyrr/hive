@@ -431,3 +431,43 @@ export async function collectRuns(
 
   return { active, terminal };
 }
+
+// ---------------------------------------------------------------------------
+// Cross-link helper: runs indexed by ticket
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal reference to a run, just enough to render a link + status badge
+ * on a ticket card.
+ */
+export type RunRef = {
+  id: string;
+  status: RunRowStatus;
+};
+
+/**
+ * Build a Map<ticketId, RunRef[]> from a CollectedRuns result.
+ * One pass over active + terminal; only entries with a ticketId are indexed.
+ * Results per ticket are sorted newest-first (by original array order which
+ * is already time-sorted).
+ */
+export function runsByTicket(data: CollectedRuns): Map<string, RunRef[]> {
+  const map = new Map<string, RunRef[]>();
+
+  const index = (row: RunRow) => {
+    if (!row.ticketId) return;
+    const ref: RunRef = { id: row.id, status: row.status };
+    const list = map.get(row.ticketId);
+    if (list) {
+      list.push(ref);
+    } else {
+      map.set(row.ticketId, [ref]);
+    }
+  };
+
+  // Active first (most relevant), then terminal (newest-first already)
+  for (const row of data.active) index(row);
+  for (const row of data.terminal) index(row);
+
+  return map;
+}

@@ -219,6 +219,17 @@ describe("renderRunsPage", () => {
     expect(html).toContain('href="/runs/CAMP-002"');
   });
 
+  test("ticket links point to /tickets#TK-NNN (TK-092)", () => {
+    const data = makeFullFixture();
+    const html = renderRunsPage(data);
+
+    // Active panel ticket link
+    expect(html).toContain('href="/tickets#TK-087"');
+    // Terminal timeline ticket link
+    expect(html).toContain('href="/tickets#TK-085"');
+    expect(html).toContain('href="/tickets#TK-042"');
+  });
+
   test("empty active: shows 'No runs in flight'", () => {
     const data: CollectedRuns = { active: [], terminal: makeTerminalFixture() };
     const html = renderRunsPage(data);

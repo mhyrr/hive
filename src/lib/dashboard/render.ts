@@ -539,6 +539,15 @@ ${rows}
 // standalone block at the top. docs/specs/2026-05-09-tickets-page-design.md
 // ---------------------------------------------------------------------------
 
+function renderRunsLine(runs: TicketCitation["runs"]): string {
+  if (!runs || runs.length === 0) return "";
+  const links = runs.map((r) => {
+    const statusClass = `run-status-${r.status}`;
+    return `<a href="/runs/${escapeHtml(r.id)}" class="run-link ${statusClass}">${escapeHtml(r.id)} <span class="run-link-status">(${escapeHtml(r.status)})</span></a>`;
+  }).join(" ");
+  return `<div class="card-runs"><span class="card-runs-label">Runs:</span> ${links}</div>`;
+}
+
 function renderTicketCard(t: TicketCitation, opts: { showBlockedBy?: boolean } = {}): string {
   const priority = PRIORITY_LABELS[t.priority] ?? "P?";
   const ageLabel = t.ageDays <= 0
@@ -554,6 +563,7 @@ function renderTicketCard(t: TicketCitation, opts: { showBlockedBy?: boolean } =
   const bodyHtml = t.body && t.body.trim()
     ? `<div class="card-body" hidden>${md(t.body)}</div>`
     : "";
+  const runsLine = renderRunsLine(t.runs);
   const tagsLine = t.tags.length > 0
     ? `<div class="card-tags">${t.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>`
     : "";
@@ -568,6 +578,7 @@ function renderTicketCard(t: TicketCitation, opts: { showBlockedBy?: boolean } =
         <span class="card-chevron" aria-hidden="true">+</span>
       </div>
       ${blockedBy}
+      ${runsLine}
     </div>
     ${bodyHtml}
     ${bodyHtml ? tagsLine : ""}

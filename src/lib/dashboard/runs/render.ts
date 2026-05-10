@@ -104,7 +104,7 @@ function renderActivePanel(active: RunRow[]): string {
   const rows = active
     .map((r) => {
       const ticketLink = r.ticketId
-        ? `<a href="/tickets" class="mono">${escapeHtml(r.ticketId)}</a>`
+        ? `<a href="/tickets#${escapeHtml(r.ticketId)}" class="mono">${escapeHtml(r.ticketId)}</a>`
         : `<span class="runs-muted">—</span>`;
       const logLine = r.lastLogLine
         ? escapeHtml(truncate(r.lastLogLine, 120))
@@ -149,7 +149,7 @@ function renderTerminalTimeline(terminal: RunRow[]): string {
     .map((r) => {
       const badgeClass = statusBadgeClass(r.status);
       const ticketCell = r.ticketId
-        ? `<a href="/tickets" class="mono">${escapeHtml(r.ticketId)}</a>`
+        ? `<a href="/tickets#${escapeHtml(r.ticketId)}" class="mono">${escapeHtml(r.ticketId)}</a>`
         : `<span class="runs-muted">—</span>`;
       return `<tr class="timeline-row">
   <td><a href="/runs/${escapeHtml(r.id)}" class="run-id mono">${escapeHtml(r.id)}</a></td>

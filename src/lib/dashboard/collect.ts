@@ -22,6 +22,11 @@ import {
   type MemorySection,
 } from "../memory";
 import { loadUsageSummary, formatUsd } from "../pricing";
+import {
+  collectRuns as collectRunsPage,
+  runsByTicket as buildRunsByTicket,
+  type RunRef as RunsRunRef,
+} from "./runs/collect";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,6 +60,11 @@ export type InboxEntry = {
   isEmpty: boolean;
 };
 
+export type RunRef = {
+  id: string;
+  status: string;
+};
+
 export type TicketCitation = {
   id: string;
   title: string;
@@ -66,6 +76,8 @@ export type TicketCitation = {
   // Optional. Populated by collectTicketsPage so cards can expand inline.
   // Empty / unset for collectors that only need summary citations.
   body?: string;
+  // Optional. Populated by collectTicketsPage from cross-referencing runs.
+  runs?: RunRef[];
 };
 
 export type TicketBuckets = {
@@ -434,11 +446,20 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
   const all: Indexed[] = [];
   const projectsWithTickets = new Set<string>();
 
-  for (const id of projectIds) {
-    const tickets = await listTicketsWithBodies(paths, id).catch(() => []);
-    if (tickets.length > 0) projectsWithTickets.add(id);
-    for (const ticket of tickets) all.push({ projectId: id, ticket });
-  }
+  // Collect tickets and runs in parallel.
+  const [, runsData] = await Promise.all([
+    (async () => {
+      for (const id of projectIds) {
+        const tickets = await listTicketsWithBodies(paths, id).catch(() => []);
+        if (tickets.length > 0) projectsWithTickets.add(id);
+        for (const ticket of tickets) all.push({ projectId: id, ticket });
+      }
+    })(),
+    collectRunsPage(paths, { checkPid: false }),
+  ]);
+
+  // Build runs-by-ticket index for cross-linking.
+  const runsMap = buildRunsByTicket(runsData);
 
   // Open-by-project so the blocked check matches collectTickets' semantics.
   const openByProject = new Map<string, Set<string>>();
@@ -447,16 +468,22 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
     if (ticket.status !== "closed") openByProject.get(projectId)!.add(ticket.id);
   }
 
-  const toCitation = (it: Indexed): TicketCitation => ({
-    id: it.ticket.id,
-    title: it.ticket.title,
-    projectId: it.projectId,
-    priority: it.ticket.priority,
-    tags: it.ticket.tags,
-    depends: it.ticket.depends,
-    ageDays: daysBetween(new Date(it.ticket.created), now),
-    body: it.ticket.body,
-  });
+  const toCitation = (it: Indexed): TicketCitation => {
+    const refs = runsMap.get(it.ticket.id);
+    return {
+      id: it.ticket.id,
+      title: it.ticket.title,
+      projectId: it.projectId,
+      priority: it.ticket.priority,
+      tags: it.ticket.tags,
+      depends: it.ticket.depends,
+      ageDays: daysBetween(new Date(it.ticket.created), now),
+      body: it.ticket.body,
+      runs: refs && refs.length > 0
+        ? refs.map((r) => ({ id: r.id, status: r.status }))
+        : undefined,
+    };
+  };
 
   const bucketize = (items: Indexed[]): TicketBuckets => {
     const ready: TicketCitation[] = [];
