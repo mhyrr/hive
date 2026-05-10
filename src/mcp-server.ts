@@ -1082,10 +1082,11 @@ server.registerTool("show_campaign", {
   const totalCostUsd = scorecard.reduce((sum, row) => sum + row.cost_usd, 0);
   const totalTokens = scorecard.reduce((sum, row) => sum + row.tokens_used, 0);
 
-  // Build structured response
+  // Build structured response — show the raw goal, not the full frozen prefix
+  const goalText = state.goal ?? state.frozenPrefix ?? "(no goal)";
   const data = {
     campaign_id,
-    goal: state.frozenPrefix ?? "(no frozen prefix)",
+    goal: goalText,
     status: state.status,
     iteration_count: state.iterationCount,
     latest_checkpoint: state.checkpoint,
@@ -1104,7 +1105,7 @@ server.registerTool("show_campaign", {
   lines.push(`**Tokens:** ${totalTokens.toLocaleString()}`);
   lines.push("");
   lines.push(`## Goal`);
-  lines.push(state.frozenPrefix ?? "(none)");
+  lines.push(goalText);
   if (state.plan) {
     lines.push("");
     lines.push(`## Current Plan`);

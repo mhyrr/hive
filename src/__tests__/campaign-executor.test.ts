@@ -111,6 +111,7 @@ function makeState(overrides?: Partial<CampaignState>): CampaignState {
     workspacePath,
     status: "running",
     frozenPrefix: "Build the feature end-to-end.",
+    goal: "Build the feature end-to-end.",
     plan: "1. [ ] Step one\n2. [ ] Step two",
     checkpoint: null,
     scorecard: [],
@@ -223,11 +224,11 @@ describe("parseStreamLine", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildExecutorPrompt", () => {
-  test("includes frozen prefix, plan, and iteration instructions", () => {
+  test("includes goal, plan, and iteration instructions", () => {
     const state = makeState();
     const prompt = buildExecutorPrompt(state, 1, "/tmp/sentinel");
 
-    expect(prompt).toContain("# Prime Directive");
+    expect(prompt).toContain("# Goal");
     expect(prompt).toContain("Build the feature end-to-end.");
     expect(prompt).toContain("# Current Plan");
     expect(prompt).toContain("Step one");
@@ -245,10 +246,10 @@ describe("buildExecutorPrompt", () => {
   });
 
   test("omits sections when state fields are null", () => {
-    const state = makeState({ frozenPrefix: null, plan: null, checkpoint: null });
+    const state = makeState({ frozenPrefix: null, goal: null, plan: null, checkpoint: null });
     const prompt = buildExecutorPrompt(state, 1, "/tmp/sentinel");
 
-    expect(prompt).not.toContain("# Prime Directive");
+    expect(prompt).not.toContain("# Goal");
     expect(prompt).not.toContain("# Current Plan");
     expect(prompt).not.toContain("# Previous Iteration Checkpoint");
     expect(prompt).toContain("# Iteration 1 Instructions");

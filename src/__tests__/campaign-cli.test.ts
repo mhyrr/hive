@@ -161,7 +161,9 @@ describe("campaign state for CLI", () => {
     const state = await readCampaignState(id, tempDir);
     expect(state).not.toBeNull();
     expect(state!.id).toBe(id);
-    expect(state!.frozenPrefix).toBe("Full state test");
+    expect(state!.frozenPrefix).toContain("Full state test");
+    expect(state!.frozenPrefix).toContain("## Prime Directive");
+    expect(state!.goal).toBe("Full state test");
     expect(state!.plan).toBe("Step 1: do stuff");
     expect(state!.checkpoint).toBe("Completed step 1");
     expect(state!.scorecard).toHaveLength(2);
