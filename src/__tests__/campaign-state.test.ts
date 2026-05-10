@@ -22,6 +22,9 @@ import {
   readCampaignState,
   teardownWorktree,
   listCampaigns,
+  readPid,
+  isPidAlive,
+  resolveStatus,
   detectAndFixStaleStatus,
   type ScorecardRow,
   type CampaignState,
@@ -363,6 +366,10 @@ describe("readCampaignState", () => {
   test("aggregates all state into one object", async () => {
     const id = await initCampaign({ goal: "Full state", repoPath, hiveHome });
 
+    // Write a live PID so resolveStatus doesn't auto-correct "running" to "aborted"
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), String(process.pid), "utf-8");
+
     await writePlan(id, "Step 1\nStep 2", hiveHome);
     await writeCheckpoint(id, "Checkpoint data", hiveHome);
     await appendScorecardRow(id, makeRow(1), hiveHome);
@@ -373,6 +380,7 @@ describe("readCampaignState", () => {
     expect(state).not.toBeNull();
     expect(state!.id).toBe(id);
     expect(state!.status).toBe("running");
+    expect(state!.wasOrphaned).toBe(false);
     expect(state!.frozenPrefix).toContain("Full state");
     expect(state!.frozenPrefix).toContain("## Prime Directive");
     expect(state!.goal).toBe("Full state");
@@ -404,70 +412,167 @@ describe("listCampaigns", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Stale-status detection
+// PID liveness and stale-running detection (TK-084)
 // ---------------------------------------------------------------------------
 
-describe("detectAndFixStaleStatus", () => {
-  test("returns non-running status unchanged", async () => {
-    const id = await initCampaign({ goal: "Done campaign", repoPath, hiveHome });
+describe("readPid", () => {
+  test("returns null when no pid file exists", async () => {
+    const id = await initCampaign({ goal: "No pid", repoPath, hiveHome });
+    const { unlink } = await import("node:fs/promises");
+    try { await unlink(join(hiveHome, "campaigns", id, "pid")); } catch { /* ok */ }
+
+    const pid = await readPid(id, hiveHome);
+    expect(pid).toBeNull();
+  });
+
+  test("reads a valid PID from the pid file", async () => {
+    const id = await initCampaign({ goal: "Has pid", repoPath, hiveHome });
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "12345", "utf-8");
+
+    const pid = await readPid(id, hiveHome);
+    expect(pid).toBe(12345);
+  });
+
+  test("returns null for non-numeric pid content", async () => {
+    const id = await initCampaign({ goal: "Bad pid", repoPath, hiveHome });
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "not-a-number", "utf-8");
+
+    const pid = await readPid(id, hiveHome);
+    expect(pid).toBeNull();
+  });
+});
+
+describe("isPidAlive", () => {
+  test("returns true for the current process", () => {
+    expect(isPidAlive(process.pid)).toBe(true);
+  });
+
+  test("returns false for a definitely-dead PID", () => {
+    expect(isPidAlive(2147483647)).toBe(false);
+  });
+});
+
+describe("resolveStatus", () => {
+  test("returns raw status for non-running campaigns", async () => {
+    const id = await initCampaign({ goal: "Done", repoPath, hiveHome });
     await writeStatus(id, "done", hiveHome);
 
-    const status = await detectAndFixStaleStatus(id, hiveHome);
-    expect(status).toBe("done");
+    const resolved = await resolveStatus(id, hiveHome);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.status).toBe("done");
+    expect(resolved!.wasOrphaned).toBe(false);
   });
 
-  test("returns 'running' when PID is still alive", async () => {
-    const id = await initCampaign({ goal: "Running campaign", repoPath, hiveHome });
-    // Write our own PID (which is obviously alive)
+  test("returns running when PID is alive", async () => {
+    const id = await initCampaign({ goal: "Alive", repoPath, hiveHome });
     const { writeFile: wf } = await import("node:fs/promises");
-    await wf(join(hiveHome, "campaigns", id, "pid"), String(process.pid));
+    await wf(join(hiveHome, "campaigns", id, "pid"), String(process.pid), "utf-8");
 
-    const status = await detectAndFixStaleStatus(id, hiveHome);
-    expect(status).toBe("running");
+    const resolved = await resolveStatus(id, hiveHome);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.status).toBe("running");
+    expect(resolved!.wasOrphaned).toBe(false);
   });
 
-  test("marks 'aborted' when PID is dead and no result.txt", async () => {
-    const id = await initCampaign({ goal: "Dead campaign", repoPath, hiveHome });
-    // Use a PID that's almost certainly not alive (max int)
+  test("detects orphaned campaign (dead PID, no result.txt)", async () => {
+    const id = await initCampaign({ goal: "Orphaned", repoPath, hiveHome });
     const { writeFile: wf } = await import("node:fs/promises");
-    await wf(join(hiveHome, "campaigns", id, "pid"), "999999999");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "2147483647", "utf-8");
+
+    const resolved = await resolveStatus(id, hiveHome);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.status).toBe("aborted");
+    expect(resolved!.wasOrphaned).toBe(true);
+
+    // Verify the status file was updated on disk (self-healing)
+    const rawStatus = await readStatus(id, hiveHome);
+    expect(rawStatus).toBe("aborted");
+  });
+
+  test("does NOT mark as orphaned when result.txt exists", async () => {
+    const id = await initCampaign({ goal: "Has result", repoPath, hiveHome });
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "2147483647", "utf-8");
+    await wf(join(hiveHome, "campaigns", id, "result.txt"), "done", "utf-8");
+
+    const resolved = await resolveStatus(id, hiveHome);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.status).toBe("running");
+    expect(resolved!.wasOrphaned).toBe(false);
+  });
+
+  test("detects orphaned campaign when no PID file exists", async () => {
+    const id = await initCampaign({ goal: "No pid file", repoPath, hiveHome });
+    const { unlink } = await import("node:fs/promises");
+    try { await unlink(join(hiveHome, "campaigns", id, "pid")); } catch { /* ok */ }
+
+    const resolved = await resolveStatus(id, hiveHome);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.status).toBe("aborted");
+    expect(resolved!.wasOrphaned).toBe(true);
+  });
+
+  test("returns null for non-existent campaign", async () => {
+    const resolved = await resolveStatus("CAMP-999", hiveHome);
+    expect(resolved).toBeNull();
+  });
+});
+
+describe("detectAndFixStaleStatus (compat wrapper)", () => {
+  test("returns corrected status for dead PID", async () => {
+    const id = await initCampaign({ goal: "Dead", repoPath, hiveHome });
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "999999999", "utf-8");
 
     const status = await detectAndFixStaleStatus(id, hiveHome);
     expect(status).toBe("aborted");
-
-    // Verify it actually wrote the corrected status
-    const onDisk = await readStatus(id, hiveHome);
-    expect(onDisk).toBe("aborted");
   });
 
-  test("marks 'done' when PID is dead but result.txt exists", async () => {
-    const id = await initCampaign({ goal: "Finished campaign", repoPath, hiveHome });
+  test("returns running for live PID", async () => {
+    const id = await initCampaign({ goal: "Alive", repoPath, hiveHome });
     const { writeFile: wf } = await import("node:fs/promises");
-    await wf(join(hiveHome, "campaigns", id, "pid"), "999999999");
-    await wf(join(hiveHome, "campaigns", id, "result.txt"), "Campaign finished normally");
-
-    const status = await detectAndFixStaleStatus(id, hiveHome);
-    expect(status).toBe("done");
-
-    const onDisk = await readStatus(id, hiveHome);
-    expect(onDisk).toBe("done");
-  });
-
-  test("returns 'running' when no PID file exists", async () => {
-    const id = await initCampaign({ goal: "No pid", repoPath, hiveHome });
-    // Don't write a PID file — detectAndFixStaleStatus can't check liveness
+    await wf(join(hiveHome, "campaigns", id, "pid"), String(process.pid), "utf-8");
 
     const status = await detectAndFixStaleStatus(id, hiveHome);
     expect(status).toBe("running");
   });
+});
 
-  test("readCampaignState auto-corrects stale status", async () => {
-    const id = await initCampaign({ goal: "Stale state", repoPath, hiveHome });
+describe("readCampaignState with PID liveness", () => {
+  test("wasOrphaned is false for live campaigns", async () => {
+    const id = await initCampaign({ goal: "Live", repoPath, hiveHome });
     const { writeFile: wf } = await import("node:fs/promises");
-    await wf(join(hiveHome, "campaigns", id, "pid"), "999999999");
+    await wf(join(hiveHome, "campaigns", id, "pid"), String(process.pid), "utf-8");
+
+    const state = await readCampaignState(id, hiveHome);
+    expect(state).not.toBeNull();
+    expect(state!.status).toBe("running");
+    expect(state!.wasOrphaned).toBe(false);
+  });
+
+  test("wasOrphaned is true and status corrected for dead PID", async () => {
+    const id = await initCampaign({ goal: "Dead", repoPath, hiveHome });
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "2147483647", "utf-8");
 
     const state = await readCampaignState(id, hiveHome);
     expect(state).not.toBeNull();
     expect(state!.status).toBe("aborted");
+    expect(state!.wasOrphaned).toBe(true);
+  });
+
+  test("second read after orphan detection sees aborted directly", async () => {
+    const id = await initCampaign({ goal: "Self-heal", repoPath, hiveHome });
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), "2147483647", "utf-8");
+
+    const state1 = await readCampaignState(id, hiveHome);
+    expect(state1!.wasOrphaned).toBe(true);
+
+    const state2 = await readCampaignState(id, hiveHome);
+    expect(state2!.status).toBe("aborted");
+    expect(state2!.wasOrphaned).toBe(false);
   });
 });

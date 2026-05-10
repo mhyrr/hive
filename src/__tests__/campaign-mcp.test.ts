@@ -68,6 +68,10 @@ afterEach(async () => {
 describe("show_campaign data shape", () => {
   test("returns structured data for an existing campaign", async () => {
     const id = await initCampaign({ goal: "Build the widget", repoPath, hiveHome });
+    // Write a live PID so resolveStatus doesn't auto-correct "running" to "aborted"
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), String(process.pid), "utf-8");
+
     await writePlan(id, "Step 1: scaffold\nStep 2: implement", hiveHome);
     await writeCheckpoint(id, "Completed scaffold", hiveHome);
     await appendScorecardRow(id, makeRow(1), hiveHome);
@@ -146,6 +150,10 @@ describe("list_campaigns data shape", () => {
 describe("start_campaign prerequisites", () => {
   test("initCampaign creates the campaign directory", async () => {
     const id = await initCampaign({ goal: "Test goal", repoPath, hiveHome });
+    // Write a live PID so resolveStatus doesn't auto-correct "running" to "aborted"
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(join(hiveHome, "campaigns", id, "pid"), String(process.pid), "utf-8");
+
     expect(id).toMatch(/^CAMP-\d{3}$/);
 
     const state = await readCampaignState(id, hiveHome);

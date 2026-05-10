@@ -78,6 +78,8 @@ export type CampaignState = {
   dir: string;
   workspacePath: string;
   status: CampaignStatus;
+  /** True when status was auto-corrected from "running" to "aborted" due to dead PID. */
+  wasOrphaned: boolean;
   frozenPrefix: string | null;
   goal: string | null;
   plan: string | null;
@@ -331,7 +333,7 @@ export async function readScorecard(
 // ---------------------------------------------------------------------------
 
 /**
- * Read campaign status.
+ * Read campaign status (raw — no PID liveness check).
  */
 export async function readStatus(
   id: string,
@@ -359,66 +361,98 @@ export async function writeStatus(
 }
 
 // ---------------------------------------------------------------------------
-// Stale-status detection
+// PID liveness
 // ---------------------------------------------------------------------------
 
 /**
- * Check whether a campaign's PID is still alive.
- * Returns true if the process exists, false if it's gone.
+ * Read the orchestrator PID from the pid file. Returns null if missing/unreadable.
  */
-function isProcessAlive(pid: number): boolean {
+export async function readPid(
+  id: string,
+  hiveHome?: string,
+): Promise<number | null> {
+  const path = join(campaignDir(id, hiveHome), "pid");
   try {
-    process.kill(pid, 0); // signal 0 = existence check, no actual signal
+    const raw = await readFile(path, "utf-8");
+    const pid = parseInt(raw.trim(), 10);
+    return isNaN(pid) ? null : pid;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if a PID is alive using kill(pid, 0).
+ * Returns false if the process doesn't exist or we lack permission.
+ */
+export function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
     return true;
   } catch {
     return false;
   }
 }
 
+export type ResolvedStatus = {
+  status: CampaignStatus;
+  /** True when status was auto-corrected from "running" -> "aborted" (dead PID). */
+  wasOrphaned: boolean;
+};
+
 /**
- * Detect and fix stale "running" status.
- *
- * If a campaign says "running" but its PID is dead and no result.txt exists,
- * the orchestrator crashed without a clean exit. Mark it "aborted" so the
- * dashboard and CLI show the truth.
- *
+ * Read status with PID liveness cross-check. If status is "running" but the
+ * orchestrator PID is dead and no result.txt exists, auto-corrects to "aborted"
+ * and updates the status file on disk. Self-healing: subsequent reads see "aborted".
+ */
+export async function resolveStatus(
+  id: string,
+  hiveHome?: string,
+): Promise<ResolvedStatus | null> {
+  const status = await readStatus(id, hiveHome);
+  if (status === null) return null;
+
+  if (status !== "running") {
+    return { status, wasOrphaned: false };
+  }
+
+  // Status says "running" — cross-check PID
+  const pid = await readPid(id, hiveHome);
+  if (pid === null) {
+    // No PID file but status is running — treat as orphaned
+    const hasResult = existsSync(join(campaignDir(id, hiveHome), "result.txt"));
+    if (!hasResult) {
+      await writeStatus(id, "aborted", hiveHome);
+      return { status: "aborted", wasOrphaned: true };
+    }
+    return { status, wasOrphaned: false };
+  }
+
+  if (isPidAlive(pid)) {
+    return { status, wasOrphaned: false };
+  }
+
+  // PID is dead. If there's a result.txt, the campaign ended normally
+  // (status file just didn't get updated). Otherwise, orchestrator died.
+  const hasResult = existsSync(join(campaignDir(id, hiveHome), "result.txt"));
+  if (!hasResult) {
+    await writeStatus(id, "aborted", hiveHome);
+    return { status: "aborted", wasOrphaned: true };
+  }
+
+  return { status, wasOrphaned: false };
+}
+
+/**
+ * Backward-compat wrapper over resolveStatus().
  * Returns the corrected status, or the original if no correction needed.
  */
 export async function detectAndFixStaleStatus(
   id: string,
   hiveHome?: string,
 ): Promise<CampaignStatus | null> {
-  const status = await readStatus(id, hiveHome);
-  if (status !== "running") return status;
-
-  const dir = campaignDir(id, hiveHome);
-
-  // Read PID
-  let pid: number | null = null;
-  try {
-    const raw = await readFile(join(dir, "pid"), "utf-8");
-    pid = parseInt(raw.trim(), 10);
-    if (isNaN(pid)) pid = null;
-  } catch {
-    // No PID file — can't check liveness. Leave status as-is.
-    return status;
-  }
-
-  if (pid === null) return status;
-
-  // If process is alive, status is accurate
-  if (isProcessAlive(pid)) return status;
-
-  // Process is dead — check if result.txt exists (clean exit writes this)
-  if (existsSync(join(dir, "result.txt"))) {
-    // Orchestrator finished but status wasn't updated (shouldn't happen, but be safe)
-    await writeStatus(id, "done", hiveHome);
-    return "done";
-  }
-
-  // Dead process, no result.txt → aborted
-  await writeStatus(id, "aborted", hiveHome);
-  return "aborted";
+  const resolved = await resolveStatus(id, hiveHome);
+  return resolved?.status ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -460,6 +494,7 @@ export function iterationDir(
 
 /**
  * Read the full campaign state into a single object.
+ * Cross-checks PID liveness when status is "running" — auto-corrects orphaned campaigns.
  */
 export async function readCampaignState(
   id: string,
@@ -468,9 +503,8 @@ export async function readCampaignState(
   const dir = campaignDir(id, hiveHome);
   if (!existsSync(dir)) return null;
 
-  // Auto-correct stale "running" status before returning state
-  const status = await detectAndFixStaleStatus(id, hiveHome);
-  if (!status) return null;
+  const resolved = await resolveStatus(id, hiveHome);
+  if (!resolved) return null;
 
   const frozenPrefix = await readFrozenPrefix(id, hiveHome);
   const goal = await readGoal(id, hiveHome);
@@ -486,7 +520,8 @@ export async function readCampaignState(
     id,
     dir,
     workspacePath: join(dir, "workspace"),
-    status,
+    status: resolved.status,
+    wasOrphaned: resolved.wasOrphaned,
     frozenPrefix,
     goal,
     plan,

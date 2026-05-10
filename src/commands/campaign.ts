@@ -21,7 +21,7 @@ import {
   listCampaigns,
   readScorecard,
   readFrozenPrefix,
-  detectAndFixStaleStatus,
+  resolveStatus,
   readGoal,
   type CampaignStatus,
   type ScorecardRow,
@@ -279,9 +279,9 @@ async function listSubcommand(args: string[]): Promise<void> {
   }> = [];
 
   for (const id of campaigns) {
-    const status = await detectAndFixStaleStatus(id);
-    if (!status) continue;
-    if (statusFilter && status !== statusFilter) continue;
+    const resolved = await resolveStatus(id);
+    if (!resolved) continue;
+    if (statusFilter && resolved.status !== statusFilter) continue;
 
     const scorecard = await readScorecard(id);
     const goal = await readGoal(id);
@@ -289,9 +289,13 @@ async function listSubcommand(args: string[]): Promise<void> {
     const totalCost = scorecard.reduce((sum, r) => sum + r.cost_usd, 0);
     const goalLine = (goal ?? frozenPrefix ?? "").split("\n")[0]?.slice(0, 50) ?? "—";
 
+    const displayStatus = resolved.wasOrphaned
+      ? "aborted (orchestrator died)"
+      : resolved.status;
+
     rows.push({
       id,
-      status,
+      status: displayStatus,
       iterations: scorecard.length,
       cost: `$${totalCost.toFixed(2)}`,
       goal: goalLine,
@@ -303,14 +307,14 @@ async function listSubcommand(args: string[]): Promise<void> {
     return;
   }
 
-  // Print table
-  const header = "ID         Status             Iters   Cost    Goal";
-  const sep    = "--------   ----------------   -----   ------  ----";
+  // Print table — wider status column for orphaned campaigns
+  const header = "ID         Status                        Iters   Cost    Goal";
+  const sep    = "--------   --------------------------   -----   ------  ----";
   console.log(header);
   console.log(sep);
   for (const row of rows) {
     const id = row.id.padEnd(10);
-    const status = row.status.padEnd(18);
+    const status = row.status.padEnd(28);
     const iters = String(row.iterations).padStart(5);
     const cost = row.cost.padStart(8);
     console.log(`${id} ${status} ${iters}   ${cost}  ${row.goal}`);
@@ -339,7 +343,10 @@ async function showSubcommand(args: string[]): Promise<void> {
   }
 
   // Header
-  console.log(`# ${id} [${state.status}]`);
+  const displayStatus = state.wasOrphaned
+    ? "aborted (orchestrator died)"
+    : state.status;
+  console.log(`# ${id} [${displayStatus}]`);
   console.log();
 
   // Goal (raw user-supplied text)

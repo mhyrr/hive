@@ -1084,10 +1084,15 @@ server.registerTool("show_campaign", {
 
   // Build structured response — show the raw goal, not the full frozen prefix
   const goalText = state.goal ?? state.frozenPrefix ?? "(no goal)";
+  const displayStatus = state.wasOrphaned
+    ? "aborted (orchestrator died)"
+    : state.status;
+
   const data = {
     campaign_id,
     goal: goalText,
     status: state.status,
+    was_orphaned: state.wasOrphaned,
     iteration_count: state.iterationCount,
     latest_checkpoint: state.checkpoint,
     scorecard_rows: scorecard,
@@ -1099,7 +1104,7 @@ server.registerTool("show_campaign", {
   // Text representation for display
   const lines: string[] = [];
   lines.push(`# Campaign ${campaign_id}`);
-  lines.push(`**Status:** ${state.status}`);
+  lines.push(`**Status:** ${displayStatus}`);
   lines.push(`**Iterations:** ${state.iterationCount}`);
   lines.push(`**Cost:** $${data.total_cost_usd.toFixed(4)}`);
   lines.push(`**Tokens:** ${totalTokens.toLocaleString()}`);
@@ -1152,6 +1157,8 @@ server.registerTool("list_campaigns", {
     campaign_id: string;
     goal: string;
     status: string;
+    was_orphaned: boolean;
+    display_status: string;
     iteration_count: number;
   }> = [];
 
@@ -1160,10 +1167,16 @@ server.registerTool("list_campaigns", {
     if (!state) continue;
     if (status && state.status !== status) continue;
 
+    const displayStatus = state.wasOrphaned
+      ? "aborted (orchestrator died)"
+      : state.status;
+
     summaries.push({
       campaign_id: id,
       goal: (state.frozenPrefix ?? "").split("\n")[0]?.slice(0, 100) ?? "",
       status: state.status,
+      was_orphaned: state.wasOrphaned,
+      display_status: displayStatus,
       iteration_count: state.iterationCount,
     });
   }
@@ -1173,7 +1186,7 @@ server.registerTool("list_campaigns", {
   }
 
   const lines = summaries.map(
-    (s) => `- **${s.campaign_id}** [${s.status}] (${s.iteration_count} iter) — ${s.goal}`,
+    (s) => `- **${s.campaign_id}** [${s.display_status}] (${s.iteration_count} iter) — ${s.goal}`,
   );
 
   return {
