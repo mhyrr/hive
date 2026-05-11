@@ -467,9 +467,9 @@ describe("dashboard runs collector", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Budget-exhausted campaign maps to failed
+  // Budget-exhausted campaign maps to partial (not failed) — TK-110
   // -------------------------------------------------------------------------
-  test("budget-exhausted campaign status maps to failed", async () => {
+  test("budget-exhausted campaign status maps to partial", async () => {
     await createCampaignRun(home, "CAMP-004", {
       status: "budget-exhausted",
       frozenPrefix: "Expensive campaign",
@@ -478,7 +478,7 @@ describe("dashboard runs collector", () => {
     const paths = await ensureHiveScaffold(home);
     const result = await collectRuns(paths, { checkPid: false });
 
-    expect(result.terminal[0]!.status).toBe("failed");
+    expect(result.terminal[0]!.status).toBe("partial");
   });
 
   // -------------------------------------------------------------------------

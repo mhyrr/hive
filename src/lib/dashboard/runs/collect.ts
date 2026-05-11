@@ -136,7 +136,8 @@ function normalizeCampaignStatus(raw: string, alive: boolean): RunRowStatus {
   if (s === "running" && !alive) return "crashed";
   if (s === "running") return "running";
   if (s === "done") return "shipped";
-  if (s === "aborted" || s === "budget-exhausted") return "failed";
+  if (s === "budget-exhausted") return "partial";
+  if (s === "aborted") return "failed";
   if (s === "paused") return "partial";
 
   return "failed";
@@ -758,10 +759,13 @@ export async function collectArcs(
       finalArtifact = resultMd.trim();
     }
 
-    // Failure reason for non-shipped campaigns (priority: error.txt > scorecard > orchestrator.log > fallback)
+    // Failure reason for non-shipped campaigns (priority: error.txt > scorecard > orchestrator.log > fallback).
+    // result.txt presence signals a normal orchestrator termination (judge_done or budget cap) —
+    // those are not failures and get no reason regardless of arc status.
     const arcStatus = campaignArcStatus(row);
+    const resultTxt = await safeReadFile(join(campDir, "result.txt"));
     let failureReason: string | null = null;
-    if (arcStatus === "blocked" || arcStatus === "mixed") {
+    if ((arcStatus === "blocked" || arcStatus === "mixed") && !resultTxt?.trim()) {
       // 1. error.txt (orchestrator catch block)
       const errorTxt = await safeReadFile(join(campDir, "error.txt"));
       if (errorTxt?.trim()) {

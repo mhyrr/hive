@@ -46,6 +46,7 @@ async function createCampaignDir(
     goal?: string;
     ticketId?: string;
     scorecardRows?: string[];
+    resultTxt?: string;
   },
 ): Promise<void> {
   const dir = join(home, "campaigns", id);
@@ -61,6 +62,9 @@ async function createCampaignDir(
       join(dir, "scorecard.jsonl"),
       opts.scorecardRows.join("\n") + "\n",
     );
+  }
+  if (opts.resultTxt) {
+    await writeFile(join(dir, "result.txt"), opts.resultTxt);
   }
 }
 
@@ -309,6 +313,31 @@ describe("collectArcs", () => {
     const arcs = await collectArcs(paths, { checkPid: false });
     const campArcs = arcs.filter((a): a is CampaignArc => a.kind === "campaign");
     expect(campArcs[0]!.status).toBe("blocked"); // failed/crashed → blocked (stalled)
+  });
+
+  // TK-110: budget-exhausted with result.txt is a normal termination — no failure reason.
+  // The last iteration's "natural · continue" is the most successful possible last state,
+  // not a failure message.
+  test("budget-exhausted campaign with result.txt has no failureReason", async () => {
+    await createCampaignDir(home, "CAMP-003", {
+      status: "budget-exhausted",
+      goal: "Cap-hit campaign",
+      scorecardRows: [
+        JSON.stringify({
+          iteration_n: 1,
+          started_at: "2026-05-10T10:00:00Z",
+          ended_at: "2026-05-10T10:05:00Z",
+          exit_reason: "natural",
+          judge_decision: "continue",
+          cost_usd: 0.30,
+        }),
+      ],
+      resultTxt: "Campaign CAMP-003 finished.\n  Reason: max_iterations\n",
+    });
+
+    const arcs = await collectArcs(paths, { checkPid: false });
+    const campArcs = arcs.filter((a): a is CampaignArc => a.kind === "campaign");
+    expect(campArcs[0]!.failureReason).toBeNull();
   });
 
   // -------------------------------------------------------------------------
