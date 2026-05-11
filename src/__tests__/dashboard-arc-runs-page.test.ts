@@ -121,6 +121,7 @@ function makeCampaignArc(overrides: Partial<CampaignArc> = {}): CampaignArc {
     goal: "Optimize frozen prefix cache for better hit rate",
     frozenPrefix: null,
     finalArtifact: null,
+    failureReason: null,
     ...overrides,
   };
 }

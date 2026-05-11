@@ -102,6 +102,37 @@ function formatStartTime(iso: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Why-failed block
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a "WHY FAILED" block for failed/crashed arcs.
+ * One-line truncated by default, click-to-expand reveals full multiline log tail.
+ *
+ * @param reason - The failure reason text (multiline ok)
+ * @returns HTML string, or empty string if reason is falsy
+ */
+export function renderWhyFailed(reason: string | null | undefined): string {
+  if (!reason) return "";
+  return `<div class="why-failed" data-why-failed>
+  <div class="why-failed-label">Why Failed <span class="why-failed-toggle">click to expand</span></div>
+  <div class="why-failed-body">${escapeHtml(reason)}</div>
+</div>`;
+}
+
+/**
+ * Render an inline failure reason for decomposition tree rows and direct dispatches.
+ * Single line, click to expand.
+ */
+export function renderWhyFailedInline(reason: string | null | undefined): string {
+  if (!reason) return "";
+  // Take just the last meaningful line for the inline view
+  const lines = reason.split("\n").filter((l) => l.trim());
+  const lastMeaningfulLine = lines[lines.length - 1] ?? reason;
+  return `<span class="why-failed-inline" data-why-failed-inline title="${escapeHtml(reason)}">${escapeHtml(lastMeaningfulLine)}</span>`;
+}
+
+// ---------------------------------------------------------------------------
 // Section renderers
 // ---------------------------------------------------------------------------
 
@@ -241,6 +272,10 @@ export function renderDirectDispatches(directs: DirectArc[]): string {
         run.status === "running" ? "running" :
         "failed";
 
+      const failureCell = run.failureReason
+        ? `<td class="direct-failure">${renderWhyFailedInline(run.failureReason)}</td>`
+        : `<td></td>`;
+
       return `<tr class="direct-row">
   <td><a href="/runs/${escapeHtml(run.id)}" class="direct-id mono">${escapeHtml(run.id)}</a></td>
   <td>${ticketCell}</td>
@@ -248,6 +283,7 @@ export function renderDirectDispatches(directs: DirectArc[]): string {
   <td><span class="arc-chip chip-${chipKind}">${escapeHtml(run.status)}</span></td>
   <td class="mono direct-elapsed">${escapeHtml(formatElapsed(run.elapsedSec))}</td>
   <td class="mono direct-time">${escapeHtml(formatStartTime(run.startedAt))}</td>
+  ${failureCell}
 </tr>`;
     })
     .join("\n");
@@ -264,6 +300,7 @@ export function renderDirectDispatches(directs: DirectArc[]): string {
         <th>Status</th>
         <th>Elapsed</th>
         <th>Started</th>
+        <th>Reason</th>
       </tr>
     </thead>
     <tbody>
@@ -437,6 +474,12 @@ export function renderGoalArc(arc: GoalArc): string {
     // Cost: dispatches don't track cost yet
     const costCell = "—";
 
+    // Inline failure reason for failed/crashed child runs
+    const failedRun = runs.find((r) => r.status === "failed" || r.status === "crashed");
+    const failureInline = failedRun?.failureReason
+      ? renderWhyFailedInline(failedRun.failureReason)
+      : "";
+
     return `<li class="arc-child">
   <span class="arc-child-id"><a href="/tickets#${escapeHtml(ticket.id)}" class="mono">${escapeHtml(ticket.id)}</a></span>
   <span class="arc-child-title">${escapeHtml(ticket.title)}</span>
@@ -444,6 +487,7 @@ export function renderGoalArc(arc: GoalArc): string {
   <span class="arc-child-status ${statusClass}">${escapeHtml(statusLabel)}</span>
   <span class="arc-child-elapsed">${escapeHtml(elapsedCell)}</span>
   <span class="arc-child-cost">${escapeHtml(costCell)}</span>
+  ${failureInline ? `<span class="arc-child-failure">${failureInline}</span>` : ""}
 </li>`;
   }).join("\n");
 
@@ -570,12 +614,16 @@ export function renderCampaignArc(arc: CampaignArc): string {
   <span class="arc-meta">${iterationCount} iter${iterationCount !== 1 ? "s" : ""}</span>
 </div>`;
 
-  // Body: full goal + frozen prefix + iteration table + final artifact
+  // Why-failed block for failed/crashed campaigns (at top of body)
+  const whyFailedBlock = renderWhyFailed(arc.failureReason);
+
+  // Body: why-failed + full goal + frozen prefix + iteration table + final artifact
   const goalBlock = goal
     ? `<div class="arc-section-label">Goal</div>\n<div class="arc-prose"><p>${escapeHtml(goal)}</p></div>`
     : "";
 
   const body = `<div class="arc-body">
+  ${whyFailedBlock}
   ${goalBlock}
   ${renderFrozenPrefixBlock(frozenPrefix)}
   ${renderIterationTable(iterations)}

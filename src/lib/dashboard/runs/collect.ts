@@ -37,6 +37,8 @@ export type RunRow = {
   goalSummary: string; // first ~140 chars
   worktreeBranch?: string;
   lastLogLine?: string; // for active runs only
+  /** Why the run failed — last meaningful lines from output.log. Only populated for non-running terminal statuses. */
+  failureReason?: string;
 };
 
 export type CollectedRuns = {
@@ -94,6 +96,15 @@ async function lastLine(path: string): Promise<string> {
   if (!content) return "";
   const lines = content.split("\n").filter((l) => l.trim().length > 0);
   return lines[lines.length - 1]?.trimEnd() ?? "";
+}
+
+/** Read the last N non-empty lines from a file. */
+async function tailLines(path: string, n: number): Promise<string | null> {
+  const content = await safeReadFile(path);
+  if (!content) return null;
+  const lines = content.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return null;
+  return lines.slice(-n).map((l) => l.trimEnd()).join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +199,12 @@ async function collectDispatchRun(
     ? await lastLine(join(runDir, "output.log"))
     : undefined;
 
+  // Failure reason for terminal non-shipped runs
+  let failureReason: string | undefined;
+  if (status !== "running" && status !== "shipped") {
+    failureReason = (await tailLines(join(runDir, "output.log"), 5)) ?? undefined;
+  }
+
   return {
     kind: "dispatch",
     id,
@@ -199,6 +216,7 @@ async function collectDispatchRun(
     goalSummary,
     worktreeBranch,
     lastLogLine,
+    failureReason,
   };
 }
 
@@ -445,6 +463,8 @@ export async function collectRuns(
 export type RunRef = {
   id: string;
   status: RunRowStatus;
+  /** Why the run failed (last log lines). Only present for failed/crashed. */
+  failureReason?: string;
 };
 
 /**
@@ -459,6 +479,7 @@ export function runsByTicket(data: CollectedRuns): Map<string, RunRef[]> {
   const index = (row: RunRow) => {
     if (!row.ticketId) return;
     const ref: RunRef = { id: row.id, status: row.status };
+    if (row.failureReason) ref.failureReason = row.failureReason;
     const list = map.get(row.ticketId);
     if (list) {
       list.push(ref);
@@ -515,6 +536,8 @@ export type CampaignArc = {
   frozenPrefix: string | null;
   /** Final artifact path/reference if known. */
   finalArtifact: string | null;
+  /** Why the campaign failed — sourced from error.txt > scorecard > orchestrator.log > fallback. */
+  failureReason: string | null;
 };
 
 export type DirectArc = {
@@ -735,16 +758,43 @@ export async function collectArcs(
       finalArtifact = resultMd.trim();
     }
 
+    // Failure reason for non-shipped campaigns (priority: error.txt > scorecard > orchestrator.log > fallback)
+    const arcStatus = campaignArcStatus(row);
+    let failureReason: string | null = null;
+    if (arcStatus === "blocked" || arcStatus === "mixed") {
+      // 1. error.txt (orchestrator catch block)
+      const errorTxt = await safeReadFile(join(campDir, "error.txt"));
+      if (errorTxt?.trim()) {
+        failureReason = errorTxt.trim();
+      }
+      // 2. Last scorecard row's exit_reason + judge_decision
+      if (!failureReason && iterations.length > 0) {
+        const last = iterations[iterations.length - 1]!;
+        failureReason = `exit: ${last.exitReason}` +
+          (last.judgeDecision !== "unknown" ? ` · judge: ${last.judgeDecision}` : "");
+      }
+      // 3. orchestrator.log tail
+      if (!failureReason) {
+        const orchTail = await tailLines(join(campDir, "orchestrator.log"), 5);
+        if (orchTail) failureReason = orchTail;
+      }
+      // 4. Fallback
+      if (!failureReason) {
+        failureReason = "Campaign failed before iteration 1 started — no error log captured";
+      }
+    }
+
     campaignArcs.push({
       kind: "campaign",
       campaign: row,
       iterations,
       totalCost,
       iterationCount: iterations.length,
-      status: campaignArcStatus(row),
+      status: arcStatus,
       goal,
       frozenPrefix: frozenPrefix?.trim() || null,
       finalArtifact,
+      failureReason,
     });
   }
 

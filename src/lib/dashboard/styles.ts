@@ -1779,6 +1779,10 @@ body.filtered-by-actions .row-less:not(.has-action) {
   text-align: right;
   color: var(--muted);
 }
+.arc-child-failure {
+  grid-column: 2 / -1;
+  padding-top: 2px;
+}
 
 /* ---------- Iteration table (campaign arcs) ---------- */
 
@@ -1893,6 +1897,62 @@ body.filtered-by-actions .row-less:not(.has-action) {
   margin-top: 10px;
   padding-top: 6px;
   border-top: 1px solid var(--faint);
+}
+
+/* ---------- Why-failed block ---------- */
+
+.why-failed {
+  margin: 10px 0 12px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--rust);
+  background: rgba(139, 74, 42, 0.04);
+  cursor: pointer;
+}
+.why-failed-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  color: var(--rust);
+  margin: 0 0 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.why-failed-toggle {
+  font-weight: 400;
+  font-size: 9px;
+  color: var(--muted);
+}
+.why-failed-body {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--rust);
+  white-space: pre-wrap;
+  max-height: 1.5em;
+  overflow: hidden;
+  transition: max-height 200ms ease;
+}
+.why-failed.expanded .why-failed-body {
+  max-height: 600px;
+}
+/* Inline variant for decomposition tree child rows */
+.why-failed-inline {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--rust);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+  cursor: pointer;
+}
+.why-failed-inline.expanded {
+  white-space: pre-wrap;
+  max-width: none;
+  max-height: none;
 }
 
 /* ---------- Arc responsive ---------- */
