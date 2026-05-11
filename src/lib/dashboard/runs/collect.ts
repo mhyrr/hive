@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import type { HivePaths } from "../../paths";
 import { listProjects } from "../../paths";
-import { listTickets, type Ticket } from "../../ticket";
+import { listTickets, type Ticket, type TicketWithBody } from "../../ticket";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -487,7 +487,7 @@ export type GoalArcChild = {
 
 export type GoalArc = {
   kind: "goal";
-  epic: Ticket;
+  epic: TicketWithBody;
   children: GoalArcChild[];
   totalCost: number | null; // null — dispatch cost not tracked today
   runCount: number;
@@ -623,23 +623,25 @@ export async function collectArcs(
   const collectedRuns = await collectRuns(paths, { checkPid: opts.checkPid ?? true });
   const ticketRunMap = runsByTicket(collectedRuns);
 
-  // Load all tickets across all projects
+  // Load all tickets across all projects.
+  // listTickets returns Ticket[] but parseTicketFile produces TicketWithBody
+  // at runtime — cast to preserve the body for epic rendering.
   const projectIds = await listProjects(paths.projectsDir);
-  const allTickets: Ticket[] = [];
+  const allTickets: TicketWithBody[] = [];
   for (const pid of projectIds) {
     const tickets = await listTickets(paths, pid).catch(() => [] as Ticket[]);
-    allTickets.push(...tickets);
+    allTickets.push(...(tickets as TicketWithBody[]));
   }
 
   // Build lookup structures
-  const ticketById = new Map<string, Ticket>(allTickets.map((t) => [t.id, t]));
+  const ticketById = new Map<string, TicketWithBody>(allTickets.map((t) => [t.id, t]));
   const openTicketIds = new Set<string>(
     allTickets.filter((t) => t.status !== "closed").map((t) => t.id),
   );
 
   // Identify epics and their children
   const epics = allTickets.filter((t) => t.type === "epic");
-  const childrenByEpic = new Map<string, Ticket[]>();
+  const childrenByEpic = new Map<string, TicketWithBody[]>();
   for (const t of allTickets) {
     if (t.parentEpic) {
       const list = childrenByEpic.get(t.parentEpic);
