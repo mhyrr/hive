@@ -147,4 +147,4 @@ hive ticket list --tags platform-audit
 
 | Date | Auditor | Baseline Versions | Key Findings |
 |------|---------|-------------------|--------------|
-| 2026-05-11 | Maya (CAMP-006) | CC 2.1.138, Codex 0.128.0 | Model retirement risk (TK-105), alwaysLoad gap (TK-106), codex_hooks deprecation (TK-107), plugin packaging opportunity (TK-108) |
+| 2026-05-11 | Maya (CAMP-006) | CC 2.1.138, Codex 0.128.0 | alwaysLoad gap (TK-106), codex_hooks deprecation (TK-107), plugin packaging opportunity (TK-108), model pin bump planning (TK-105, P3). Iter 3 corrected model retirement claim — Opus 4.6 is Active until Feb 2027, not retiring June 15. |

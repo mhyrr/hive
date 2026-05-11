@@ -17,14 +17,14 @@
 | **Doctor** | working | degraded |
 | **Council** | working | working (as model) |
 | **Memory pipeline** | working | n/a |
-| **Model pinning** | degraded | degraded |
+| **Model pinning** | working | working |
 
 HIVE's primary integration is with Claude Code. Codex support covers interactive sessions (identity, MCP) and council (as a model provider). Dispatch, heartbeat, campaign, and the memory pipeline are Claude-Code-only.
 
 **Action items surfaced by this matrix:**
-1. **Model retirement risk** — `claude-opus-4-6` retires June 15, 2026. Dispatch/heartbeat pins must update.
-2. **Codex version lag** — 0.128.0 installed vs. 0.130.0 current. `codex_hooks` feature flag deprecated in v0.129.
-3. **MCP deferral workaround** — `alwaysLoad` config option exists in Claude Code; would eliminate prompt-level pre-fetch hack.
+1. **Codex version lag** — 0.128.0 installed vs. 0.130.0 current. `codex_hooks` feature flag deprecated in v0.129. Doctor check needs updating.
+2. **MCP deferral workaround** — `alwaysLoad` config option exists in Claude Code (v2.1.121+); would eliminate prompt-level pre-fetch hack.
+3. **Model pin planning** — `claude-opus-4-6` is Active until at least Feb 5, 2027. Plan a bump to Opus 4.7 before then (low urgency).
 
 ---
 
@@ -44,7 +44,7 @@ HIVE's primary integration is with Claude Code. Codex support covers interactive
 | **Agent templates** | `working` — 5 templates installed to `~/.claude/agents/` (maya-coder, -executor, -heartbeat, -planner, -reviewer). | `gap` — Agent templates are Claude-Code-specific (`--agent` flag). Codex has no equivalent. `child_agents_md` (under dev) could change this. | Codex identity goes through AGENTS.md, not per-agent templates. |
 | **Skills** | `working` — `hive-status` skill installed to `~/.claude/skills/`. | `gap` — Codex does not have a skill system equivalent. Codex uses MCP + Plugins instead. | Skills are a Claude Code plugin feature. |
 | **OAuth enforcement** | `working` — `ANTHROPIC_API_KEY` unset in all spawned processes. | `working` — `OPENAI_API_KEY` scrubbed in Codex spawns. | Different keys for different providers; same enforcement pattern. |
-| **Model pinning** | `degraded` — Pinned to `claude-opus-4-6` for dispatch/heartbeat, `claude-opus-4-7` for judge. **`claude-opus-4-6` retires June 15, 2026.** Env overrides available as escape hatch. | `degraded` — Codex model selection via `-m` flag in `codex exec`. No HIVE-level model pinning for Codex interactive sessions. Interactive `hive -x` uses Codex's default. | Model pins must be updated before June 15 retirement. |
+| **Model pinning** | `working` — Pinned to `claude-opus-4-6` (Active, retires not sooner than Feb 5, 2027) for dispatch/heartbeat, `claude-opus-4-7` (Active, not sooner than Apr 16, 2027) for judge. Env overrides available. | `working` — Codex model selection via `-m` flag in `codex exec`. Interactive `hive -x` uses Codex's default model (GPT-5.4). | No urgent action. Plan a `claude-opus-4-6` → `claude-opus-4-7` bump before Feb 2027. |
 | **`hive init`** | `working` — Installs hook, MCP, agents, skills, identity files. | `working` — Installs MCP, AGENTS.md, hook script, hooks.json. Best-effort, silent skip if Codex absent. | Init is idempotent for both harnesses. |
 | **Hook deferral** | `gap` — PreToolUse `defer` option available since v2.1.89. HIVE does not use it. | `n/a` — Codex hooks support `allow`/`deny` but no `defer` equivalent. | Hook deferral could gate dangerous dispatch actions on external approval. |
 | **Plugin packaging** | `gap` — Claude Code supports `.zip` plugin archives (v2.1.128). HIVE installs via `hive init`, not as a plugin. | `gap` — Codex has plugins with bundled hooks (v0.129+). HIVE doesn't package as a Codex plugin. | Both platforms have plugin systems HIVE could use for distribution. |
