@@ -74,7 +74,7 @@ HIVE exposes 18 tools via an MCP server that Claude Code discovers at session st
 
 **ToolSearch deferral:** Claude Code 2.1.x defers MCP tool schemas behind `ToolSearch`. The SessionStart hook does not pre-fetch schemas itself — the HIVE identity prefix (via `AGENTS.md` content) contains a "MCP Tools — First-Turn Pre-Fetch" instruction that tells the agent to call `ToolSearch select:mcp__hive__*` on first turn. This is a prompt-level convention, not a harness-level mechanism.
 
-**`alwaysLoad` alternative (not yet adopted):** Since Claude Code v2.1.121, MCP server configs support `"alwaysLoad": true` which skips ToolSearch deferral for all tools in the server. Additionally, an MCP server can self-declare tools as always-loaded via `"anthropic/alwaysLoad": true` in the tool's `_meta` object. Either approach would eliminate the prompt-level pre-fetch workaround. See TK-002.
+**`alwaysLoad` alternative (not yet adopted):** Since Claude Code v2.1.121, MCP server configs support `"alwaysLoad": true` which skips ToolSearch deferral for all tools in the server. Additionally, an MCP server can self-declare tools as always-loaded via `"anthropic/alwaysLoad": true` in the tool's `_meta` object. Either approach would eliminate the prompt-level pre-fetch workaround. See TK-106.
 
 ### A3. Identity Files
 
