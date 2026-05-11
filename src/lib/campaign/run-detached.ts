@@ -12,9 +12,13 @@ import { runCampaign, type RunCampaignOpts, type CampaignLimits } from "./orches
 import { runIteration } from "./executor";
 import { runJudge } from "./judge";
 import { liveJudgeCaller } from "./judge-run";
-import { writeStatus } from "./state";
 import { assembleIdentity } from "../identity";
 import { execSync } from "node:child_process";
+import {
+  emitStartBreadcrumb,
+  writeCrashArtifacts,
+  writeCompletionArtifacts,
+} from "./run-lifecycle";
 
 // ---------------------------------------------------------------------------
 // Parse args
@@ -25,6 +29,9 @@ if (!campaignId) {
   console.error("Usage: bun run run-detached.ts <campaign-id> [options-json]");
   process.exit(1);
 }
+
+// Early breadcrumb — before any potentially-throwing init
+emitStartBreadcrumb(campaignId, "run-detached");
 
 const optsJson = process.argv[3];
 const rawOpts = optsJson ? JSON.parse(optsJson) : {};
@@ -88,13 +95,8 @@ const opts: RunCampaignOpts = {
 
 try {
   const result = await runCampaign(opts);
-  // Status is written by the orchestrator — just log the summary for the log file
-  console.log(JSON.stringify(result));
+  await writeCompletionArtifacts(result);
 } catch (err) {
-  // Mark as aborted on unhandled crash
-  try {
-    await writeStatus(campaignId, "aborted");
-  } catch { /* best effort */ }
-  console.error(`Campaign ${campaignId} crashed:`, err);
+  await writeCrashArtifacts(campaignId, err);
   process.exit(1);
 }
