@@ -322,6 +322,10 @@ describe("runCampaign — max iterations", () => {
 
     const scorecard = await readScorecard(id, hiveHome);
     expect(scorecard.length).toBe(3);
+
+    // TK-109: max_iterations is a normal budget termination, not an abort
+    const status = await readStatus(id, hiveHome);
+    expect(status).toBe("budget-exhausted");
   });
 });
 

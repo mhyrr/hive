@@ -203,7 +203,10 @@ export async function runCampaign(opts: RunCampaignOpts): Promise<CampaignResult
     const elapsedMs = Date.now() - startTime;
     const limitCheck = checkLimits(iterationN, totalCostUsd, elapsedMs, limits);
     if (limitCheck.exceeded) {
-      await writeStatus(campaignId, limitCheck.reason === "max_cost" ? "budget-exhausted" : "aborted", hiveHome);
+      // All three budget caps (max_cost, max_iterations, max_walltime) are normal
+      // budget terminations — campaign did all it could within constraints. Reserve
+      // "aborted" for genuine aborts (crash, manual stop, judge_decision=abort).
+      await writeStatus(campaignId, "budget-exhausted", hiveHome);
       return {
         campaignId,
         terminationReason: limitCheck.reason!,
