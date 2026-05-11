@@ -388,6 +388,51 @@ export const DASHBOARD_JS = `
 
   document.querySelectorAll(".epic-board").forEach(wireEpicBoard);
 
+  // ---------- Arc card expand/collapse ----------
+  function arcCardKey(card) {
+    var id = card.getAttribute("data-arc-id") || "";
+    return "arc-expanded:" + id;
+  }
+
+  function setArcExpanded(card, expanded) {
+    var body = card.querySelector(".arc-body");
+    var header = card.querySelector(".arc-header");
+    var glyph = card.querySelector(".arc-expand");
+    if (!body || !header) return;
+    if (expanded) {
+      card.classList.add("expanded");
+      header.setAttribute("aria-expanded", "true");
+      if (glyph) glyph.textContent = "−"; // minus sign
+      state[arcCardKey(card)] = 1;
+    } else {
+      card.classList.remove("expanded");
+      header.setAttribute("aria-expanded", "false");
+      if (glyph) glyph.textContent = "+";
+      delete state[arcCardKey(card)];
+    }
+    saveState();
+  }
+
+  function wireArcCard(card) {
+    var header = card.querySelector(".arc-header");
+    if (!header) return;
+
+    // Restore persisted state
+    if (state[arcCardKey(card)]) setArcExpanded(card, true);
+
+    header.addEventListener("click", function () {
+      setArcExpanded(card, !card.classList.contains("expanded"));
+    });
+    header.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setArcExpanded(card, !card.classList.contains("expanded"));
+      }
+    });
+  }
+
+  document.querySelectorAll(".arc-card").forEach(wireArcCard);
+
   // ---------- Keyboard ----------
   var focusables = function () { return Array.prototype.slice.call(document.querySelectorAll(".ticket-row, .dispatch-row, .inbox-entry:not(.empty)")); };
   var focusIdx = -1;

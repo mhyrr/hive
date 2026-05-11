@@ -8,7 +8,7 @@
  * Pure function: no I/O, no async, no DOM.
  */
 
-import type { CollectedRuns, RunRow, RunRowStatus } from "./collect";
+import type { CollectedRuns, RunRow, RunRowStatus, CampaignArc, CampaignIteration, ArcStatus } from "./collect";
 import { DASHBOARD_CSS } from "../styles";
 import { DASHBOARD_JS } from "../script";
 
@@ -187,6 +187,119 @@ ${rows}
     </tbody>
   </table>
 </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Campaign arc card renderer
+// ---------------------------------------------------------------------------
+
+function arcStatusChipClass(status: ArcStatus): string {
+  switch (status) {
+    case "shipped":   return "chip-shipped";
+    case "in-flight": return "chip-in-flight";
+    case "blocked":   return "chip-failed";
+    case "mixed":     return "chip-mixed";
+    default:          return "chip-unknown";
+  }
+}
+
+function arcStatusLabel(status: ArcStatus): string {
+  switch (status) {
+    case "shipped":   return "shipped";
+    case "in-flight": return "running";
+    case "blocked":   return "failed";
+    case "mixed":     return "mixed";
+    default:          return status;
+  }
+}
+
+function judgeDecisionClass(decision: string): string {
+  const d = decision.toLowerCase();
+  if (d === "done" || d === "accept" || d === "continue" || d === "replan") return "judge-accept";
+  if (d === "reject" || d === "abort") return "judge-reject";
+  return "";
+}
+
+function renderIterationTable(iterations: CampaignIteration[]): string {
+  if (iterations.length === 0) return "";
+
+  const rows = iterations.map((it) => {
+    const decisionCls = judgeDecisionClass(it.judgeDecision);
+    return `<tr>
+  <td class="num">${it.iterationN}</td>
+  <td>${escapeHtml(it.exitReason)}</td>
+  <td class="${decisionCls}">${escapeHtml(it.judgeDecision)}</td>
+  <td class="num">$${it.cost.toFixed(2)}</td>
+  <td class="num">${escapeHtml(formatElapsed(it.elapsedSec))}</td>
+</tr>`;
+  }).join("\n");
+
+  return `<div class="arc-section-label">Iterations</div>
+<table class="arc-iterations">
+  <thead>
+    <tr>
+      <th class="num">#</th>
+      <th>Exit Reason</th>
+      <th>Judge</th>
+      <th class="num">Cost</th>
+      <th class="num">Elapsed</th>
+    </tr>
+  </thead>
+  <tbody>
+${rows}
+  </tbody>
+</table>`;
+}
+
+function renderFrozenPrefixBlock(prefix: string | null): string {
+  if (!prefix) return "";
+  return `<div class="arc-section-label frozen-prefix-label">Frozen prefix (cache-stable)</div>
+<pre class="arc-frozen-prefix">${escapeHtml(prefix)}</pre>`;
+}
+
+function renderFinalArtifact(artifact: string | null): string {
+  if (!artifact) return "";
+  return `<div class="arc-section-label">Final Artifact</div>
+<div class="arc-prose"><code>${escapeHtml(artifact)}</code></div>`;
+}
+
+/**
+ * Render a campaign arc card (header + expandable body).
+ * Uses `.arc-card` / `.arc-header` / `.arc-body` pattern from TK-095 styles.
+ */
+export function renderCampaignArc(arc: CampaignArc): string {
+  const { campaign, iterations, totalCost, iterationCount, status, goal, frozenPrefix, finalArtifact } = arc;
+
+  // Header: id + goal summary (first ~80 chars) + status chip + cost + iter count
+  const goalSummary = truncate(campaign.goalSummary, 80);
+  const chipClass = arcStatusChipClass(status);
+  const chipLabel = arcStatusLabel(status);
+  const costStr = formatCost(totalCost || undefined);
+
+  const header = `<div class="arc-header" role="button" tabindex="0" aria-expanded="false">
+  <span class="arc-expand">+</span>
+  <span class="arc-title"><span class="mono">${escapeHtml(campaign.id)}</span> ${escapeHtml(goalSummary)}</span>
+  <span class="arc-chip ${chipClass}">${escapeHtml(chipLabel)}</span>
+  <span class="arc-meta">${escapeHtml(costStr)}</span>
+  <span class="arc-meta">${iterationCount} iter${iterationCount !== 1 ? "s" : ""}</span>
+</div>`;
+
+  // Body: full goal + frozen prefix + iteration table + final artifact
+  const goalBlock = goal
+    ? `<div class="arc-section-label">Goal</div>\n<div class="arc-prose"><p>${escapeHtml(goal)}</p></div>`
+    : "";
+
+  const body = `<div class="arc-body">
+  ${goalBlock}
+  ${renderFrozenPrefixBlock(frozenPrefix)}
+  ${renderIterationTable(iterations)}
+  ${renderFinalArtifact(finalArtifact)}
+</div>`;
+
+  return `<div class="arc-card" data-arc-id="${escapeHtml(campaign.id)}">
+  ${header}
+  ${body}
+</div>`;
 }
 
 // ---------------------------------------------------------------------------
