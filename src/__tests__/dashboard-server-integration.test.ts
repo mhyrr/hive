@@ -179,8 +179,8 @@ describe("dashboard server end-to-end", () => {
 
   // --- /runs deep content assertions (TK-091) ---
 
-  test("GET /runs contains active panel + timeline section headers", async () => {
-    // Seed a completed run so the timeline section has content
+  test("GET /runs renders arc-first view with direct dispatches", async () => {
+    // Seed a completed run — it will appear as a direct dispatch (no parent_epic)
     const runDir = join(home, "runs", "RUN-050");
     await mkdir(runDir, { recursive: true });
     await writeFile(join(runDir, "status"), "complete");
@@ -190,21 +190,23 @@ describe("dashboard server end-to-end", () => {
     const res = await fetch(`http://127.0.0.1:${port}/runs`);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain('id="section-active-runs"');
-    expect(body).toContain('id="section-terminal-runs"');
-    expect(body).toContain("Active Runs");
-    expect(body).toContain("Run History");
+    // Arc-first page: direct dispatches section for orphan runs
+    expect(body).toContain("direct-section");
+    expect(body).toContain("RUN-050");
+    // Page uses page-wide layout
+    expect(body).toContain("page-wide");
   });
 
-  test("GET /runs with empty fixture renders both empty states", async () => {
+  test("GET /runs with empty fixture renders empty state", async () => {
     // No runs, no campaigns seeded — scaffold only
     const res = await fetch(`http://127.0.0.1:${port}/runs`);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("No runs in flight");
-    expect(body).toContain("No completed runs yet");
-    expect(body).toContain('id="section-active-runs"');
-    expect(body).toContain('id="section-terminal-runs"');
+    // Arc-first empty state
+    expect(body).toContain("No arcs to display");
+    // Full document shell
+    expect(body).toContain("<!DOCTYPE html>");
+    expect(body).toContain("HIVE");
   });
 
   test("GET /runs/RUN-XXX contains goal text and output.log tail", async () => {

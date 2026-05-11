@@ -43,8 +43,8 @@ import {
 import { resolveHiveBin, HiveBinNotFoundError } from "./hive-bin";
 import { renderDashboard, renderTicketsPageDocument } from "./render";
 import { collectDashboardData, collectTicketsPage } from "./collect";
-import { collectRuns } from "./runs/collect";
-import { renderRunsPageDocument } from "./runs/render";
+import { collectRuns, collectArcs } from "./runs/collect";
+import { renderRunsPageDocument, renderArcRunsPageDocument } from "./runs/render";
 import { collectDispatchDetail } from "./runs/collect-detail";
 import { renderDispatchFragment } from "./render-dispatch";
 import { collectCampaignFragment } from "./runs/collect-campaign";
@@ -171,8 +171,8 @@ async function serveTicketsPage(rctx: RequestCtx): Promise<Response> {
 }
 
 async function serveRunsPage(rctx: RequestCtx): Promise<Response> {
-  const data = await collectRuns(rctx.paths);
-  const html = renderRunsPageDocument(data, { interactive: true });
+  const arcs = await collectArcs(rctx.paths);
+  const html = renderArcRunsPageDocument(arcs, { interactive: true });
   return new Response(html, {
     headers: {
       "content-type": "text/html; charset=utf-8",

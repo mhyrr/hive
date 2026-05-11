@@ -11,7 +11,7 @@
 
 import { marked } from "marked";
 
-import type { CollectedRuns, RunRow, RunRowStatus, DirectArc, GoalArc, CampaignArc, CampaignIteration, ArcStatus } from "./collect";
+import type { CollectedRuns, RunRow, RunRowStatus, DirectArc, GoalArc, CampaignArc, CampaignIteration, ArcStatus, Arc } from "./collect";
 import { DASHBOARD_CSS } from "../styles";
 import { DASHBOARD_JS } from "../script";
 
@@ -604,12 +604,149 @@ export function renderRunsPage(data: CollectedRuns): string {
 }
 
 /**
- * Render a complete HTML document for the /runs page.
+ * Render a complete HTML document for the /runs page (legacy flat list).
  */
 export function renderRunsPageDocument(
   data: CollectedRuns,
   opts: RunsPageRenderOptions = {},
 ): string {
+  return renderFullDocument(renderRunsPage(data), opts);
+}
+
+// ---------------------------------------------------------------------------
+// Arc-first /runs page — day grouping + active bubbling
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the start date (ISO YYYY-MM-DD) from an arc for day grouping.
+ */
+function arcStartDate(arc: Arc): string {
+  switch (arc.kind) {
+    case "goal":
+      return arc.epic.created.slice(0, 10);
+    case "campaign":
+      return arc.campaign.startedAt.slice(0, 10);
+    case "direct":
+      return arc.run.startedAt.slice(0, 10);
+  }
+}
+
+/**
+ * Extract the start ISO timestamp for sorting within a day.
+ */
+function arcStartTime(arc: Arc): string {
+  switch (arc.kind) {
+    case "goal":
+      return arc.epic.created;
+    case "campaign":
+      return arc.campaign.startedAt;
+    case "direct":
+      return arc.run.startedAt;
+  }
+}
+
+/**
+ * Determine if an arc is "active" (any run in flight).
+ */
+function isArcActive(arc: Arc): boolean {
+  switch (arc.kind) {
+    case "goal":
+      return arc.status === "in-flight";
+    case "campaign":
+      return arc.status === "in-flight";
+    case "direct":
+      return arc.run.status === "running";
+  }
+}
+
+/**
+ * Render a single arc card (dispatches to the appropriate renderer).
+ */
+function renderArcCard(arc: GoalArc | CampaignArc): string {
+  return arc.kind === "goal" ? renderGoalArc(arc) : renderCampaignArc(arc);
+}
+
+/**
+ * Render the arc-first /runs page body.
+ *
+ * Layout:
+ *   - Goal + campaign arcs grouped by day (date of first activity), newest first
+ *   - Within each day: active arcs bubble to top, then sorted by start time desc
+ *   - Direct dispatches as a single section below all arc-day groups
+ */
+export function renderArcRunsPage(arcs: Arc[]): string {
+  // Separate directs from goal/campaign arcs
+  const grouped: (GoalArc | CampaignArc)[] = [];
+  const directs: DirectArc[] = [];
+
+  for (const arc of arcs) {
+    if (arc.kind === "direct") {
+      directs.push(arc);
+    } else {
+      grouped.push(arc);
+    }
+  }
+
+  // Group by day
+  const dayMap = new Map<string, (GoalArc | CampaignArc)[]>();
+  for (const arc of grouped) {
+    const day = arcStartDate(arc);
+    const list = dayMap.get(day);
+    if (list) {
+      list.push(arc);
+    } else {
+      dayMap.set(day, [arc]);
+    }
+  }
+
+  // Sort days newest-first
+  const sortedDays = [...dayMap.keys()].sort((a, b) => b.localeCompare(a));
+
+  // Render each day group
+  const dayGroups = sortedDays.map((day) => {
+    const dayArcs = dayMap.get(day)!;
+
+    // Within a day: active first, then by start time desc
+    dayArcs.sort((a, b) => {
+      const aActive = isArcActive(a) ? 0 : 1;
+      const bActive = isArcActive(b) ? 0 : 1;
+      if (aActive !== bActive) return aActive - bActive;
+      // Both same activity status — newest first
+      return new Date(arcStartTime(b)).getTime() - new Date(arcStartTime(a)).getTime();
+    });
+
+    const cards = dayArcs.map(renderArcCard).join("\n");
+
+    return `<div class="day-group">
+  <h3 class="day-heading">${escapeHtml(longDate(day))}</h3>
+${cards}
+</div>`;
+  });
+
+  const dayGroupsHtml = dayGroups.length > 0
+    ? dayGroups.join("\n")
+    : `<div class="runs-empty">No arcs to display.</div>`;
+
+  const directsHtml = renderDirectDispatches(directs);
+
+  return `${dayGroupsHtml}\n${directsHtml}`;
+}
+
+/**
+ * Render a complete HTML document for the arc-first /runs page.
+ */
+export function renderArcRunsPageDocument(
+  arcs: Arc[],
+  opts: RunsPageRenderOptions = {},
+): string {
+  return renderFullDocument(renderArcRunsPage(arcs), opts);
+}
+
+// ---------------------------------------------------------------------------
+// Shared document shell
+// ---------------------------------------------------------------------------
+
+function renderFullDocument(bodyContent: string, opts: RunsPageRenderOptions = {}): string {
   const interactive = opts.interactive !== false;
   const today = new Date().toISOString().slice(0, 10);
 
@@ -650,7 +787,7 @@ export function renderRunsPageDocument(
       <span>${escapeHtml(longDate(today))}</span>
     </div>
   </header>
-  ${renderRunsPage(data)}
+  ${bodyContent}
 </div>
 ${scriptBlock}
 </body>
