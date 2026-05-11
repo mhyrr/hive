@@ -19,8 +19,12 @@ import { runCampaign, type CampaignLimits, type ExecutorFn, type JudgeFn } from 
 import { runIteration } from "./executor";
 import { runJudge } from "./judge";
 import { liveJudgeCaller } from "./judge-run";
-import { writeStatus } from "./state";
 import type { CapsConfig } from "./caps";
+import {
+  emitStartBreadcrumb,
+  writeCrashArtifacts,
+  writeCompletionArtifacts,
+} from "./run-lifecycle";
 
 // ---------------------------------------------------------------------------
 // Find claude binary
@@ -46,6 +50,9 @@ async function main(): Promise<void> {
     console.error("Usage: run-orchestrator.ts <CAMP-NNN>");
     process.exit(1);
   }
+
+  // Early breadcrumb — before any potentially-throwing init
+  emitStartBreadcrumb(campaignId, "run-orchestrator");
 
   const hiveHome = resolveHiveHome();
   const campaignDir = join(hiveHome, "campaigns", campaignId);
@@ -94,17 +101,7 @@ async function main(): Promise<void> {
       hiveHome,
     });
 
-    // Write completion summary
-    const summary = [
-      `Campaign ${result.campaignId} finished.`,
-      `  Reason: ${result.terminationReason}`,
-      `  Iterations: ${result.iterationsCompleted}`,
-      `  Cost: $${result.totalCostUsd.toFixed(2)}`,
-      `  Tokens: ${result.totalTokens}`,
-      `  Walltime: ${Math.round(result.totalWalltimeMs / 1000)}s`,
-    ].join("\n");
-
-    await Bun.write(join(campaignDir, "result.txt"), summary);
+    await writeCompletionArtifacts(result, hiveHome);
 
     // macOS notification
     try {
@@ -115,14 +112,11 @@ async function main(): Promise<void> {
     } catch { /* notification is best-effort */ }
 
   } catch (err) {
-    // Campaign crashed — mark aborted
-    await writeStatus(campaignId, "aborted", hiveHome);
-    const msg = err instanceof Error ? err.message : String(err);
-    await Bun.write(join(campaignDir, "error.txt"), msg);
+    await writeCrashArtifacts(campaignId, err, hiveHome);
 
     try {
       execSync(
-        `osascript -e 'display notification "${campaignId} crashed: ${msg.slice(0, 80)}" with title "HIVE Campaign" sound name "Basso"'`,
+        `osascript -e 'display notification "${campaignId} crashed: ${(err instanceof Error ? err.message : String(err)).slice(0, 80)}" with title "HIVE Campaign" sound name "Basso"'`,
         { stdio: "pipe" },
       );
     } catch { /* best-effort */ }

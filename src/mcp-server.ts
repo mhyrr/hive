@@ -1030,7 +1030,7 @@ server.registerTool("start_campaign", {
   });
 
   const logPath = join(statePath, "orchestrator.log");
-  const { openSync } = await import("node:fs");
+  const { openSync, closeSync } = await import("node:fs");
   const logFd = openSync(logPath, "a");
 
   const child = spawn("bun", ["run", runnerPath, campaignId, optsPayload], {
@@ -1041,6 +1041,7 @@ server.registerTool("start_campaign", {
   });
 
   child.unref();
+  closeSync(logFd); // Release parent's copy — child has its own fd
 
   // Write PID for later management
   await Bun.write(join(statePath, "pid"), String(child.pid));
