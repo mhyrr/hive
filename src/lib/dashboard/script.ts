@@ -436,6 +436,24 @@ export const DASHBOARD_JS = `
 
   document.querySelectorAll(".arc-card").forEach(wireArcCard);
 
+  // ---------- Why-failed expand/collapse ----------
+  function wireWhyFailed(el) {
+    el.addEventListener("click", function (e) {
+      el.classList.toggle("expanded");
+      var toggle = el.querySelector(".why-failed-toggle");
+      if (toggle) toggle.textContent = el.classList.contains("expanded") ? "click to collapse" : "click to expand";
+    });
+  }
+  document.querySelectorAll("[data-why-failed]").forEach(wireWhyFailed);
+
+  function wireWhyFailedInline(el) {
+    el.addEventListener("click", function (e) {
+      e.stopPropagation();
+      el.classList.toggle("expanded");
+    });
+  }
+  document.querySelectorAll("[data-why-failed-inline]").forEach(wireWhyFailedInline);
+
   // ---------- Keyboard ----------
   var focusables = function () { return Array.prototype.slice.call(document.querySelectorAll(".ticket-row, .dispatch-row, .inbox-entry:not(.empty)")); };
   var focusIdx = -1;

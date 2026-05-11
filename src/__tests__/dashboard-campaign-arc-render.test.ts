@@ -46,6 +46,7 @@ function makeArc(overrides: Partial<CampaignArc> = {}): CampaignArc {
     goal: "Implement feature X with comprehensive test coverage and documentation updates to reflect the new behavior.",
     frozenPrefix: "You are an expert TypeScript developer.\nAlways write tests first.",
     finalArtifact: null,
+    failureReason: null,
     ...overrides,
   };
 }
