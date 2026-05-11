@@ -224,6 +224,23 @@ describe("renderCampaignArc", () => {
     expect(html).toContain("hard-cap");
   });
 
+  test("goal renders markdown (headings, bold, code)", () => {
+    const goal = "# Prime Directive\n\nBuild the **frobnitz** with `--fast` flag.\n\n## Constraints\n\n- No regressions\n- Full test coverage";
+    const html = renderCampaignArc(makeArc({ goal }));
+
+    // Headings rendered
+    expect(html).toContain("<h1>");
+    expect(html).toContain("Prime Directive");
+    expect(html).toContain("<h2>");
+    expect(html).toContain("Constraints");
+    // Bold rendered
+    expect(html).toContain("<strong>frobnitz</strong>");
+    // Inline code rendered
+    expect(html).toContain("<code>--fast</code>");
+    // List rendered
+    expect(html).toContain("<li>");
+  });
+
   test("escapes HTML in goal and frozen prefix", () => {
     const arc = makeArc({
       goal: "Implement <script>alert('xss')</script> safely",

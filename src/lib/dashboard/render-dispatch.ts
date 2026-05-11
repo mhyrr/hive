@@ -52,7 +52,8 @@ function escapeHtml(s: string): string {
 
 function md(source: string): string {
   if (!source || !source.trim()) return "";
-  return marked.parse(source, { async: false, breaks: false, gfm: true }) as string;
+  const safe = escapeHtml(source);
+  return marked.parse(safe, { async: false, breaks: false, gfm: true }) as string;
 }
 
 function formatElapsed(sec: number): string {

@@ -144,8 +144,40 @@ describe("renderGoalArc", () => {
 
   test("body renders remaining epic content as markdown", () => {
     const html = renderGoalArc(makeArc());
-    // The "Why" section should be rendered
+    // The "Why" section heading should be rendered as an HTML heading
+    expect(html).toMatch(/<h2[^>]*>.*Why/);
+    // Prose content present
     expect(html).toContain("brittle and breaks under load");
+  });
+
+  test("original ask renders markdown (bold, code, links)", () => {
+    const epic = makeEpic({
+      body: `## Goal
+Build the **frobnitz** with \`--fast\` flag and [docs](https://example.com).
+
+## Why
+Performance.`,
+    });
+    const html = renderGoalArc(makeArc({ epic }));
+    // Bold rendered in Original Ask
+    expect(html).toContain("<strong>frobnitz</strong>");
+    // Inline code rendered
+    expect(html).toContain("<code>--fast</code>");
+  });
+
+  test("escapes HTML in epic body while rendering markdown", () => {
+    const epic = makeEpic({
+      body: `## Goal
+Fix <script>alert('xss')</script> in the **parser**.
+
+## Why
+Security.`,
+    });
+    const html = renderGoalArc(makeArc({ epic }));
+    expect(html).not.toContain("<script>alert");
+    expect(html).toContain("&lt;script&gt;");
+    // Markdown still renders
+    expect(html).toContain("<strong>parser</strong>");
   });
 
   test("decomposition tree shows all children", () => {

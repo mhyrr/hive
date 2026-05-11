@@ -80,6 +80,22 @@ function longDate(iso: string): string {
   return `${weekday}, ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
+/**
+ * Render markdown → HTML, safe from injection.
+ *
+ * Escape HTML entities first so raw `<script>` / `<img onerror>` etc. are
+ * neutralized, then parse the escaped source as markdown. Markdown syntax
+ * characters (`#`, `*`, `` ` ``, `[`, `]`, etc.) are unaffected by the
+ * escape pass. The only thing lost is inline HTML in markdown (e.g.
+ * `<em>italic</em>`) — which is the desired tradeoff for a dashboard
+ * rendering user-supplied goals.
+ */
+function md(source: string): string {
+  if (!source || !source.trim()) return "";
+  const safe = escapeHtml(source);
+  return marked.parse(safe, { async: false, breaks: false, gfm: true }) as string;
+}
+
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   const cut = text.slice(0, maxLen);
@@ -403,7 +419,7 @@ export function renderGoalArc(arc: GoalArc): string {
   // Original ask block
   const originalAsk = firstPara
     ? `<div class="arc-section-label">Original Ask</div>
-<div class="arc-prose"><p>${escapeHtml(firstPara)}</p></div>`
+<div class="arc-prose">${md(firstPara)}</div>`
     : "";
 
   // Rendered markdown for the rest of the body (minus notes)
@@ -413,7 +429,7 @@ export function renderGoalArc(arc: GoalArc): string {
     .join("\n")
     .trim();
   const renderedBody = bodyWithoutNotes
-    ? `<div class="arc-prose">${marked.parse(bodyWithoutNotes)}</div>`
+    ? `<div class="arc-prose">${md(bodyWithoutNotes)}</div>`
     : "";
 
   // Decomposition tree
@@ -572,7 +588,7 @@ export function renderCampaignArc(arc: CampaignArc): string {
 
   // Body: full goal + frozen prefix + iteration table + final artifact
   const goalBlock = goal
-    ? `<div class="arc-section-label">Goal</div>\n<div class="arc-prose"><p>${escapeHtml(goal)}</p></div>`
+    ? `<div class="arc-section-label">Goal</div>\n<div class="arc-prose">${md(goal)}</div>`
     : "";
 
   const body = `<div class="arc-body">
