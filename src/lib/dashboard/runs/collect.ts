@@ -11,6 +11,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { HivePaths } from "../../paths";
+import { listProjects } from "../../paths";
+import { listTickets, type Ticket } from "../../ticket";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -470,4 +472,264 @@ export function runsByTicket(data: CollectedRuns): Map<string, RunRef[]> {
   for (const row of data.terminal) index(row);
 
   return map;
+}
+
+// ---------------------------------------------------------------------------
+// Arc types — discriminated union for the arc-first /runs view
+// ---------------------------------------------------------------------------
+
+export type ArcStatus = "shipped" | "in-flight" | "blocked" | "mixed";
+
+export type GoalArcChild = {
+  ticket: Ticket;
+  runs: RunRef[];
+};
+
+export type GoalArc = {
+  kind: "goal";
+  epic: Ticket;
+  children: GoalArcChild[];
+  totalCost: number | null; // null — dispatch cost not tracked today
+  runCount: number;
+  status: ArcStatus;
+};
+
+export type CampaignIteration = {
+  iterationN: number;
+  exitReason: string;
+  judgeDecision: string;
+  cost: number;
+  elapsedSec: number;
+};
+
+export type CampaignArc = {
+  kind: "campaign";
+  campaign: RunRow;
+  iterations: CampaignIteration[];
+  totalCost: number;
+  iterationCount: number;
+  status: ArcStatus;
+};
+
+export type DirectArc = {
+  kind: "direct";
+  run: RunRow;
+};
+
+export type Arc = GoalArc | CampaignArc | DirectArc;
+
+// ---------------------------------------------------------------------------
+// collectArcs() — build Arc[] from live ~/.hive/ data
+// ---------------------------------------------------------------------------
+
+/**
+ * Roll up child statuses into a single arc-level status.
+ * - All children shipped (or have a shipped run) → "shipped"
+ * - Any child in_progress or has a running run → "in-flight"
+ * - Any child is blocked (has unmet depends) → "blocked"
+ * - Mixed conditions → "mixed"
+ */
+function rollUpGoalStatus(children: GoalArcChild[], openTicketIds: Set<string>): ArcStatus {
+  if (children.length === 0) return "shipped";
+
+  let hasShipped = false;
+  let hasInFlight = false;
+  let hasBlocked = false;
+  let hasOpen = false;
+
+  for (const child of children) {
+    const { ticket, runs } = child;
+    const hasRunningRun = runs.some((r) => r.status === "running");
+    const hasShippedRun = runs.some((r) => r.status === "shipped");
+    const isBlocked = ticket.depends.length > 0 && ticket.depends.some((d) => openTicketIds.has(d));
+
+    if (ticket.status === "closed" || hasShippedRun) {
+      hasShipped = true;
+    } else if (hasRunningRun || ticket.status === "in_progress") {
+      hasInFlight = true;
+    } else if (isBlocked) {
+      hasBlocked = true;
+    } else {
+      hasOpen = true;
+    }
+  }
+
+  // Pure states
+  if (hasInFlight && !hasBlocked && !hasOpen && !hasShipped) return "in-flight";
+  if (hasShipped && !hasInFlight && !hasBlocked && !hasOpen) return "shipped";
+  if (hasBlocked && !hasInFlight && !hasShipped && !hasOpen) return "blocked";
+
+  // In-flight dominates when mixed with shipped
+  if (hasInFlight) return "in-flight";
+  // Blocked dominates when mixed with open
+  if (hasBlocked) return "blocked";
+  // All open but not blocked or in-flight — treat as mixed
+  if (hasOpen && hasShipped) return "mixed";
+
+  return "mixed";
+}
+
+function campaignArcStatus(row: RunRow): ArcStatus {
+  if (row.status === "shipped") return "shipped";
+  if (row.status === "running") return "in-flight";
+  if (row.status === "partial") return "mixed";
+  return "blocked"; // failed/crashed → blocked (stalled)
+}
+
+/** Parse scorecard.jsonl for per-iteration arc data. */
+function parseScorecardForArcs(content: string): CampaignIteration[] {
+  const iterations: CampaignIteration[] = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const row = JSON.parse(trimmed);
+      const startMs = row.started_at ? new Date(row.started_at).getTime() : 0;
+      const endMs = row.ended_at ? new Date(row.ended_at).getTime() : 0;
+      const elapsedSec = startMs && endMs ? Math.max(0, Math.round((endMs - startMs) / 1000)) : 0;
+
+      iterations.push({
+        iterationN: row.iteration_n ?? 0,
+        exitReason: row.exit_reason ?? "unknown",
+        judgeDecision: row.judge_decision ?? "unknown",
+        cost: typeof row.cost_usd === "number" ? row.cost_usd : 0,
+        elapsedSec,
+      });
+    } catch {
+      // skip malformed
+    }
+  }
+  return iterations;
+}
+
+export type CollectArcsOpts = {
+  /** Check PID liveness via process.kill(pid, 0). Disable for tests. */
+  checkPid?: boolean;
+};
+
+/**
+ * Build an arc-first view of all execution in `~/.hive/`.
+ *
+ * Three arc kinds:
+ * - Goal: epic ticket + children joined to runs via runsByTicket()
+ * - Campaign: campaign run + parsed scorecard iterations
+ * - Direct: orphan dispatch run (no parent_epic, not part of campaign)
+ */
+export async function collectArcs(
+  paths: HivePaths,
+  opts: CollectArcsOpts = {},
+): Promise<Arc[]> {
+  // Collect runs (reuses existing collector)
+  const collectedRuns = await collectRuns(paths, { checkPid: opts.checkPid ?? true });
+  const ticketRunMap = runsByTicket(collectedRuns);
+
+  // Load all tickets across all projects
+  const projectIds = await listProjects(paths.projectsDir);
+  const allTickets: Ticket[] = [];
+  for (const pid of projectIds) {
+    const tickets = await listTickets(paths, pid).catch(() => [] as Ticket[]);
+    allTickets.push(...tickets);
+  }
+
+  // Build lookup structures
+  const ticketById = new Map<string, Ticket>(allTickets.map((t) => [t.id, t]));
+  const openTicketIds = new Set<string>(
+    allTickets.filter((t) => t.status !== "closed").map((t) => t.id),
+  );
+
+  // Identify epics and their children
+  const epics = allTickets.filter((t) => t.type === "epic");
+  const childrenByEpic = new Map<string, Ticket[]>();
+  for (const t of allTickets) {
+    if (t.parentEpic) {
+      const list = childrenByEpic.get(t.parentEpic);
+      if (list) {
+        list.push(t);
+      } else {
+        childrenByEpic.set(t.parentEpic, [t]);
+      }
+    }
+  }
+
+  // Track which ticket IDs are "claimed" by a goal arc
+  const claimedTicketIds = new Set<string>();
+
+  // --- Goal arcs ---
+  const goalArcs: GoalArc[] = [];
+  for (const epic of epics) {
+    const children = childrenByEpic.get(epic.id) ?? [];
+    claimedTicketIds.add(epic.id);
+
+    const arcChildren: GoalArcChild[] = children.map((child) => {
+      claimedTicketIds.add(child.id);
+      return {
+        ticket: child,
+        runs: ticketRunMap.get(child.id) ?? [],
+      };
+    });
+
+    const runCount = arcChildren.reduce((sum, c) => sum + c.runs.length, 0);
+    const status = rollUpGoalStatus(arcChildren, openTicketIds);
+
+    goalArcs.push({
+      kind: "goal",
+      epic,
+      children: arcChildren,
+      totalCost: null, // dispatch cost not tracked today
+      runCount,
+      status,
+    });
+  }
+
+  // --- Campaign arcs ---
+  // Campaign runs are already in collectedRuns. Enrich with scorecard data.
+  const campaignArcs: CampaignArc[] = [];
+  const campaignRunRows = [
+    ...collectedRuns.active.filter((r) => r.kind === "campaign"),
+    ...collectedRuns.terminal.filter((r) => r.kind === "campaign"),
+  ];
+
+  // Track which ticketIds are claimed by campaigns
+  const campaignTicketIds = new Set<string>();
+
+  for (const row of campaignRunRows) {
+    if (row.ticketId) campaignTicketIds.add(row.ticketId);
+
+    // Read scorecard.jsonl for iteration detail
+    const scorecardPath = join(paths.campaignsDir, row.id, "scorecard.jsonl");
+    const scorecardRaw = await safeReadFile(scorecardPath);
+    const iterations = scorecardRaw ? parseScorecardForArcs(scorecardRaw) : [];
+
+    const totalCost = iterations.reduce((sum, it) => sum + it.cost, 0);
+
+    campaignArcs.push({
+      kind: "campaign",
+      campaign: row,
+      iterations,
+      totalCost,
+      iterationCount: iterations.length,
+      status: campaignArcStatus(row),
+    });
+  }
+
+  // --- Direct arcs ---
+  // Any dispatch run whose ticket has no parent_epic AND isn't part of a campaign
+  const allDispatchRows = [
+    ...collectedRuns.active.filter((r) => r.kind === "dispatch"),
+    ...collectedRuns.terminal.filter((r) => r.kind === "dispatch"),
+  ];
+
+  const directArcs: DirectArc[] = [];
+  for (const row of allDispatchRows) {
+    // If it has a ticket ID, check if that ticket is claimed by a goal arc or campaign
+    if (row.ticketId) {
+      if (claimedTicketIds.has(row.ticketId)) continue;
+      if (campaignTicketIds.has(row.ticketId)) continue;
+    }
+    directArcs.push({ kind: "direct", run: row });
+  }
+
+  // Combine: goal arcs first, then campaigns, then direct
+  const arcs: Arc[] = [...goalArcs, ...campaignArcs, ...directArcs];
+  return arcs;
 }
