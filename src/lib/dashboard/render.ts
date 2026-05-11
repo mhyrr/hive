@@ -708,6 +708,7 @@ export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOpt
     .join(' <span class="nav-sep">·</span> ');
 
   const scriptBlock = c.interactive ? `<script>${DASHBOARD_JS}</script>` : "";
+  const filterBar = c.interactive ? renderTicketsFilterBar(data.projectIds) : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -727,11 +728,27 @@ export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOpt
       <span>${escapeHtml(longDate(today))}</span>
     </div>
   </header>
+  ${filterBar}
   ${renderTicketsPage(data, c)}
 </div>
 ${scriptBlock}
 </body>
 </html>`;
+}
+
+function renderTicketsFilterBar(projectIds: string[]): string {
+  if (projectIds.length === 0) return "";
+  const pills = [
+    `<button type="button" class="pill pill--active" data-project-filter="ALL">ALL</button>`,
+    ...projectIds.map(
+      (id) =>
+        `<button type="button" class="pill" data-project-filter="${escapeHtml(id)}">${escapeHtml(id)}</button>`,
+    ),
+  ].join("");
+  return `<div class="tickets-filter-bar">
+    <div class="pills">${pills}</div>
+  </div>
+  <div id="filter-banner" class="filter-banner" aria-live="polite"></div>`;
 }
 
 // ---------------------------------------------------------------------------

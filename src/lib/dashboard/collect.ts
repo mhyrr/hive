@@ -103,6 +103,8 @@ export type TicketsPageData = {
   standalone: TicketBuckets;
   totalActive: number;
   projectCount: number;
+  /** Sorted list of project ids that have at least one ticket. Drives the filter pills. */
+  projectIds: string[];
 };
 
 // Internal helper for tickets-page collector: read tickets WITH bodies.
@@ -571,6 +573,7 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
     standalone,
     totalActive,
     projectCount: projectsWithTickets.size,
+    projectIds: [...projectsWithTickets].sort(),
   };
 }
 

@@ -1168,6 +1168,19 @@ html { scroll-padding-top: 48px; }
   .sticky-filter { order: 2; }
 }
 
+/* ---------- Tickets-page filter bar ---------- */
+
+.tickets-filter-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  margin: 6px 0 14px;
+  padding: 6px 0 8px;
+  border-top: 1px solid var(--amber);
+  border-bottom: 1px solid var(--amber);
+}
+.tickets-filter-bar .pills { font-size: 12px; }
+
 /* ---------- Pill row + Needs-Action toggle ---------- */
 
 .pill-row {

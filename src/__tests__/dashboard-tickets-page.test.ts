@@ -267,6 +267,39 @@ describe("renderTicketsPageDocument", () => {
     expect(html).toContain('<a href="/tickets" class="nav-active">TICKETS</a>');
     expect(html).toContain('<a href="/">BRIEFING</a>');
   });
+
+  test("renders a project filter bar with ALL + one pill per project, ALL active", async () => {
+    await registerProject("alpha");
+    await registerProject("bravo");
+    await createTicket(paths, "alpha", { title: "a1", type: "task" });
+    await createTicket(paths, "bravo", { title: "b1", type: "task" });
+
+    const data = await collectTicketsPage(paths);
+    expect(data.projectIds).toEqual(["alpha", "bravo"]);
+
+    const html = renderTicketsPageDocument(data, { interactive: true });
+    expect(html).toContain('class="tickets-filter-bar"');
+    expect(html).toContain('<button type="button" class="pill pill--active" data-project-filter="ALL">ALL</button>');
+    expect(html).toContain('data-project-filter="alpha"');
+    expect(html).toContain('data-project-filter="bravo"');
+    expect(html).toContain('id="filter-banner"');
+  });
+
+  test("filter bar is omitted in non-interactive mode", async () => {
+    await registerProject("alpha");
+    await createTicket(paths, "alpha", { title: "lone", type: "task" });
+    const data = await collectTicketsPage(paths);
+    const html = renderTicketsPageDocument(data, { interactive: false });
+    expect(html).not.toContain('class="tickets-filter-bar"');
+    expect(html).not.toContain("data-project-filter");
+  });
+
+  test("filter bar is omitted when no projects have tickets", async () => {
+    const data = await collectTicketsPage(paths);
+    expect(data.projectIds).toEqual([]);
+    const html = renderTicketsPageDocument(data, { interactive: true });
+    expect(html).not.toContain('class="tickets-filter-bar"');
+  });
 });
 
 // ---------------------------------------------------------------------------
