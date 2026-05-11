@@ -1843,6 +1843,47 @@ body.filtered-by-actions .row-less:not(.has-action) {
   margin-bottom: 14px;
   font-weight: 700;
 }
+.direct-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-feature-settings: "tnum" 1;
+}
+.direct-table th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: var(--smallcaps-tracking);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 700;
+  border-bottom: 1px solid var(--faint);
+  padding: 3px 6px;
+}
+.direct-table td {
+  border-bottom: 1px solid var(--faint);
+  padding: 4px 6px;
+  vertical-align: baseline;
+}
+.direct-row:last-child td { border-bottom: 0; }
+.direct-id { font-size: 11px; }
+.direct-title {
+  font-size: 13px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 400px;
+}
+.direct-elapsed,
+.direct-time {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.direct-muted {
+  color: var(--muted);
+}
 
 /* Result line for closed arcs */
 .arc-result {

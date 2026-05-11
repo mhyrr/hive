@@ -1,14 +1,15 @@
 /**
  * Runs page renderer — turns collectRuns() output into a broadsheet HTML page.
  *
- * Two sections:
+ * Three sections:
  *   1. Active runs panel (top) — one row per running dispatch/campaign
  *   2. Terminal timeline (below) — completed runs newest-first
+ *   3. Direct dispatches (bottom) — orphan runs not claimed by any arc
  *
  * Pure function: no I/O, no async, no DOM.
  */
 
-import type { CollectedRuns, RunRow, RunRowStatus } from "./collect";
+import type { CollectedRuns, RunRow, RunRowStatus, DirectArc } from "./collect";
 import { DASHBOARD_CSS } from "../styles";
 import { DASHBOARD_JS } from "../script";
 
@@ -82,6 +83,20 @@ function truncate(text: string, maxLen: number): string {
   const cut = text.slice(0, maxLen);
   const lastSpace = cut.lastIndexOf(" ");
   return (lastSpace > maxLen * 0.5 ? cut.slice(0, lastSpace) : cut) + "…";
+}
+
+function formatStartTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const months = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  const h = d.getHours();
+  const m = d.getMinutes().toString().padStart(2, "0");
+  const ampm = h >= 12 ? "pm" : "am";
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${months[d.getMonth()]} ${d.getDate()}, ${h12}:${m}${ampm}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +195,73 @@ function renderTerminalTimeline(terminal: RunRow[]): string {
         <th>Elapsed</th>
         <th class="num">Cost</th>
         <th>Goal</th>
+      </tr>
+    </thead>
+    <tbody>
+${rows}
+    </tbody>
+  </table>
+</section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Direct dispatches section
+// ---------------------------------------------------------------------------
+
+/**
+ * Render the "Direct dispatches" section — orphan runs not claimed by any
+ * goal arc or campaign. Visually quieter than arc cards: smaller heading,
+ * tighter rows, compact table layout.
+ *
+ * Returns empty string when there are no direct dispatches (section hidden).
+ * Sorted by start time descending within the section.
+ */
+export function renderDirectDispatches(directs: DirectArc[]): string {
+  if (directs.length === 0) return "";
+
+  // Sort by start time descending (newest first)
+  const sorted = [...directs].sort(
+    (a, b) =>
+      new Date(b.run.startedAt).getTime() - new Date(a.run.startedAt).getTime(),
+  );
+
+  const rows = sorted
+    .map((d) => {
+      const { run } = d;
+      const badgeClass = statusBadgeClass(run.status);
+      const ticketCell = run.ticketId
+        ? `<a href="/tickets#${escapeHtml(run.ticketId)}" class="mono">${escapeHtml(run.ticketId)}</a>`
+        : `<span class="direct-muted">—</span>`;
+      const title = escapeHtml(truncate(run.goalSummary, 100));
+
+      const chipKind =
+        run.status === "shipped" ? "shipped" :
+        run.status === "running" ? "running" :
+        "failed";
+
+      return `<tr class="direct-row">
+  <td><a href="/runs/${escapeHtml(run.id)}" class="direct-id mono">${escapeHtml(run.id)}</a></td>
+  <td>${ticketCell}</td>
+  <td class="direct-title">${title}</td>
+  <td><span class="arc-chip chip-${chipKind}">${escapeHtml(run.status)}</span></td>
+  <td class="mono direct-elapsed">${escapeHtml(formatElapsed(run.elapsedSec))}</td>
+  <td class="mono direct-time">${escapeHtml(formatStartTime(run.startedAt))}</td>
+</tr>`;
+    })
+    .join("\n");
+
+  return `
+<section class="direct-section" id="section-direct-dispatches">
+  <div class="direct-section-head">Direct dispatches</div>
+  <table class="direct-table">
+    <thead>
+      <tr>
+        <th>Run</th>
+        <th>Ticket</th>
+        <th>Title</th>
+        <th>Status</th>
+        <th>Elapsed</th>
+        <th>Started</th>
       </tr>
     </thead>
     <tbody>
