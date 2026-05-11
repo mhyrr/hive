@@ -388,6 +388,51 @@ export const DASHBOARD_JS = `
 
   document.querySelectorAll(".epic-board").forEach(wireEpicBoard);
 
+  // ---------- Arc card expand/collapse ----------
+  function arcCardKey(card) {
+    return "arc-expanded:" + card.id;
+  }
+
+  function setArcExpanded(card, expanded) {
+    var body = card.querySelector(":scope > .arc-body");
+    var expand = card.querySelector(":scope > .arc-header .arc-expand");
+    if (!body) return;
+    if (expanded) {
+      card.classList.add("expanded");
+      body.style.display = "block";
+      if (expand) expand.textContent = "−";
+      state[arcCardKey(card)] = 1;
+    } else {
+      card.classList.remove("expanded");
+      body.style.display = "none";
+      if (expand) expand.textContent = "+";
+      delete state[arcCardKey(card)];
+    }
+    saveState();
+  }
+
+  function wireArcCard(card) {
+    var header = card.querySelector(":scope > .arc-header");
+    if (!header) return;
+    // Restore prior state
+    if (state[arcCardKey(card)]) {
+      setArcExpanded(card, true);
+    }
+    header.addEventListener("click", function (e) {
+      // Don't toggle when clicking links inside the header
+      if (e.target.closest("a")) return;
+      setArcExpanded(card, !card.classList.contains("expanded"));
+    });
+    header.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setArcExpanded(card, !card.classList.contains("expanded"));
+      }
+    });
+  }
+
+  document.querySelectorAll(".arc-card").forEach(wireArcCard);
+
   // ---------- Keyboard ----------
   var focusables = function () { return Array.prototype.slice.call(document.querySelectorAll(".ticket-row, .dispatch-row, .inbox-entry:not(.empty)")); };
   var focusIdx = -1;
