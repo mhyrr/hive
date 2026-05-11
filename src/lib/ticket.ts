@@ -213,7 +213,40 @@ export async function updateTicket(
   ticket.updated = toIsoTimestamp();
 
   await Bun.write(ticketFilePath(ticketsDir(paths, projectId), ticket.id), serializeTicket(ticket));
+
+  // Cascade: if this ticket just closed and has a parent epic, the epic
+  // may now be done. maybeAutoCloseEpic recurses for epic-of-epic chains.
+  if (updates.status === "closed" && ticket.parentEpic) {
+    await maybeAutoCloseEpic(paths, projectId, ticket.parentEpic);
+  }
+
   return ticket;
+}
+
+/**
+ * Auto-close an epic when ALL of its children are closed.
+ *
+ * Skips empty placeholders (zero children — those represent "decomposition
+ * pending"). Skips non-epic tickets and already-closed epics. Recursion is
+ * bounded by the parent chain and idempotent on already-closed epics.
+ */
+async function maybeAutoCloseEpic(
+  paths: HivePaths,
+  projectId: string,
+  epicId: string,
+): Promise<void> {
+  const epic = await readTicket(paths, projectId, epicId);
+  if (!epic) return;
+  if (epic.status === "closed") return;
+  if (epic.type !== "epic") return;
+
+  const children = (await listTickets(paths, projectId)).filter(
+    (t) => t.parentEpic === epicId,
+  );
+  if (children.length === 0) return;
+  if (children.some((c) => c.status !== "closed")) return;
+
+  await updateTicket(paths, projectId, epicId, { status: "closed" });
 }
 
 export async function addTicketNote(
