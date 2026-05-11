@@ -2,8 +2,8 @@
 
 **Date:** 2026-05-11
 **Audited against:** HIVE `main` at `5046c17`
-**Claude Code version:** (see Section C)
-**Codex version:** (see Section D)
+**Claude Code version:** 2.1.138 (May 9, 2026)
+**Codex version:** 0.128.0 (April 30, 2026) — 2 releases behind current (0.130.0)
 
 ---
 
@@ -318,79 +318,225 @@ Per HIVE memory: Codex CLI 0.128.0 reports `codex_hooks` as a stable enabled fea
 
 ## Section C: Claude Code Current State
 
-*(To be completed in iteration 3-4 via web research)*
+*Research conducted 2026-05-11 via web search, local version check, and changelog review.*
 
 ### C1. Current Released Version
 
-*(pending — anchor all findings against this)*
+**Claude Code 2.1.138** (May 9, 2026) — verified locally via `claude --version`.
 
-### C2. Recent Changelog Highlights (last ~3 months)
+This is the current stable release. Internal fixes only in this version; the substantive platform changes landed in v2.1.89–v2.1.136 over the preceding 6 weeks.
 
-*(pending)*
+### C2. Recent Changelog Highlights (March–May 2026)
+
+| Version | Date | Changes |
+|---------|------|---------|
+| **2.1.138** | May 9 | Internal fixes |
+| **2.1.136** | May 8 | Fixed MCP servers/plugins/connectors disappearing after `/clear`; fixed MCP OAuth refresh-token race; fixed extended-thinking redacted blocks; fixed `--resume`/`--continue` with underscore paths; fixed plan mode not blocking writes matching `Edit(...)` rules |
+| **2.1.133** | May 7 | Added `worktree.baseRef` setting (`fresh` \| `head`); hooks now receive effort level via `effort.level` / `$CLAUDE_EFFORT`; added `sandbox.bwrapPath`/`sandbox.socatPath`; fixed 401 race in parallel sessions |
+| **2.1.128** | ~May 1 | Plugins can load from `.zip` archives; `claude plugin prune` for orphaned deps |
+| **2.1.126** | May 1 | `/model` picker lists from gateway `/v1/models`; `claude project purge [path]`; security fix for `allowManagedDomainsOnly` bypass; image paste auto-downscaling |
+| **2.1.91** | ~Apr 15 | MCP tool result size limit raised to **500,000 characters** per tool (was lower); per-tool override via `anthropic/maxResultSizeChars` |
+| **2.1.89** | ~Apr 13 | PreToolUse hook gains `defer` decision (pause execution, wait for external signal) in addition to `allow`/`deny`; PostToolUse hooks can replace tool output for all tools via `hookSpecificOutput.updatedToolOutput` |
+| **2.1.69** | ~Mar | ToolSearch deferral extended to built-in system tools — reduces system-tool context from ~14–16K tokens to ~968 tokens, but deferred descriptors add ~20K tokens |
+
+**Quality incidents and reversals (Anthropic April 23 postmortem):**
+
+| What | When introduced | When fixed | Impact |
+|------|----------------|------------|--------|
+| Reasoning effort default changed from `high` to `medium` | Mar 4 | Apr 7 | Intelligence drop on complex tasks; now defaults to `xhigh` for Opus 4.7, `high` for others |
+| Caching logic bug — kept clearing thinking history every turn | Mar 26 | Apr 10 | Thinking quality degradation in long sessions |
+| System prompt verbosity reduction | Apr 16 | Apr 20 | Hurt coding quality; fully reverted |
+
+Sources: [GitHub Releases](https://github.com/anthropics/claude-code/releases), [Anthropic April 23 Postmortem](https://www.anthropic.com/engineering/april-23-postmortem), [claudefa.st changelog](https://claudefa.st/blog/guide/changelog)
 
 ### C3. Notable Features
 
-Known from HIVE memory and codebase:
-- `--bare` mode (skip hooks/plugins/CLAUDE.md)
-- `--brief` mode (SendUserMessage tool)
-- ToolSearch deferral (MCP + built-in tool schemas deferred behind `ToolSearch`)
-- Plugin/skill system (superpowers, custom skills in `~/.claude/skills/`)
-- Hooks system (SessionStart, PostCompact, etc.)
-- `--append-system-prompt-file` / `--system-prompt-file`
-- `--agent` mode with agent template files
-- `--worktree` for isolated git worktrees
-- `--permission-mode bypassPermissions`
-- `--print` for non-interactive output
-- `--output-format stream-json`
-- `--add-dir` for additional directory discovery
-- `--name` for session naming
-- `--model` for model selection
-- `--max-turns` for turn limits
+**Features HIVE currently leverages:**
+
+| Feature | How HIVE uses it |
+|---------|-----------------|
+| `--append-system-prompt-file` | Default launch mode — identity appended to Claude's base prompt (`src/lib/harness.ts`) |
+| `--system-prompt-file` | `--owned` launch mode — identity replaces base prompt |
+| `--bare` | Minimal mode — no hooks/skills/MCP/CLAUDE.md |
+| `--agent <template>` | Dispatch, heartbeat, campaign use maya-* agent templates |
+| `--worktree` | Dispatch creates isolated worktrees for agent execution |
+| `--print` | Heartbeat and campaign use non-interactive output |
+| `--output-format stream-json` | Campaign executor parses streaming JSON for status |
+| `--permission-mode bypassPermissions` | Dispatch grants full tool access to agents |
+| `--max-turns` | Heartbeat limits agent turns |
+| `--model` | Model pinning for dispatch/heartbeat/campaign |
+| `--name` | Session naming for dispatch runs |
+| `--add-dir` | Campaign executor adds `~/.hive` as additional directory |
+| SessionStart/PostCompact hooks | Identity injection via `load-identity.sh` |
+| MCP server registration | 18 HIVE tools via `hive-mcp` binary |
+| Plugin/skill system | `hive-status` skill, superpowers integration |
+| ToolSearch deferral | Prompt-level pre-fetch instruction in identity prefix |
+
+**Features HIVE does NOT currently leverage:**
+
+| Feature | Potential use |
+|---------|-------------|
+| `--brief` / `SendUserMessage` tool | Could be used for tighter dispatch output control |
+| PreToolUse hook `defer` (v2.1.89) | Could gate dangerous tool calls on external approval |
+| `$CLAUDE_EFFORT` in hooks (v2.1.133) | Could adjust identity injection weight by effort level |
+| `worktree.baseRef` setting (v2.1.133) | Could configure whether dispatch worktrees fork from `fresh` or `head` |
+| MCP `alwaysLoad` option | Could skip ToolSearch deferral for HIVE MCP tools — eliminating the prompt-level pre-fetch workaround |
+| `claude project purge` (v2.1.126) | Could be used in cleanup flows |
+| Plugin `.zip` archive support (v2.1.128) | Could package HIVE as a distributable plugin |
+| MCP tool result 500K limit (v2.1.91) | HIVE tools already return small payloads; no immediate need |
 
 ### C4. Signals About Future Changes
 
-*(pending)*
+**Model deprecations:**
+- **Claude Sonnet 4 and Claude Opus 4 retire June 15, 2026.** HIVE currently pins dispatch/heartbeat to `claude-opus-4-6` — this pin must be updated before the retirement date. The env-override path (`HIVE_MODEL`) provides a manual escape, but the hardcoded default needs a bump.
+
+**Rate limit changes (May 2026):**
+- Doubled five-hour rate limits for Pro/Max/Team/Enterprise plans. Removed peak-hours reduction for Pro and Max. This is net positive for HIVE dispatch throughput.
+
+**Platform direction signals:**
+- ToolSearch deferral is expanding (system tools already deferred as of v2.1.69). An `alwaysLoad` config option exists to opt specific MCP servers out of deferral — HIVE should consider using it.
+- Plugin system is maturing (archive support, prune command, hook bundling). HIVE could eventually ship as a plugin rather than a standalone MCP + hooks install.
+- Hook system gaining richer semantics (defer, effort level, output replacement). The trajectory suggests hooks will become the primary extension surface.
+- SSE transport for MCP deprecated in favor of HTTP.
+
+**Known platform issues:**
+- ToolSearch does not properly defer HTTP/Streamable HTTP MCP tools — ~120K tokens loaded upfront ([GitHub #40314](https://github.com/anthropics/claude-code/issues/40314)). HIVE uses stdio transport, so not affected today.
+- MCP servers/plugins disappearing after `/clear` was fixed in v2.1.136 but indicates fragility in session state management.
+
+Sources: [Anthropic model deprecations](https://platform.claude.com/docs/en/about-claude/model-deprecations), [GitHub Issues](https://github.com/anthropics/claude-code/issues)
 
 ### C5. Stack-Implication Summary
 
-*(pending — what HIVE leverages / doesn't leverage / risks breakage on)*
+| Category | Finding |
+|----------|---------|
+| **Leveraged well** | Hook system (SessionStart/PostCompact), MCP server registration, agent templates, worktree isolation, `--print`/`--output-format stream-json` for autonomous work, model pinning |
+| **Underleveraged** | `alwaysLoad` for MCP deferral bypass (would eliminate prompt-level pre-fetch workaround); `worktree.baseRef` for dispatch isolation control; hook `defer` for gated tool access; plugin archive packaging |
+| **Breakage risk** | **Opus 4 / Opus 4.6 model retirement (June 15, 2026)** — dispatch/heartbeat pins must update; ToolSearch deferral expansion could add friction if new tools get deferred unexpectedly; SSE transport deprecation (HIVE uses stdio, not affected) |
+| **Monitoring** | MCP session stability (the `/clear` bug and OAuth race suggest fragility); reasoning effort default changes (Anthropic has reversed these before — HIVE dispatch quality depends on them staying at `high`/`xhigh`) |
 
 ---
 
 ## Section D: Codex Current State
 
-*(To be completed in iteration 3-4 via web research)*
+*Research conducted 2026-05-11 via web search, local version check, and `codex features list`.*
 
 ### D1. Current Released Version
 
-*(pending)*
+**Codex CLI 0.128.0** (April 30, 2026) — verified locally via `codex --version`.
 
-### D2. Recent Changelog Highlights
+Newer versions exist: **v0.129.0** (May 7) and **v0.130.0** (May 8). HIVE's installed version is 2 releases behind. The gap contains a deprecation that directly affects HIVE's hook wiring.
 
-*(pending)*
+### D2. Recent Changelog Highlights (March–May 2026)
+
+| Version | Date | Key Changes |
+|---------|------|-------------|
+| **0.130.0** | May 8 | `codex remote-control` CLI command (headless app-server entrypoint); multi-environment `view_image`; Bedrock AWS auth via console-login; app-server thread pagination; live config refresh for running threads |
+| **0.129.0** | May 7 | Vim editing support; enhanced plugin management; sandbox reliability; **`codex_hooks` deprecated in favor of `hooks`** (feature flag rename); `on-failure` approval mode deprecated |
+| **0.128.0** | Apr 30 | Persisted `/goal` workflows; configurable TUI keymaps; plan-mode nudges; action-required terminal titles; permission profile expansion; **`--full-auto` deprecated** in favor of explicit permission profiles |
+
+**Earlier notable changes (March–April 2026):**
+- Context compaction rewrite fixing "summaries of summaries" bug (recursive degradation in long sessions)
+- Rust rewrite now 95.7% of codebase; deterministic allocator eliminates GC pauses
+- Dynamic model routing — mid-session model switching supported
+- Cross-surface session sync (CLI ↔ Desktop)
+- GPT-5.4 default (Mar 5), GPT-5.4-mini released (Mar 17), GPT-5.5 released (Apr 23)
+
+Sources: [Codex Changelog](https://developers.openai.com/codex/changelog), [GitHub Releases](https://github.com/openai/codex/releases)
 
 ### D3. `codex features list` Snapshot
 
-Known from HIVE memory: Codex 0.128.0, `codex_hooks` stable and enabled.
+Captured from installed v0.128.0 on 2026-05-11.
+
+**Stable + enabled features (relevant to HIVE):**
+
+| Feature | Status |
+|---------|--------|
+| `codex_hooks` | stable, enabled — **deprecated in v0.129; migrate to `hooks`** |
+| `tool_search` | stable, enabled |
+| `multi_agent` | stable, enabled |
+| `plugins` | stable, enabled |
+| `shell_tool` | stable, enabled |
+| `shell_snapshot` | stable, enabled |
+| `unified_exec` | stable, enabled |
+| `fast_mode` | stable, enabled |
+| `computer_use` | stable, enabled |
+| `browser_use` | stable, enabled |
+| `image_generation` | stable, enabled |
+| `guardian_approval` | stable, enabled |
+| `skill_mcp_dependency_install` | stable, enabled |
+| `tool_call_mcp_elicitation` | stable, enabled |
+| `workspace_dependencies` | stable, enabled |
+
+**Under development (watch list):**
+
+| Feature | Notes |
+|---------|-------|
+| `multi_agent_v2` | Next-gen multi-agent with explicit configuration |
+| `child_agents_md` | Per-child-agent AGENTS.md — could affect HIVE identity injection |
+| `enable_fanout` | Parallel task fan-out |
+| `goals` | Persisted goal workflows (shipped in v0.128 TUI, flag still dev) |
+| `plugin_hooks` | Plugin-bundled hooks |
+| `realtime_conversation` | Voice/realtime session model |
+| `remote_control` | Headless app-server (shipped in v0.130) |
+| `memories` | Codex-native memory system (experimental) |
 
 ### D4. Hooks, MCP, AGENTS.md Semantics
 
-*(pending)*
+**Hooks:**
+- HIVE wires Codex hooks via `~/.codex/hooks.json` with a `SessionStart` entry pointing to `~/.hive/codex-load-identity.sh`.
+- **Deprecation alert:** v0.129 renames `[features].codex_hooks` to `[features].hooks`. HIVE's `hive doctor` checks the `codex_hooks` feature flag (`src/commands/doctor.ts`). After upgrading to v0.129+, the doctor check will need updating.
+- Hook coverage gaps exist: PreToolUse hooks unreliable for `apply_patch`; MCP-dispatched calls have intermittent coverage.
+- Plugins can now bundle hooks directly (v0.129+).
+
+**MCP:**
+- HIVE registers via `codex mcp add hive -- ~/.local/bin/hive-mcp` (wired in `src/lib/codex-wire.ts`).
+- v0.130 promotes built-in MCPs to first-class runtime servers (auto-launch on session start).
+- MCP configuration lives in `~/.codex/config.toml` under `[mcp_servers.hive]`.
+- Both STDIO and HTTP streaming transports supported. HIVE uses STDIO.
+
+**AGENTS.md:**
+- Concatenation semantics: AGENTS.md files are concatenated up the directory tree, not overridden. `AGENTS.override.md` replaces at its level.
+- HIVE writes `~/.codex/AGENTS.md` from `assembleIdentity()` output. The SessionStart hook refreshes it via `hive identity emit`.
+- v0.128+ exposes AGENTS.md content through the app-server JSON-RPC API — external clients can query resolved instructions without filesystem access.
+- Loading happens once at session start; no mid-session refresh of AGENTS.md content.
+
+**Session model:**
+- Context compaction fires before new user messages if token threshold exceeded.
+- Rust rewrite eliminated the recursive "summaries of summaries" compaction bug.
+- Dynamic model routing supports mid-session model switching (explore → plan → execute → review).
+- `codex exec --json` now reports reasoning-token usage for programmatic consumers.
+
+Sources: [Codex AGENTS.md guide](https://developers.openai.com/codex/guides/agents-md), [Codex MCP docs](https://developers.openai.com/codex/mcp), [Codex hooks reference](https://agenticcontrolplane.com/blog/codex-cli-hooks-reference)
 
 ### D5. Signals About Future Changes
 
-*(pending)*
+**Deprecations requiring HIVE action:**
+- **`codex_hooks` → `hooks`** (v0.129): HIVE doctor's Codex feature-flag check references `codex_hooks`. Needs update after Codex upgrade.
+- **`--full-auto` deprecated** (v0.128): HIVE doesn't use this flag, but any scripts referencing it should migrate to explicit permission profiles.
+
+**Emerging capabilities:**
+- **`child_agents_md`** (under development): Per-child-agent AGENTS.md would let HIVE inject different identity into Codex subagents. Currently AGENTS.md is session-global.
+- **`memories`** (experimental): Codex-native memory system. If this stabilizes, HIVE's memory layer could either integrate with or compete against it. Worth monitoring.
+- **`multi_agent_v2`**: Enhanced subagent spawning with explicit config. Currently has a limitation where `spawn_agent` doesn't respect `agent_type`/`model` overrides ([GitHub #20077](https://github.com/openai/codex/issues/20077)).
+- **`remote_control`** (v0.130): Headless app-server entrypoint. Could enable HIVE dispatch via Codex (currently Claude-Code-only).
+- **Plugin hooks** (under development): Plugins bundling their own hooks. HIVE could distribute Codex integration as a plugin instead of a `hive init` install step.
+
+**Platform direction:**
+- Codex is converging on five customization layers: AGENTS.md + Skills + MCP + Subagents + Plugins. HIVE currently uses three (AGENTS.md, MCP, hooks via init). Skills and plugins are unexplored.
+- Rust rewrite is nearly complete — expect performance and reliability improvements but also potential behavioral changes in edge cases.
+- Cross-surface session sync means Codex sessions started via `hive -x` (CLI) could be picked up in Desktop or VS Code. HIVE doesn't account for this.
 
 ### D6. Stack-Implication Summary
 
-*(pending)*
+| Category | Finding |
+|----------|---------|
+| **Leveraged well** | AGENTS.md identity injection (with byte-equivalence caching), MCP server registration, SessionStart hook refresh, `codex exec --json` for council |
+| **Underleveraged** | Plugin system (could package HIVE Codex integration as a distributable plugin); `remote_control` for potential Codex-based dispatch; `child_agents_md` for per-agent identity |
+| **Breakage risk** | **`codex_hooks` feature flag deprecated in v0.129** — HIVE doctor checks this flag specifically; HIVE is 2 versions behind (0.128 installed, 0.130 current); if `memories` feature stabilizes, potential conflict with HIVE memory layer |
+| **Monitoring** | `multi_agent_v2` evolution (could enable Codex dispatch path); `plugin_hooks` (could replace init-based hook wiring); AGENTS.md API exposure (could change how identity is discovered) |
 
 ---
 
 ## Sidebar: Pi Harness
 
 Pi exists in the HIVE codebase (`src/lib/pi-wire.ts`, `src/lib/harness.ts:38-39`) as an opt-in harness via `hive -3` / `hive --pi` / `HIVE_HARNESS=pi`. It routes through Pi with subscription OAuth + pi-mcp-adapter + identity extension. However, the Anthropic ToS question about using a Claude Pro/Max subscription through a third-party harness remains open. Greg is researching. Pi is available for experiments but is not the daily driver. **This audit does not cover Pi.**
-
----
-
-*Sections C and D will be completed in iterations 3-4 via web research.*
