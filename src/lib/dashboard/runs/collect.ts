@@ -509,6 +509,12 @@ export type CampaignArc = {
   totalCost: number;
   iterationCount: number;
   status: ArcStatus;
+  /** Full goal text (untruncated). */
+  goal: string;
+  /** Raw frozen-prefix content, null if not present. */
+  frozenPrefix: string | null;
+  /** Final artifact path/reference if known. */
+  finalArtifact: string | null;
 };
 
 export type DirectArc = {
@@ -697,12 +703,37 @@ export async function collectArcs(
   for (const row of campaignRunRows) {
     if (row.ticketId) campaignTicketIds.add(row.ticketId);
 
+    const campDir = join(paths.campaignsDir, row.id);
+
     // Read scorecard.jsonl for iteration detail
-    const scorecardPath = join(paths.campaignsDir, row.id, "scorecard.jsonl");
+    const scorecardPath = join(campDir, "scorecard.jsonl");
     const scorecardRaw = await safeReadFile(scorecardPath);
     const iterations = scorecardRaw ? parseScorecardForArcs(scorecardRaw) : [];
 
     const totalCost = iterations.reduce((sum, it) => sum + it.cost, 0);
+
+    // Full goal text (untruncated)
+    let goal = "";
+    const configRaw = await safeReadFile(join(campDir, "config.json"));
+    if (configRaw) {
+      try {
+        const cfg = JSON.parse(configRaw);
+        goal = cfg.goal ?? "";
+      } catch { /* fallthrough */ }
+    }
+    if (!goal) {
+      goal = (await safeReadFile(join(campDir, "frozen-prefix.md")))?.trim() ?? "";
+    }
+
+    // Frozen prefix
+    const frozenPrefix = await safeReadFile(join(campDir, "frozen-prefix.md"));
+
+    // Final artifact: check for result.md or artifact ref in orchestrator log
+    let finalArtifact: string | null = null;
+    const resultMd = await safeReadFile(join(campDir, "result.md"));
+    if (resultMd?.trim()) {
+      finalArtifact = resultMd.trim();
+    }
 
     campaignArcs.push({
       kind: "campaign",
@@ -711,6 +742,9 @@ export async function collectArcs(
       totalCost,
       iterationCount: iterations.length,
       status: campaignArcStatus(row),
+      goal,
+      frozenPrefix: frozenPrefix?.trim() || null,
+      finalArtifact,
     });
   }
 

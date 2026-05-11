@@ -390,22 +390,25 @@ export const DASHBOARD_JS = `
 
   // ---------- Arc card expand/collapse ----------
   function arcCardKey(card) {
-    return "arc-expanded:" + card.id;
+    // Support both id-based (goal arcs) and data-arc-id (campaign arcs)
+    var id = card.getAttribute("data-arc-id") || card.id || "";
+    return "arc-expanded:" + id;
   }
 
   function setArcExpanded(card, expanded) {
     var body = card.querySelector(":scope > .arc-body");
-    var expand = card.querySelector(":scope > .arc-header .arc-expand");
-    if (!body) return;
+    var header = card.querySelector(":scope > .arc-header");
+    var glyph = card.querySelector(":scope > .arc-header .arc-expand");
+    if (!body || !header) return;
     if (expanded) {
       card.classList.add("expanded");
-      body.style.display = "block";
-      if (expand) expand.textContent = "−";
+      header.setAttribute("aria-expanded", "true");
+      if (glyph) glyph.textContent = "−"; // minus sign
       state[arcCardKey(card)] = 1;
     } else {
       card.classList.remove("expanded");
-      body.style.display = "none";
-      if (expand) expand.textContent = "+";
+      header.setAttribute("aria-expanded", "false");
+      if (glyph) glyph.textContent = "+";
       delete state[arcCardKey(card)];
     }
     saveState();
@@ -414,13 +417,13 @@ export const DASHBOARD_JS = `
   function wireArcCard(card) {
     var header = card.querySelector(":scope > .arc-header");
     if (!header) return;
-    // Restore prior state
-    if (state[arcCardKey(card)]) {
-      setArcExpanded(card, true);
-    }
+
+    // Restore persisted state
+    if (state[arcCardKey(card)]) setArcExpanded(card, true);
+
     header.addEventListener("click", function (e) {
       // Don't toggle when clicking links inside the header
-      if (e.target.closest("a")) return;
+      if (e.target.closest && e.target.closest("a")) return;
       setArcExpanded(card, !card.classList.contains("expanded"));
     });
     header.addEventListener("keydown", function (e) {
