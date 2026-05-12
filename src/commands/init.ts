@@ -272,15 +272,30 @@ export async function initCommand(args: string[]): Promise<void> {
 
     const servers = (mcpConfig.mcpServers ?? {}) as Record<string, unknown>;
     const mcpBin = join(localBin, "hive-mcp");
+    let mcpChanged = false;
     if (!servers.hive) {
       servers.hive = {
         command: mcpBin,
         args: [],
+        alwaysLoad: true,
       };
       mcpConfig.mcpServers = servers;
-      await Bun.write(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + "\n");
+      mcpChanged = true;
       console.log();
       console.log(`Registered HIVE MCP server in ${mcpConfigPath}`);
+    } else {
+      // Ensure alwaysLoad is set on existing entries (idempotent upgrade)
+      const hiveEntry = servers.hive as Record<string, unknown>;
+      if (!hiveEntry.alwaysLoad) {
+        hiveEntry.alwaysLoad = true;
+        mcpChanged = true;
+        console.log();
+        console.log(`Added alwaysLoad: true to HIVE MCP server in ${mcpConfigPath}`);
+      }
+    }
+    if (mcpChanged) {
+      mcpConfig.mcpServers = servers;
+      await Bun.write(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + "\n");
     }
   } catch {
     console.log();

@@ -425,6 +425,17 @@ function checkMcp(): Check[] {
 
     checks.push({ status: "pass", label: "hive registered in ~/.claude.json" });
 
+    // Check alwaysLoad is set (skips ToolSearch deferral)
+    if (servers.hive.alwaysLoad === true) {
+      checks.push({ status: "pass", label: "alwaysLoad: true (tools skip ToolSearch deferral)" });
+    } else {
+      checks.push({
+        status: "warn",
+        label: "alwaysLoad not set — HIVE tools require ToolSearch pre-fetch",
+        detail: "Run: hive init (adds alwaysLoad: true to existing config)",
+      });
+    }
+
     // Validate the MCP command is resolvable
     const mcpCommand = servers.hive.command as string;
     const mcpArgs = (servers.hive.args ?? []) as string[];
