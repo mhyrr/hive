@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   getCodexAgentsMdStatus,
   getCodexHome,
+  getCodexHooksFeatureStatus,
   getRegisteredCodexHiveMcp,
   isCodexInstalled,
 } from "../lib/codex-wire";
@@ -141,6 +142,24 @@ async function checkCodex(): Promise<Check[]> {
       : { status: "fail", label: `Codex MCP command missing: ${registered}` });
   } else {
     checks.push({ status: "warn", label: "hive not registered in ~/.codex/config.toml", detail: "Run: hive init" });
+  }
+
+  // Hooks feature flag — required for HIVE hooks to fire.
+  // Codex 0.128 used `codex_hooks`; 0.129+ renamed to `hooks`.
+  const hooksStatus = await getCodexHooksFeatureStatus();
+  if (hooksStatus === null) {
+    checks.push({ status: "warn", label: "config.toml missing — cannot verify hooks feature", detail: "Run: codex login" });
+  } else if (hooksStatus.enabled) {
+    const keyNote = hooksStatus.key === "codex_hooks" ? " (legacy key — will rename to hooks in 0.129+)" : "";
+    checks.push({ status: "pass", label: `[features] ${hooksStatus.key} = true${keyNote}` });
+  } else {
+    checks.push({
+      status: "warn",
+      label: "hooks feature not enabled in config.toml",
+      detail: hooksStatus.reason
+        ? `${hooksStatus.reason}. Add hooks = true under [features] or run: codex features enable hooks`
+        : "Add hooks = true under [features] in ~/.codex/config.toml",
+    });
   }
 
   // AGENTS.md freshness. Codex uses a single global AGENTS.md, while HIVE's

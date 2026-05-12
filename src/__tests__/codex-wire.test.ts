@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   getCodexAgentsMdStatus,
   getCodexHome,
+  getCodexHooksFeatureStatus,
   getRegisteredCodexHiveMcp,
   installCodexIdentityHook,
   writeCodexAgentsMd,
@@ -188,5 +189,82 @@ describe("installCodexIdentityHook", () => {
     const result = await installCodexIdentityHook();
     expect(result.scriptInstalled).toBe(false);
     expect(result.hookWired).toBe(false);
+  });
+});
+
+describe("getCodexHooksFeatureStatus", () => {
+  test("returns null when config.toml is missing", async () => {
+    expect(await getCodexHooksFeatureStatus()).toBeNull();
+  });
+
+  test("returns enabled: true for [features] hooks = true (0.129+)", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `model = "gpt-5.5"\n\n[features]\nhooks = true\n`,
+    );
+    const result = await getCodexHooksFeatureStatus();
+    expect(result).toEqual({ enabled: true, key: "hooks" });
+  });
+
+  test("returns enabled: true for [features] codex_hooks = true (0.128)", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `model = "gpt-5.5"\n\n[features]\ncodex_hooks = true\n`,
+    );
+    const result = await getCodexHooksFeatureStatus();
+    expect(result).toEqual({ enabled: true, key: "codex_hooks" });
+  });
+
+  test("prefers hooks over codex_hooks when both present", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `[features]\ncodex_hooks = true\nhooks = true\n`,
+    );
+    const result = await getCodexHooksFeatureStatus();
+    expect(result).toEqual({ enabled: true, key: "hooks" });
+  });
+
+  test("returns enabled: false when hooks = false", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `[features]\nhooks = false\n`,
+    );
+    const result = await getCodexHooksFeatureStatus();
+    expect(result).toEqual({ enabled: false, key: "hooks", reason: "[features] hooks = false" });
+  });
+
+  test("returns enabled: false when [features] section exists but no hooks key", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `[features]\nsome_other_flag = true\n`,
+    );
+    const result = await getCodexHooksFeatureStatus();
+    expect(result).toEqual({ enabled: false, reason: "no hooks or codex_hooks key in [features]" });
+  });
+
+  test("returns enabled: false when no [features] section at all", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `model = "gpt-5.5"\n[mcp_servers.hive]\ncommand = "/bin/foo"\n`,
+    );
+    const result = await getCodexHooksFeatureStatus();
+    expect(result).toEqual({ enabled: false, reason: "no hooks or codex_hooks key in [features]" });
+  });
+
+  test("handles hooks key nested among other [features] keys", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      [
+        `[features]`,
+        `apps = true`,
+        `hooks = true`,
+        `plugins = true`,
+        ``,
+        `[mcp_servers.hive]`,
+        `command = "/bin/foo"`,
+      ].join("\n"),
+    );
+    const result = await getCodexHooksFeatureStatus();
+    expect(result).toEqual({ enabled: true, key: "hooks" });
   });
 });

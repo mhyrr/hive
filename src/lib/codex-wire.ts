@@ -98,6 +98,68 @@ export async function registerCodexHiveMcp(mcpBinPath: string): Promise<{ added:
 }
 
 // ---------------------------------------------------------------------------
+// Feature flag checks
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether Codex hooks are enabled in config.toml.
+ *
+ * Codex 0.128 used `codex_hooks`, 0.129+ renamed it to `hooks`. We check
+ * both under `[features]` and prefer `hooks` when present.
+ *
+ * Returns:
+ *   { enabled: true }  — hooks are on
+ *   { enabled: false, reason }  — hooks disabled or section/key missing
+ *   null — config.toml doesn't exist (caller decides severity)
+ */
+export async function getCodexHooksFeatureStatus(): Promise<{
+  enabled: boolean;
+  key?: string;
+  reason?: string;
+} | null> {
+  const configPath = join(getCodexHome(), "config.toml");
+  if (!existsSync(configPath)) return null;
+
+  const raw = await Bun.file(configPath).text();
+  const lines = raw.split("\n");
+
+  let inFeatures = false;
+  let hooksValue: string | undefined;
+  let codexHooksValue: string | undefined;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[")) {
+      inFeatures = trimmed === "[features]";
+      continue;
+    }
+    if (!inFeatures) continue;
+
+    const m = trimmed.match(/^(hooks|codex_hooks)\s*=\s*(.+)/);
+    if (m) {
+      const key = m[1]!;
+      const val = m[2]!.trim();
+      if (key === "hooks") hooksValue = val;
+      else codexHooksValue = val;
+    }
+  }
+
+  // Prefer `hooks` (0.129+) over `codex_hooks` (0.128)
+  if (hooksValue !== undefined) {
+    return hooksValue === "true"
+      ? { enabled: true, key: "hooks" }
+      : { enabled: false, key: "hooks", reason: `[features] hooks = ${hooksValue}` };
+  }
+  if (codexHooksValue !== undefined) {
+    return codexHooksValue === "true"
+      ? { enabled: true, key: "codex_hooks" }
+      : { enabled: false, key: "codex_hooks", reason: `[features] codex_hooks = ${codexHooksValue}` };
+  }
+
+  return { enabled: false, reason: "no hooks or codex_hooks key in [features]" };
+}
+
+// ---------------------------------------------------------------------------
 // AGENTS.md emission
 // ---------------------------------------------------------------------------
 
