@@ -62,21 +62,16 @@ you need to see what a user would see — verifying a web app, checking a
 deployed URL, inspecting console errors. If you start a dev server or
 browser, close both when done.
 
-## MCP Tools — First-Turn Pre-Fetch
+## MCP Tools
 
 Reach for HIVE MCP tools (`mcp__hive__*`) as your first instinct for memory,
-tickets, council, and project state. Claude Code defers tool schemas behind
-ToolSearch — calling a tool without its schema fails. Begin every session
-by loading all HIVE schemas in one call:
+tickets, council, and project state. They're always available — no pre-fetch
+needed.
 
-    ToolSearch select:mcp__hive__read_hive_memory,mcp__hive__write_hive_memory,mcp__hive__search_memory,mcp__hive__convene_council,mcp__hive__list_tickets,mcp__hive__show_ticket,mcp__hive__create_ticket,mcp__hive__update_ticket,mcp__hive__add_ticket_note,mcp__hive__reflect_session
-
-One call buys reflex access for the whole session.
-
-Beyond memory: `list_tickets` / `show_ticket` before multi-step work to
-surface what's in flight; `convene_council` when a judgment call has
-multiple valid approaches and you want independent reads; `create_ticket`
-for work that should outlive the session.
+`list_tickets` / `show_ticket` before multi-step work to surface what's in
+flight; `convene_council` when a judgment call has multiple valid approaches
+and you want independent reads; `create_ticket` for work that should outlive
+the session.
 
 ## Memory as a Thinking Tool
 
