@@ -277,11 +277,12 @@ export async function runTick(projectId: string): Promise<TickResult> {
   // the system prompt (via assembleHeartbeatIdentity) and the user message
   // are invariant, so the prompt cache prefix matches between ticks within
   // the 1h TTL window.
-  // Pin heartbeat to Opus 4.6. 4.7 is architected for more literal instruction-
-  // following and fewer subagent spawns — that hurts judgment-heavy autonomous
-  // work (cf. Anthropic's 4.7 release notes). 4.6 retains the exploratory
-  // instinct we want for heartbeat. Override via HIVE_HEARTBEAT_MODEL env.
-  const model = process.env.HIVE_HEARTBEAT_MODEL || "claude-opus-4-6";
+  // Heartbeats are status/triage — checking inbox, git, tickets, deciding
+  // whether to write a one-paragraph escalation. Opus-level reasoning is
+  // wasted here (was running ~$26/day producing mostly "HEARTBEAT_OK").
+  // Decisions, plans, and campaign judgment stay on Opus; this doesn't.
+  // Override via HIVE_HEARTBEAT_MODEL env.
+  const model = process.env.HIVE_HEARTBEAT_MODEL || "claude-sonnet-4-6";
 
   const args = [
     "--model", model,
