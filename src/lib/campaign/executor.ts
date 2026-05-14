@@ -182,6 +182,7 @@ export function parseStreamLine(line: string): StreamUsage | null {
 
     return null;
   } catch {
+    // intentional: usage file missing or malformed — no token stats
     return null;
   }
 }
@@ -195,6 +196,7 @@ async function isWorkspaceAccessible(path: string): Promise<boolean> {
     await access(path);
     return true;
   } catch {
+    // intentional: workspace path inaccessible (removed/permissions)
     return false;
   }
 }
@@ -307,7 +309,7 @@ export async function runIteration(opts: RunIterationOpts): Promise<IterationRes
           `[executor] Soft cap signal written: ${decision.reason}\n`,
         );
       } catch {
-        // If we can't write the sentinel, workspace may be gone
+        // intentional: workspace may be gone — sentinel write is best-effort
       }
     }
 
@@ -383,7 +385,7 @@ function killProcess(child: ChildProcess): void {
   try {
     child.kill("SIGTERM");
   } catch {
-    return; // Process already gone
+    return; // intentional: process already gone
   }
 
   // Grace period: SIGKILL after 5s if still alive
@@ -391,7 +393,7 @@ function killProcess(child: ChildProcess): void {
     try {
       child.kill("SIGKILL");
     } catch {
-      // Already dead
+      // intentional: process already dead
     }
   }, 5000);
 }

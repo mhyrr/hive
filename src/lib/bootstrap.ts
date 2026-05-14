@@ -101,7 +101,7 @@ function countFiles(
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      return;
+      return; // intentional: skip unreadable directories during walk
     }
     for (const entry of entries) {
       if (entry.isDirectory()) {
@@ -138,6 +138,7 @@ function readJsonFile(path: string): Record<string, unknown> | null {
     if (!existsSync(path)) return null;
     return JSON.parse(readFileSync(path, "utf-8"));
   } catch {
+    // intentional: corrupted JSON config — treat as absent
     return null;
   }
 }
@@ -147,6 +148,7 @@ function readTextFile(path: string): string | null {
     if (!existsSync(path)) return null;
     return readFileSync(path, "utf-8");
   } catch {
+    // intentional: unreadable file — treat as absent
     return null;
   }
 }
@@ -327,7 +329,7 @@ function scanMixExs(root: string): {
           }
         }
       }
-    } catch { /* skip */ }
+    } catch { /* intentional: skip unreadable lib dir */ }
   }
 
   return { scripts, testFramework, linters, entrypoints, version };
@@ -432,7 +434,7 @@ function detectCI(root: string): CIConfig | null {
         .filter(f => f.endsWith(".yml") || f.endsWith(".yaml"))
         .map(f => `.github/workflows/${f}`);
       if (files.length > 0) return { system: "github-actions", files };
-    } catch { /* skip */ }
+    } catch { /* intentional: skip unreadable workflows dir */ }
   }
 
   // GitLab CI
@@ -753,6 +755,7 @@ export async function emitBootstrapCandidates(
   try {
     snapshot = await readProjectMemorySnapshot(paths, projectId);
   } catch {
+    // intentional: knowledge.md missing or corrupt — skip dedup against canon
     snapshot = null;
   }
 
@@ -934,6 +937,7 @@ function readFileTruncated(fullPath: string): { content: string; truncated: bool
     }
     return { content: raw.slice(0, MAX_FILE_BYTES) + "\n... [truncated]", truncated: true };
   } catch {
+    // intentional: file unreadable — skip it
     return null;
   }
 }
@@ -955,7 +959,7 @@ function miniGlob(root: string, pattern: string, maxResults = 3): string[] {
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      return;
+      return; // intentional: skip unreadable directories during glob walk
     }
 
     if (part === "**") {
@@ -1071,6 +1075,7 @@ export function readStackSkillContent(stack: string | null): string {
   try {
     entries = readdirSync(userSkillsDir, { withFileTypes: true });
   } catch {
+    // intentional: skills dir unreadable — no skills to list
     return "";
   }
 
@@ -1366,6 +1371,7 @@ export async function inferConventions(
   try {
     snapshot = await readProjectMemorySnapshot(paths, projectId);
   } catch {
+    // intentional: knowledge.md missing or corrupt — skip dedup against canon
     snapshot = null;
   }
 

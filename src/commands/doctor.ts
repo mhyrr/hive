@@ -28,6 +28,7 @@ function run(cmd: string): string | null {
   try {
     return execSync(cmd, { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }).trim();
   } catch {
+    // intentional: command not found or failed — return null
     return null;
   }
 }
@@ -199,6 +200,7 @@ async function checkCodex(): Promise<Check[]> {
         ? { status: "pass", label: "SessionStart hook wired in ~/.codex/hooks.json" }
         : { status: "warn", label: "Codex SessionStart hook not wired", detail: "Run: hive init" });
     } catch {
+      // intentional: malformed hooks.json — report as failure
       checks.push({ status: "fail", label: "~/.codex/hooks.json is malformed" });
     }
   }
@@ -269,9 +271,11 @@ function checkIdentity(): Check[] {
           });
         }
       } catch {
+        // intentional: canonical template read failed — warn
         checks.push({ status: "warn", label: "could not read live hook for drift check" });
       }
     } catch {
+      // intentional: hook file unreadable — warn
       checks.push({ status: "warn", label: "load-identity.sh unreadable" });
     }
   } else {
@@ -306,6 +310,7 @@ function checkIdentity(): Check[] {
         });
       }
     } catch {
+      // intentional: malformed settings.json — report as warning
       checks.push({
         status: "warn",
         label: "~/.claude/settings.json malformed — cannot verify hook wiring",
@@ -454,6 +459,7 @@ function checkMcp(): Check[] {
       checks.push({ status: "fail", label: `MCP command not found: ${mcpCommand}` });
     }
   } catch {
+    // intentional: malformed ~/.claude.json — report as failure
     checks.push({ status: "fail", label: "~/.claude.json is malformed" });
   }
 
@@ -574,6 +580,7 @@ async function checkProject(): Promise<{ heading: string; checks: Check[] }> {
       const state = config.enabled ? `enabled (${config.intervalMinutes}m)` : "disabled";
       checks.push({ status: "pass", label: `heartbeat ${state}` });
     } catch {
+      // intentional: malformed heartbeat config — report as warning
       checks.push({ status: "warn", label: "heartbeat.json malformed" });
     }
   } else {
@@ -619,7 +626,7 @@ function checkBuild(): Check[] {
           }
         }
       }
-    } catch { /* skip */ }
+    } catch { /* intentional: skip unreadable directory during walk */ }
   }
 
   scanDir(join(process.cwd(), "src"));

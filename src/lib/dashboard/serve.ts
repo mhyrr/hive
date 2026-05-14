@@ -471,6 +471,7 @@ async function safeReadJson(req: Request): Promise<any | null> {
     if (!text) return {};
     return JSON.parse(text);
   } catch {
+    // intentional: request body missing or malformed JSON
     return null;
   }
 }

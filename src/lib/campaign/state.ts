@@ -196,6 +196,7 @@ export async function readFrozenPrefix(
   try {
     return await readFile(path, "utf-8");
   } catch {
+    // intentional: frozen prefix doesn't exist yet
     return null;
   }
 }
@@ -215,6 +216,7 @@ export async function readGoal(
   try {
     return await readFile(path, "utf-8");
   } catch {
+    // intentional: goal file doesn't exist yet
     return null;
   }
 }
@@ -258,6 +260,7 @@ export async function readCheckpoint(
   try {
     return await readFile(path, "utf-8");
   } catch {
+    // intentional: checkpoint doesn't exist yet
     return null;
   }
 }
@@ -289,6 +292,7 @@ export async function latestPlan(
   try {
     return await readFile(path, "utf-8");
   } catch {
+    // intentional: plan doesn't exist yet
     return null;
   }
 }
@@ -324,6 +328,7 @@ export async function readScorecard(
       .filter((line) => line.trim().length > 0)
       .map((line) => JSON.parse(line) as ScorecardRow);
   } catch {
+    // intentional: scorecard missing or malformed — return empty
     return [];
   }
 }
@@ -344,6 +349,7 @@ export async function readStatus(
     const raw = await readFile(path, "utf-8");
     return raw.trim() as CampaignStatus;
   } catch {
+    // intentional: status file doesn't exist yet
     return null;
   }
 }
@@ -377,6 +383,7 @@ export async function readPid(
     const pid = parseInt(raw.trim(), 10);
     return isNaN(pid) ? null : pid;
   } catch {
+    // intentional: pid file missing or unreadable
     return null;
   }
 }
@@ -390,6 +397,7 @@ export function isPidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch {
+    // intentional: ESRCH (no process) or EPERM — PID is not alive to us
     return false;
   }
 }
@@ -553,7 +561,7 @@ export async function teardownWorktree(
       stdio: "pipe",
     });
   } catch {
-    // Already removed or not a valid worktree — safe to ignore
+    // intentional: already removed or not a valid worktree
   }
 
   // Clean up the branch
@@ -564,7 +572,7 @@ export async function teardownWorktree(
       stdio: "pipe",
     });
   } catch {
-    // Branch doesn't exist or already deleted
+    // intentional: branch doesn't exist or already deleted
   }
 }
 

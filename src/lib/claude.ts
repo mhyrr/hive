@@ -143,6 +143,7 @@ export async function completeClaudeText(input: {
   try {
     envelope = JSON.parse(stdout) as ClaudeJsonEnvelope;
   } catch {
+    // intentional: JSON parse failure → rethrow with context for debugging
     throw new Error(
       `claude --print output was not JSON. First 400 chars: ${stdout.slice(0, 400)}`,
     );

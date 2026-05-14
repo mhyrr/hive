@@ -180,6 +180,7 @@ export function parseVerdict(raw: string): JudgeVerdict | null {
   try {
     parsed = JSON.parse(text);
   } catch {
+    // intentional: judge response isn't valid JSON — caller retries or bails
     return null;
   }
 

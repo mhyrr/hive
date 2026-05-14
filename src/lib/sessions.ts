@@ -116,7 +116,7 @@ function findRecentClaudeSessions(hoursAgo: number = 24, now: Date = new Date())
         try {
           return statSync(f).mtimeMs > cutoff;
         } catch {
-          return false;
+          return false; // intentional: stat failure — exclude file
         }
       });
 
@@ -142,7 +142,7 @@ function collectRecentJsonlFiles(root: string, cutoffMs: number): string[] {
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      continue;
+      continue; // intentional: skip unreadable directories during walk
     }
 
     for (const entry of entries) {
@@ -155,7 +155,7 @@ function collectRecentJsonlFiles(root: string, cutoffMs: number): string[] {
       try {
         if (statSync(path).mtimeMs > cutoffMs) result.push(path);
       } catch {
-        /* skip unreadable file */
+        // intentional: skip unreadable file during walk
       }
     }
   }
@@ -186,13 +186,14 @@ function readFirstLine(path: string, maxBytes = 1_000_000): string | null {
 
     return chunks.length > 0 ? Buffer.concat(chunks).toString("utf-8") : null;
   } catch {
+    // intentional: file unreadable — return null
     return null;
   } finally {
     if (fd !== null) {
       try {
         closeSync(fd);
       } catch {
-        /* ignore close failure */
+        // intentional: close failure is non-actionable
       }
     }
   }
@@ -207,6 +208,7 @@ function readCodexCwd(jsonlPath: string): string | null {
     const cwd = obj.payload?.cwd;
     return typeof cwd === "string" && cwd.trim() ? cwd : null;
   } catch {
+    // intentional: malformed first-line JSON — no cwd extractable
     return null;
   }
 }
@@ -269,7 +271,7 @@ async function resolveClaudeProjectName(encodedPath: string): Promise<string> {
       if (projectPath && encodeProjectPath(projectPath) === encodedPath) {
         return projectId;
       }
-    } catch { /* skip */ }
+    } catch { /* intentional: skip unreadable project config */ }
   }
 
   // Fall back to the encoded path, cleaned up
@@ -291,7 +293,7 @@ async function resolveCodexProjectName(cwd: string): Promise<string> {
         matches.push({ projectId, projectPath });
       }
     } catch {
-      /* skip */
+      // intentional: skip unreadable project config
     }
   }
 
@@ -356,6 +358,7 @@ export function extractExchanges(jsonlPath: string): ExtractedExchange[] {
   try {
     content = readFileSync(jsonlPath, "utf-8");
   } catch {
+    // intentional: session file unreadable — no exchanges
     return [];
   }
 
@@ -366,7 +369,7 @@ export function extractExchanges(jsonlPath: string): ExtractedExchange[] {
     try {
       obj = JSON.parse(line);
     } catch {
-      continue;
+      continue; // intentional: skip malformed JSONL lines
     }
 
     let role: "user" | "assistant" | undefined;
@@ -413,6 +416,7 @@ function estimateDuration(jsonlPath: string): string {
   try {
     content = readFileSync(jsonlPath, "utf-8");
   } catch {
+    // intentional: session file unreadable — duration unknown
     return "unknown";
   }
 
@@ -428,7 +432,7 @@ function estimateDuration(jsonlPath: string): string {
         lastTs = obj.timestamp;
       }
     } catch {
-      continue;
+      continue; // intentional: skip malformed JSONL lines
     }
   }
 
@@ -495,7 +499,7 @@ export async function extractDailySessions(hoursAgo: number = 24): Promise<strin
       try {
         return statSync(b).mtimeMs - statSync(a).mtimeMs;
       } catch {
-        return 0;
+        return 0; // intentional: stat failure — preserve original order
       }
     });
 
@@ -529,7 +533,7 @@ export async function extractDailySessions(hoursAgo: number = 24): Promise<strin
               summary.name = meta.name || sessionId.slice(0, 8);
               break;
             }
-          } catch { /* skip */ }
+          } catch { /* intentional: skip unreadable session index entry */ }
         }
       }
 

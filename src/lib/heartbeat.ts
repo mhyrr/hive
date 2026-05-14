@@ -48,6 +48,7 @@ export function readHeartbeatConfig(projectDir: string): HeartbeatConfig | null 
   try {
     return JSON.parse(readFileSync(configPath, "utf-8"));
   } catch {
+    // intentional: corrupted heartbeat config — treat as unconfigured
     return null;
   }
 }
@@ -69,6 +70,7 @@ function findClaude(): string {
   try {
     return execSync("which claude", { encoding: "utf-8" }).trim();
   } catch {
+    // intentional: `which claude` not on PATH — try known fallback
     const fallback = join(process.env.HOME || "", ".local", "bin", "claude");
     if (existsSync(fallback)) return fallback;
     throw new Error("Could not find claude CLI. Is it installed?");
@@ -81,6 +83,7 @@ function getProjectPath(projectDir: string): string {
     const parsed = parseFrontmatter(raw);
     return (parsed.attributes?.path as string) || process.cwd();
   } catch {
+    // intentional: missing or malformed config — fall back to cwd
     return process.cwd();
   }
 }
@@ -131,7 +134,7 @@ async function buildContextBrief(projectId: string): Promise<string> {
         }
       }
     }
-  } catch { /* no tickets */ }
+  } catch { /* intentional: no tickets dir yet */ }
 
   // Memory index (lightweight summary)
   try {
@@ -159,7 +162,7 @@ async function buildContextBrief(projectId: string): Promise<string> {
         }
       }
     }
-  } catch { /* no index */ }
+  } catch { /* intentional: no index file yet */ }
 
   // Recent git (last 5 commits, cheap shell call)
   try {
@@ -170,7 +173,7 @@ async function buildContextBrief(projectId: string): Promise<string> {
       sections.push(`**Recent commits:**`);
       sections.push(log);
     }
-  } catch { /* not a git repo or no commits */ }
+  } catch { /* intentional: not a git repo or no commits */ }
 
   // Dispatch runs
   try {
@@ -195,7 +198,7 @@ async function buildContextBrief(projectId: string): Promise<string> {
         sections.push(runSummaries.join("\n"));
       }
     }
-  } catch { /* no runs */ }
+  } catch { /* intentional: no runs dir yet */ }
 
   if (sections.length === 0) return "";
   return "\n---\nContext brief (pre-assembled from memory, tickets, git):\n\n" + sections.join("\n") + "\n---";
@@ -313,7 +316,7 @@ export async function runTick(projectId: string): Promise<TickResult> {
   try {
     await rebuildIndex(paths, projectId);
   } catch {
-    // Non-fatal — index rebuild failure shouldn't break heartbeat
+    // intentional: index rebuild failure is non-fatal for heartbeat
   }
 
   // Update config
@@ -339,7 +342,7 @@ export async function runTick(projectId: string): Promise<TickResult> {
     try {
       const escaped = firstLine.replace(/"/g, '\\"').replace(/'/g, "'");
       execSync(`osascript -e 'display notification "${escaped}" with title "HIVE: ${projectId}" sound name "Glass"'`);
-    } catch {}
+    } catch { /* intentional: macOS notification is best-effort */ }
   }
 
   return { output, exitCode, result };

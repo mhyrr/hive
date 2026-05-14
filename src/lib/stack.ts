@@ -231,6 +231,7 @@ export function readStackBinding(projectId: string): string | null {
   try {
     return readFileSync(bindingPath, "utf-8").trim() || null;
   } catch {
+    // intentional: stack binding file unreadable — treat as unbound
     return null;
   }
 }
@@ -257,6 +258,7 @@ function resolveProjectPath(projectId: string): string | null {
     const parsed = parseFrontmatter(raw);
     return (parsed.attributes?.path as string) || null;
   } catch {
+    // intentional: malformed project config — no path available
     return null;
   }
 }

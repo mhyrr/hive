@@ -108,6 +108,7 @@ async function installIdentityHook(opts: { forceHook?: boolean } = {}): Promise<
     try {
       settings = JSON.parse(await Bun.file(settingsPath).text()) as SettingsShape;
     } catch {
+      // intentional: malformed settings.json — can't wire hook
       return { hookInstalled, wired: false };
     }
   }
@@ -148,6 +149,7 @@ function installLaunchAgent(plistName: string): boolean {
     execSync(`launchctl load ${dest}`, { encoding: "utf-8" });
     return true;
   } catch {
+    // intentional: launchctl load failed — non-fatal
     return false;
   }
 }
@@ -161,7 +163,7 @@ export async function initCommand(args: string[]): Promise<void> {
     try {
       userName = prompt("Your name (for identity templates): ");
     } catch {
-      // non-interactive — leave placeholders
+      // intentional: non-interactive terminal — leave placeholders
     }
   }
   if (!userName) userName = "your-name-here";
@@ -236,6 +238,7 @@ export async function initCommand(args: string[]): Promise<void> {
       require("fs").symlinkSync(hiveCliSource, hiveCliBin);
       console.log(`Linked hive to ${hiveCliBin}`);
     } catch {
+      // intentional: symlink failed (permissions, existing file) — warn and continue
       console.log(`Note: Could not link hive to ${hiveCliBin}. Add manually to PATH.`);
     }
   }
@@ -247,7 +250,7 @@ export async function initCommand(args: string[]): Promise<void> {
       if (existsSync(hiveMcpBin)) require("fs").unlinkSync(hiveMcpBin);
       require("fs").symlinkSync(hiveMcpSource, hiveMcpBin);
     } catch {
-      // non-fatal
+      // intentional: MCP binary symlink failed — non-fatal
     }
   }
 
@@ -298,6 +301,7 @@ export async function initCommand(args: string[]): Promise<void> {
       await Bun.write(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + "\n");
     }
   } catch {
+    // intentional: MCP config write failed — warn user
     console.log();
     console.log(`Note: Could not register MCP server automatically. Add manually to ${mcpConfigPath}`);
   }
@@ -327,7 +331,7 @@ export async function initCommand(args: string[]): Promise<void> {
       }
     }
   } catch {
-    // non-fatal — codex integration is optional
+    // intentional: codex integration is optional — skip on failure
   }
 
   // Pi CLI integration: register HIVE MCP for pi-mcp-adapter.
@@ -345,6 +349,6 @@ export async function initCommand(args: string[]): Promise<void> {
       }
     }
   } catch {
-    // non-fatal — Pi integration is optional
+    // intentional: Pi integration is optional — skip on failure
   }
 }

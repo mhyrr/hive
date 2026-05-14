@@ -101,6 +101,7 @@ function readProjectRepoPath(paths: HivePaths, projectId: string): string | null
     const p = parsed.attributes?.path as string | undefined;
     return p && existsSync(p) ? p : null;
   } catch {
+    // intentional: missing or malformed project config — no path available
     return null;
   }
 }
@@ -181,6 +182,7 @@ function heartbeatSignal(paths: HivePaths, projectId: string): HeartbeatSignal {
   try {
     inboxBytes = statSync(inboxPath).size;
   } catch {
+    // intentional: stat failure on inbox file — treat as empty
     return { inboxBytes: 0, findings: 0 };
   }
   if (inboxBytes === 0) return { inboxBytes: 0, findings: 0 };
@@ -205,6 +207,7 @@ async function projectKnowledgeCorpus(
       ...snap.questions.map((q) => q.text),
     ];
   } catch {
+    // intentional: knowledge.md missing or unreadable — return empty corpus
     return [];
   }
 }

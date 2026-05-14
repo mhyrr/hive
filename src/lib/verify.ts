@@ -212,7 +212,7 @@ export function parseVerifierJson(raw: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    // fall through
+    // intentional: raw text isn't valid JSON — try bracket extraction below
   }
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -220,7 +220,7 @@ export function parseVerifierJson(raw: string): unknown {
     try {
       return JSON.parse(text.slice(start, end + 1));
     } catch {
-      // give up
+      // intentional: bracket-extracted substring also invalid — fall through to throw
     }
   }
   throw new Error(`Could not parse verifier output as JSON object. First 200 chars: ${raw.slice(0, 200)}`);
@@ -486,7 +486,7 @@ export async function loadVerifierBundle(
       const parsed = JSON.parse(await Bun.file(cPath).text()) as { candidates?: ReflectionCandidate[] };
       cCandidates = parsed.candidates ?? [];
     } catch {
-      // tolerate missing or malformed Pass C
+      // intentional: tolerate missing or malformed Pass C artifact
     }
   }
 
@@ -501,7 +501,7 @@ export async function loadVerifierBundle(
         const parsed = JSON.parse(await Bun.file(bPath).text()) as { candidates?: ProjectCandidate[] };
         bCandidates = parsed.candidates ?? [];
       } catch {
-        // tolerate
+        // intentional: tolerate missing or malformed Pass B artifact
       }
     }
 

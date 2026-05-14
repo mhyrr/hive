@@ -80,6 +80,7 @@ export async function councilCommand(args: string[]): Promise<void> {
     try {
       camps = JSON.parse(campsJson) as Camp[];
     } catch {
+      // intentional: JSON.parse failure means bad user input — rethrow as UsageError
       throw new UsageError(`Invalid --camps JSON: ${campsJson}\n${usage}`);
     }
     if (!Array.isArray(camps) || camps.length < 2) {

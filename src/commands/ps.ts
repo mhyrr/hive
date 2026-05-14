@@ -19,7 +19,7 @@ function isProcessAlive(pid: string): boolean {
     process.kill(parseInt(pid, 10), 0);
     return true;
   } catch {
-    return false;
+    return false; // intentional: ESRCH/EPERM — process not alive
   }
 }
 
@@ -78,6 +78,7 @@ function readRunInfo(runsDir: string, runId: string): RunInfo | null {
 
     return { id: runId, status: effectiveStatus, goal, project, dispatched, pid, alive };
   } catch {
+    // intentional: run directory unreadable — skip
     return null;
   }
 }

@@ -172,6 +172,7 @@ export async function completeGeminiText(input: {
   try {
     envelope = JSON.parse(stdout) as GeminiJsonEnvelope;
   } catch {
+    // intentional: JSON parse failure — gemini sometimes outputs plain text
     // If JSON parsing fails, the output might be plain text (gemini sometimes
     // outputs text despite -o json on errors). Treat stdout as the response.
     if (stdout.trim()) {

@@ -97,6 +97,7 @@ function findClaude(): string {
   try {
     return execSync("which claude", { encoding: "utf-8" }).trim();
   } catch {
+    // intentional: `which claude` not on PATH — try known fallback
     const fallback = join(process.env.HOME || "", ".local", "bin", "claude");
     if (existsSync(fallback)) return fallback;
     throw new Error("Could not find claude CLI. Is it installed?");
@@ -108,6 +109,7 @@ function findCodex(): string {
   try {
     return execSync("which codex", { encoding: "utf-8" }).trim();
   } catch {
+    // intentional: `which codex` not on PATH — try known fallback
     const fallback = join(process.env.HOME || "", ".local", "bin", "codex");
     if (existsSync(fallback)) return fallback;
     throw new Error("Could not find codex CLI. Is it installed?");
@@ -148,7 +150,7 @@ async function cleanupPiIdentityExtensionTempDir(dir: string): Promise<void> {
   try {
     await rm(dir, { recursive: true, force: true });
   } catch {
-    /* best effort */
+    /* intentional: best-effort temp dir cleanup */
   }
 }
 
@@ -178,7 +180,7 @@ async function launchClaude(mode: ClaudeMode, args: string[]): Promise<void> {
   let bareMcpDir: string | null = null;
   const cleanup = () => {
     if (bareMcpDir) {
-      try { require("fs").rmSync(bareMcpDir, { recursive: true, force: true }); } catch { /* best effort */ }
+      try { require("fs").rmSync(bareMcpDir, { recursive: true, force: true }); } catch { /* intentional: best-effort temp dir cleanup */ }
     }
   };
   process.on("exit", cleanup);

@@ -49,6 +49,7 @@ function findClaude(): string {
   try {
     return execSync("which claude", { encoding: "utf-8" }).trim();
   } catch {
+    // intentional: `which claude` not on PATH — use common default
     return "/usr/local/bin/claude";
   }
 }

@@ -46,7 +46,7 @@ export function parseExtractionJson(raw: string): unknown[] {
       return (direct as { candidates: unknown[] }).candidates;
     }
   } catch {
-    // fall through to bracket-extraction
+    // intentional: raw text isn't valid JSON array — try bracket extraction below
   }
 
   // Last resort: grab the first balanced [...] in the text
@@ -58,7 +58,7 @@ export function parseExtractionJson(raw: string): unknown[] {
       const parsed = JSON.parse(slice);
       if (Array.isArray(parsed)) return parsed;
     } catch {
-      // give up
+      // intentional: bracket-extracted substring also invalid — fall through to throw
     }
   }
 
@@ -458,7 +458,7 @@ export async function loadIdentityText(paths: HivePaths): Promise<string> {
     try {
       sections.push(await Bun.file(file).text());
     } catch {
-      // skip missing files
+      // intentional: skip missing identity files — assemble what's available
     }
   }
   return sections.join("\n\n---\n\n");

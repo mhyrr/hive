@@ -111,7 +111,7 @@ function formatScorecardTable(rows: ScorecardRow[]): string {
       if (!isNaN(start) && !isNaN(end)) {
         walltime = formatDuration(end - start);
       }
-    } catch { /* use dash */ }
+    } catch { /* intentional: parse failure — leave walltime as dash */ }
     const walltimeStr = walltime.padStart(8);
 
     return `  ${iter}  ${decision}${tokens}  ${cost}  ${walltimeStr}`;
@@ -189,7 +189,7 @@ async function runSubcommand(args: string[]): Promise<void> {
     const raw = await Bun.file(projectConfigPath).text();
     const parsed = parseFrontmatter(raw);
     projectPath = (parsed.attributes?.path as string) ?? process.cwd();
-  } catch { /* use cwd */ }
+  } catch { /* intentional: missing project config — use cwd */ }
 
   // Initialize campaign state (creates dir, worktree, status file)
   const campaignId = await initCampaign({

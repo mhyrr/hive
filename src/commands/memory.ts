@@ -365,6 +365,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
     try {
       learnings = JSON.parse(stdin.trim());
     } catch {
+      // intentional: JSON.parse failure → rethrow as UsageError with guidance
       throw new UsageError("Invalid JSON on stdin. Expected: [{\"type\":\"fact\",\"content\":\"...\"},...]");
     }
     if (!Array.isArray(learnings) || learnings.length === 0) {

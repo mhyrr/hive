@@ -59,6 +59,7 @@ function defaultWhich(cmd: string): string | null {
     return execSync(`command -v ${cmd}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
       .trim() || null;
   } catch {
+    // intentional: command not found — return null
     return null;
   }
 }

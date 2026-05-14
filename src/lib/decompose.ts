@@ -300,6 +300,7 @@ export function parseOrientResponse(raw: string): OrientDecision | null {
   try {
     parsed = JSON.parse(candidate);
   } catch {
+    // intentional: orient response isn't valid JSON — caller treats null as parse failure
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;

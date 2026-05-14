@@ -57,7 +57,7 @@ export async function writeCrashArtifacts(
   try {
     await writeFile(join(campaignDir, "status"), "aborted", "utf-8");
   } catch {
-    /* campaign dir may not exist */
+    /* intentional: campaign dir may not exist yet */
   }
 
   // Write error.txt
@@ -67,7 +67,7 @@ export async function writeCrashArtifacts(
       : msg;
     await writeFile(join(campaignDir, "error.txt"), errorContent, "utf-8");
   } catch {
-    /* best effort */
+    /* intentional: best-effort error artifact write */
   }
 }
 
@@ -101,6 +101,6 @@ export async function writeCompletionArtifacts(
   try {
     await writeFile(join(campaignDir, "result.txt"), summary, "utf-8");
   } catch {
-    /* best effort */
+    /* intentional: best-effort result artifact write */
   }
 }

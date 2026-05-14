@@ -30,6 +30,7 @@ export function isCodexInstalled(): boolean {
     execSync("which codex", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
     return true;
   } catch {
+    // intentional: `which codex` not on PATH — check fallback location
     return existsSync(join(process.env.HOME || "", ".local", "bin", "codex"));
   }
 }
@@ -41,6 +42,7 @@ export function findCodexBin(): string | null {
   try {
     return execSync("which codex", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
   } catch {
+    // intentional: `which codex` not on PATH — try known fallback
     const fallback = join(process.env.HOME || "", ".local", "bin", "codex");
     return existsSync(fallback) ? fallback : null;
   }
@@ -263,6 +265,7 @@ export async function installCodexIdentityHook(): Promise<{
     try {
       config = JSON.parse(await Bun.file(hooksJsonPath).text()) as CodexHooksConfig;
     } catch {
+      // intentional: malformed hooks.json — report and bail
       return { scriptInstalled, hookWired: false, reason: "~/.codex/hooks.json is malformed" };
     }
   }

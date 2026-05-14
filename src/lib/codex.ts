@@ -126,7 +126,7 @@ function parseCodexJsonl(raw: string): { text: string; inputTokens: number | nul
         error = (event as CodexTurnFailed).error?.message ?? "turn failed";
       }
     } catch {
-      // Skip non-JSON lines
+      // intentional: skip non-JSON lines in codex output
     }
   }
 

@@ -25,7 +25,7 @@ async function safeRead(path: string): Promise<string | null> {
   try {
     return await readFile(path, "utf-8");
   } catch {
-    return null;
+    return null; // intentional: file missing or unreadable
   }
 }
 
@@ -37,7 +37,7 @@ function parseScorecardJsonl(raw: string): ScorecardRow[] {
     try {
       rows.push(JSON.parse(trimmed) as ScorecardRow);
     } catch {
-      // Skip malformed lines
+      // intentional: skip malformed JSONL lines
     }
   }
   return rows;
@@ -81,7 +81,7 @@ export async function collectCampaignFragment(
       const cfg = JSON.parse(configRaw);
       goal = cfg.goal ?? "";
     } catch {
-      // fallthrough
+      // intentional: malformed config.json — try other goal sources
     }
   }
   if (!goal) {
@@ -137,7 +137,7 @@ export async function collectCampaignFragment(
         progress = typeof judgeRow.progress_vs_prime === "number" ? judgeRow.progress_vs_prime : null;
         confidence = typeof judgeRow.confidence === "number" ? judgeRow.confidence : null;
       } catch {
-        // Ignore parse errors
+        // intentional: malformed judge row — skip enrichment
       }
     }
 

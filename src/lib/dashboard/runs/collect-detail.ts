@@ -25,7 +25,7 @@ async function safeReadFile(path: string): Promise<string | null> {
   try {
     return await readFile(path, "utf-8");
   } catch {
-    return null;
+    return null; // intentional: file missing or unreadable
   }
 }
 
@@ -33,7 +33,7 @@ async function safeStat(path: string): Promise<{ mtime: Date } | null> {
   try {
     return await stat(path);
   } catch {
-    return null;
+    return null; // intentional: path doesn't exist
   }
 }
 
@@ -44,7 +44,7 @@ function isProcessAlive(pidStr: string): boolean {
     process.kill(pid, 0);
     return true;
   } catch {
-    return false;
+    return false; // intentional: ESRCH/EPERM — process not alive
   }
 }
 
@@ -125,7 +125,7 @@ export function detectWorktreeState(
           return "alive";
         }
       } catch {
-        // git worktree list failed — branch exists but can't confirm worktree
+        // intentional: git worktree list failed — branch exists but can't confirm worktree
       }
       return "alive"; // Branch exists, close enough
     }
@@ -140,12 +140,12 @@ export function detectWorktreeState(
 
       if (merged) return "merged";
     } catch {
-      // Couldn't check merged state
+      // intentional: couldn't check merged state
     }
 
     return "pruned";
   } catch {
-    // Git not available or not a repo
+    // intentional: git not available or not a repo
     return "pruned";
   }
 }

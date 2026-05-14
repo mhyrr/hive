@@ -79,7 +79,7 @@ async function loadCandidateSources(
       const parsed = JSON.parse(await Bun.file(file).text()) as { candidates?: ProjectCandidate[] };
       if (Array.isArray(parsed.candidates)) B.set(projectId, parsed.candidates);
     } catch {
-      // tolerate
+      // intentional: tolerate missing or malformed Pass B artifact
     }
   }
 
@@ -90,7 +90,7 @@ async function loadCandidateSources(
       const parsed = JSON.parse(await Bun.file(cFile).text()) as { candidates?: ReflectionCandidate[] };
       if (Array.isArray(parsed.candidates)) C = parsed.candidates;
     } catch {
-      // tolerate
+      // intentional: tolerate missing or malformed Pass C artifact
     }
   }
 
@@ -185,6 +185,7 @@ async function loadVerifierOutputArtifacts(
       taste: parsed.taste ?? null,
     };
   } catch {
+    // intentional: corrupted verifier output — return empty defaults
     return { gaps: [], taste: null };
   }
 }

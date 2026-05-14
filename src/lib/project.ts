@@ -47,7 +47,7 @@ export function resolveProjectFromCwd(): string | null {
       const parsed = parseFrontmatter(raw);
       const projectPath = parsed.attributes?.path as string | undefined;
       if (projectPath && cwd.startsWith(projectPath)) return projectId;
-    } catch { /* skip */ }
+    } catch { /* intentional: skip unreadable project config */ }
   }
 
   return projects[0] ?? null;

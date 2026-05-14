@@ -206,7 +206,7 @@ export async function readMeta(paths: HivePaths, projectId: string): Promise<Met
       return await file.json();
     }
   } catch {
-    // Corrupted — start fresh
+    // intentional: corrupted meta JSON — start fresh with empty sidecar
   }
   return { entries: {}, version: 1 };
 }
@@ -860,6 +860,7 @@ export async function readLog(
   try {
     files = (await readdir(dir)).filter((f) => f.endsWith(".md")).sort().reverse();
   } catch {
+    // intentional: log directory doesn't exist yet — no entries to return
     return entries;
   }
 
@@ -1331,7 +1332,7 @@ export async function readCandidates(
         out.push(obj as Candidate);
       }
     } catch {
-      // Skip malformed lines — append-safety means we tolerate corruption.
+      // intentional: skip malformed JSONL lines — append-only format tolerates partial corruption
     }
   }
   return out;

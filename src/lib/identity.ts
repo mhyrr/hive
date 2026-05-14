@@ -107,6 +107,7 @@ export function getIdentityName(): string {
     const match = content.match(/^- Name:\s*(.+)$/m);
     return match?.[1]?.trim() || "Claude";
   } catch {
+    // intentional: IDENTITY.md unreadable — fall back to default name
     return "Claude";
   }
 }

@@ -81,7 +81,7 @@ export async function shouldInvokeHeartbeat(input: TriggerInput): Promise<Trigge
       reasons.push(`${commits.length} new commit(s) since last tick: ${commits.slice(0, 3).join(", ")}${commits.length > 3 ? ", ..." : ""}`);
     }
   } catch {
-    // Not a git repo, or git unavailable. Not a reason to block — just skip this signal.
+    // intentional: not a git repo or git unavailable — skip this signal
   }
 
   // Signal 2: Any ticket with updated > lastTick. Catches new tickets, status
@@ -97,7 +97,7 @@ export async function shouldInvokeHeartbeat(input: TriggerInput): Promise<Trigge
       reasons.push(`${changed.length} ticket(s) updated since last tick: ${ids}${changed.length > 5 ? ", ..." : ""}`);
     }
   } catch {
-    // Ticket read failure — fail open so we don't miss real changes.
+    // intentional: ticket read failure — fail open so we don't miss real changes
     reasons.push("ticket read failed — invoking to re-check");
   }
 
@@ -119,7 +119,7 @@ export async function shouldInvokeHeartbeat(input: TriggerInput): Promise<Trigge
       reasons.push(`${ready.length} auto-dispatch ticket(s) ready: ${ids}`);
     }
   } catch {
-    // fall through
+    // intentional: auto-dispatch ticket check failed — skip signal
   }
 
   // Signal 4: Dispatch runs changed since last tick. Any RUN-* directory whose
@@ -133,7 +133,7 @@ export async function shouldInvokeHeartbeat(input: TriggerInput): Promise<Trigge
       reasons.push(`${changed.length} dispatch run(s) changed status since last tick: ${changed.slice(0, 3).join(", ")}${changed.length > 3 ? ", ..." : ""}`);
     }
   } catch {
-    // runs dir missing or unreadable — skip
+    // intentional: runs dir missing or unreadable — skip signal
   }
 
   return { invoke: reasons.length > 0, reasons };
@@ -174,7 +174,7 @@ function detectChangedRuns(paths: HivePaths, sinceMs: number): string[] {
         changed.push(`${entry.name}=${status}`);
       }
     } catch {
-      // skip
+      // intentional: skip unreadable run status file
     }
   }
   return changed;

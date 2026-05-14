@@ -138,7 +138,7 @@ export async function appendReflectionsToDay(
   try {
     existing = await Bun.file(filePath).text();
   } catch {
-    // file doesn't exist — we'll create
+    // intentional: file doesn't exist yet — will create below
   }
 
   if (!existing.trim()) {
@@ -208,6 +208,7 @@ export async function readUnprocessedReflections(
   try {
     files = await readdir(paths.reflectionsDir);
   } catch {
+    // intentional: reflections directory doesn't exist yet
     return [];
   }
 
@@ -380,6 +381,7 @@ async function writeIdentityProposals(
   try {
     content = await Bun.file(pp.inbox).text();
   } catch {
+    // intentional: inbox doesn't exist yet — initialize with header
     content = `# Inbox: ${projectId}\n\n`;
   }
 

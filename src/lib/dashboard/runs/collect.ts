@@ -54,7 +54,7 @@ async function safeReadFile(path: string): Promise<string | null> {
   try {
     return await readFile(path, "utf-8");
   } catch {
-    return null;
+    return null; // intentional: file missing or unreadable
   }
 }
 
@@ -62,7 +62,7 @@ async function safeStat(path: string): Promise<{ mtime: Date } | null> {
   try {
     return await stat(path);
   } catch {
-    return null;
+    return null; // intentional: path doesn't exist
   }
 }
 
@@ -73,7 +73,7 @@ function isProcessAlive(pidStr: string): boolean {
     process.kill(pid, 0);
     return true;
   } catch {
-    return false;
+    return false; // intentional: ESRCH/EPERM — process not alive
   }
 }
 
@@ -251,7 +251,7 @@ function parseScorecardJsonl(content: string): Array<{
         cost_usd: typeof row.cost_usd === "number" ? row.cost_usd : 0,
       });
     } catch {
-      // Skip malformed lines
+      // intentional: skip malformed JSONL lines
     }
   }
   return rows;
@@ -273,7 +273,7 @@ function parseOrchestratorLog(content: string): {
         totalWalltimeMs: typeof obj.totalWalltimeMs === "number" ? obj.totalWalltimeMs : undefined,
       };
     } catch {
-      continue;
+      continue; // intentional: skip non-JSON lines in orchestrator log
     }
   }
   return {};
@@ -300,7 +300,7 @@ async function collectCampaignRun(
       const cfg = JSON.parse(configRaw);
       goalText = cfg.goal ?? "";
     } catch {
-      // fallthrough
+      // intentional: malformed config.json — try other goal sources
     }
   }
   if (!goalText) {
@@ -626,7 +626,7 @@ function parseScorecardForArcs(content: string): CampaignIteration[] {
         elapsedSec,
       });
     } catch {
-      // skip malformed
+      // intentional: skip malformed scorecard lines
     }
   }
   return iterations;
@@ -743,7 +743,7 @@ export async function collectArcs(
       try {
         const cfg = JSON.parse(configRaw);
         goal = cfg.goal ?? "";
-      } catch { /* fallthrough */ }
+      } catch { /* intentional: malformed config.json — try other goal sources */ }
     }
     if (!goal) {
       goal = (await safeReadFile(join(campDir, "frozen-prefix.md")))?.trim() ?? "";

@@ -166,7 +166,7 @@ server.registerTool("read_hive_memory", {
       const content = await Bun.file(iPath).text();
       return { content: [{ type: "text" as const, text: content }] };
     } catch {
-      // No index yet — rebuild it
+      // intentional: no index yet — rebuild it
       const content = await rebuildIndex(paths, projectId);
       return { content: [{ type: "text" as const, text: content }] };
     }
@@ -558,7 +558,7 @@ server.registerTool("add_project", {
       content = content.replaceAll("{{projectName}}", projectId);
       await Bun.write(heartbeatPath, content);
     } catch {
-      // Template may not exist in all installations — non-fatal
+      // intentional: template may not exist in all installations — non-fatal
     }
   }
 
@@ -594,6 +594,7 @@ server.registerTool("hive_status", {
     const serveMatch = selfFile.match(/^##\s*Who I Serve\s*\n(.+)/m);
     if (serveMatch) lines.push(`Serving: ${serveMatch[1].trim()}`);
   } catch {
+    // intentional: identity files missing — show fallback message
     lines.push(`## Identity\nCould not read identity files.`);
   }
 
@@ -610,7 +611,7 @@ server.registerTool("hive_status", {
       const raw = await Bun.file(configPath).text();
       const parsed = parseFrontmatter(raw);
       projectPath = (parsed.attributes?.path as string) ?? "unknown";
-    } catch { /* skip */ }
+    } catch { /* intentional: skip unreadable entry */ }
 
     // Count open tickets
     const tickets = await listTickets(paths, projectId, { status: "open" as TicketStatus });
@@ -674,7 +675,7 @@ server.registerTool("hive_status", {
         const goalLine = goalRaw.split("\n").find((l) => l.trim() && !l.startsWith("#") && !l.startsWith("---"))?.trim().slice(0, 60) ?? "";
         const icon = status === "running" ? "🔵" : status === "complete" ? "✅" : status === "failed" ? "❌" : status === "blocked" ? "🟡" : "⚪";
         activeRuns.push(`${icon} ${runId} ${status} — ${goalLine}`);
-      } catch { /* skip */ }
+      } catch { /* intentional: skip unreadable entry */ }
     }
 
     if (activeRuns.length > 0) {
@@ -682,7 +683,7 @@ server.registerTool("hive_status", {
       for (const r of activeRuns) lines.push(`- ${r}`);
       lines.push("");
     }
-  } catch { /* no runs dir yet */ }
+  } catch { /* intentional: no runs dir yet */ }
 
   // Latest briefing
   const briefingsDir = join(paths.home, "briefings");
@@ -691,7 +692,7 @@ server.registerTool("hive_status", {
     if (briefings.length > 0) {
       lines.push(`- **Latest briefing**: ${briefings[briefings.length - 1]!.replace(".md", "")}`);
     }
-  } catch { /* no briefings yet */ }
+  } catch { /* intentional: no briefings dir yet */ }
 
   // Last nightly run
   const nightlyLog = join(paths.home, "logs", "nightly.log");
@@ -706,6 +707,7 @@ server.registerTool("hive_status", {
       lines.push(`- **Last nightly run**: never`);
     }
   } catch {
+    // intentional: nightly log file doesn't exist yet
     lines.push(`- **Last nightly run**: no log found`);
   }
 
@@ -723,6 +725,7 @@ server.registerTool("hive_status", {
       lines.push(`- **${name}**: ${descMatch?.[1]?.trim() ?? "no description"}`);
     }
   } catch {
+    // intentional: agents dir doesn't exist yet
     lines.push("- No agents installed");
   }
 
@@ -739,7 +742,7 @@ server.registerTool("hive_status", {
         lines.push(`**${projectId}** (recent decisions):`);
         for (const d of decisionLines) lines.push(d);
       }
-    } catch { /* skip */ }
+    } catch { /* intentional: skip unreadable entry */ }
   }
 
   return { content: [{ type: "text" as const, text: lines.join("\n") }] };
@@ -843,7 +846,7 @@ server.tool(
           let template = await Bun.file(join(templateDir, "HEARTBEAT.md")).text();
           template = template.replaceAll("{{projectName}}", projectId);
           await Bun.write(ordersPath, template);
-        } catch { /* template missing — user can create manually */ }
+        } catch { /* intentional: template missing — user can create manually */ }
       }
 
       return { content: [{ type: "text" as const, text: `Heartbeat enabled for ${projectId} (every ${interval}m). Standing orders at ~/.hive/projects/${projectId}/HEARTBEAT.md. Run \`hive heartbeat tick\` to test or wait for launchd.` }] };

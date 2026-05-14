@@ -41,7 +41,7 @@ export async function killCommand(args: string[]): Promise<void> {
   try {
     process.kill(pid, 0);
   } catch {
-    // Already dead — update status
+    // intentional: process already dead — update status
     await Bun.write(statusPath, "crashed");
     console.log(`${normalized} process (${pid}) already dead. Marked as crashed.`);
     return;
@@ -51,10 +51,11 @@ export async function killCommand(args: string[]): Promise<void> {
   try {
     process.kill(-pid, "SIGTERM");
   } catch {
-    // If group kill fails, try the process directly
+    // intentional: group kill failed — try individual process
     try {
       process.kill(pid, "SIGTERM");
     } catch {
+      // intentional: process unreachable — report and bail
       console.log(`${normalized} could not be killed (PID ${pid}).`);
       return;
     }

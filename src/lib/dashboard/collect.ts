@@ -220,7 +220,7 @@ async function safeReadFile(path: string): Promise<string | null> {
   try {
     return await readFile(path, "utf-8");
   } catch {
-    return null;
+    return null; // intentional: file missing or unreadable
   }
 }
 
@@ -228,7 +228,7 @@ async function safeStat(path: string): Promise<{ mtime: Date } | null> {
   try {
     return await stat(path);
   } catch {
-    return null;
+    return null; // intentional: path doesn't exist
   }
 }
 
@@ -322,7 +322,7 @@ export async function collectProjects(paths: HivePaths): Promise<ProjectCard[]> 
         tickCount = typeof hb.tickCount === "number" ? hb.tickCount : 0;
         lastResult = hb.lastResult ?? null;
       } catch {
-        // tolerate malformed heartbeat.json
+        // intentional: tolerate malformed heartbeat.json
       }
     }
 
@@ -687,7 +687,7 @@ export async function collectPromotionCandidates(paths: HivePaths): Promise<Prom
       snapshot = await readProjectMemorySnapshot(paths, projectId);
       meta = await readMeta(paths, projectId);
     } catch {
-      continue; // Project has no memory yet, or unreadable
+      continue; // intentional: project has no memory yet, or unreadable
     }
 
     const conventions = snapshot.conventions.filter((c) => !c.superseded);
@@ -736,7 +736,7 @@ export async function collectOpenQuestions(paths: HivePaths): Promise<OpenQuesti
     try {
       snap = await readProjectMemorySnapshot(paths, projectId);
     } catch {
-      continue;
+      continue; // intentional: project memory unreadable
     }
     for (const q of snap.questions) {
       if (q.superseded) continue;
@@ -763,7 +763,7 @@ export async function collectRecentMemory(
       snap = await readProjectMemorySnapshot(paths, projectId);
       meta = await readMeta(paths, projectId);
     } catch {
-      continue;
+      continue; // intentional: project memory unreadable
     }
 
     const sections: Array<{ section: MemorySection; entries: { text: string; tags: string[]; superseded?: boolean }[] }> = [

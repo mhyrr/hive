@@ -34,6 +34,7 @@ function findClaude(): string {
   try {
     return execSync("which claude", { encoding: "utf-8" }).trim();
   } catch {
+    // intentional: `which claude` not on PATH — try known fallback
     const fallback = join(process.env.HOME || "", ".local", "bin", "claude");
     if (existsSync(fallback)) return fallback;
     throw new Error("Could not find claude CLI. Is it installed?");
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
         `osascript -e 'display notification "${result.campaignId} ${result.terminationReason} (${result.iterationsCompleted} iterations, $${result.totalCostUsd.toFixed(2)})" with title "HIVE Campaign" sound name "Glass"'`,
         { stdio: "pipe" },
       );
-    } catch { /* notification is best-effort */ }
+    } catch { /* intentional: macOS notification is best-effort */ }
 
   } catch (err) {
     await writeCrashArtifacts(campaignId, err, hiveHome);
@@ -119,7 +120,7 @@ async function main(): Promise<void> {
         `osascript -e 'display notification "${campaignId} crashed: ${(err instanceof Error ? err.message : String(err)).slice(0, 80)}" with title "HIVE Campaign" sound name "Basso"'`,
         { stdio: "pipe" },
       );
-    } catch { /* best-effort */ }
+    } catch { /* intentional: macOS notification is best-effort */ }
 
     process.exit(1);
   }

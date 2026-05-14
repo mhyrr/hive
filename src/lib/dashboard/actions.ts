@@ -260,6 +260,7 @@ async function readJsonArray(path: string): Promise<string[]> {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
   } catch {
+    // intentional: tags file missing or malformed
     return [];
   }
 }

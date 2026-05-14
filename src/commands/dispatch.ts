@@ -164,6 +164,7 @@ function findClaude(): string {
   try {
     return require("child_process").execSync("which claude", { encoding: "utf-8" }).trim();
   } catch {
+    // intentional: `which claude` fails when not on PATH — try known fallback
     const fallback = join(process.env.HOME || "", ".local", "bin", "claude");
     if (existsSync(fallback)) return fallback;
     throw new UsageError("Could not find claude CLI. Is it installed?");
@@ -256,7 +257,7 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     const raw = await Bun.file(projectConfigPath).text();
     const parsed = parseFrontmatter(raw);
     projectPath = (parsed.attributes?.path as string) ?? process.cwd();
-  } catch { /* use cwd */ }
+  } catch { /* intentional: missing project config — use cwd */ }
 
   // Write run metadata
   await Bun.write(join(runDir, "goal.md"), `# Goal\n\n${goalText}\n\n---\nProject: ${projectId}\nDispatched: ${new Date().toISOString()}\n`);

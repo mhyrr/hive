@@ -29,6 +29,7 @@ export function isPiInstalled(): boolean {
     execSync("which pi", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
     return true;
   } catch {
+    // intentional: `which pi` not on PATH — check fallback location
     return existsSync(join(process.env.HOME || "", ".local", "bin", "pi"));
   }
 }
@@ -40,6 +41,7 @@ export function findPiBin(): string | null {
   try {
     return execSync("which pi", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
   } catch {
+    // intentional: `which pi` not on PATH — try known fallback
     const fallback = join(process.env.HOME || "", ".local", "bin", "pi");
     return existsSync(fallback) ? fallback : null;
   }
