@@ -43,30 +43,30 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("emitStartBreadcrumb", () => {
-  test("writes campaign ID and runner name to stdout", () => {
-    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+  test("writes campaign ID and runner name to stderr", () => {
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
     try {
       emitStartBreadcrumb("CAMP-007", "run-orchestrator");
-      expect(logSpy).toHaveBeenCalledTimes(1);
-      const msg = logSpy.mock.calls[0]![0] as string;
+      expect(errSpy).toHaveBeenCalledTimes(1);
+      const msg = errSpy.mock.calls[0]![0] as string;
       expect(msg).toContain("CAMP-007");
       expect(msg).toContain("run-orchestrator");
       expect(msg).toMatch(/\d{4}-\d{2}-\d{2}T/); // ISO timestamp
     } finally {
-      logSpy.mockRestore();
+      errSpy.mockRestore();
     }
   });
 
   test("includes ISO timestamp", () => {
-    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
     try {
       const before = new Date().toISOString().slice(0, 16); // minute precision
       emitStartBreadcrumb("CAMP-001", "run-detached");
-      const msg = logSpy.mock.calls[0]![0] as string;
+      const msg = errSpy.mock.calls[0]![0] as string;
       // Timestamp should be close to "now"
       expect(msg).toContain(before.slice(0, 10)); // at least same date
     } finally {
-      logSpy.mockRestore();
+      errSpy.mockRestore();
     }
   });
 });
@@ -152,8 +152,8 @@ describe("writeCompletionArtifacts", () => {
     expect(content).toContain("3600s");
   });
 
-  test("logs summary to stdout (which goes to orchestrator.log)", async () => {
-    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+  test("logs summary to stderr (which goes to orchestrator.log)", async () => {
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
     try {
       const result: CampaignResult = {
         campaignId: CAMP_ID,
@@ -165,11 +165,11 @@ describe("writeCompletionArtifacts", () => {
       };
 
       await writeCompletionArtifacts(result, hiveHome);
-      expect(logSpy).toHaveBeenCalledTimes(1);
-      const msg = logSpy.mock.calls[0]![0] as string;
+      expect(errSpy).toHaveBeenCalledTimes(1);
+      const msg = errSpy.mock.calls[0]![0] as string;
       expect(msg).toContain("finished");
     } finally {
-      logSpy.mockRestore();
+      errSpy.mockRestore();
     }
   });
 
