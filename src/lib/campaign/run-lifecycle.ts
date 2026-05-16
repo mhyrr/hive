@@ -17,11 +17,14 @@ import type { CampaignResult } from "./orchestrator";
 // ---------------------------------------------------------------------------
 
 /**
- * Write a start breadcrumb to stdout (which is redirected to orchestrator.log).
+ * Write a start breadcrumb to stderr (which is redirected to orchestrator.log).
  * Call this as early as possible — before assembleIdentity, config reads, etc.
+ *
+ * Uses stderr so this shared module never writes to stdout — critical for
+ * any caller where stdout is a protocol channel (e.g. MCP JSON-RPC).
  */
 export function emitStartBreadcrumb(campaignId: string, runner: string): void {
-  console.log(
+  console.error(
     `--- Campaign ${campaignId} starting at ${new Date().toISOString()} (runner: ${runner}) ---`,
   );
 }
@@ -78,7 +81,7 @@ export async function writeCrashArtifacts(
 /**
  * Write completion artifacts to the campaign directory:
  * - result.txt with a human-readable summary
- * - A log line to stdout (redirected to orchestrator.log)
+ * - A log line to stderr (redirected to orchestrator.log)
  */
 export async function writeCompletionArtifacts(
   result: CampaignResult,
@@ -96,7 +99,7 @@ export async function writeCompletionArtifacts(
     `  Walltime: ${Math.round(result.totalWalltimeMs / 1000)}s`,
   ].join("\n");
 
-  console.log(summary);
+  console.error(summary);
 
   try {
     await writeFile(join(campaignDir, "result.txt"), summary, "utf-8");
