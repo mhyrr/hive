@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 
-import { buildRunWrapper } from "../commands/dispatch";
+import { buildExecutorMessage, buildRunWrapper } from "../commands/dispatch";
 
 const baseOpts = {
   projectPath: "/Users/x/work/hive",
@@ -67,5 +67,47 @@ describe("buildRunWrapper", () => {
     expect(script).toContain('echo "complete" > "/Users/x/.hive/runs/RUN-099/status"');
     expect(script).toContain('echo "partial" > "/Users/x/.hive/runs/RUN-099/status"');
     expect(script).toContain('echo "blocked" > "/Users/x/.hive/runs/RUN-099/status"');
+  });
+});
+
+const baseMessageOpts = {
+  runDir: "/Users/x/.hive/runs/RUN-099",
+  projectId: "hive",
+  goalText: "Refactor the dispatch wrapper to use /goal",
+  maxTurns: 20,
+  useGoalCommand: true,
+};
+
+describe("buildExecutorMessage", () => {
+  test("wraps the message in /goal when enabled", () => {
+    const msg = buildExecutorMessage(baseMessageOpts);
+    expect(msg.startsWith("/goal ")).toBe(true);
+  });
+
+  test("references the plan file in the success condition", () => {
+    const msg = buildExecutorMessage(baseMessageOpts);
+    expect(msg).toContain("/Users/x/.hive/runs/RUN-099/plan.md");
+    expect(msg).toContain("marked [x]");
+    expect(msg).toContain("committed");
+  });
+
+  test("includes the turn cap in the /goal stop clause", () => {
+    expect(buildExecutorMessage(baseMessageOpts)).toContain("or stop after 20 turns");
+    expect(buildExecutorMessage({ ...baseMessageOpts, maxTurns: 5 })).toContain("or stop after 5 turns");
+  });
+
+  test("preserves run dir, project, and goal text in the body", () => {
+    const msg = buildExecutorMessage(baseMessageOpts);
+    expect(msg).toContain("Run directory: /Users/x/.hive/runs/RUN-099");
+    expect(msg).toContain("Plan file: /Users/x/.hive/runs/RUN-099/plan.md");
+    expect(msg).toContain("Project: hive");
+    expect(msg).toContain("Refactor the dispatch wrapper to use /goal");
+  });
+
+  test("omits the /goal prefix and stop clause when disabled", () => {
+    const msg = buildExecutorMessage({ ...baseMessageOpts, useGoalCommand: false });
+    expect(msg.startsWith("/goal")).toBe(false);
+    expect(msg).not.toContain("or stop after");
+    expect(msg).toContain("Goal:\nRefactor the dispatch wrapper to use /goal");
   });
 });

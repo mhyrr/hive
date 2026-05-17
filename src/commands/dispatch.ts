@@ -21,6 +21,40 @@ async function nextRunId(runsDir: string): Promise<string> {
 }
 
 
+export interface ExecutorMessageOpts {
+  runDir: string;
+  projectId: string;
+  goalText: string;
+  maxTurns: number;
+  useGoalCommand: boolean;
+}
+
+// Wraps the dispatched goal in Claude Code's `/goal` slash command so the
+// executor self-loops until the success condition holds, instead of
+// completing a single turn and exiting. The condition doubles as the first
+// turn's prompt: Claude reads it to know what to do, the Haiku evaluator
+// reads it after each turn to decide whether to keep going. Requires
+// Claude Code >= 2.1.139; older versions will treat the `/goal` text as a
+// literal prompt and the run still attempts the task once.
+export function buildExecutorMessage(opts: ExecutorMessageOpts): string {
+  const { runDir, projectId, goalText, maxTurns, useGoalCommand } = opts;
+
+  const body = `Run directory: ${runDir}
+Plan file: ${runDir}/plan.md
+Project: ${projectId}
+
+Goal:
+${goalText}`;
+
+  if (!useGoalCommand) {
+    return body;
+  }
+
+  return `/goal The dispatched task is complete when every checklist item in ${runDir}/plan.md is marked [x] and all implementation changes are committed in the worktree branch. If you hit a hard blocker, document it in the plan and stop. (or stop after ${maxTurns} turns)
+
+${body}`;
+}
+
 export interface RunWrapperOpts {
   projectPath: string;
   timeoutMin: number;
@@ -174,7 +208,20 @@ function findClaude(): string {
 export async function dispatchCommand(args: string[]): Promise<void> {
   const usage = `Usage: hive dispatch "<goal>" [--project <name>] [--ticket <id>]
        hive dispatch --ticket TK-007
-       hive dispatch --plan <path-to-plan.md>`;
+       hive dispatch --plan <path-to-plan.md>
+
+Options:
+  --project <name>     Project to dispatch against (defaults to cwd resolution)
+  --ticket <id>        Use ticket as the goal
+  --plan <path>        Append plan file to the goal
+  --timeout <min>      Hard wall-clock cap (default 30)
+  --model <id>         Executor model (default claude-opus-4-6)
+  --max-turns <n>      Inner /goal turn cap (default 20)
+
+Env:
+  HIVE_DISPATCH_MODEL       Override default model
+  HIVE_DISPATCH_MAX_TURNS   Override default turn cap
+  HIVE_DISPATCH_NO_GOAL=1   Disable /goal self-loop (one-shot mode)`;
 
   if (args.length === 0) throw new UsageError(usage);
 
@@ -190,6 +237,11 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   // instruction-following and fewer-subagents bias hurt judgment-heavy
   // autonomous work. Override via --model or HIVE_DISPATCH_MODEL env.
   let model = process.env.HIVE_DISPATCH_MODEL || "claude-opus-4-6";
+  // Inner-loop turn cap for the `/goal` self-verifier. Belt to the wrapper's
+  // wall-clock timeout suspenders.
+  let maxTurns = parseInt(process.env.HIVE_DISPATCH_MAX_TURNS || "20", 10);
+  if (isNaN(maxTurns) || maxTurns < 1) maxTurns = 20;
+  const useGoalCommand = process.env.HIVE_DISPATCH_NO_GOAL !== "1";
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--project" && args[i + 1]) {
@@ -203,6 +255,9 @@ export async function dispatchCommand(args: string[]): Promise<void> {
       if (isNaN(timeoutMin) || timeoutMin < 1) timeoutMin = 30;
     } else if (args[i] === "--model" && args[i + 1]) {
       model = args[++i]!;
+    } else if (args[i] === "--max-turns" && args[i + 1]) {
+      const parsed = parseInt(args[++i]!, 10);
+      if (!isNaN(parsed) && parsed >= 1) maxTurns = parsed;
     } else if (!args[i]!.startsWith("--")) {
       goal = args[i]!;
     }
@@ -273,7 +328,13 @@ export async function dispatchCommand(args: string[]): Promise<void> {
   // the wrapper — embedding the message as a bash string literal causes `set -u`
   // to abort on any `${...}` token in the goal text (common in ticket bodies
   // with shell snippets). Command substitution from a file side-steps expansion.
-  const message = `Your run directory is: ${runDir}\nWrite your plan to: ${runDir}/plan.md\nProject: ${projectId}\n\nGoal:\n${goalText}`;
+  const message = buildExecutorMessage({
+    runDir,
+    projectId,
+    goalText,
+    maxTurns,
+    useGoalCommand,
+  });
   const messagePath = join(runDir, "message.txt");
   await Bun.write(messagePath, message);
 
@@ -310,6 +371,11 @@ export async function dispatchCommand(args: string[]): Promise<void> {
 
   console.log(`Dispatched ${runId} (${projectId})`);
   console.log(`  Goal: ${goalText.split("\n")[0]!.slice(0, 80)}`);
+  if (useGoalCommand) {
+    console.log(`  Mode: /goal self-loop, max ${maxTurns} turns, ${timeoutMin}m wall-clock`);
+  } else {
+    console.log(`  Mode: one-shot, ${timeoutMin}m wall-clock`);
+  }
   console.log(`  Log:  ${logPath}`);
   console.log(`  PID:  ${child.pid}`);
 }
