@@ -68,6 +68,51 @@ describe("buildRunWrapper", () => {
     expect(script).toContain('echo "partial" > "/Users/x/.hive/runs/RUN-099/status"');
     expect(script).toContain('echo "blocked" > "/Users/x/.hive/runs/RUN-099/status"');
   });
+
+  test("TK-041: trusts commits on a worktree branch before plan.md heuristics", () => {
+    // The fix: if any .claude/worktrees/*/ has AHEAD>0 against main, status is
+    // complete regardless of plan.md content. Covers the agent-rewrote-plan-as-
+    // summary failure mode (RUN-007/013/014/051).
+    const script = buildRunWrapper(baseOpts);
+    expect(script).toContain('COMMITS_FOUND=0');
+    expect(script).toContain('.claude/worktrees');
+    expect(script).toContain('git -C "$wt" log "main..$WT_BRANCH"');
+    // Commits branch fires before the all-checkboxes-ticked branch.
+    const commitsIdx = script.indexOf('if [ "$COMMITS_FOUND" = "1" ]');
+    const checkboxIdx = script.indexOf('[ "$UNCHECKED" = "0" ] && [ "$CHECKED" -gt "0" ]');
+    expect(commitsIdx).toBeGreaterThan(-1);
+    expect(checkboxIdx).toBeGreaterThan(commitsIdx);
+  });
+
+  test("TK-041: plan.md 'Status: complete' marker is honored when checkboxes are gone", () => {
+    // Agents that rewrite plan.md into a summary often leave a 'Status: complete'
+    // line behind (RUN-014, RUN-051). Treat that as evidence too.
+    const script = buildRunWrapper(baseOpts);
+    expect(script).toContain('PLAN_SAYS_COMPLETE=1');
+    expect(script).toMatch(/grep -qiE '\^.*Status:.*\(complete\|done\|shipped\)/);
+  });
+
+  test("TK-081: emits ticket-revert function when --ticket flow is active", () => {
+    const script = buildRunWrapper({
+      ...baseOpts,
+      ticketId: "TK-042",
+      projectId: "hive",
+      hiveBin: "/Users/x/.local/bin/hive",
+    });
+    expect(script).toContain('maybe_revert_ticket()');
+    expect(script).toContain('"/Users/x/.local/bin/hive" ticket reopen "TK-042" --project "hive"');
+    expect(script).toMatch(/case "\$TERMINAL_STATUS" in[\s\S]*partial\|failed\|blocked\|timed_out/);
+    // Revert fires both after main status determination and after timed_out branch.
+    const matches = script.match(/maybe_revert_ticket\b/g) ?? [];
+    // 1 definition + at least 2 invocations.
+    expect(matches.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("TK-081: ticket-revert is a no-op stub when --ticket flow is inactive", () => {
+    const script = buildRunWrapper(baseOpts); // no ticketId
+    expect(script).toContain('maybe_revert_ticket() { :; }');
+    expect(script).not.toContain('hive ticket reopen');
+  });
 });
 
 const baseMessageOpts = {

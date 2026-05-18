@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 
 import { UsageError } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { ensureDirectory, getHivePaths } from "../lib/paths";
-import { readTicket, formatTicketDetail } from "../lib/ticket";
+import { readTicket, updateTicket, formatTicketDetail } from "../lib/ticket";
 import { assembleIdentity } from "../lib/identity";
 import { resolveProjectFromCwd } from "../lib/project";
 
@@ -67,6 +67,12 @@ export interface RunWrapperOpts {
   logPath: string;
   runDir: string;
   runsDir: string;
+  // TK-081: when set together, terminal statuses partial/failed/blocked/timed_out
+  // revert the ticket to `open` via `hive ticket reopen`. `complete` stays
+  // `in_progress` so the operator reviews and closes manually.
+  ticketId?: string;
+  projectId?: string;
+  hiveBin?: string;
 }
 
 export function buildRunWrapper(opts: RunWrapperOpts): string {
@@ -82,7 +88,27 @@ export function buildRunWrapper(opts: RunWrapperOpts): string {
     logPath,
     runDir,
     runsDir,
+    ticketId,
+    projectId,
+    hiveBin,
   } = opts;
+
+  // TK-081: emit a shell function that reverts the ticket to `open` on any
+  // non-`complete` terminal status. No-op when --ticket wasn't used.
+  const ticketRevertFn =
+    ticketId && projectId && hiveBin
+      ? `
+maybe_revert_ticket() {
+  TERMINAL_STATUS=$(cat "${runDir}/status" 2>/dev/null || echo "unknown")
+  case "$TERMINAL_STATUS" in
+    partial|failed|blocked|timed_out)
+      "${hiveBin}" ticket reopen "${ticketId}" --project "${projectId}" >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+`
+      : `\nmaybe_revert_ticket() { :; }\n`;
+
   return `#!/bin/bash
 set -euo pipefail
 
@@ -124,35 +150,67 @@ wait "$CLAUDE_PID" || EXIT_CODE=$?
 kill "$WATCHDOG_PID" 2>/dev/null || true
 wait "$WATCHDOG_PID" 2>/dev/null || true
 
+${ticketRevertFn}
 if [ -f "${runDir}/.timed_out" ]; then
   echo "timed_out" > "${runDir}/status"
+  maybe_revert_ticket
   osascript -e "display notification \\"Run ${runId} timed out after ${timeoutMin}m\\" with title \\"HIVE\\" sound name \\"Glass\\"" 2>/dev/null || true
   exit 0
 fi
 
-# Determine status from evidence of work, not exit code
-# Claude can exit non-zero even when all work completed (context exhaustion, etc.)
+# Determine status from evidence of work, not exit code.
+# Claude can exit non-zero even when all work completed (context exhaustion,
+# SessionEnd hook errors, etc.).
+#
+# TK-041: trust commits on any worktree branch FIRST. Commits ARE the evidence
+# of work — agents that rewrite plan.md into a summary with no remaining
+# checkboxes used to false-negative as "failed" (RUN-007/013/014/051). Plan.md
+# checkboxes are kept as a secondary signal for agents that don't commit.
+COMMITS_FOUND=0
+if [ -d "${projectPath}/.claude/worktrees" ]; then
+  for wt in "${projectPath}"/.claude/worktrees/*/; do
+    [ -d "$wt" ] || continue
+    WT_BRANCH=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    [ -z "$WT_BRANCH" ] && continue
+    AHEAD=$(git -C "$wt" log "main..$WT_BRANCH" --oneline 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$AHEAD" -gt "0" ]; then
+      COMMITS_FOUND=1
+      break
+    fi
+  done
+fi
+
+CHECKED=0
+UNCHECKED=0
+PLAN_SAYS_COMPLETE=0
+PLAN_SAYS_BLOCKED=0
 if [ -f "${runDir}/plan.md" ]; then
   CHECKED=$(grep -c '\\- \\[x\\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
   UNCHECKED=$(grep -c '\\- \\[ \\]' "${runDir}/plan.md" 2>/dev/null || echo "0")
-  if [ "$UNCHECKED" = "0" ] && [ "$CHECKED" -gt "0" ]; then
-    echo "complete" > "${runDir}/status"
-  elif grep -q "blocked" "${runDir}/plan.md" 2>/dev/null; then
-    echo "blocked" > "${runDir}/status"
-  elif [ "$CHECKED" -gt "0" ]; then
-    echo "partial" > "${runDir}/status"
-  else
-    echo "failed" > "${runDir}/status"
+  # Match "Status: complete", "**Status:** done", "Status complete ✓" etc.
+  if grep -qiE '^[[:space:]]*\\**Status:?\\**[[:space:]]*(complete|done|shipped)' "${runDir}/plan.md" 2>/dev/null; then
+    PLAN_SAYS_COMPLETE=1
   fi
-else
-  # No plan file — check if there are commits on the worktree branch
-  COMMITS=$(git log main..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$COMMITS" -gt "0" ] || [ "$EXIT_CODE" = "0" ]; then
-    echo "complete" > "${runDir}/status"
-  else
-    echo "failed" > "${runDir}/status"
+  if grep -q "blocked" "${runDir}/plan.md" 2>/dev/null; then
+    PLAN_SAYS_BLOCKED=1
   fi
 fi
+
+if [ "$COMMITS_FOUND" = "1" ]; then
+  echo "complete" > "${runDir}/status"
+elif [ "$UNCHECKED" = "0" ] && [ "$CHECKED" -gt "0" ]; then
+  echo "complete" > "${runDir}/status"
+elif [ "$PLAN_SAYS_COMPLETE" = "1" ]; then
+  echo "complete" > "${runDir}/status"
+elif [ "$PLAN_SAYS_BLOCKED" = "1" ]; then
+  echo "blocked" > "${runDir}/status"
+elif [ "$CHECKED" -gt "0" ]; then
+  echo "partial" > "${runDir}/status"
+else
+  echo "failed" > "${runDir}/status"
+fi
+
+maybe_revert_ticket
 
 # Clean up worktree if claude left one behind.
 # TK-045: Skip cleanup entirely if any other run is still active — a sibling
@@ -196,12 +254,23 @@ osascript -e "display notification \\"Run ${runId} \$STATUS\\" with title \\"HIV
 
 function findClaude(): string {
   try {
-    return require("child_process").execSync("which claude", { encoding: "utf-8" }).trim();
+    return execSync("which claude", { encoding: "utf-8" }).trim();
   } catch {
     // intentional: `which claude` fails when not on PATH — try known fallback
     const fallback = join(process.env.HOME || "", ".local", "bin", "claude");
     if (existsSync(fallback)) return fallback;
     throw new UsageError("Could not find claude CLI. Is it installed?");
+  }
+}
+
+function findHive(): string | null {
+  try {
+    return execSync("which hive", { encoding: "utf-8" }).trim();
+  } catch {
+    const fallback = join(process.env.HOME || "", ".local", "bin", "hive");
+    if (existsSync(fallback)) return fallback;
+    // Ticket auto-revert simply degrades to a no-op if we can't find hive.
+    return null;
   }
 }
 
@@ -217,6 +286,7 @@ Options:
   --timeout <min>      Hard wall-clock cap (default 30)
   --model <id>         Executor model (default claude-opus-4-6)
   --max-turns <n>      Inner /goal turn cap (default 20)
+  --no-update-ticket   Skip auto-flip of ticket status on start/finish
 
 Env:
   HIVE_DISPATCH_MODEL       Override default model
@@ -242,6 +312,7 @@ Env:
   let maxTurns = parseInt(process.env.HIVE_DISPATCH_MAX_TURNS || "20", 10);
   if (isNaN(maxTurns) || maxTurns < 1) maxTurns = 20;
   const useGoalCommand = process.env.HIVE_DISPATCH_NO_GOAL !== "1";
+  let updateTicketStatus = true;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--project" && args[i + 1]) {
@@ -258,6 +329,8 @@ Env:
     } else if (args[i] === "--max-turns" && args[i + 1]) {
       const parsed = parseInt(args[++i]!, 10);
       if (!isNaN(parsed) && parsed >= 1) maxTurns = parsed;
+    } else if (args[i] === "--no-update-ticket") {
+      updateTicketStatus = false;
     } else if (!args[i]!.startsWith("--")) {
       goal = args[i]!;
     }
@@ -273,10 +346,12 @@ Env:
 
   // Build goal text
   let goalText = goal;
+  let resolvedTicketId: string | null = null;
 
   if (ticketId) {
     const ticket = await readTicket(paths, projectId, ticketId);
     if (!ticket) throw new UsageError(`Ticket not found: ${ticketId}`);
+    resolvedTicketId = ticket.id;
     goalText = `Implement ticket ${ticket.id}: ${ticket.title}\n\n${formatTicketDetail(ticket)}`;
     if (goal) goalText = `${goal}\n\nTicket context:\n${formatTicketDetail(ticket)}`;
   }
@@ -318,6 +393,17 @@ Env:
   await Bun.write(join(runDir, "goal.md"), `# Goal\n\n${goalText}\n\n---\nProject: ${projectId}\nDispatched: ${new Date().toISOString()}\n`);
   await Bun.write(join(runDir, "status"), "running");
 
+  // TK-081: flip ticket to in_progress so dashboards reflect reality.
+  // Resolve hiveBin once — wrapper uses it to revert on non-complete terminal.
+  const hiveBin = (resolvedTicketId && updateTicketStatus) ? findHive() : null;
+  if (resolvedTicketId && updateTicketStatus) {
+    try {
+      await updateTicket(paths, projectId, resolvedTicketId, { status: "in_progress" });
+    } catch {
+      // Non-fatal — dispatch should not fail because of dashboard cosmetics.
+    }
+  }
+
   // Find claude and assemble identity
   const claude = findClaude();
   const identity = await assembleIdentity();
@@ -354,6 +440,9 @@ Env:
     logPath,
     runDir,
     runsDir: paths.runsDir,
+    ticketId: resolvedTicketId ?? undefined,
+    projectId: resolvedTicketId ? projectId : undefined,
+    hiveBin: hiveBin ?? undefined,
   }));
   const { chmod } = await import("node:fs/promises");
   await chmod(wrapperPath, 0o755);
