@@ -16,7 +16,7 @@ Use the council (convene_council) when you face a real fork in the road, not for
 Work isn't done until it lands on main. You're in a worktree — your commits are on a branch. Before you mark the plan complete:
 - Merge your branch into main: `git checkout main && git merge <your-branch>`
 - If merge conflicts, try to resolve them. If you can't, note it in the plan and stop.
-- Remove the worktree: `git worktree remove <worktree-path>`
+- **Do not run `git worktree remove` yourself.** Your shell is parked inside the worktree; removing it from inside bricks every subsequent command with ENOENT on CWD. The dispatch wrapper cleans the worktree up automatically after you exit — leave it alone.
 - If the work is risky or you're unsure, leave the branch and note "needs human review" in the plan instead of merging.
 
 You have a headless browser (Playwright). For web features, use it: start the dev server, navigate to the page, verify the UI works, check console for errors. Verify visually — tests tell you correctness, the browser tells you what the user sees. Clean up (browser_close, kill dev server) before finishing.
