@@ -165,7 +165,9 @@ async function checkCodex(): Promise<Check[]> {
 
   // AGENTS.md freshness. Codex uses a single global AGENTS.md, while HIVE's
   // prefix is cwd/project-sensitive, so presence alone is not enough.
-  const identity = await assembleIdentity();
+  // TK-114: compare against the codex-variant identity (different stack hint
+  // wording from the claude default).
+  const identity = await assembleIdentity({ harness: "codex" });
   const agents = await getCodexAgentsMdStatus(identity);
   if (!agents.exists) {
     checks.push({ status: "warn", label: "~/.codex/AGENTS.md missing", detail: "Run: hive init or launch with hive -x" });

@@ -1,12 +1,16 @@
 import { UsageError } from "../lib/errors";
 import { assembleIdentity } from "../lib/identity";
+import type { Harness } from "../lib/stack";
+
+const VALID_HARNESSES: ReadonlySet<Harness> = new Set(["claude", "codex", "pi"]);
 
 export async function identityCommand(args: string[]): Promise<void> {
   const usage = `Usage:
-  hive identity emit
+  hive identity emit [--harness claude|codex|pi]
       Print the canonical identity prefix to stdout. Used by the SessionStart
       hook so that interactive, dispatch, and heartbeat all share one source
-      of truth.`;
+      of truth. --harness only affects stack-hint wording (Codex has no Skill
+      tool, so it gets a direct "read the file" variant). Defaults to claude.`;
 
   const subcommand = args[0];
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
@@ -18,10 +22,21 @@ export async function identityCommand(args: string[]): Promise<void> {
     throw new UsageError(`Unknown subcommand: ${subcommand}\n\n${usage}`);
   }
 
-  if (args.length > 1) {
-    throw new UsageError(`Unknown flags: ${args.slice(1).join(" ")}\n\n${usage}`);
+  let harness: Harness | undefined;
+  const rest = args.slice(1);
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    if (arg === "--harness" && rest[i + 1]) {
+      const value = rest[++i]!;
+      if (!VALID_HARNESSES.has(value as Harness)) {
+        throw new UsageError(`Unknown harness '${value}'. Valid: claude, codex, pi.`);
+      }
+      harness = value as Harness;
+    } else {
+      throw new UsageError(`Unknown flag: ${arg}\n\n${usage}`);
+    }
   }
 
-  const content = await assembleIdentity();
+  const content = await assembleIdentity({ harness });
   process.stdout.write(content);
 }

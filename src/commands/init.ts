@@ -307,10 +307,11 @@ export async function initCommand(args: string[]): Promise<void> {
   }
 
   // Codex CLI integration: register MCP, emit AGENTS.md, install SessionStart hook.
-  // Best-effort — silent skip if codex isn't installed.
+  // Best-effort — silent skip if codex isn't installed. TK-114: pass harness=codex
+  // so the AGENTS.md uses the direct-read variant of the stack hint.
   try {
     const codexMcpBin = join(localBin, "hive-mcp");
-    const identity = await assembleIdentity();
+    const identity = await assembleIdentity({ harness: "codex" });
     const codex = await wireCodex({ identity, mcpBinPath: codexMcpBin });
 
     if (codex.detected) {

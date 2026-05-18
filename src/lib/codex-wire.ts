@@ -215,6 +215,9 @@ const CODEX_HOOK_SCRIPT = `#!/bin/bash
 # canonical identity prefix into ~/.codex/AGENTS.md so Codex picks it up
 # natively. The hive -x launcher refreshes the file before spawning Codex;
 # this hook keeps direct codex sessions on the same path.
+#
+# --harness codex selects the Codex-tailored stack hint (no Skill tool
+# conditional). TK-114.
 
 if command -v hive >/dev/null 2>&1; then
   HIVE_BIN="hive"
@@ -228,7 +231,7 @@ AGENTS_PATH="$HOME/.codex/AGENTS.md"
 TMP_FILE="$(mktemp)"
 trap 'rm -f "$TMP_FILE"' EXIT
 
-if "$HIVE_BIN" identity emit > "$TMP_FILE" 2>/dev/null; then
+if "$HIVE_BIN" identity emit --harness codex > "$TMP_FILE" 2>/dev/null; then
   if [ -s "$TMP_FILE" ]; then
     if ! [ -f "$AGENTS_PATH" ] || ! cmp -s "$TMP_FILE" "$AGENTS_PATH"; then
       mv "$TMP_FILE" "$AGENTS_PATH"

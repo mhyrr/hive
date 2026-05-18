@@ -133,6 +133,9 @@ describe("installCodexIdentityHook", () => {
     expect(existsSync(scriptPath)).toBe(true);
     const script = await Bun.file(scriptPath).text();
     expect(script).toContain("identity emit");
+    // TK-114: hook must pass --harness codex so AGENTS.md gets the Codex-direct
+    // stack hint variant (no Skill tool conditional).
+    expect(script).toContain("identity emit --harness codex");
     expect(script).toContain("$HOME/.codex/AGENTS.md");
 
     const hooksPath = join(scratch, ".codex", "hooks.json");

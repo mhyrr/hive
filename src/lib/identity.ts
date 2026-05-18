@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { getHivePaths } from "./paths";
 import { resolveProjectFromCwd } from "./project";
-import { buildStackHint, resolveProjectStack } from "./stack";
+import { buildStackHint, resolveProjectStack, type Harness } from "./stack";
 import { buildTasteLayer } from "./taste";
 
 const IDENTITY_FILES = ["SOUL.md", "IDENTITY.md", "SELF.md", "AGENTS.md", "TRUST.md"];
@@ -13,6 +13,8 @@ interface CanonicalIdentityOpts {
   projectId?: string | null;
   /** Include the project's memory index/knowledge. Heartbeat sets false for cache stability. */
   includeProjectMemory: boolean;
+  /** Target harness — affects stack-hint wording (Codex has no Skill tool). Default "claude". */
+  harness?: Harness;
 }
 
 /**
@@ -56,9 +58,9 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
     }
   }
 
-  // 3. Stack hint (stable per project; safe for cache)
+  // 3. Stack hint (stable per project + harness; safe for cache)
   if (opts.projectId) {
-    const stackHint = buildStackHint(resolveProjectStack(opts.projectId));
+    const stackHint = buildStackHint(resolveProjectStack(opts.projectId), opts.harness ?? "claude");
     if (stackHint) {
       parts.push(stackHint);
       parts.push("\n");
@@ -76,10 +78,11 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
   return parts.join("\n");
 }
 
-export async function assembleIdentity(): Promise<string> {
+export async function assembleIdentity(opts?: { harness?: Harness }): Promise<string> {
   return buildCanonicalIdentity({
     projectId: resolveProjectFromCwd(),
     includeProjectMemory: true,
+    harness: opts?.harness,
   });
 }
 

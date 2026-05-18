@@ -292,6 +292,9 @@ const STACK_TRIGGERS: Record<string, string> = {
   typescript: "React components, Next.js routing, or TypeScript types",
 };
 
+/** Harness emitting the stack hint. Affects wording, not content. */
+export type Harness = "claude" | "codex" | "pi";
+
 /**
  * Build the session-start hint line for a detected stack.
  * Returns empty string if no stack.
@@ -301,12 +304,22 @@ const STACK_TRIGGERS: Record<string, string> = {
  * Claude self-flagged domain concerns without loading the matching skill.
  * This wording names the trigger surfaces and labels skipping the skill as
  * an anti-pattern so it registers as an action to take, not a hint to weigh.
+ *
+ * Codex harness: the Skill tool doesn't exist in Codex, so the conditional
+ * "if the Skill tool is unavailable" wording is dead weight. TK-114 emits a
+ * direct "read the skill file" instruction instead — same skill files, same
+ * anti-pattern framing, just without the Claude Code tooling reference.
  */
-export function buildStackHint(stack: string | null): string {
+export function buildStackHint(stack: string | null, harness: Harness = "claude"): string {
   if (!stack) return "";
   const triggers = STACK_TRIGGERS[stack];
   const triggerClause = triggers ? `on ${triggers}` : `in this stack's domain`;
-  return `Project stack: ${stack}. Before recommending ${triggerClause}, load the matching ${stack}-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. dispatch or --agent mode), read the skill directly: ~/.claude/skills/${stack}-*/SKILL.md`;
+
+  if (harness === "codex") {
+    return `Project stack: ${stack}. Before recommending ${triggerClause}, read ~/.claude/skills/${stack}-*/SKILL.md and follow it. Self-flagging a domain concern without reading the skill is the anti-pattern.`;
+  }
+
+  return `Project stack: ${stack}. Before recommending ${triggerClause}, load the matching ${stack}-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read the skill directly: ~/.claude/skills/${stack}-*/SKILL.md`;
 }
 
 /**

@@ -402,14 +402,14 @@ describe("buildStackHint", () => {
   test("elixir hint names Phoenix/Ecto/LiveView/OTP/security as triggers", () => {
     const hint = buildStackHint("elixir");
     expect(hint).toBe(
-      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. dispatch or --agent mode), read the skill directly: ~/.claude/skills/elixir-*/SKILL.md",
+      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read the skill directly: ~/.claude/skills/elixir-*/SKILL.md",
     );
   });
 
   test("typescript hint names React/Next.js/types as triggers", () => {
     const hint = buildStackHint("typescript");
     expect(hint).toBe(
-      "Project stack: typescript. Before recommending on React components, Next.js routing, or TypeScript types, load the matching typescript-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. dispatch or --agent mode), read the skill directly: ~/.claude/skills/typescript-*/SKILL.md",
+      "Project stack: typescript. Before recommending on React components, Next.js routing, or TypeScript types, load the matching typescript-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read the skill directly: ~/.claude/skills/typescript-*/SKILL.md",
     );
   });
 
@@ -418,7 +418,7 @@ describe("buildStackHint", () => {
     // direct instruction so the discipline applies, just without specifics.
     const hint = buildStackHint("rust");
     expect(hint).toBe(
-      "Project stack: rust. Before recommending in this stack's domain, load the matching rust-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. dispatch or --agent mode), read the skill directly: ~/.claude/skills/rust-*/SKILL.md",
+      "Project stack: rust. Before recommending in this stack's domain, load the matching rust-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read the skill directly: ~/.claude/skills/rust-*/SKILL.md",
     );
   });
 
@@ -439,6 +439,42 @@ describe("buildStackHint", () => {
 
   test("returns empty string for null", () => {
     expect(buildStackHint(null)).toBe("");
+  });
+
+  test("TK-114: codex harness emits a direct read-the-file instruction, no Skill tool mention", () => {
+    // Codex has no Skill tool, so the Claude variant's "load the matching skill"
+    // / "if the Skill tool is unavailable" framing is dead weight. Codex variant
+    // names the file directly and reframes the anti-pattern around reading.
+    const hint = buildStackHint("typescript", "codex");
+    expect(hint).toBe(
+      "Project stack: typescript. Before recommending on React components, Next.js routing, or TypeScript types, read ~/.claude/skills/typescript-*/SKILL.md and follow it. Self-flagging a domain concern without reading the skill is the anti-pattern.",
+    );
+    // No Skill tool conditional.
+    expect(hint).not.toContain("Skill tool");
+    expect(hint).not.toContain("load the matching");
+  });
+
+  test("TK-114: claude variant fallback explicitly names Codex as a no-Skill-tool environment", () => {
+    // The claude-variant text is what dispatch/--agent mode sessions see, and
+    // it's also a safety net for any path that emits claude-style text into a
+    // Codex environment. Naming Codex in the fallback helps that case land.
+    expect(buildStackHint("elixir")).toContain("e.g. Codex, dispatch, or --agent mode");
+  });
+
+  test("TK-114: codex variant is byte-stable", () => {
+    expect(buildStackHint("typescript", "codex")).toBe(buildStackHint("typescript", "codex"));
+    expect(buildStackHint("elixir", "codex")).toBe(buildStackHint("elixir", "codex"));
+  });
+
+  test("TK-114: claude (default) and codex variants diverge on every stack", () => {
+    for (const stack of ["elixir", "typescript", "rust"]) {
+      expect(buildStackHint(stack, "claude")).not.toBe(buildStackHint(stack, "codex"));
+    }
+  });
+
+  test("TK-114: pi harness uses claude-style wording (Pi runs Claude inside)", () => {
+    // Pi is a Claude-flavored harness; identity should match the claude default.
+    expect(buildStackHint("typescript", "pi")).toBe(buildStackHint("typescript", "claude"));
   });
 });
 
