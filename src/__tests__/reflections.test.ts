@@ -7,6 +7,8 @@ import {
   parseReflectionFile,
   readUnprocessedReflections,
   promoteReflections,
+  promoteReflectionsBatch,
+  projectFromReflectionEntry,
   tokenize,
   wordOverlap,
 } from "../lib/reflections";
@@ -374,5 +376,166 @@ describe("promoteReflections", () => {
     const f2 = await Bun.file(join(paths.reflectionsDir, "2026-04-12.md")).text();
     expect(f1).toContain("promoted:");
     expect(f2).toContain("promoted:");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TK-027 / TK-057 — batch promotion + tightened gate
+// ---------------------------------------------------------------------------
+
+describe("projectFromReflectionEntry", () => {
+  test("extracts project name from provenance hint", () => {
+    expect(projectFromReflectionEntry(
+      "Maya plans more than she ships  \n  _provenance:_ project=hive, topRanked[2]",
+    )).toBe("hive");
+  });
+
+  test("returns null when no project= hint is present", () => {
+    expect(projectFromReflectionEntry("Some unrelated text with no hint")).toBe(null);
+  });
+
+  test("is case-insensitive and accepts hyphens", () => {
+    expect(projectFromReflectionEntry("text — provenance: Project=My-Project")).toBe("my-project");
+  });
+});
+
+describe("promoteReflectionsBatch", () => {
+  let tempDir: string;
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "hive-reflect-batch-"));
+    paths = await ensureHiveScaffold(tempDir);
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await mkdir(join(paths.projectsDir, "bravo"), { recursive: true });
+  });
+
+  test("TK-027: routes per-entry to the project named in provenance", async () => {
+    await Bun.write(
+      join(paths.reflectionsDir, "2026-05-18.md"),
+      `# Reflections\n\n## About the System\n- Alpha learned how to recover from worktree pruning  \n  _provenance:_ project=alpha, topRanked[1]\n- Bravo's deploy script needs idempotency  \n  _provenance:_ project=bravo, topRanked[2]\n- Orphan entry without a hint goes to the default\n`,
+    );
+
+    const result = await promoteReflectionsBatch(paths, {
+      defaultProjectId: "alpha",
+      eligibleProjectIds: new Set(["alpha", "bravo"]),
+      date: "2026-05-18",
+    });
+
+    expect(result.filesProcessed).toBe(1);
+    expect(result.promoted).toBe(3);
+    expect(result.perProject.alpha?.promoted).toBe(2); // alpha + orphan-fallback
+    expect(result.perProject.bravo?.promoted).toBe(1);
+
+    const alphaKnowledge = await Bun.file(knowledgePath(paths, "alpha")).text();
+    expect(alphaKnowledge).toContain("Alpha learned how to recover from worktree pruning");
+    expect(alphaKnowledge).toContain("Orphan entry without a hint");
+    const bravoKnowledge = await Bun.file(knowledgePath(paths, "bravo")).text();
+    expect(bravoKnowledge).toContain("Bravo's deploy script needs idempotency");
+  });
+
+  test("TK-027: falls back to default when claimed project is not registered", async () => {
+    await Bun.write(
+      join(paths.reflectionsDir, "2026-05-18.md"),
+      `# Reflections\n\n## About the System\n- Ghost project learned a thing  \n  _provenance:_ project=ghost, topRanked[1]\n`,
+    );
+
+    const result = await promoteReflectionsBatch(paths, {
+      defaultProjectId: "alpha",
+      eligibleProjectIds: new Set(["alpha", "bravo"]),
+      date: "2026-05-18",
+    });
+
+    expect(result.perProject.alpha?.promoted).toBe(1);
+    expect(result.perProject.ghost).toBeUndefined();
+  });
+
+  test("TK-057: dedupes a 'system' entry against identity stack with a citation", async () => {
+    // Plant a SOUL.md-style paragraph the reflection paraphrases.
+    await Bun.write(
+      join(paths.home, "SOUL.md"),
+      `# HIVE Soul\n\n### Solve the right problem\nFind the why under the ask. Symptoms are loud; causes are quiet — fix the cause and the symptom stops returning.\n`,
+    );
+    await Bun.write(
+      join(paths.reflectionsDir, "2026-05-18.md"),
+      `# Reflections\n\n## About the System\n- Solving the right problem means finding the why under the ask, not the symptom which is loud\n`,
+    );
+
+    const result = await promoteReflectionsBatch(paths, {
+      defaultProjectId: "alpha",
+      eligibleProjectIds: new Set(["alpha"]),
+      date: "2026-05-18",
+    });
+
+    expect(result.skipped).toBe(1);
+    expect(result.promoted).toBe(0);
+    const note = result.details.find((d) => d.includes("skip (dup)"));
+    expect(note).toBeDefined();
+    expect(note).toContain("SOUL.md");
+  });
+
+  test("TK-057: also dedupes 'About Greg' identity proposals against SELF.md", async () => {
+    await Bun.write(
+      join(paths.home, "SELF.md"),
+      `# Self\n\n## Preferences\nGreg prefers depth over breadth. Get one thing right.\n`,
+    );
+    await Bun.write(
+      join(paths.reflectionsDir, "2026-05-18.md"),
+      `# Reflections\n\n## About Greg\n- Greg prefers depth over breadth, would rather get one thing right than ship many half-baked\n`,
+    );
+
+    const result = await promoteReflectionsBatch(paths, {
+      defaultProjectId: "alpha",
+      eligibleProjectIds: new Set(["alpha"]),
+      date: "2026-05-18",
+    });
+
+    expect(result.proposed).toBe(0);
+    expect(result.skipped).toBe(1);
+    const dropped = result.details.find((d) => d.includes("skip identity-proposal"));
+    expect(dropped).toBeDefined();
+    expect(dropped).toContain("SELF.md");
+  });
+
+  test("TK-057: rate-limits identity proposals and surfaces overflow", async () => {
+    const bullets = [
+      "- Greg prefers terse responses with no trailing summary",
+      "- Greg signals 'these all sound like tickets' to mean stop analyzing and file them",
+      "- Greg expects pre-action announcement of intent in one short sentence",
+      "- Greg validates non-obvious approaches without follow-up; absence of criticism is approval",
+    ].join("\n");
+    await Bun.write(
+      join(paths.reflectionsDir, "2026-05-18.md"),
+      `# Reflections\n\n## About Greg\n${bullets}\n`,
+    );
+
+    const result = await promoteReflectionsBatch(paths, {
+      defaultProjectId: "alpha",
+      eligibleProjectIds: new Set(["alpha"]),
+      date: "2026-05-18",
+    });
+
+    expect(result.proposed).toBe(2); // capped at IDENTITY_PROPOSAL_RATE_LIMIT
+    const overflow = result.details.find((d) => d.includes("rate-limited"));
+    expect(overflow).toBeDefined();
+    expect(overflow).toContain("2 extra SELF.md proposal(s)");
+  });
+
+  test("TK-057: inbox uses 'candidates for promotion' framing instead of 'Proposed edits to'", async () => {
+    await Bun.write(
+      join(paths.reflectionsDir, "2026-05-18.md"),
+      `# Reflections\n\n## About Maya\n- Maya holds tension between plan and ship\n`,
+    );
+
+    await promoteReflectionsBatch(paths, {
+      defaultProjectId: "alpha",
+      eligibleProjectIds: new Set(["alpha"]),
+      date: "2026-05-18",
+    });
+
+    const inbox = await Bun.file(join(paths.projectsDir, "alpha", "inbox.md")).text();
+    expect(inbox).toContain("Session learnings — candidates for promotion");
+    expect(inbox).not.toContain("Proposed edits to");
+    expect(inbox).toContain("Target: `IDENTITY.md`");
   });
 });

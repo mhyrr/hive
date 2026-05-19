@@ -14,6 +14,11 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
+// TK-057: cap identity proposals per project per nightly. Healthy pipeline
+// lands ~1 per week per project; if we're flooding past this it's signal,
+// not principle. Overflow is reported, not silently dropped.
+const IDENTITY_PROPOSAL_RATE_LIMIT = 2;
+
 export type ReflectionSection = "greg" | "maya" | "system";
 
 export type ReflectionEntry = {
@@ -34,6 +39,27 @@ export type PromotionResult = {
   proposed: number;
   details: string[];
 };
+
+// TK-027: batch promotion used by the nightly orchestrator (Pass P).
+// Same routing as `promoteReflections` but iterates a project list once and
+// dispatches each entry to the project named in its provenance string (with
+// a default fallback), instead of marking files as processed on the first
+// project's pass and starving subsequent projects.
+export interface PromotionBatchOpts {
+  defaultProjectId: string;
+  eligibleProjectIds: ReadonlySet<string>;
+  /** Optional date filter — only process reflections at this date. Default: all unprocessed. */
+  date?: string;
+}
+
+export interface PromotionBatchResult {
+  filesProcessed: number;
+  promoted: number;
+  skipped: number;
+  proposed: number;
+  perProject: Record<string, { promoted: number; skipped: number; proposed: number }>;
+  details: string[];
+}
 
 // ---------------------------------------------------------------------------
 // Parse
@@ -66,22 +92,45 @@ export async function parseReflectionFile(
 
   const entries: ReflectionEntry[] = [];
   let current: ReflectionSection | null = null;
+  let activeEntry: ReflectionEntry | null = null;
+
+  const startsBullet = (s: string): boolean => /^\s*-\s/.test(s);
 
   for (const line of lines) {
     const trimmed = line.trim();
     const lower = trimmed.toLowerCase();
 
     // Detect section headers
+    let isHeader = false;
     for (const [header, section] of Object.entries(SECTION_HEADERS)) {
       if (lower === header) {
         current = section;
+        activeEntry = null;
+        isHeader = true;
         break;
       }
     }
+    if (isHeader) continue;
 
-    // Collect bullet entries under current section
-    if (current && trimmed.startsWith("- ")) {
-      entries.push({ text: trimmed.slice(2).trim(), section: current });
+    if (current && startsBullet(line)) {
+      const text = trimmed.replace(/^-\s+/, "").trim();
+      activeEntry = { text, section: current };
+      entries.push(activeEntry);
+      continue;
+    }
+
+    // Continuation: indented line that doesn't start a new bullet. Pass V's
+    // reflectionLine puts `  _provenance:_ ...` on the line after the bullet;
+    // we fold those into the active entry's text so downstream parsers
+    // (e.g. projectFromReflectionEntry) can see the hint.
+    if (activeEntry && line.length > 0 && /^\s+\S/.test(line) && !startsBullet(line)) {
+      activeEntry.text = `${activeEntry.text} ${trimmed}`;
+      continue;
+    }
+
+    // Blank line or top-level prose → close the active entry.
+    if (line.trim() === "" || !line.startsWith(" ")) {
+      activeEntry = null;
     }
   }
 
@@ -268,20 +317,77 @@ export function wordOverlap(a: string, b: string): number {
 
 const OVERLAP_THRESHOLD = 0.5;
 
+// Identity-stack files we check when classifying a candidate as "covered."
+// Order is loudest-first so the citation in details reads naturally.
+const IDENTITY_STACK_FILES = ["SOUL.md", "IDENTITY.md", "SELF.md", "AGENTS.md", "TRUST.md"];
+
+export interface DuplicateCheckResult {
+  duplicate: boolean;
+  /** Which file + line covers it, when duplicate. */
+  coveredBy?: { source: string; snippet: string };
+}
+
+/**
+ * TK-057: extend duplicate detection from knowledge.md alone to the full
+ * identity stack. A reflection that just restates an existing SOUL/IDENTITY/
+ * SELF/AGENTS principle should be dropped (with citation), not promoted.
+ *
+ * Walks identity files paragraph-by-paragraph and runs the same word-overlap
+ * heuristic the knowledge.md check uses. First hit wins; SOUL→TRUST order.
+ */
+async function checkDuplicate(
+  paths: HivePaths,
+  projectId: string,
+  entryText: string,
+): Promise<DuplicateCheckResult> {
+  // Knowledge layer first — same as the prior behavior.
+  const results = await searchMemory(paths, projectId, entryText.slice(0, 150));
+  for (const r of results.slice(0, 3)) {
+    if (r.source !== "knowledge") continue;
+    if (wordOverlap(entryText, r.entry) > OVERLAP_THRESHOLD) {
+      return {
+        duplicate: true,
+        coveredBy: { source: `knowledge:${projectId}`, snippet: truncate(r.entry, 100) },
+      };
+    }
+  }
+
+  // Identity stack — splits on blank lines to keep "paragraphs" as the unit.
+  for (const file of IDENTITY_STACK_FILES) {
+    const filePath = join(paths.home, file);
+    let raw: string;
+    try {
+      raw = await Bun.file(filePath).text();
+    } catch {
+      // intentional: identity file missing — skip
+      continue;
+    }
+    const paragraphs = raw.split(/\n\s*\n+/).map((p) => p.trim()).filter(Boolean);
+    for (const para of paragraphs) {
+      if (wordOverlap(entryText, para) > OVERLAP_THRESHOLD) {
+        // Use the first line of the paragraph as a citation handle —
+        // typically a heading or the opening sentence.
+        const handle = (para.split("\n")[0] ?? para).slice(0, 100);
+        return {
+          duplicate: true,
+          coveredBy: { source: file, snippet: handle },
+        };
+      }
+    }
+  }
+
+  return { duplicate: false };
+}
+
+// Backward-compat shim — `promoteReflections` (single-project CLI flow) still
+// calls the boolean signature.
 async function isDuplicate(
   paths: HivePaths,
   projectId: string,
   entryText: string,
 ): Promise<boolean> {
-  const results = await searchMemory(paths, projectId, entryText.slice(0, 150));
-  if (results.length === 0) return false;
-
-  // Check top 3 results for significant word overlap
-  for (const r of results.slice(0, 3)) {
-    if (r.source !== "knowledge") continue;
-    if (wordOverlap(entryText, r.entry) > OVERLAP_THRESHOLD) return true;
-  }
-  return false;
+  const r = await checkDuplicate(paths, projectId, entryText);
+  return r.duplicate;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +472,172 @@ export async function promoteReflections(
 }
 
 // ---------------------------------------------------------------------------
+// Batch promotion — routes per-entry by parsing provenance for project=NAME.
+// Used by the nightly orchestrator (Pass P).
+// ---------------------------------------------------------------------------
+
+const PROVENANCE_PROJECT_RE = /\bproject\s*=\s*([a-z0-9][a-z0-9_-]*)/i;
+
+export function projectFromReflectionEntry(entryText: string): string | null {
+  // Pass C's provenance template includes `project=<name>` (see extract.ts).
+  // The reflection file appended by `appendReflectionsToDay` puts the
+  // provenance on a separate `_provenance:_` line. We search the whole
+  // entry text and pick the first match.
+  const m = entryText.match(PROVENANCE_PROJECT_RE);
+  return m?.[1] ? m[1].toLowerCase() : null;
+}
+
+function ensureBucket(
+  agg: PromotionBatchResult,
+  projectId: string,
+): { promoted: number; skipped: number; proposed: number } {
+  let bucket = agg.perProject[projectId];
+  if (!bucket) {
+    bucket = { promoted: 0, skipped: 0, proposed: 0 };
+    agg.perProject[projectId] = bucket;
+  }
+  return bucket;
+}
+
+export async function promoteReflectionsBatch(
+  paths: HivePaths,
+  opts: PromotionBatchOpts,
+): Promise<PromotionBatchResult> {
+  const result: PromotionBatchResult = {
+    filesProcessed: 0,
+    promoted: 0,
+    skipped: 0,
+    proposed: 0,
+    perProject: {},
+    details: [],
+  };
+
+  const unprocessed = await readUnprocessedReflections(paths);
+  const files = opts.date
+    ? unprocessed.filter((f) => f.date === opts.date)
+    : unprocessed;
+
+  if (files.length === 0) {
+    result.details.push("No unprocessed reflections.");
+    return result;
+  }
+
+  // Per-project batched identity proposals so each project's inbox gets one
+  // consolidated entry per nightly, not one per reflection line.
+  const gregProposalsByProject = new Map<string, Array<{ text: string; date: string }>>();
+  const mayaProposalsByProject = new Map<string, Array<{ text: string; date: string }>>();
+  const projectsTouched = new Set<string>();
+
+  for (const file of files) {
+    for (const entry of file.entries) {
+      const claimed = projectFromReflectionEntry(entry.text);
+      const target =
+        claimed && opts.eligibleProjectIds.has(claimed)
+          ? claimed
+          : opts.defaultProjectId;
+
+      if (entry.section === "system") {
+        try {
+          const check = await checkDuplicate(paths, target, entry.text);
+          if (check.duplicate) {
+            ensureBucket(result, target).skipped++;
+            result.skipped++;
+            const covered = check.coveredBy
+              ? ` (covered by ${check.coveredBy.source}: "${check.coveredBy.snippet}")`
+              : "";
+            result.details.push(`[${target}] skip (dup)${covered}: ${truncate(entry.text)}`);
+            continue;
+          }
+          await appendProjectMemory(paths, target, "fact", entry.text, ["reflection"]);
+          ensureBucket(result, target).promoted++;
+          result.promoted++;
+          projectsTouched.add(target);
+          result.details.push(`[${target}] promoted: ${truncate(entry.text)}`);
+        } catch (err) {
+          result.details.push(
+            `[${target}] error: ${truncate(entry.text, 60)} — ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        continue;
+      }
+
+      // TK-057: same dedupe gate as system entries — most "About Greg/Maya"
+      // candidates in the prior 54-item backlog were already covered by SOUL/
+      // IDENTITY/SELF text. Drop with citation rather than flooding the inbox.
+      const check = await checkDuplicate(paths, target, entry.text);
+      if (check.duplicate) {
+        ensureBucket(result, target).skipped++;
+        result.skipped++;
+        const covered = check.coveredBy
+          ? ` (covered by ${check.coveredBy.source}: "${check.coveredBy.snippet}")`
+          : "";
+        const dest = entry.section === "greg" ? "SELF.md" : "IDENTITY.md";
+        result.details.push(`[${target}] skip identity-proposal → ${dest}${covered}: ${truncate(entry.text)}`);
+        continue;
+      }
+
+      if (entry.section === "greg") {
+        const list = gregProposalsByProject.get(target) ?? [];
+        list.push({ text: entry.text, date: file.date });
+        gregProposalsByProject.set(target, list);
+      } else {
+        const list = mayaProposalsByProject.get(target) ?? [];
+        list.push({ text: entry.text, date: file.date });
+        mayaProposalsByProject.set(target, list);
+      }
+    }
+
+    await markPromoted(file.path);
+    result.filesProcessed++;
+  }
+
+  // TK-057: rate-limit identity proposals. Healthy pipeline lands maybe one
+  // per project per week; bursts mean the gate is loose and an operator
+  // should look. We cap per-pass at IDENTITY_PROPOSAL_RATE_LIMIT and surface
+  // the overflow in details so it doesn't silently disappear.
+  for (const [projectId, proposals] of gregProposalsByProject) {
+    const kept = proposals.slice(0, IDENTITY_PROPOSAL_RATE_LIMIT);
+    const overflow = proposals.length - kept.length;
+    await writeIdentityProposals(paths, projectId, "SELF.md", "About Greg", kept);
+    ensureBucket(result, projectId).proposed += kept.length;
+    result.proposed += kept.length;
+    for (const p of kept) {
+      result.details.push(`[${projectId}] proposed → SELF.md: ${truncate(p.text)}`);
+    }
+    if (overflow > 0) {
+      result.details.push(
+        `[${projectId}] rate-limited ${overflow} extra SELF.md proposal(s) — gate is loose, review the kept ones first`,
+      );
+    }
+  }
+  for (const [projectId, proposals] of mayaProposalsByProject) {
+    const kept = proposals.slice(0, IDENTITY_PROPOSAL_RATE_LIMIT);
+    const overflow = proposals.length - kept.length;
+    await writeIdentityProposals(paths, projectId, "IDENTITY.md", "About Maya", kept);
+    ensureBucket(result, projectId).proposed += kept.length;
+    result.proposed += kept.length;
+    for (const p of kept) {
+      result.details.push(`[${projectId}] proposed → IDENTITY.md: ${truncate(p.text)}`);
+    }
+    if (overflow > 0) {
+      result.details.push(
+        `[${projectId}] rate-limited ${overflow} extra IDENTITY.md proposal(s) — gate is loose, review the kept ones first`,
+      );
+    }
+  }
+
+  for (const projectId of projectsTouched) {
+    try {
+      await rebuildIndex(paths, projectId);
+    } catch {
+      // intentional: rebuild failure is non-fatal here; doctor will catch drift.
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Inbox + file helpers
 // ---------------------------------------------------------------------------
 
@@ -385,10 +657,15 @@ async function writeIdentityProposals(
     content = `# Inbox: ${projectId}\n\n`;
   }
 
+  // TK-057: name the section by what it actually is — candidates for
+  // promotion that survived the dedupe + rate gates. The prior "Proposed
+  // edits to FILE.md" framing pre-classified every entry as
+  // identity-bound, which biased review toward accepting things that
+  // belonged in project memory instead.
   const lines = [
-    `\n## ${toIsoTimestamp()} — Reflection Promotion`,
+    `\n## ${toIsoTimestamp()} — Session learnings — candidates for promotion`,
     ``,
-    `**Proposed edits to \`${targetFile}\`** (${label}):`,
+    `Target: \`${targetFile}\` (${label}). These passed the dedupe gate against the identity stack; review before applying.`,
     ``,
   ];
   for (const p of proposals) {

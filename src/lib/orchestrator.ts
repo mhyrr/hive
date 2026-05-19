@@ -33,7 +33,9 @@ import {
 import { runProjectExtractor, runReflectionExtractor } from "./extract";
 import { runVerifier } from "./verify";
 import { applyDecisions } from "./apply";
+import { promoteReflectionsBatch } from "./reflections";
 import { buildDashboard } from "./dashboard";
+import { listProjects } from "./paths";
 
 // ---------------------------------------------------------------------------
 // Result shape
@@ -63,6 +65,7 @@ export interface NightlyResult {
     C: PassReport;
     V: PassReport;
     F: PassReport;
+    P: PassReport;
     dashboard: PassReport;
   };
   artifactsDir: string;
@@ -179,6 +182,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       C: { pass: "C", status: "skipped" },
       V: { pass: "V", status: "skipped" },
       F: { pass: "F", status: "skipped" },
+      P: { pass: "P", status: "skipped" },
       dashboard: { pass: "dashboard", status: "skipped" },
     },
     artifactsDir: join(paths.memoryRunsDir, date),
@@ -348,6 +352,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     emit({ type: "pass-skipped", report: result.passes.dashboard });
   } else {
     emit({ type: "pass-start", pass: "F", detail: "applying decisions to canon" });
+    let applyOK = false;
     try {
       const { value, durationMs } = await timed(() =>
         applyDecisions({ paths, date }),
@@ -360,11 +365,57 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
         durationMs,
       };
       emit({ type: "pass-complete", report: result.passes.F });
+      applyOK = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       result.passes.F = { pass: "F", status: "failed", error: msg };
       emit({ type: "pass-failed", report: result.passes.F });
       result.errors.push(`Pass F: ${msg}`);
+    }
+
+    // ---- Pass P (promote) — TK-027 ----------------------------------------
+    // Closes the reflection loop: today's reflection file (just written by
+    // Pass F) gets routed entry-by-entry to project knowledge.md or to the
+    // appropriate inbox.md as an identity proposal. Default project is the
+    // one with the highest exchange count today; per-entry `project=NAME`
+    // hints in provenance override.
+    if (applyOK) {
+      emit({ type: "pass-start", pass: "P", detail: "promoting today's reflections" });
+      try {
+        const eligible = new Set(await listProjects(paths.projectsDir));
+        const ranked = condition.projects
+          .filter(projectHasSignal)
+          .sort((a, b) => b.sessions.exchangeCount - a.sessions.exchangeCount);
+        const defaultProject = ranked[0]?.projectName ?? [...eligible][0] ?? "hive";
+        const { value: pr, durationMs: pms } = await timed(() =>
+          promoteReflectionsBatch(paths, {
+            defaultProjectId: defaultProject,
+            eligibleProjectIds: eligible,
+            date,
+          }),
+        );
+        result.passes.P = {
+          pass: "P",
+          status: pr.filesProcessed > 0 ? "complete" : "skipped",
+          detail:
+            pr.filesProcessed === 0
+              ? "no unprocessed reflections"
+              : `${pr.filesProcessed} file(s) · +${pr.promoted} knowledge · ${pr.proposed} identity-proposed · ${pr.skipped} dup-skipped`,
+          durationMs: pms,
+        };
+        emit({ type: "pass-complete", report: result.passes.P });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.passes.P = { pass: "P", status: "failed", error: msg };
+        emit({ type: "pass-failed", report: result.passes.P });
+        result.errors.push(`Pass P: ${msg}`);
+      }
+    } else {
+      result.passes.P = {
+        pass: "P",
+        status: "skipped",
+        detail: "apply failed; nothing to promote",
+      };
     }
 
     // Dashboard rebuild — never fatal.
