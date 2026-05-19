@@ -11,6 +11,7 @@ import {
 } from "../lib/codex-wire";
 import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
 import { assembleIdentity } from "../lib/identity";
+import { validateMemoryStructure } from "../lib/memory";
 import { getHivePaths, listProjects } from "../lib/paths";
 import {
   getPiMcpConfigPath,
@@ -669,6 +670,54 @@ function printGroup(heading: string, checks: Check[], verbose: boolean) {
   }
 }
 
+// TK-058: validate every project's knowledge.md against the canonical schema.
+// Schema drift is silent on read but fatal on write (reflect_session, Pass F),
+// so a hygiene check that surfaces it proactively saves the next reflection
+// batch from being dropped on the floor.
+async function checkMemorySchema(): Promise<Check[]> {
+  const checks: Check[] = [];
+  const paths = getHivePaths();
+  if (!existsSync(paths.projectsDir)) {
+    return [{ status: "warn", label: "No projects directory — nothing to validate" }];
+  }
+
+  const projects = await listProjects(paths.projectsDir);
+  if (projects.length === 0) {
+    return [{ status: "pass", label: "No projects registered" }];
+  }
+
+  for (const projectId of projects) {
+    const knowledgePath = join(paths.memoryProjectsDir, projectId, "knowledge.md");
+    if (!existsSync(knowledgePath)) {
+      // Missing knowledge is its own check elsewhere; not a schema concern here.
+      checks.push({ status: "pass", label: `${projectId}: no knowledge.md yet` });
+      continue;
+    }
+    let raw: string;
+    try {
+      raw = readFileSync(knowledgePath, "utf-8");
+    } catch (err) {
+      checks.push({
+        status: "fail",
+        label: `${projectId}: knowledge.md unreadable`,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+    const result = validateMemoryStructure(raw);
+    if (result.valid) {
+      checks.push({ status: "pass", label: `${projectId}: knowledge.md schema OK` });
+    } else {
+      checks.push({
+        status: "fail",
+        label: `${projectId}: knowledge.md schema drift`,
+        detail: `${result.error} — next reflect_session/Pass F to this project will drop entries silently until repaired.`,
+      });
+    }
+  }
+  return checks;
+}
+
 export async function doctorCommand(args: string[]): Promise<void> {
   const verbose = args.includes("--verbose") || args.includes("-v");
 
@@ -683,6 +732,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
     { heading: "Pi", checks: await checkPi() },
     { heading: "Models", checks: checkModels() },
     { heading: "Scheduler", checks: checkScheduler() },
+    { heading: "Memory schema", checks: await checkMemorySchema() },
     { heading: "Registered CLAUDE.md", checks: await checkStaleClaudeMd() },
     await checkProject(),
     { heading: "Build", checks: checkBuild() },

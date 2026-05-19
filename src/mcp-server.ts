@@ -301,7 +301,12 @@ server.registerTool("reflect_session", {
     text += `\n\nSkipped ${errors.length} invalid entries:\n${errors.map((e) => `- ${e}`).join("\n")}`;
   }
 
-  return { content: [{ type: "text" as const, text }] };
+  // TK-058: when any entry was skipped, surface the partial-failure shape
+  // (isError=true) so the caller doesn't read "Queued 0 fact(s)" as success.
+  // Log + raw candidates may still have landed for the entries that passed —
+  // the message above describes the partial outcome.
+  const partialFailure = errors.length > 0 || queued.length < learnings.length;
+  return { content: [{ type: "text" as const, text }], isError: partialFailure };
 });
 
 // Tool 5: Search project memory

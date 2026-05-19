@@ -8,7 +8,7 @@ import { parseFrontmatter } from "./frontmatter";
 import { assembleHeartbeatIdentity } from "./identity";
 import { readLog, readProjectMemorySnapshot, readProjectMemorySection, indexPath } from "./memory";
 import { listTickets, type Ticket } from "./ticket";
-import { rebuildIndex } from "./memory";
+import { rebuildIndex, validateMemoryStructure } from "./memory";
 import { shouldInvokeHeartbeat } from "./heartbeat-trigger";
 
 export interface HeartbeatDispatch {
@@ -313,7 +313,29 @@ export async function runTick(projectId: string): Promise<TickResult> {
   // Rebuild memory index — cheap, runs every tick to keep it current.
   // Note: index content does NOT feed back into the next tick's identity
   // prefix (heartbeat identity is deterministic), so this is safe for cache.
+  //
+  // TK-058: validate knowledge.md schema first. Drift here makes every
+  // subsequent reflect_session / Pass F to this project drop entries on
+  // the floor — surface it in inbox.md so the next interactive session
+  // notices at session-start, not at the next failed write.
   try {
+    const knowledgePath = join(paths.memoryProjectsDir, projectId, "knowledge.md");
+    if (existsSync(knowledgePath)) {
+      const raw = readFileSync(knowledgePath, "utf-8");
+      const result = validateMemoryStructure(raw);
+      if (!result.valid) {
+        const inboxPath = join(projectDir, "inbox.md");
+        const header = `## ${timestamp} — Memory schema drift\n`;
+        const body =
+          `\`memory/projects/${projectId}/knowledge.md\` no longer matches the canonical schema:\n\n` +
+          `> ${result.error}\n\n` +
+          `Any reflect_session / Pass F to this project will silently drop entries until repaired. ` +
+          `Fix the header / section order, then re-run \`hive doctor\` to confirm.\n`;
+        const entry = `${header}\n${body}\n---\n\n`;
+        const existing = existsSync(inboxPath) ? readFileSync(inboxPath, "utf-8") : `# Inbox: ${projectId}\n\n`;
+        await Bun.write(inboxPath, existing + entry);
+      }
+    }
     await rebuildIndex(paths, projectId);
   } catch {
     // intentional: index rebuild failure is non-fatal for heartbeat
