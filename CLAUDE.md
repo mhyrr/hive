@@ -60,7 +60,7 @@ is a future TK if it becomes a recurring ask.
 Crown-jewel modules:
 - `src/lib/council.ts` — parallel multi-model deliberation
 - `src/lib/harness.ts` / `src/lib/pi-wire.ts` / `src/lib/codex-wire.ts` — interactive harness selection and optional runtime wiring
-- `src/lib/orchestrator.ts` — nightly pipeline (Pass A → B → C → V → F)
+- `src/lib/orchestrator.ts` — nightly pipeline (Pass A → B → C → V → F → P)
 - `src/lib/verify.ts` — Opus verifier; the only path into `knowledge.md`
 - `src/lib/memory.ts` — storage layer: BM25, decay, hashed supersede/merge primitives, candidates queue
 
