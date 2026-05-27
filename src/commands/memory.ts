@@ -11,7 +11,6 @@ import {
   rebuildIndex,
   type MemorySection,
 } from "../lib/memory";
-import { writeDailySessions } from "../lib/sessions";
 import { promoteReflections } from "../lib/reflections";
 import { buildConditionReport, writeConditionReport } from "../lib/condition";
 import {
@@ -319,12 +318,6 @@ export async function memoryCommand(args: string[]): Promise<void> {
       console.log("");
       for (const d of result.details) console.log(`  ${d}`);
     }
-    return;
-  }
-
-  if (subcommand === "extract-sessions") {
-    const outputPath = await writeDailySessions();
-    console.log(`Sessions extracted to: ${outputPath}`);
     return;
   }
 

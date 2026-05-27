@@ -9,21 +9,11 @@ import {
   type Dirent,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, basename, resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 
 import { getHivePaths, listProjects } from "./paths";
 import { parseFrontmatter } from "./frontmatter";
 import { buildCorpus, bm25Score, tokenize } from "./memory";
-
-interface SessionMeta {
-  pid: number;
-  sessionId: string;
-  cwd: string;
-  startedAt: number;
-  kind: string;
-  entrypoint: string;
-  name: string;
-}
 
 export interface ExtractedExchange {
   role: "user" | "assistant";
@@ -36,16 +26,6 @@ export interface RankedExchange {
   tokenCount: number;
   novelty: number;
   alwaysInclude: boolean;
-}
-
-interface SessionSummary {
-  sessionId: string;
-  name: string;
-  project: string;
-  projectPath: string;
-  source: SessionSource;
-  durationEstimate: string;
-  exchanges: ExtractedExchange[];
 }
 
 type SessionSource = "claude" | "codex";
@@ -406,158 +386,6 @@ export function extractExchanges(jsonlPath: string): ExtractedExchange[] {
   }
 
   return exchanges;
-}
-
-/**
- * Estimate session duration from first and last message timestamps.
- */
-function estimateDuration(jsonlPath: string): string {
-  let content: string;
-  try {
-    content = readFileSync(jsonlPath, "utf-8");
-  } catch {
-    // intentional: session file unreadable — duration unknown
-    return "unknown";
-  }
-
-  const lines = content.split("\n").filter((l) => l.trim());
-  let firstTs = "";
-  let lastTs = "";
-
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      if (obj.timestamp) {
-        if (!firstTs) firstTs = obj.timestamp;
-        lastTs = obj.timestamp;
-      }
-    } catch {
-      continue; // intentional: skip malformed JSONL lines
-    }
-  }
-
-  if (!firstTs || !lastTs) return "unknown";
-
-  const start = new Date(firstTs).getTime();
-  const end = new Date(lastTs).getTime();
-  const mins = Math.round((end - start) / 60000);
-
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const remainder = mins % 60;
-  return `${hours}h${remainder > 0 ? remainder + "m" : ""}`;
-}
-
-/**
- * Format a session's exchanges into readable markdown.
- * Truncates long messages and limits total output.
- */
-function formatSession(summary: SessionSummary, maxChars: number = 8000): string {
-  const header = `## ${summary.project} / ${summary.source} (${summary.sessionId.slice(0, 8)}) — "${summary.name}" — ${summary.durationEstimate}`;
-  const lines: string[] = [header, "### Key exchanges"];
-
-  let totalChars = header.length;
-
-  for (const ex of summary.exchanges) {
-    const label = ex.role === "user" ? "Greg" : "Maya";
-    // Truncate individual messages
-    const text = ex.text.length > 500 ? ex.text.slice(0, 500) + "..." : ex.text;
-    const line = `- **${label}:** ${text.replace(/\n/g, " ")}`;
-
-    totalChars += line.length;
-    if (totalChars > maxChars) {
-      lines.push("- *(truncated — session too long for full extraction)*");
-      break;
-    }
-
-    lines.push(line);
-  }
-
-  return lines.join("\n");
-}
-
-/**
- * Main entry point: extract sessions from last 24h, write condensed markdown.
- */
-export async function extractDailySessions(hoursAgo: number = 24): Promise<string> {
-  const recentBundles = findRecentSessions(hoursAgo);
-
-  if (recentBundles.length === 0) {
-    return "No sessions found in the last 24 hours.";
-  }
-
-  const date = new Date().toISOString().slice(0, 10);
-  const sections: string[] = [`# Sessions — ${date}\n`];
-  let totalSize = 0;
-  const maxTotalSize = 50000; // 50KB target
-
-  for (const bundle of recentBundles) {
-    const projectName = await resolveProjectName(bundle);
-
-    // Sort by modification time, most recent first
-    const sorted = bundle.files.sort((a, b) => {
-      try {
-        return statSync(b).mtimeMs - statSync(a).mtimeMs;
-      } catch {
-        return 0; // intentional: stat failure — preserve original order
-      }
-    });
-
-    for (const file of sorted) {
-      if (totalSize > maxTotalSize) break;
-
-      const sessionId = basename(file, ".jsonl");
-      const exchanges = extractExchanges(file);
-
-      // Skip trivial sessions (< 3 exchanges)
-      if (exchanges.length < 3) continue;
-
-      const summary: SessionSummary = {
-        sessionId,
-        name: sessionId.slice(0, 8),
-        project: projectName,
-        projectPath: bundle.locator,
-        source: bundle.source,
-        durationEstimate: estimateDuration(file),
-        exchanges,
-      };
-
-      // Try to get session name from index files
-      const sessionsDir = join(userHome(), ".claude", "sessions");
-      if (existsSync(sessionsDir)) {
-        const indexFiles = readdirSync(sessionsDir).filter((f) => f.endsWith(".json"));
-        for (const idx of indexFiles) {
-          try {
-            const meta: SessionMeta = JSON.parse(readFileSync(join(sessionsDir, idx), "utf-8"));
-            if (meta.sessionId === sessionId) {
-              summary.name = meta.name || sessionId.slice(0, 8);
-              break;
-            }
-          } catch { /* intentional: skip unreadable session index entry */ }
-        }
-      }
-
-      const formatted = formatSession(summary);
-      totalSize += formatted.length;
-      sections.push(formatted);
-    }
-  }
-
-  return sections.join("\n\n");
-}
-
-/**
- * Write the condensed sessions file to the daily directory.
- */
-export async function writeDailySessions(hoursAgo: number = 24): Promise<string> {
-  const paths = getHivePaths();
-  const date = new Date().toISOString().slice(0, 10);
-  const outputPath = join(paths.memoryDailyDir, `sessions-${date}.md`);
-
-  const content = await extractDailySessions(hoursAgo);
-  await Bun.write(outputPath, content);
-
-  return outputPath;
 }
 
 // ---------------------------------------------------------------------------
