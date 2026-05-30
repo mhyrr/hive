@@ -1,4 +1,4 @@
-# <img src="logo.svg" alt="" width="32" height="32"> Hive
+# <img src="img/logo.svg" alt="" width="32" height="32"> Hive
 
 HIVE is an identity, memory, and council layer for CLI coding agents.
 Claude Code is the default runtime; Pi and Codex are opt-in interactive
@@ -138,7 +138,7 @@ inside HIVE itself.
 
 | Invocation | Runtime | Identity path |
 | --- | --- | --- |
-| `hive` / `hive "<prompt>"` | Claude Code | Per-invocation `--append-system-prompt-file` plus `~/.claude` SessionStart hook |
+| `hive` / `hive "<prompt>"` | Claude Code | Per-invocation `--append-system-prompt` plus `~/.claude` SessionStart hook |
 | `hive -3 "<prompt>"` / `hive --pi "<prompt>"` | Pi CLI | Runtime-generated `-e` identity extension; Pi owns provider/model selection |
 | `hive -x "<prompt>"` / `hive --codex "<prompt>"` | Codex CLI | `~/.codex/AGENTS.md`, refreshed before launch and by `~/.hive/codex-load-identity.sh` |
 | `HIVE_HARNESS=pi hive "<prompt>"` | Pi CLI | Same as `-3`; override with `--claude` or `--claude-code` |
@@ -146,6 +146,25 @@ inside HIVE itself.
 
 `-3` / Pi is an opt-in research lane while the subscription-OAuth policy
 question remains open. Claude Code stays the default.
+
+### Claude Code modes
+
+When `hive` launches Claude Code, a flag controls how the HIVE identity
+relates to Claude Code's own default system prompt:
+
+| Flag | Default prompt | Hooks / skills / MCP | Auth | Claude arg |
+| --- | --- | --- | --- | --- |
+| _(none)_ — `append` | kept | kept | subscription OAuth | `--append-system-prompt` |
+| `--owned` | **replaced** by HIVE identity | kept | subscription OAuth | `--system-prompt` |
+| `--bare` | **replaced** by HIVE identity | dropped | requires `ANTHROPIC_API_KEY` | `--bare --system-prompt` |
+
+Default `append` sits the HIVE identity after Anthropic's base prompt.
+`--owned` makes the HIVE identity the entire system prompt while keeping
+hooks, skills, MCP, and OAuth. `--bare` goes further — it skips hook,
+plugin, and `CLAUDE.md` auto-discovery entirely and never reads OAuth or
+keychain (Claude Code's design), so it requires `ANTHROPIC_API_KEY` and
+wires HIVE MCP explicitly via `--mcp-config`. Set the mode with the flag or
+`HIVE_CLAUDE_MODE=owned|bare`.
 
 After init, customize these files:
 
@@ -264,6 +283,8 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive -3 "<prompt>"` | Launch Pi CLI with HIVE identity; Pi chooses provider/model |
 | `hive -x "<prompt>"` | Launch Codex CLI with HIVE identity |
 | `hive --claude "<prompt>"` | Force Claude Code when `HIVE_HARNESS=pi` or `HIVE_HARNESS=codex` is set |
+| `hive --owned "<prompt>"` | Launch Claude Code with HIVE identity as the whole system prompt (keeps hooks/skills/MCP/OAuth) |
+| `hive --bare "<prompt>"` | Launch Claude Code in `--bare` mode (no hooks/skills/CLAUDE.md; requires `ANTHROPIC_API_KEY`) |
 
 ## How Identity Works
 
@@ -273,8 +294,8 @@ prefix through different native integration points.
 
 Claude Code loads the prefix through the user-level SessionStart hook at
 `~/.claude/hooks/load-identity.sh`, wired into `~/.claude/settings.json`.
-The `hive` wrapper also passes a temp identity file with
-`--append-system-prompt-file` when it launches Claude Code directly.
+The `hive` wrapper also passes the identity inline with
+`--append-system-prompt` when it launches Claude Code directly.
 
 Pi gets a generated identity extension at launch time via `pi -e <tempfile>`;
 all remaining args pass through unchanged so Pi owns provider/model choice.
