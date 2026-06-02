@@ -1219,6 +1219,7 @@ export type Candidate = {
   provenance: string;        // auto-attached at write time
   provenanceNote?: string;   // optional enrichment from caller
   supersedesHint?: string;   // hint for Pass V; verifier still owns the call
+  directive?: boolean;       // user explicitly directed the save — verifier may place but not reject (TK-123)
   writtenAt: string;         // ISO UTC
 };
 
@@ -1228,6 +1229,7 @@ export type CandidateInput = {
   tags?: string[];
   provenanceNote?: string;
   supersedesHint?: string;
+  directive?: boolean;
 };
 
 const CANDIDATES_HEADER =
@@ -1271,6 +1273,7 @@ export async function appendCandidate(
     writtenAt: now.toISOString(),
     ...(input.provenanceNote ? { provenanceNote: input.provenanceNote } : {}),
     ...(input.supersedesHint ? { supersedesHint: input.supersedesHint } : {}),
+    ...(input.directive ? { directive: true } : {}),
   };
 
   const file = await ensureCandidatesFile(paths, projectId);
@@ -1304,6 +1307,7 @@ export async function appendCandidates(
       writtenAt: batchNow.toISOString(),
       ...(input.provenanceNote ? { provenanceNote: input.provenanceNote } : {}),
       ...(input.supersedesHint ? { supersedesHint: input.supersedesHint } : {}),
+      ...(input.directive ? { directive: true } : {}),
     };
     candidates.push(candidate);
     lines.push(JSON.stringify(candidate));

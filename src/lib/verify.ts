@@ -245,6 +245,8 @@ Bar for accept: "would this still help a session a month from now?" Be selective
 
 If the candidate's quoted source isn't visible anywhere in the inputs, **reject as cite_unverifiable** — citation discipline matters more than charity.
 
+**Directives.** A mid-session candidate marked \`"directive": true\` was saved on Greg's explicit instruction — it is his decision, not an extractor's guess. You MAY **accept**, **supersede**, or **merge** a directive: refine its wording, place it well, or fold it into an existing entry. You may NOT **reject** it — the human already decided it's worth keeping, so the accept-bar, cite_unverifiable, trivial, and low_signal do not apply. Your job on a directive is placement, never veto. (A directive you try to reject is force-admitted downstream anyway, so a reject decision just produces a worse-placed entry.)
+
 ## 2) Gap report
 Things Sonnet missed but should have caught — patterns from the exchanges that didn't land in either candidate batch. Cite the specific source (e.g. "alpha:topRanked[5] — Greg established X but extractor missed it"). Empty array if Sonnet did fine.
 

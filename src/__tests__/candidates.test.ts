@@ -92,12 +92,34 @@ describe("candidates — round trip", () => {
     expect(read[0]?.supersedesHint).toBe("old fact text");
   });
 
+  test("directive flag round-trips through appendCandidate", async () => {
+    await appendCandidate(paths, "alpha", {
+      type: "fact",
+      content: "Greg said save this",
+      directive: true,
+    });
+    const read = await readCandidates(paths, "alpha");
+    expect(read[0]?.directive).toBe(true);
+  });
+
+  test("directive flag round-trips through appendCandidates (batch)", async () => {
+    await appendCandidates(paths, "alpha", [
+      { type: "fact", content: "directed one", directive: true },
+      { type: "fact", content: "ordinary two" },
+    ]);
+    const read = await readCandidates(paths, "alpha");
+    expect(read[0]?.directive).toBe(true);
+    // Non-directive entries don't carry the flag at all.
+    expect(read[1]?.directive).toBeUndefined();
+  });
+
   test("absent optional fields stay undefined (not on disk)", async () => {
     await appendCandidate(paths, "alpha", { type: "fact", content: "minimal" });
     const raw = await Bun.file(candidatesPath(paths, "alpha")).text();
     // The serialized JSON should not carry the optional keys.
     expect(raw).not.toContain('"provenanceNote"');
     expect(raw).not.toContain('"supersedesHint"');
+    expect(raw).not.toContain('"directive"');
   });
 
   test("malformed lines are skipped, valid ones survive", async () => {

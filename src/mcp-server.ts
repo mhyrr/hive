@@ -186,7 +186,9 @@ server.registerTool("write_hive_memory", {
     "question. Don't batch to end-of-session. Mid-session writes queue to a candidates file; " +
     "the nightly verifier admits them to canon. Reach for it freely — the night is the gatekeeper. " +
     "Tags help with search; use them to categorize. Provenance is auto-attached; use " +
-    "provenance_note to add context the verifier should weigh (e.g. 'Greg said X in design walk').",
+    "provenance_note to add context the verifier should weigh (e.g. 'Greg said X in design walk'). " +
+    "Set directive=true ONLY when the user explicitly told you to save this — a directive still " +
+    "flows through the nightly verifier for wording and placement, but it cannot be rejected.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     type: z.enum(["fact", "convention", "decision", "question"]).describe("What kind of memory to record."),
@@ -194,8 +196,9 @@ server.registerTool("write_hive_memory", {
     tags: z.array(z.string()).optional().describe("Topic tags for this entry (e.g. ['auth', 'security']). Lowercase, short."),
     supersedes: z.string().optional().describe("Hint: text of an existing entry this candidate would replace. The verifier decides whether to honor the supersede."),
     provenance_note: z.string().optional().describe("Optional context for the verifier — what was said, by whom, in what flow. Strengthens the candidate's chance of admission."),
+    directive: z.boolean().optional().describe("Set true ONLY when the user explicitly directed this save ('save this', 'remember that'). A directive is the user's instruction, not your judgment — it still passes through the nightly verifier, which may refine its wording or fold it into an existing entry (supersede/merge), but it CANNOT be rejected. Never set this for your own judgment-based writes; those stay fully subject to the verifier."),
   },
-}, async ({ project, type, content, tags, supersedes, provenance_note }) => {
+}, async ({ project, type, content, tags, supersedes, provenance_note, directive }) => {
   const paths = getHivePaths();
   const projectId = project ?? resolveProjectFromCwd();
 
@@ -212,16 +215,18 @@ server.registerTool("write_hive_memory", {
     tags: tags ?? [],
     provenanceNote: provenance_note,
     supersedesHint: supersedes,
+    directive,
   });
+
+  const statusLine = directive
+    ? `Queued ${type} directive for ${projectId}. It will land in canon — the nightly verifier may refine its wording or place it (supersede/merge), but cannot reject it.`
+    : `Queued ${type} candidate for ${projectId}. Nothing in canon yet — the nightly verifier admits, supersedes, or rejects.`;
 
   return {
     content: [
       {
         type: "text" as const,
-        text:
-          `Queued ${type} candidate for ${projectId}. ` +
-          `Nothing in canon yet — the nightly verifier admits, supersedes, or rejects.\n` +
-          `provenance: ${candidate.provenance}`,
+        text: `${statusLine}\nprovenance: ${candidate.provenance}`,
       },
     ],
   };
@@ -241,6 +246,7 @@ server.registerTool("reflect_session", {
       type: z.enum(["fact", "convention", "decision", "question"]).describe("What kind of memory to record."),
       content: z.string().describe("The text to record."),
       tags: z.array(z.string()).optional().describe("Topic tags (e.g. ['auth', 'api']). Lowercase."),
+      directive: z.boolean().optional().describe("Set true ONLY when the user explicitly directed this learning be saved. A directive cannot be rejected by the nightly verifier (it can still be refined or placed). Leave unset for your own judgment-based reflections."),
     })).describe("Array of learnings to record."),
     provenance_note: z.string().optional().describe("Optional shared context for the whole batch — e.g. 'closing reflection on the V1 design walk'."),
   },
@@ -283,6 +289,7 @@ server.registerTool("reflect_session", {
         content: l.content,
         tags: l.tags ?? [],
         provenanceNote: provenance_note,
+        directive: l.directive,
       })),
     );
   } catch (err) {

@@ -113,6 +113,7 @@ export interface ProjectApplyOutcome {
   superseded: number;
   merged: number;
   rejected: number;
+  directivesForceAdmitted: number;  // directives the verifier tried to reject but were kept (TK-123)
   gapsLanded: number;
   drainedCandidates: number;
   drainPath: string | null;
@@ -128,6 +129,7 @@ export interface ApplyResult {
     superseded: number;
     merged: number;
     rejected: number;
+    directivesForceAdmitted: number;
     gapsLanded: number;
     reflectionsLanded: number;
   };
@@ -145,6 +147,7 @@ function emptyOutcome(projectId: string): ProjectApplyOutcome {
     superseded: 0,
     merged: 0,
     rejected: 0,
+    directivesForceAdmitted: 0,
     gapsLanded: 0,
     drainedCandidates: 0,
     drainPath: null,
@@ -205,8 +208,9 @@ interface ApplyContext {
 async function lookupContent(
   ctx: ApplyContext,
   source: ResolvedSource,
-): Promise<{ type: MemorySection; content: string; tags: string[]; provenance: string } | null> {
+): Promise<{ type: MemorySection; content: string; tags: string[]; provenance: string; directive?: boolean } | null> {
   if (source.kind === "B") {
+    // Pass B candidates are Sonnet-extracted, never user directives.
     const list = ctx.sources.B.get(source.project) ?? [];
     const c = list[source.index];
     if (!c) return null;
@@ -216,9 +220,16 @@ async function lookupContent(
     const list = ctx.sources.midSession.get(source.project) ?? [];
     const c = list[source.index];
     if (!c) return null;
-    return { type: c.type, content: c.content, tags: c.tags, provenance: c.provenance };
+    return { type: c.type, content: c.content, tags: c.tags, provenance: c.provenance, directive: c.directive };
   }
   return null;
+}
+
+// Resolve whether a project decision targets a user directive — used both to
+// keep the rejection audit log honest and to force-admit in applyProjectDecision.
+function isDirectiveSource(ctx: ApplyContext, source: ResolvedSource): boolean {
+  if (source.kind !== "candidates") return false;
+  return (ctx.sources.midSession.get(source.project) ?? [])[source.index]?.directive === true;
 }
 
 async function applyProjectDecision(
@@ -226,14 +237,15 @@ async function applyProjectDecision(
   outcome: ProjectApplyOutcome,
   decision: VerifierDecision,
   source: ResolvedSource,
-): Promise<void> {
+): Promise<{ forceAdmitted: boolean }> {
+  const none = { forceAdmitted: false };
   const projectId = "project" in source ? source.project : null;
-  if (!projectId) return; // shouldn't happen for project decisions
+  if (!projectId) return none; // shouldn't happen for project decisions
 
   const content = await lookupContent(ctx, source);
   if (!content) {
     outcome.errors.push(`Could not resolve candidate ${decision.candidate_id}`);
-    return;
+    return none;
   }
 
   if (decision.action === "accept") {
@@ -250,17 +262,17 @@ async function applyProjectDecision(
         outcome.errors.push(
           `accept ${decision.candidate_id}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        return;
+        return none;
       }
     }
     outcome.accepted++;
-    return;
+    return none;
   }
 
   if (decision.action === "supersede") {
     if (!decision.target_hash) {
       outcome.errors.push(`supersede ${decision.candidate_id} missing target_hash`);
-      return;
+      return none;
     }
     if (!ctx.dryRun) {
       try {
@@ -276,17 +288,17 @@ async function applyProjectDecision(
         outcome.errors.push(
           `supersede ${decision.candidate_id}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        return;
+        return none;
       }
     }
     outcome.superseded++;
-    return;
+    return none;
   }
 
   if (decision.action === "merge") {
     if (!decision.target_hash) {
       outcome.errors.push(`merge ${decision.candidate_id} missing target_hash`);
-      return;
+      return none;
     }
     const tagsToMerge = decision.added_tags ?? content.tags;
     if (!ctx.dryRun) {
@@ -302,17 +314,44 @@ async function applyProjectDecision(
         outcome.errors.push(
           `merge ${decision.candidate_id}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        return;
+        return none;
       }
     }
     outcome.merged++;
-    return;
+    return none;
   }
 
   if (decision.action === "reject") {
+    // TK-123: a user directive is not subject to the verifier's veto. If the
+    // model rejected one anyway, force-admit it to canon — the human already
+    // decided it was worth keeping. The prompt tells the verifier never to
+    // reject a directive; this is the backstop that makes the guarantee real.
+    if (content.directive) {
+      if (!ctx.dryRun) {
+        try {
+          await appendProjectMemory(
+            ctx.paths,
+            projectId,
+            content.type,
+            content.content,
+            content.tags,
+          );
+        } catch (err) {
+          outcome.errors.push(
+            `directive force-admit ${decision.candidate_id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return { forceAdmitted: true };
+        }
+      }
+      outcome.accepted++;
+      outcome.directivesForceAdmitted++;
+      return { forceAdmitted: true };
+    }
     outcome.rejected++;
-    return;
+    return none;
   }
+
+  return none;
 }
 
 async function applyReflectionDecision(
@@ -490,10 +529,12 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
     }
 
     const outcome = ensureOutcome(source.project);
-    if (decision.action === "reject") {
+    const { forceAdmitted } = await applyProjectDecision(ctx, outcome, decision, source);
+    // A force-admitted directive is an accept, not a rejection — keep it out of
+    // the rejection audit log and the rejected tally (TK-123).
+    if (decision.action === "reject" && !forceAdmitted) {
       rejections.push(decision);
     }
-    await applyProjectDecision(ctx, outcome, decision, source);
   }
 
   // Land gaps — projects-as-questions, identity-as-reflections
@@ -580,10 +621,11 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
       superseded: acc.superseded + o.superseded,
       merged: acc.merged + o.merged,
       rejected: acc.rejected + o.rejected,
+      directivesForceAdmitted: acc.directivesForceAdmitted + o.directivesForceAdmitted,
       gapsLanded: acc.gapsLanded + o.gapsLanded,
       reflectionsLanded: acc.reflectionsLanded,
     }),
-    { accepted: 0, superseded: 0, merged: 0, rejected: 0, gapsLanded: 0, reflectionsLanded },
+    { accepted: 0, superseded: 0, merged: 0, rejected: 0, directivesForceAdmitted: 0, gapsLanded: 0, reflectionsLanded },
   );
   totals.reflectionsLanded = reflectionsLanded;
 

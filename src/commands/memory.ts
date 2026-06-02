@@ -236,10 +236,14 @@ export async function memoryCommand(args: string[]): Promise<void> {
       `Pass F (Apply) — ${dryRun ? "dry-run" : "applying"} decisions for ${date}…`,
     );
     const result = await applyDecisions({ paths, date, dryRun });
+    const forcedNote =
+      result.totals.directivesForceAdmitted > 0
+        ? ` · ${result.totals.directivesForceAdmitted} directive(s) kept over verifier reject`
+        : "";
     console.log(
       `Totals: ${result.totals.accepted} accept · ${result.totals.superseded} supersede · ` +
         `${result.totals.merged} merge · ${result.totals.rejected} reject · ` +
-        `${result.totals.gapsLanded} gap(s) landed · ${result.totals.reflectionsLanded} reflection(s)`,
+        `${result.totals.gapsLanded} gap(s) landed · ${result.totals.reflectionsLanded} reflection(s)${forcedNote}`,
     );
     for (const o of result.perProject) {
       const drainNote = o.drainedCandidates > 0 ? ` · drained ${o.drainedCandidates}` : "";

@@ -265,6 +265,23 @@ existing canon and outstanding candidates.
 Optional `provenance_note` on `write_hive_memory` lets the caller add
 context the verifier can weigh.
 
+### Directives
+
+`write_hive_memory` (and `reflect_session`, per-learning) accept a
+`directive: true` flag. An agent sets it **only when the user explicitly
+directed the save** ("save this", "remember that") — never for its own
+judgment-based writes.
+
+A directive is the user's instruction, not an extractor's guess, so the
+verifier may not veto it. It still flows through the nightly pipeline so
+Pass V can refine its wording or place it well (accept / supersede /
+merge), but **a `reject` decision on a directive is overridden** — Pass F
+force-admits it to canon regardless. The accept-bar, `cite_unverifiable`,
+`trivial`, and `low_signal` simply don't apply to a human instruction.
+The verifier prompt is told this; Pass F enforces it as a hard backstop
+(`directivesForceAdmitted` in the apply tally records any override). A
+directive still reaches canon at the next nightly run, not same-session.
+
 ## V1 Nightly Pipeline
 
 The nightly pipeline at 2am is the only path into `knowledge.md`:
@@ -290,6 +307,7 @@ Pass V — Opus (single call) — reads B + C + candidates.md + canon
 Pass F — Apply (mechanical)
   ↓ walk decisions: appendProjectMemory / supersedeEntryByHash /
   ↓                 mergeTagsIntoEntry / drop rejected
+  ↓                 (directives marked reject are force-admitted, not dropped)
   ↓ drain candidates.md → runs/{DATE}/candidates.consumed.{name}.md
   ↓ truncate inbox.md, rebuild _index.md per project touched
   ↓ land accepted reflections + project-scoped gaps as questions
@@ -300,7 +318,9 @@ Pass F — Apply (mechanical)
 verifier checks against the day's signal. If the cited source can't be
 found, Opus can reject with reason `cite_unverifiable`. This is the gate
 that keeps the system honest — facts in canon trace back to actual
-exchanges or commits, not to plausible hallucinations.
+exchanges or commits, not to plausible hallucinations. The one exception
+is a directive (see above): the user's explicit instruction is its own
+authority, so `cite_unverifiable` and the other reject reasons don't apply.
 
 **Run state is durable.** Each pass writes its artifact to
 `~/.hive/memory/runs/{DATE}/` before the next pass consumes. Failures

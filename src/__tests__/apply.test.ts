@@ -387,3 +387,94 @@ describe("applyDecisions — end to end", () => {
     ).rejects.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Directive guard (TK-123): a user-directed save the verifier rejected anyway
+// must be force-admitted, not dropped.
+// ---------------------------------------------------------------------------
+
+async function buildDirectiveFixture(opts: { directive: boolean }): Promise<{ paths: HivePaths; date: string }> {
+  const home = await mkdtemp(join(tmpdir(), "hive-apply-directive-"));
+  const paths = await ensureHiveScaffold(home);
+  const date = new Date().toISOString().slice(0, 10);
+  const runDir = join(paths.memoryRunsDir, date);
+  await mkdir(runDir, { recursive: true });
+
+  await mkdir(join(home, "projects", "alpha"), { recursive: true });
+  await writeFile(
+    join(home, "projects", "alpha", "config.md"),
+    `---\nname: alpha\npath: /tmp/nope/alpha\n---\n`,
+  );
+
+  // One mid-session candidate; directive flag varies by case.
+  await appendCandidate(paths, "alpha", {
+    type: "fact",
+    content: "Changelog is user-facing; pricing and admin stay out",
+    tags: ["changelog"],
+    directive: opts.directive,
+  });
+
+  // The verifier rejected it.
+  await writeFile(
+    join(runDir, "decisions.json"),
+    JSON.stringify({
+      decisions: [
+        { candidate_id: "candidates.alpha[0]", action: "reject", reason: "low_signal" },
+      ],
+    }),
+  );
+  await writeFile(join(runDir, "briefing.md"), `# HIVE — ${date}\n`);
+
+  return { paths, date };
+}
+
+describe("applyDecisions — directive guard (TK-123)", () => {
+  test("a rejected directive is force-admitted to canon", async () => {
+    const { paths, date } = await buildDirectiveFixture({ directive: true });
+    const result = await applyDecisions({ paths, date });
+
+    // Counted as an accept, not a rejection.
+    expect(result.totals.accepted).toBe(1);
+    expect(result.totals.rejected).toBe(0);
+    expect(result.totals.directivesForceAdmitted).toBe(1);
+
+    // It actually landed in canon.
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    const landed = snap.facts.find((f) => f.text.includes("Changelog is user-facing"));
+    expect(landed).toBeTruthy();
+    expect(landed?.superseded).toBeFalsy();
+
+    // It must NOT appear in the rejection audit log.
+    const rejPath = join(paths.memoryRunsDir, date, "rejections.log");
+    expect(await Bun.file(rejPath).exists()).toBe(false);
+  });
+
+  test("a rejected non-directive candidate is still dropped", async () => {
+    const { paths, date } = await buildDirectiveFixture({ directive: false });
+    const result = await applyDecisions({ paths, date });
+
+    expect(result.totals.accepted).toBe(0);
+    expect(result.totals.rejected).toBe(1);
+    expect(result.totals.directivesForceAdmitted).toBe(0);
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    const landed = snap.facts.find((f) => f.text.includes("Changelog is user-facing"));
+    expect(landed).toBeUndefined();
+
+    // Ordinary rejection is logged.
+    const rejPath = join(paths.memoryRunsDir, date, "rejections.log");
+    expect(await Bun.file(rejPath).exists()).toBe(true);
+  });
+
+  test("dry-run force-admits in the tally but does not mutate canon", async () => {
+    const { paths, date } = await buildDirectiveFixture({ directive: true });
+    const result = await applyDecisions({ paths, date, dryRun: true });
+
+    expect(result.totals.directivesForceAdmitted).toBe(1);
+    expect(result.totals.accepted).toBe(1);
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    const landed = snap.facts.find((f) => f.text.includes("Changelog is user-facing"));
+    expect(landed).toBeUndefined();
+  });
+});

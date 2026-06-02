@@ -358,10 +358,13 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
         applyDecisions({ paths, date }),
       );
       result.briefingPath = value.briefingPath;
+      const forced = value.totals.directivesForceAdmitted;
       result.passes.F = {
         pass: "F",
         status: "complete",
-        detail: `+${value.totals.accepted} ~${value.totals.superseded} ⊕${value.totals.merged} ✗${value.totals.rejected}`,
+        detail:
+          `+${value.totals.accepted} ~${value.totals.superseded} ⊕${value.totals.merged} ✗${value.totals.rejected}` +
+          (forced > 0 ? ` ⚡${forced} directive(s) kept over verifier reject` : ""),
         durationMs,
       };
       emit({ type: "pass-complete", report: result.passes.F });
