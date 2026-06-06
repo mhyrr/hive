@@ -1,0 +1,8 @@
+I want to add a --json flag to hive status. How should I approach it?
+Let's build a new dashboard widget that shows ticket velocity over time.
+The heartbeat log is growing unbounded. What's going on?
+A test is failing intermittently and I can't tell why. Help me figure it out.
+Make the dashboard better.
+Add a React hook that polls ticket status every 5 seconds.
+Should we cache council results? What's your take?
+What do you think of the identity dedup we shipped today?
