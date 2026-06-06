@@ -18,6 +18,15 @@ export const LOAD_IDENTITY_HOOK = `#!/bin/bash
 #
 # If \`hive\` isn't on PATH or fails, we emit nothing and exit 0 — sessions must
 # never be blocked by a missing identity layer.
+#
+# Dedup guard: when HIVE launched this session itself, the identity is already
+# in the system prompt and HIVE_IDENTITY_IN_PROMPT is set. Re-emitting here
+# would duplicate ~63KB into context every turn, so skip. A plain \`claude\`
+# session (no env var) still gets identity from this hook.
+
+if [ -n "$HIVE_IDENTITY_IN_PROMPT" ]; then
+  exit 0
+fi
 
 if command -v hive >/dev/null 2>&1; then
   HIVE_BIN="hive"

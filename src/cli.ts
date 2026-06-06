@@ -219,6 +219,10 @@ async function launchClaude(mode: ClaudeMode, args: string[]): Promise<void> {
       "--add-dir", join(process.env.HOME || "", ".hive"),
     );
     env.ANTHROPIC_API_KEY = undefined; // force subscription
+    // Identity is already in the system prompt above; tell the SessionStart/
+    // PostCompact hook to skip its context emit so we don't duplicate ~63KB
+    // every turn. A plain claude session (no env var) still gets the hook.
+    env.HIVE_IDENTITY_IN_PROMPT = "1";
   } else {
     // append: legacy default — HIVE identity sits AFTER the base system prompt.
     claudeArgs.push(
@@ -226,6 +230,10 @@ async function launchClaude(mode: ClaudeMode, args: string[]): Promise<void> {
       "--add-dir", join(process.env.HOME || "", ".hive"),
     );
     env.ANTHROPIC_API_KEY = undefined; // force subscription
+    // Identity is already in the system prompt above; tell the SessionStart/
+    // PostCompact hook to skip its context emit so we don't duplicate ~63KB
+    // every turn. A plain claude session (no env var) still gets the hook.
+    env.HIVE_IDENTITY_IN_PROMPT = "1";
   }
 
   claudeArgs.push(...args);
