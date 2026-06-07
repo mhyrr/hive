@@ -130,7 +130,7 @@ async function runBootstrap(
 ): Promise<void> {
   const startTime = Date.now();
 
-  console.log(`Scanning ${repoPath}...`);
+  console.error(`Scanning ${repoPath}...`);
   const scan = scanRepo(repoPath);
   const scanMs = Date.now() - startTime;
 
@@ -157,8 +157,8 @@ async function runBootstrap(
 
   // Phase 2: LLM inference (opt-in)
   if (options.infer) {
-    console.log();
-    console.log("Running inference pass (single LLM call)...");
+    console.error("");
+    console.error("Running inference pass (single LLM call)...");
 
     const inferResult = await inferConventions(repoPath, scan, paths, projectId, {
       dryRun: options.dryRun,

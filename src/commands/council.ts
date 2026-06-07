@@ -108,9 +108,9 @@ export async function councilCommand(args: string[]): Promise<void> {
   // Dialectic mode
   if (mode === "dialectic" && camps) {
     const numRounds = clampRounds(rounds);
-    console.log(`Convening dialectic with ${members.length} members, ${camps.length} camps, ${numRounds} rounds`);
-    console.log(`Camps: ${camps.map((c) => `${c.name} ("${c.position}")`).join(" vs. ")}`);
-    console.log();
+    console.error(`Convening dialectic with ${members.length} members, ${camps.length} camps, ${numRounds} rounds`);
+    console.error(`Camps: ${camps.map((c) => `${c.name} ("${c.position}")`).join(" vs. ")}`);
+    console.error("");
 
     const result = await conveneDialectic({
       question,
@@ -139,8 +139,8 @@ export async function councilCommand(args: string[]): Promise<void> {
 
   // Standard / analyst mode
   const resolvedPersona = mode === "analyst" ? "analyst" : persona;
-  console.log(`Convening council with ${members.length} members: ${members.map((m) => m.model.name).join(", ")}`);
-  console.log();
+  console.error(`Convening council with ${members.length} members: ${members.map((m) => m.model.name).join(", ")}`);
+  console.error("");
 
   const result = await conveneCouncil({
     question,
