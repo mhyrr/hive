@@ -71,10 +71,10 @@ export async function goalCommand(args: string[]): Promise<void> {
 
   const priority = resolvePriority(priorityRaw);
 
-  console.log(`Decomposing goal in project: ${projectId}`);
-  console.log(`Goal: ${goal}`);
-  if (dryRun) console.log("(dry-run — no tickets will be created)");
-  console.log("");
+  console.error(`Decomposing goal in project: ${projectId}`);
+  console.error(`Goal: ${goal}`);
+  if (dryRun) console.error("(dry-run — no tickets will be created)");
+  console.error("");
 
   // Gather context — index, principles, search hits, open tickets.
   const context = await gatherDecomposeContext(paths, projectId, goal);

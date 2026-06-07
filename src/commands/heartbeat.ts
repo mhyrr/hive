@@ -136,7 +136,7 @@ async function heartbeatTickCmd(projectId: string): Promise<void> {
     return;
   }
 
-  console.log(`Running heartbeat tick for ${projectId}...`);
+  console.error(`Running heartbeat tick for ${projectId}...`);
   const result = await runTick(projectId);
   console.log(`Result: ${result.result}`);
   if (result.output) {

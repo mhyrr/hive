@@ -82,7 +82,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
       else if (rest[i] === "--dry-run") dryRun = true;
     }
 
-    console.log(
+    console.error(
       `=== HIVE memory nightly · ${date}${dryRun ? " · DRY RUN" : ""} ===`,
     );
 
@@ -99,9 +99,9 @@ export async function memoryCommand(args: string[]): Promise<void> {
       onProgress: (event) => {
         if (event.type === "pass-start") {
           const detail = event.detail ? ` — ${event.detail}` : "";
-          console.log(`[STARTING] ${event.pass}${detail}`);
+          console.error(`[STARTING] ${event.pass}${detail}`);
         } else {
-          console.log(fmt(event.report));
+          console.error(fmt(event.report));
         }
       },
     });
@@ -182,7 +182,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
       if (rest[i] === "--date") date = rest[++i] ?? date;
     }
 
-    console.log(`Pass B (Sonnet) — extracting candidates for ${target} (${date})…`);
+    console.error(`Pass B (Sonnet) — extracting candidates for ${target} (${date})…`);
     const { outputPath, result } = await runProjectExtractor({
       paths,
       projectId: target,
@@ -208,7 +208,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
       if (rest[i] === "--date") date = rest[++i] ?? date;
     }
 
-    console.log(`Pass C (Sonnet) — extracting cross-project reflections (${date})…`);
+    console.error(`Pass C (Sonnet) — extracting cross-project reflections (${date})…`);
     const { outputPath, result } = await runReflectionExtractor({ paths, date });
     const u = result.usage;
     console.log(`Wrote ${result.candidates.length} reflection candidate(s) to ${outputPath}`);
@@ -232,7 +232,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
       else if (rest[i] === "--dry-run") dryRun = true;
     }
 
-    console.log(
+    console.error(
       `Pass F (Apply) — ${dryRun ? "dry-run" : "applying"} decisions for ${date}…`,
     );
     const result = await applyDecisions({ paths, date, dryRun });
@@ -276,7 +276,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
       if (rest[i] === "--date") date = rest[++i] ?? date;
     }
 
-    console.log(`Pass V (Opus) — verifying + drafting briefing (${date})…`);
+    console.error(`Pass V (Opus) — verifying + drafting briefing (${date})…`);
     const result = await runVerifier({ paths, date });
     const u = result.usage;
     const accepts = result.output.decisions.filter((d) => d.action === "accept").length;
