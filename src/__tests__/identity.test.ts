@@ -41,6 +41,12 @@ async function seedHive(hiveDir: string, projectId: string, projectPath: string)
   const tasteDir = join(hiveDir, "taste");
   await mkdir(tasteDir, { recursive: true });
   await writeFile(join(tasteDir, "principles.md"), "# taste-principles-marker\n");
+
+  // Swappable persona register (default: greg-dry).
+  const personasDir = join(hiveDir, "personas");
+  await mkdir(personasDir, { recursive: true });
+  await writeFile(join(personasDir, "greg-dry.md"), "# persona-greg-dry-marker\n");
+  await writeFile(join(personasDir, "skeptic.md"), "# persona-skeptic-marker\n");
 }
 
 beforeEach(async () => {
@@ -102,6 +108,32 @@ describe("assembleIdentity", () => {
     const out = await assembleIdentity();
     expect(out).toContain("taste-principles-marker");
   });
+
+  test("persona slot is absent unless includePersona (dispatch/heartbeat stay neutral)", async () => {
+    const out = await assembleIdentity();
+    expect(out).not.toContain("persona-greg-dry-marker");
+  });
+
+  test("includePersona inserts the default register between IDENTITY and SELF", async () => {
+    const out = await assembleIdentity({ includePersona: true });
+    expect(out).toContain("persona-greg-dry-marker");
+    const idIdx = out.indexOf("identity-marker");
+    const personaIdx = out.indexOf("persona-greg-dry-marker");
+    const selfIdx = out.indexOf("self-marker");
+    expect(personaIdx).toBeGreaterThan(idIdx);
+    expect(selfIdx).toBeGreaterThan(personaIdx);
+  });
+
+  test("explicit persona name overrides the default", async () => {
+    const out = await assembleIdentity({ includePersona: true, persona: "skeptic" });
+    expect(out).toContain("persona-skeptic-marker");
+    expect(out).not.toContain("persona-greg-dry-marker");
+  });
+
+  test("unknown persona falls back to the default register", async () => {
+    const out = await assembleIdentity({ includePersona: true, persona: "does-not-exist" });
+    expect(out).toContain("persona-greg-dry-marker");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -157,7 +189,9 @@ describe("hook ↔ assembleIdentity parity", () => {
       });
       expect(hookResult.status).toBe(0);
 
-      const direct = await assembleIdentity();
+      // The hook runs `hive identity emit`, an interactive path that includes
+      // the persona slot — compare against the same.
+      const direct = await assembleIdentity({ includePersona: true });
       expect(hookResult.stdout).toBe(direct);
     } finally {
       await rm(binDir, { recursive: true, force: true });

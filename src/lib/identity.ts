@@ -8,6 +8,27 @@ import { buildTasteLayer } from "./taste";
 
 const IDENTITY_FILES = ["SOUL.md", "IDENTITY.md", "SELF.md", "AGENTS.md", "TRUST.md"];
 
+const DEFAULT_PERSONA = "greg-dry";
+
+/** Active persona name: explicit (--persona) → HIVE_PERSONA env → default. */
+function resolvePersonaName(explicit?: string | null): string {
+  return explicit || process.env.HIVE_PERSONA || DEFAULT_PERSONA;
+}
+
+/**
+ * Load the swappable persona register from ~/.hive/personas/<name>.md.
+ * Falls back to the default persona, then to null — a missing or misnamed
+ * persona must never block a session, only quietly drop the register slot.
+ */
+async function loadPersona(home: string, explicit?: string | null): Promise<string | null> {
+  const name = resolvePersonaName(explicit);
+  const file = join(home, "personas", `${name}.md`);
+  if (existsSync(file)) return await Bun.file(file).text();
+  const fallback = join(home, "personas", `${DEFAULT_PERSONA}.md`);
+  if (name !== DEFAULT_PERSONA && existsSync(fallback)) return await Bun.file(fallback).text();
+  return null;
+}
+
 interface CanonicalIdentityOpts {
   /** Project ID for memory + stack hint. Omit for a project-neutral prefix. */
   projectId?: string | null;
@@ -15,6 +36,14 @@ interface CanonicalIdentityOpts {
   includeProjectMemory: boolean;
   /** Target harness — affects stack-hint wording (Codex has no Skill tool). Default "claude". */
   harness?: Harness;
+  /**
+   * Insert the swappable persona register after IDENTITY. Interactive sessions
+   * only — dispatch, heartbeat, campaigns, and doctor leave this false so their
+   * identity stays persona-neutral (scope: interactive, per design 2026-06).
+   */
+  includePersona?: boolean;
+  /** Explicit persona name (from --persona). Falls back to HIVE_PERSONA env, then default. */
+  persona?: string | null;
 }
 
 /**
@@ -36,13 +65,21 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
   const paths = getHivePaths();
   const parts: string[] = [];
 
-  // 1. Soul stack
+  // 1. Soul stack — the swappable persona register slots in after IDENTITY,
+  //    interactive sessions only (dispatch/heartbeat pass includePersona: false).
   for (const file of IDENTITY_FILES) {
     const filePath = join(paths.home, file);
     if (existsSync(filePath)) {
       const content = await Bun.file(filePath).text();
       parts.push(content.trim());
       parts.push("\n---\n");
+    }
+    if (file === "IDENTITY.md" && opts.includePersona) {
+      const persona = await loadPersona(paths.home, opts.persona);
+      if (persona) {
+        parts.push(persona.trim());
+        parts.push("\n---\n");
+      }
     }
   }
 
@@ -78,11 +115,17 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
   return parts.join("\n");
 }
 
-export async function assembleIdentity(opts?: { harness?: Harness }): Promise<string> {
+export async function assembleIdentity(opts?: {
+  harness?: Harness;
+  includePersona?: boolean;
+  persona?: string | null;
+}): Promise<string> {
   return buildCanonicalIdentity({
     projectId: resolveProjectFromCwd(),
     includeProjectMemory: true,
     harness: opts?.harness,
+    includePersona: opts?.includePersona,
+    persona: opts?.persona,
   });
 }
 

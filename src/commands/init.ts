@@ -178,6 +178,12 @@ export async function initCommand(args: string[]): Promise<void> {
   await writeIfMissing(paths.trust, "TRUST.md", replacements);
   await writeIfMissing(paths.config, "config.md");
 
+  // Default swappable persona register (user-editable; non-clobbering).
+  await writeIfMissing(
+    join(paths.home, "personas", "greg-dry.md"),
+    "personas/greg-dry.md",
+  );
+
   // Install HIVE agents and skills to ~/.claude/
   const claudeAgentsDir = join(process.env.HOME || "", ".claude", "agents");
   const agentsInstalled = await installTemplateDir("agents", claudeAgentsDir);

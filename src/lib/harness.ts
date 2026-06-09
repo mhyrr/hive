@@ -18,6 +18,8 @@ export type ClaudeMode = "append" | "owned" | "bare";
 export interface HarnessSelection {
   harness: Harness;
   claudeMode: ClaudeMode;
+  /** Swappable persona register name (from --persona). Undefined → identity falls to HIVE_PERSONA env, then default. */
+  persona?: string;
   remainingArgs: string[];
 }
 
@@ -25,12 +27,14 @@ export function resolveHarness(args: string[]): HarnessSelection {
   const remaining: string[] = [];
   let harness: Harness = "claude-code";
   let claudeMode: ClaudeMode = "append";
+  let persona: string | undefined;
   if (process.env.HIVE_HARNESS === "codex") harness = "codex";
   if (process.env.HIVE_HARNESS === "pi") harness = "pi";
   if (process.env.HIVE_CLAUDE_MODE === "owned") claudeMode = "owned";
   if (process.env.HIVE_CLAUDE_MODE === "bare") claudeMode = "bare";
 
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
     if (arg === "-x" || arg === "--codex") {
       harness = "codex";
       continue;
@@ -51,8 +55,16 @@ export function resolveHarness(args: string[]): HarnessSelection {
       claudeMode = "bare";
       continue;
     }
+    if (arg === "--persona" && args[i + 1]) {
+      persona = args[++i];
+      continue;
+    }
+    if (arg.startsWith("--persona=")) {
+      persona = arg.slice("--persona=".length);
+      continue;
+    }
     remaining.push(arg);
   }
 
-  return { harness, claudeMode, remainingArgs: remaining };
+  return { harness, claudeMode, persona, remainingArgs: remaining };
 }
