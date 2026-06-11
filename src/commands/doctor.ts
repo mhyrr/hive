@@ -444,6 +444,32 @@ function checkMcp(): Check[] {
       });
     }
 
+    // Duplicate registrations shadow the user-scope entry (and its alwaysLoad).
+    // Project-local scope: ~/.claude.json projects.<path>.mcpServers.hive
+    const projectEntries = (config.projects ?? {}) as Record<string, { mcpServers?: Record<string, unknown> }>;
+    const shadowing = Object.entries(projectEntries)
+      .filter(([, p]) => p?.mcpServers?.hive)
+      .map(([path]) => path);
+    // Legacy file: ~/.claude/.mcp.json
+    const legacyMcpPath = join(process.env.HOME || "", ".claude", ".mcp.json");
+    if (existsSync(legacyMcpPath)) {
+      try {
+        const legacy = JSON.parse(require("fs").readFileSync(legacyMcpPath, "utf-8"));
+        if (legacy?.mcpServers?.hive) shadowing.push("~/.claude/.mcp.json");
+      } catch {
+        // intentional: unreadable legacy file is not this check's failure
+      }
+    }
+    if (shadowing.length === 0) {
+      checks.push({ status: "pass", label: "no duplicate hive registrations shadowing user scope" });
+    } else {
+      checks.push({
+        status: "warn",
+        label: `duplicate hive registration(s) shadow user scope: ${shadowing.join(", ")}`,
+        detail: "These override the user-scope entry and drop alwaysLoad — remove them; user scope is canonical",
+      });
+    }
+
     // Validate the MCP command is resolvable
     const mcpCommand = servers.hive.command as string;
     const mcpArgs = (servers.hive.args ?? []) as string[];

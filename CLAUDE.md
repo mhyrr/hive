@@ -10,7 +10,7 @@ Pi owns provider/model selection. Codex is optional via `hive -x` /
 `hive --codex`; `hive init` wires `~/.codex/AGENTS.md`,
 `[mcp_servers.hive]`, and a Codex SessionStart hook when Codex is installed.
 
-HIVE MCP tools (pre-fetched by the hook):
+HIVE MCP tools (loaded eagerly via `alwaysLoad: true` on the MCP registration):
 - `convene_council` — Multi-model deliberation. Standard, analyst, or dialectic modes.
 - `read_hive_memory` — Read project intelligence (full knowledge or lightweight index).
 - `write_hive_memory` — Queue a fact/convention/decision/question as a candidate. Mid-session writes go to `candidates.md`; the nightly verifier (Pass V) admits them to canon.
