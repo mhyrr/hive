@@ -182,9 +182,13 @@ describe("hook ↔ assembleIdentity parity", () => {
     } catch { /* already linked */ }
 
     try {
+      // Strip the dedup guard: hive-launched sessions set HIVE_IDENTITY_IN_PROMPT=1,
+      // which makes the hook exit early with empty output.
+      const hookEnv = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, HIVE_HOME: tempHive };
+      delete hookEnv.HIVE_IDENTITY_IN_PROMPT;
       const hookResult = spawnSync("bash", [hookPath], {
         cwd: tempCwd,
-        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, HIVE_HOME: tempHive },
+        env: hookEnv,
         encoding: "utf-8",
       });
       expect(hookResult.status).toBe(0);
