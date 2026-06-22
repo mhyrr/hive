@@ -22,13 +22,13 @@ HIVE already has a reflection step that distills session learnings into a flat, 
 
 ## 3. What we're aiming at (target system, one paragraph)
 
-A **taste-extraction pass** that runs on the nightly pipeline, mines session transcripts for divergence events using a cheap-flag / expensive-analyze cascade, and emits *typed* candidate rules — each carrying its reasoning, its originating evidence, a tier, and a scope. Those candidates flow through a **validation-by-replay** gate (does this rule predict the corrections I actually made?) into a **judgment/policy memory layer that sits next to the fact canon, not inside it** — a tiered, scoped, lifecycle-managed "constitution" of deterministic checks + soft reasoning units. A separate **rigor agent** supplies recall (catches junior-isms the human missed), and the human's only new job is curating candidate rules (approve/edit/kill), not labeling everything.
+A **taste-extraction pass** that runs on the nightly pipeline, mines session transcripts for divergence events using a cheap-flag / expensive-analyze cascade, and emits *typed* candidate rules — each carrying its reasoning, its originating evidence, a tier, a scope, and a **category** (which aspect of the work the judgment governs: design / implementation / test-eval / ideas). Those candidates flow through a **validation-by-replay** gate (does this rule predict the corrections I actually made?) into a **judgment/policy memory layer that sits next to the fact canon, not inside it** — a tiered, scoped, lifecycle-managed "constitution" of deterministic checks + soft reasoning units. A separate **rigor agent** supplies recall (catches junior-isms the human missed), and the human's only new job is curating candidate rules (approve/edit/kill), not labeling everything.
 
 ## 4. Decided design directions (don't re-litigate these)
 
 ### 4a. The extraction pass — cost-tiered cascade
 - **Pass A — Flag (Haiku/Sonnet, high-recall, cheap):** locate divergence events; do not analyze. Event taxonomy: `CORRECTION`, `REWRITE`, `DISSATISFACTION`, `REDO`, `PREFERENCE`, `SELF_CORRECTION`, `ABANDONED_PATH`, `PRAISE`. Output: `{anchor, type_guess, trigger_quote, crude_confidence}`.
-- **Pass B — Analyze (Opus, over flagged ~10% only):** for each event answer: **delta** (before→after), **reason** (`stated` vs `inferred`), **rule** (the generalizing heuristic, framed senior-vs-junior where it fits), **tier** (`DETERMINISTIC` / `FUZZY` / `CONTEXTUAL`), **scope** (`project` / `general-taste` / `session-noise`), **check_sketch** (if deterministic), **evidence** (quote + confidence + dedupe_key).
+- **Pass B — Analyze (Opus, over flagged ~10% only):** for each event answer: **delta** (before→after), **reason** (`stated` vs `inferred`), **rule** (the generalizing heuristic, framed senior-vs-junior where it fits), **tier** (`DETERMINISTIC` / `FUZZY` / `CONTEXTUAL`), **scope** (`project` / `general-taste` / `session-noise`), **category** (`DESIGN` / `IMPLEMENTATION` / `TEST_EVAL` / `IDEAS` — see §4e), **check_sketch** (if deterministic), **evidence** (quote + confidence + dedupe_key).
 - **Pass C — Consolidate & gate:** dedupe (within session + against canon), **recurrence gate** (canonize only on recurrence or explicit confirmation), conflict detection, route by tier.
 - **Pass A′ — Recall (separate, lower-confidence):** the rigor agent scans for matches to *known* junior-isms even where the human didn't react; surfaced as "you may have missed this," never auto-adopted. Kept separate so it doesn't pollute the high-precision human signal.
 
@@ -36,10 +36,22 @@ A **taste-extraction pass** that runs on the nightly pipeline, mines session tra
 - **Episodic** → session logs (exists).
 - **Semantic / facts** → flat retrieval canon (exists); add graph edges *only* for the relational/temporal slice, GBrain-style (plain-text + mention-wired edges), and only if/when the relational blind spot bites. Graph is **not** the default.
 - **Procedural / normative (taste)** → **NEW judgment layer**, structured as:
-  - A **taste unit** = `{reasoning, tier (hard|deterministic|soft-fuzzy), scope (always|glob|agent-requested), evidence[] (immutable), canonical_example {bad,good}, recurrence, confidence, status, last_fired, decay}`.
+  - A **taste unit** = `{reasoning, tier (hard|deterministic|soft-fuzzy), scope (always|glob|agent-requested), category (design|implementation|test-eval|ideas — see §4e), evidence[] (immutable), canonical_example {bad,good}, recurrence, confidence, status, last_fired, decay}`.
   - **Deterministic tier** compiles to a Credo/Semgrep/lint-style check + rationale (the `ex_slop` end).
   - **Soft-fuzzy tier** is a reasoning criterion the rigor agent applies (the constitution end).
   - **Scoped activation** (Cursor-style) so we never blow the ~150-instruction follow-budget; deterministic checks always-on, fuzzy rules loaded by scope.
+
+### 4e. The category dimension — what the judgment is *about*
+Tier and scope describe *how* a rule is enforced and *where by breadth* it activates. They don't capture the thing a reader most needs to route a rule correctly: **which aspect of the work it governs.** Taste isn't general-across-the-board — a judgment is almost always *about* a specific facet of building, and it should only be in play when that facet is live. So every taste unit carries a **category**, a small fixed set (deliberately not extensible on spec — taxonomy sprawl is the failure mode):
+
+- **`DESIGN`** — architecture, interfaces, structure, and the planning/scheduling that precedes code. "Principles of design" live here: how the thing is shaped, sequenced, and decomposed before/while the approach is chosen.
+- **`IMPLEMENTATION`** — code-level craft and convention, including the language/tech/stack-specific rules (DB foreign-key style, naming, error handling). This is where most *deterministic-tier* checks land and where rules are most often glob-scoped to a tech.
+- **`TEST_EVAL`** — testing strategy and eval design: what counts as adequate coverage, what "good verification" looks like, how to judge whether a result is actually good (directly serves the §2 "verification is the bottleneck" thesis).
+- **`IDEAS`** — research/innovation-flavored judgment: novelty, problem framing, problem selection, exploration taste ("is this even the right idea?"). The least deterministic, most fuzzy/contextual category.
+
+**Category is orthogonal to tier and scope** — it's a third independent facet, not a re-slicing of either. The same judgment varies freely across all three: your "foreign keys should look like X" example is `category: IMPLEMENTATION`, `tier: DETERMINISTIC`, `scope: glob **/*.sql`. A design judgment can be project-scoped or general; an implementation judgment can be deterministic or fuzzy. Crucially, **language/tech-specificity is a scope property, not a category** — the *specificity* rides on scope (glob/always), while category names the *kind* of judgment. Keep the two from collapsing into each other.
+
+**Why it earns its place:** category is the primary signal for **when a rule is used.** It feeds scoped activation (§4b, open Q4) and the rigor agent (§4d, open Q7): load `DESIGN` units in planning/design contexts, `IMPLEMENTATION` units when editing code, `TEST_EVAL` when writing tests/evals, `IDEAS` in research/exploration. Without it, every fuzzy rule is a candidate for every context, which re-introduces the instruction-budget cliff we're trying to avoid. (Open boundary call: planning/scheduling is folded into `DESIGN` rather than split out as its own category — flagged in §6 for the design session to confirm or break out.)
 
 ### 4c. The fickleness fix — validation by replay
 A candidate rule is promoted only if it **predicts past corrections**: replay it over prior sessions — does it flag what you actually corrected without flagging what you accepted? Your correction history *is* the held-out eval set. No external ground truth needed. (Pattern: MAC's accept/edit/reject + held-out validation + pruning.)
@@ -67,6 +79,7 @@ A candidate rule is promoted only if it **predicts past corrections**: replay it
 6. **Relationship to existing canon + candidates pipeline:** does the judgment layer reuse the candidates→canon machinery, or run parallel? What changes in the nightly orchestrator passes?
 7. **Rigor agent design:** model, cadence, where its "known junior-isms" come from (the canon it applies), and its precision threshold.
 8. **Decay/expiry policy:** what makes a rule go stale, and how is "active forgetting" triggered without losing genuinely rare-but-important rules?
+9. **Category boundaries & activation (§4e):** is the fixed four (`DESIGN`/`IMPLEMENTATION`/`TEST_EVAL`/`IDEAS`) the right cut — specifically, does planning/scheduling stay folded into `DESIGN` or break out? How does Pass B assign category reliably, what happens when a judgment spans two (primary + secondary, or forbid multi-category?), and concretely how does category drive which units load in a given context without re-introducing the lookup-memory problem (ties to Q4/Q7)?
 
 ## 7. Suggested first design step (smallest test of the whole thesis)
 Before building anything: point a single Pass-A+B extraction over a handful of *real* past transcripts and look at the candidate rules it emits, tiered. Ask: *do ≥~30% of these match taste I'd genuinely canonize, or is it noise?* If yes, the mine-corrections-from-sessions premise holds and the rest is engineering. If it's mush, the signal isn't where we think and we rethink before building the stores.
