@@ -29,7 +29,7 @@ A **taste-extraction pass** that runs on the nightly pipeline, mines session tra
 ### 4a. The extraction pass — cost-tiered cascade
 - **Pass A — Flag (Haiku/Sonnet, high-recall, cheap):** locate divergence events; do not analyze. Event taxonomy: `CORRECTION`, `REWRITE`, `DISSATISFACTION`, `REDO`, `PREFERENCE`, `SELF_CORRECTION`, `ABANDONED_PATH`, `PRAISE`. Output: `{anchor, type_guess, trigger_quote, crude_confidence}`.
 - **Pass B — Analyze (Opus, over flagged ~10% only):** for each event answer: **delta** (before→after), **reason** (`stated` vs `inferred`), **rule** (the generalizing heuristic, framed senior-vs-junior where it fits), **tier** (`DETERMINISTIC` / `FUZZY` / `CONTEXTUAL`), **scope** (`project` / `general-taste` / `session-noise`), **category** (`IDEAS` / `DESIGN` / `IMPLEMENTATION` / `TEST_EVAL` / `COMMUNICATION` / `PROCESS` — see §4c), **check_sketch** (if deterministic), **evidence** (quote + confidence + dedupe_key).
-- **Pass C — Consolidate & gate:** dedupe (within session + against canon), **recurrence gate** (canonize only on recurrence or explicit confirmation), conflict detection, route by tier.
+- **Pass C — Consolidate & gate:** dedupe (within session + against canon), **recurrence gate** (canonize only on recurrence or explicit confirmation), conflict detection, **principle-coherence linking** (resolve each candidate against the top-level taste principles and record how it ladders up — instantiates / orthogonal / tension; see §4g), route by tier.
 - **Pass A′ — Recall (separate, lower-confidence):** the rigor agent scans for matches to *known* junior-isms even where the human didn't react; surfaced as "you may have missed this," never auto-adopted. Kept separate so it doesn't pollute the high-precision human signal.
 
 ### 4b. Storage — a three-store split (neurosymbolic)
@@ -85,6 +85,19 @@ The whole point is that taste rules **don't cost context budget by existing** �
   (`runs/{DATE}/taste.md` already exists as the nightly readout — this is its canonized home.)
 - **What triggers the pull:** `IMPLEMENTATION` is hook-driven and automatic — a file-edit hook maps the edited path's glob → category → query, so editing `**/*.sql` pulls the SQL units without the agent deciding to look. `COMMUNICATION` triggers similarly off the artifact being written (commit/PR/doc). `DESIGN`/`IDEAS` have no file signal, so they're phase- or agent-requested (the `agent-requested` scope value) — one retrieval call, not N resident descriptions.
 
+### 4g. Principle coherence — granular units ↔ apex principles
+There's a hierarchy here, not a flat pile. At the apex sit the **top-level taste principles** — the ~24 high-level, human-qualified judgments that live in the always-on identity file (the promotion target of §4f: "as simple as possible, but no simpler"; "everything lives in its correct place"). Below them is the granular long tail — units that may be very tech- or use-case-specific (Elixir/Phoenix idioms, how to write one SQL line). The bet is that the specific usually *ladders up to* the general: "in an Elixir project, prefer existing Phoenix/Elixir idioms and structures over inventing your own" is an `IMPLEMENTATION` unit that is really a scoped instance of the apex principles above it.
+
+So **Pass C resolves each candidate against the apex principles** and records the relationship — reasoned, never keyword-matched:
+- **Instantiates / specializes** — the candidate is a concrete, scoped expression of a principle. Record the `ladders-up-to` link: it raises confidence in the candidate and files real evidence under the principle.
+- **Orthogonal** — no clear parent. Fine; it stands alone. But a recurring cluster of orphans (especially across categories) is the signal that a *new* apex principle may be emerging — bottom-up.
+- **Tension** — the candidate appears to cut against a principle. **This is surfaced, not failed.** Exactly one of three things is true and only the human, reading the reasoning, can say which: the candidate is wrong, the principle is wrong / too broad and needs revising, or it's a legitimate scoped exception.
+
+Three constraints keep this from becoming the rigid thing we don't want:
+- **Coherence, not a gate.** A candidate is *never* rejected for "violating" a principle. Principles are violable and fallible; we have to be able to break them and to learn when they're wrong. The check informs curation, it doesn't adjudicate.
+- **Bidirectional.** Top-down, a linked unit inherits its principle's rationale, so granular rules don't restate the why. Bottom-up, accumulating specific evidence can demote or revise a principle — the apex is not frozen.
+- **Tractable because we store reasoning, not rule-lists** (§2, thesis 5). Coherence is judged by reasoning over *rationale* (Opus-grade), not by matching rule strings — which is exactly why the reasoning-first stance "takes care of" most of the nebulousness here. The link itself is reasoned and stored as evidence, so a human can audit *why* Pass C thought a unit laddered up or conflicted.
+
 ## 5. Explicitly out of scope (for the design session to NOT do)
 - No learned/parametric reward model for taste (decided against — fickle ground truth + auditability).
 - No graph database adoption for the fact store on spec.
@@ -101,6 +114,7 @@ The whole point is that taste rules **don't cost context budget by existing** �
 7. **Rigor agent design:** model, cadence, where its "known junior-isms" come from (the canon it applies), and its precision threshold.
 8. **Decay/expiry policy:** what makes a rule go stale, and how is "active forgetting" triggered without losing genuinely rare-but-important rules?
 9. **Category boundaries (§4c):** the set is fixed at six — `IDEAS`, `DESIGN`, `IMPLEMENTATION`, `TEST_EVAL` (now spanning deployment/operations), `COMMUNICATION`, `PROCESS`. Remaining: does planning/scheduling stay folded into `DESIGN` or break out? Are the `TEST_EVAL`↔`PROCESS` (operational correctness vs. working method) and `PROCESS`↔`COMMUNICATION` (substance vs. expression of docs) seams clean enough in practice? How does Pass B assign category reliably, and what happens when a judgment spans two — primary + secondary, or forbid multi-category? (Activation mechanics now live in §4f / Q4.)
+10. **Principle-coherence mechanics (§4g):** how is "ladders up to" computed cheaply and reliably (Opus over candidates × the ~24 principles? embeddings as a pre-filter?), what threshold separates *tension* worth surfacing from benign *orthogonal*, how does a recurring orphan cluster get proposed as a new apex principle, and how are principle revisions (the bottom-up path) curated without thrashing the always-on file?
 
 ## 7. Suggested first design step (smallest test of the whole thesis)
 Before building anything: point a single Pass-A+B extraction over a handful of *real* past transcripts and look at the candidate rules it emits, tiered. Ask: *do ≥~30% of these match taste I'd genuinely canonize, or is it noise?* If yes, the mine-corrections-from-sessions premise holds and the rest is engineering. If it's mush, the signal isn't where we think and we rethink before building the stores.
