@@ -5,7 +5,13 @@ import { join } from "node:path";
 
 import type { ModelCaller } from "./extract";
 import { getHivePaths, type HivePaths } from "./paths";
-import { runTasteConsolidate, validateCoherenceDecision, type CoherenceDecision } from "./taste-consolidate";
+import {
+  mergeConsolidateResults,
+  runTasteConsolidate,
+  validateCoherenceDecision,
+  type CoherenceDecision,
+  type TasteConsolidateResult,
+} from "./taste-consolidate";
 import {
   generalTasteDir,
   projectTasteDir,
@@ -222,5 +228,72 @@ describe("scope routing + resilience", () => {
     expect(r.written).toBe(0);
     expect(r.decisions).toHaveLength(0);
     expect(r.usage).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeConsolidateResults — combine per-project TC results into one artifact
+// ---------------------------------------------------------------------------
+
+describe("mergeConsolidateResults", () => {
+  function result(over: Partial<TasteConsolidateResult> = {}): TasteConsolidateResult {
+    return {
+      decisions: [],
+      written: 0,
+      reviewEligible: 0,
+      holding: 0,
+      handoffsToFacts: [],
+      conflicts: [],
+      tensions: [],
+      newPrincipleProposals: [],
+      droppedNoise: 0,
+      droppedNegative: 0,
+      usage: null,
+      errors: [],
+      ...over,
+    };
+  }
+
+  test("sums counts, concatenates lists, and folds usage across projects", () => {
+    const a = result({
+      written: 2,
+      reviewEligible: 1,
+      holding: 1,
+      droppedNoise: 1,
+      newPrincipleProposals: ["alpha proposal"],
+      errors: ["alpha: oops"],
+      usage: { inputTokens: 100, outputTokens: 20, durationMs: 50, provider: "anthropic", model: "claude-opus-4-6", usd: 0.5 },
+    });
+    const b = result({
+      written: 1,
+      holding: 1,
+      droppedNegative: 2,
+      newPrincipleProposals: ["bravo proposal"],
+      usage: { inputTokens: 200, outputTokens: 30, durationMs: 70, provider: "anthropic", model: "claude-opus-4-6", usd: 0.75 },
+    });
+
+    const merged = mergeConsolidateResults([a, b]);
+    expect(merged.written).toBe(3);
+    expect(merged.reviewEligible).toBe(1);
+    expect(merged.holding).toBe(2);
+    expect(merged.droppedNoise).toBe(1);
+    expect(merged.droppedNegative).toBe(2);
+    expect(merged.newPrincipleProposals).toEqual(["alpha proposal", "bravo proposal"]);
+    expect(merged.errors).toEqual(["alpha: oops"]);
+    expect(merged.usage?.inputTokens).toBe(300);
+    expect(merged.usage?.outputTokens).toBe(50);
+    expect(merged.usage?.usd).toBeCloseTo(1.25, 5);
+  });
+
+  test("usage stays null when no project made a coherence call", () => {
+    const merged = mergeConsolidateResults([result(), result()]);
+    expect(merged.usage).toBeNull();
+  });
+
+  test("empty input yields a clean zero result", () => {
+    const merged = mergeConsolidateResults([]);
+    expect(merged.written).toBe(0);
+    expect(merged.decisions).toHaveLength(0);
+    expect(merged.usage).toBeNull();
   });
 });

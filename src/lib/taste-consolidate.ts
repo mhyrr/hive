@@ -553,6 +553,56 @@ function emptyDecision(c: TasteCandidate, routed: RouteTarget): TasteDecision {
   };
 }
 
+/**
+ * Merge per-project TC results into one aggregate for the combined
+ * runs/{DATE}/taste-decisions.{json,md} artifact. The orchestrator runs TC
+ * per project (project context drives store routing), but the morning artifact
+ * is a single file. Per-project usage records still land authoritatively via
+ * appendUsageRecord; the merged `usage` here is only the artifact's summary.
+ */
+export function mergeConsolidateResults(
+  results: TasteConsolidateResult[],
+): TasteConsolidateResult {
+  const merged: TasteConsolidateResult = {
+    decisions: [],
+    written: 0,
+    reviewEligible: 0,
+    holding: 0,
+    handoffsToFacts: [],
+    conflicts: [],
+    tensions: [],
+    newPrincipleProposals: [],
+    droppedNoise: 0,
+    droppedNegative: 0,
+    usage: null,
+    errors: [],
+  };
+  for (const r of results) {
+    merged.decisions.push(...r.decisions);
+    merged.written += r.written;
+    merged.reviewEligible += r.reviewEligible;
+    merged.holding += r.holding;
+    merged.handoffsToFacts.push(...r.handoffsToFacts);
+    merged.conflicts.push(...r.conflicts);
+    merged.tensions.push(...r.tensions);
+    merged.newPrincipleProposals.push(...r.newPrincipleProposals);
+    merged.droppedNoise += r.droppedNoise;
+    merged.droppedNegative += r.droppedNegative;
+    merged.errors.push(...r.errors);
+    if (r.usage) {
+      if (!merged.usage) {
+        merged.usage = { ...r.usage };
+      } else {
+        merged.usage.inputTokens = (merged.usage.inputTokens ?? 0) + (r.usage.inputTokens ?? 0);
+        merged.usage.outputTokens = (merged.usage.outputTokens ?? 0) + (r.usage.outputTokens ?? 0);
+        merged.usage.durationMs = (merged.usage.durationMs ?? 0) + (r.usage.durationMs ?? 0);
+        merged.usage.usd += r.usage.usd;
+      }
+    }
+  }
+  return merged;
+}
+
 const defaultConsolidateCaller: ModelCaller = async (input) => {
   const ctrl = new AbortController();
   const timeoutMs = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 180_000;

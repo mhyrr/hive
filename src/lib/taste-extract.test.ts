@@ -6,6 +6,7 @@ import {
   __PROMPTS,
   callTasteAnalyzer,
   callTasteClassifier,
+  runProjectTasteExtract,
   runTasteExtract,
   validateTasteCandidate,
   validateTasteFlag,
@@ -229,5 +230,87 @@ describe("runTasteExtract", () => {
     expect(res.flaggedCount).toBe(1);
     expect(res.candidates).toHaveLength(1);
     expect(res.candidates[0]!.category).toBe("IMPLEMENTATION");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runProjectTasteExtract — the nightly per-project batched driver
+// ---------------------------------------------------------------------------
+
+describe("runProjectTasteExtract", () => {
+  // Two sessions for one project — the driver batches them into ONE TA call and
+  // ONE TB call (not one pair per session, which runTasteExtract would do).
+  function twoSessionLoad() {
+    const a = correctionTranscript();
+    const b = correctionTranscript();
+    return [
+      { sessionFile: "/Users/x/.claude/projects/-p/a.jsonl", source: "claude" as const, project: "proj", events: a },
+      { sessionFile: "/Users/x/.claude/projects/-p/b.jsonl", source: "claude" as const, project: "proj", events: b },
+    ];
+  }
+
+  test("makes exactly one TA call and one TB call across all the project's sessions", async () => {
+    const loaded = twoSessionLoad();
+    let taCalls = 0;
+    let tbCalls = 0;
+    const caller: ModelCaller = async (input) => {
+      if (input.systemPrompt === __PROMPTS.flag) {
+        taCalls++;
+        // Flag every window the classifier was shown.
+        const ids = [...input.userContent.matchAll(/window (\S+:\d+)/g)].map((m) => m[1]!);
+        return completion(JSON.stringify(ids.map((id) => ({ windowId: id, type_guess: "CORRECTION" }))));
+      }
+      tbCalls++;
+      return completion(
+        JSON.stringify([
+          {
+            category: "IMPLEMENTATION",
+            tier: "FUZZY",
+            scope: { kind: "project" },
+            reasoning: "integrity belongs in the schema",
+            delta: { before: "x", after: "y" },
+            reason_source: "inferred",
+            rule_statement: "use FKs",
+            canonical_example: { bad: "x", good: "y" },
+            check_sketch: null,
+            evidence: [{ anchor: { sessionFile: "f", id: "u3", ts: null }, quote: "no", confidence: 0.9 }],
+            dedupe_key: "fk",
+            provenance: "id=u3",
+          },
+        ]),
+      );
+    };
+
+    const res = await runProjectTasteExtract(loaded, { caller });
+    expect(taCalls).toBe(1);
+    expect(tbCalls).toBe(1);
+    expect(res.windowCount).toBeGreaterThanOrEqual(2); // ≥1 window per session
+    expect(res.flaggedCount).toBe(res.windowCount);
+    expect(res.candidates).toHaveLength(1);
+    // Per-pass usage records the orchestrator turns into TA/TB usage entries.
+    expect(res.usageRecords.map((u) => u.pass)).toEqual(["TA", "TB"]);
+  });
+
+  test("flags-only stops after TA and records only the TA usage", async () => {
+    const loaded = twoSessionLoad();
+    const caller: ModelCaller = async (input) => {
+      const ids = [...input.userContent.matchAll(/window (\S+:\d+)/g)].map((m) => m[1]!);
+      return completion(JSON.stringify(ids.map((id) => ({ windowId: id, type_guess: "CORRECTION" }))));
+    };
+    const res = await runProjectTasteExtract(loaded, { caller, flagsOnly: true });
+    expect(res.candidates).toHaveLength(0);
+    expect(res.usageRecords.map((u) => u.pass)).toEqual(["TA"]);
+  });
+
+  test("no windows ⇒ no model calls", async () => {
+    let calls = 0;
+    const caller: ModelCaller = async () => {
+      calls++;
+      return completion("[]");
+    };
+    const res = await runProjectTasteExtract([], { caller });
+    expect(calls).toBe(0);
+    expect(res.windowCount).toBe(0);
+    expect(res.usageRecords).toHaveLength(0);
   });
 });

@@ -478,3 +478,80 @@ export async function runTasteExtract(
 
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Nightly per-project driver — one TA call + one TB call over a project's whole
+// window (design §4.4, §5.4: "one Haiku call per project", "single Opus call
+// per project"). Distinct from runTasteExtract, which is session-granular for
+// the offline `hive taste extract` workhorse. The orchestrator wants
+// project-batched calls — cheaper (one prompt overhead, not one per session)
+// and TB dedupes across the project's sessions — plus per-pass usage so it can
+// write accurate TA/TB usage records.
+// ---------------------------------------------------------------------------
+
+export interface ProjectTasteUsage {
+  pass: "TA" | "TB";
+  usage: CallUsage;
+}
+
+export interface ProjectTasteResult {
+  flags: TasteFlag[];
+  candidates: TasteCandidate[];
+  windowCount: number;
+  flaggedCount: number;
+  rejected: { flags: number; candidates: number };
+  usageRecords: ProjectTasteUsage[];
+}
+
+export interface RunProjectTasteExtractOptions {
+  caller?: ModelCaller;
+  flagsOnly?: boolean;
+  segmentOptions?: SegmentOptions;
+  onProgress?: (msg: string) => void;
+}
+
+export async function runProjectTasteExtract(
+  loaded: LoadedTranscript[],
+  opts: RunProjectTasteExtractOptions = {},
+): Promise<ProjectTasteResult> {
+  const caller = opts.caller ?? defaultCaller;
+  const result: ProjectTasteResult = {
+    flags: [],
+    candidates: [],
+    windowCount: 0,
+    flaggedCount: 0,
+    rejected: { flags: 0, candidates: 0 },
+    usageRecords: [],
+  };
+
+  // Segment every session in the project's window into one window pool. windowId
+  // is `${basename}:${line}` — unique across a project's sessions (Claude/Codex
+  // session filenames are unique), so the byId map below can't collide.
+  const windows: DivergenceWindow[] = [];
+  for (const t of loaded) windows.push(...segmentWindows(t.events, opts.segmentOptions));
+  result.windowCount = windows.length;
+  if (windows.length === 0) return result;
+
+  // One TA (Haiku) call over all the project's windows.
+  opts.onProgress?.(`${windows.length} windows → classifying`);
+  const flagRes = await callTasteClassifier(windows, caller);
+  result.flags = flagRes.flags;
+  result.rejected.flags = flagRes.rejected;
+  result.flaggedCount = flagRes.flags.length;
+  result.usageRecords.push({ pass: "TA", usage: flagRes.usage });
+
+  if (opts.flagsOnly || flagRes.flags.length === 0) return result;
+
+  // One TB (Opus) call over the flagged windows, fully expanded.
+  const byId = new Map(windows.map((w) => [w.windowId, w]));
+  const flagged = flagRes.flags
+    .map((f) => byId.get(f.windowId))
+    .filter((w): w is DivergenceWindow => !!w);
+  opts.onProgress?.(`${flagged.length} flagged → analyzing`);
+  const analyzeRes = await callTasteAnalyzer(flagged, caller);
+  result.candidates = analyzeRes.candidates;
+  result.rejected.candidates = analyzeRes.rejected;
+  result.usageRecords.push({ pass: "TB", usage: analyzeRes.usage });
+
+  return result;
+}
