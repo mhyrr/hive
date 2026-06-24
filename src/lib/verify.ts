@@ -120,15 +120,9 @@ export interface VerifierGap {
   source: string;                // citation back into the inputs
 }
 
-export interface VerifierTaste {
-  reinforced: Array<{ principle: string; evidence: string }>;
-  corrections: Array<{ pattern: string; evidence: string }>;
-}
-
 export interface VerifierOutput {
   decisions: VerifierDecision[];
   gaps: VerifierGap[];
-  taste: VerifierTaste;
   briefing_markdown: string;
 }
 
@@ -178,26 +172,11 @@ export function validateVerifierOutput(obj: unknown): VerifierOutput | { error: 
     gaps.push({ subject: g.subject, observation: g.observation, source: g.source });
   }
 
-  if (!o.taste || typeof o.taste !== "object") return { error: "taste missing" };
-  const t = o.taste as Record<string, unknown>;
-  const reinforced: VerifierTaste["reinforced"] = [];
-  const corrections: VerifierTaste["corrections"] = [];
-  for (const r of (Array.isArray(t.reinforced) ? t.reinforced : []) as Array<Record<string, unknown>>) {
-    if (typeof r.principle === "string" && typeof r.evidence === "string") {
-      reinforced.push({ principle: r.principle, evidence: r.evidence });
-    }
-  }
-  for (const c of (Array.isArray(t.corrections) ? t.corrections : []) as Array<Record<string, unknown>>) {
-    if (typeof c.pattern === "string" && typeof c.evidence === "string") {
-      corrections.push({ pattern: c.pattern, evidence: c.evidence });
-    }
-  }
-
   if (typeof o.briefing_markdown !== "string" || !o.briefing_markdown.trim()) {
     return { error: "briefing_markdown missing or empty" };
   }
 
-  return { decisions, gaps, taste: { reinforced, corrections }, briefing_markdown: o.briefing_markdown };
+  return { decisions, gaps, briefing_markdown: o.briefing_markdown };
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +211,7 @@ export function parseVerifierJson(raw: string): unknown {
 
 const VERIFIER_SYSTEM_PROMPT = `You are the verifier for HIVE's nightly memory pipeline. Sonnet (in Pass B and C) extracted candidates from the day's signal; you decide what becomes canon and write the morning briefing.
 
-# Your four jobs (one call, one JSON object out)
+# Your three jobs (one call, one JSON object out)
 
 ## 1) Per-candidate decisions
 For every candidate from B (per-project), C (cross-project reflections), and every entry in mid-session candidates.md files, choose:
@@ -250,14 +229,7 @@ If the candidate's quoted source isn't visible anywhere in the inputs, **reject 
 ## 2) Gap report
 Things Sonnet missed but should have caught — patterns from the exchanges that didn't land in either candidate batch. Cite the specific source (e.g. "alpha:topRanked[5] — Greg established X but extractor missed it"). Empty array if Sonnet did fine.
 
-## 3) Taste readout
-Read the taste principles in the input. Surface:
-- **reinforced**: principles the day visibly demonstrated, with the evidence
-- **corrections**: patterns where Greg pushed back on something that violated a principle, with evidence
-
-One or two of each, max. Skip if no clear signal.
-
-## 4) Morning briefing
+## 3) Morning briefing
 A single user-facing markdown document Greg reads at 7am. Write in HIVE voice per the SOUL preamble above. Match the template below verbatim for sections, but vary the prose — voice belongs in the headline and per-project bullets, not in section names.
 
 Template:
@@ -279,7 +251,6 @@ Template:
 
 ## Memory + verifier
 - Added: N entries. Superseded: N. Reflections: N.
-- Taste: reinforced <principle> · correction <pattern>
 - Verifier flags: <gap count, or "none">
 \`\`\`
 
@@ -302,10 +273,6 @@ Return ONE JSON object, no fences, no prose around it:
   "gaps": [
     { "subject": "<project or greg/maya/system>", "observation": "...", "source": "..." }
   ],
-  "taste": {
-    "reinforced": [{ "principle": "...", "evidence": "..." }],
-    "corrections": [{ "pattern": "...", "evidence": "..." }]
-  },
   "briefing_markdown": "<full briefing per template>"
 }
 
@@ -590,7 +557,6 @@ export interface RunVerifierResult {
   artifacts: {
     decisionsPath: string;
     gapsPath: string;
-    tastePath: string;
     briefingPath: string;
     verifierOutputPath: string;
     usagePath: string;
@@ -689,42 +655,19 @@ function formatGapsMarkdown(gaps: VerifierGap[]): string {
   return lines.join("\n") + "\n";
 }
 
-function formatTasteMarkdown(taste: VerifierTaste): string {
-  const lines = ["# Taste readout", ""];
-  if (taste.reinforced.length > 0) {
-    lines.push("## Reinforced");
-    for (const r of taste.reinforced) {
-      lines.push(`- **${r.principle}** — ${r.evidence}`);
-    }
-    lines.push("");
-  }
-  if (taste.corrections.length > 0) {
-    lines.push("## Corrections");
-    for (const c of taste.corrections) {
-      lines.push(`- **${c.pattern}** — ${c.evidence}`);
-    }
-    lines.push("");
-  }
-  if (taste.reinforced.length === 0 && taste.corrections.length === 0) {
-    lines.push("No clear signal today.");
-  }
-  return lines.join("\n");
-}
-
 export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifierResult> {
   const runDir = join(opts.paths.memoryRunsDir, opts.date);
   await mkdir(runDir, { recursive: true });
 
   const decisionsPath = join(runDir, "decisions.json");
   const gapsPath = join(runDir, "gaps.md");
-  const tastePath = join(runDir, "taste.md");
   const briefingPath = join(runDir, "briefing.md");
   const fullOutputPath = join(runDir, "verifier-output.json");
 
   // Clear any stale artifacts from a prior run on this date before the LLM
   // call. If Opus fails, downstream sees absence (correct) rather than
   // yesterday's success masquerading as today's.
-  for (const p of [decisionsPath, gapsPath, tastePath, briefingPath, fullOutputPath]) {
+  for (const p of [decisionsPath, gapsPath, briefingPath, fullOutputPath]) {
     await rm(p, { force: true });
   }
 
@@ -738,7 +681,6 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
 
   await Bun.write(decisionsPath, JSON.stringify({ decisions: result.output.decisions }, null, 2));
   await Bun.write(gapsPath, formatGapsMarkdown(result.output.gaps));
-  await Bun.write(tastePath, formatTasteMarkdown(result.output.taste));
   // Refine Opus's prose before landing — fixes flaky footer counts and surfaces
   // gaps as a section instead of just a count.
   const refined = refineBriefing(
@@ -767,7 +709,6 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
     artifacts: {
       decisionsPath,
       gapsPath,
-      tastePath,
       briefingPath,
       verifierOutputPath: fullOutputPath,
       usagePath: usagePath(opts.paths, opts.date),

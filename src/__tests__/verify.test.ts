@@ -210,10 +210,6 @@ const validOutput = {
     },
   ],
   gaps: [{ subject: "alpha", observation: "missed X", source: "topRanked[5]" }],
-  taste: {
-    reinforced: [{ principle: "ship multi-subsystem in layers", evidence: "saw it" }],
-    corrections: [],
-  },
   briefing_markdown: "# HIVE — 2026-04-26\n\n## Headline\nA tight day.\n",
 };
 
@@ -467,7 +463,7 @@ Quiet day.
 });
 
 describe("runVerifier (end-to-end with synthetic home)", () => {
-  test("writes decisions/gaps/taste/briefing + appends usage record", async () => {
+  test("writes decisions/gaps/briefing + appends usage record", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-verify-e2e-"));
     const paths = await ensureHiveScaffold(home);
 

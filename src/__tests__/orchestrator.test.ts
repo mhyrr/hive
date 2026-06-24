@@ -34,7 +34,6 @@ function makeStub(behavior: StubBehavior): ModelCaller {
       text = behavior.vResponse ?? `{
         "decisions": [],
         "gaps": [],
-        "taste": { "reinforced": [], "corrections": [] },
         "briefing_markdown": "# HIVE — stub\\n\\n## Headline\\nStubbed run."
       }`;
     } else if (input.systemPrompt.includes("self-reflection extractor")) {
@@ -147,7 +146,6 @@ describe("runNightly — explicit --date threads through every pass", () => {
       vResponse: JSON.stringify({
         decisions: [],
         gaps: [],
-        taste: { reinforced: [], corrections: [] },
         briefing_markdown: `# HIVE — ${date}\n\n## Headline\nDated.`,
       }),
     });
@@ -194,7 +192,6 @@ describe("runNightly — stale artifact safety", () => {
       vResponse: JSON.stringify({
         decisions: [],
         gaps: [],
-        taste: { reinforced: [], corrections: [] },
         briefing_markdown: "# HIVE",
       }),
     });
@@ -261,7 +258,6 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
           { candidate_id: "C[0]", action: "accept" },
         ],
         gaps: [],
-        taste: { reinforced: [], corrections: [] },
         briefing_markdown: `# HIVE — ${date}\n\n## Headline\nFull pipeline test landed.`,
       }),
     });
@@ -316,7 +312,6 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
       vResponse: JSON.stringify({
         decisions: [],
         gaps: [],
-        taste: { reinforced: [], corrections: [] },
         briefing_markdown: `# HIVE — ${date}\n\n## Headline\nDry-run.`,
       }),
     });
@@ -347,7 +342,6 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
       vResponse: JSON.stringify({
         decisions: [],
         gaps: [],
-        taste: { reinforced: [], corrections: [] },
         briefing_markdown: `# HIVE — ${date}`,
       }),
     });

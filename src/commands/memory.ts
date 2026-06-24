@@ -287,7 +287,6 @@ export async function memoryCommand(args: string[]): Promise<void> {
     console.log(`Wrote artifacts:`);
     console.log(`  decisions → ${result.artifacts.decisionsPath}`);
     console.log(`  gaps      → ${result.artifacts.gapsPath}`);
-    console.log(`  taste     → ${result.artifacts.tastePath}`);
     console.log(`  briefing  → ${result.artifacts.briefingPath}`);
     console.log(
       `Decisions: ${accepts} accept · ${supersedes} supersede · ${merges} merge · ${rejects} reject`,
