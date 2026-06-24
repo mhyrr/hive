@@ -471,6 +471,10 @@ describe("runNightly — taste track", () => {
     expect(tb.length).toBe(1);
     expect(existsSync(join(runDir, "taste-decisions.json"))).toBe(true);
     expect(existsSync(join(runDir, "taste-decisions.md"))).toBe(true);
+    // Deprecation: Pass V ran (briefing landed) but the old taste.md readout is
+    // gone — taste-decisions.md is its replacement.
+    expect(existsSync(join(runDir, "taste.md"))).toBe(false);
+    expect(result.passes.V.status).toBe("complete");
 
     // TC wrote the unit to the store (holding — single session, below the gate).
     const units = await readTasteUnits(projectTasteDir(paths, "alpha"), "IMPLEMENTATION");
