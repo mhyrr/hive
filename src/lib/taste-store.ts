@@ -248,6 +248,72 @@ export async function writeTasteUnit(
 }
 
 // ---------------------------------------------------------------------------
+// Curation lifecycle — promote / reject / negatives (design §10)
+// ---------------------------------------------------------------------------
+
+export async function listPendingUnits(storeDir: string): Promise<TasteUnit[]> {
+  return (await readTasteUnits(storeDir)).filter((u) => u.status === "pending");
+}
+
+/** Flip a unit's status (e.g. pending → active on human approval). */
+export async function setUnitStatus(
+  storeDir: string,
+  hash: string,
+  status: TasteUnitStatus,
+): Promise<boolean> {
+  for (const cat of TASTE_CATEGORIES) {
+    const units = await readTasteUnits(storeDir, cat);
+    const idx = units.findIndex((u) => u.hash === hash);
+    if (idx >= 0) {
+      units[idx] = { ...units[idx]!, status };
+      await Bun.write(categoryFile(storeDir, cat), renderCategoryFile(cat, units));
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Drop a unit from its category file and its decay sidecar. */
+export async function removeUnit(storeDir: string, hash: string): Promise<boolean> {
+  for (const cat of TASTE_CATEGORIES) {
+    const units = await readTasteUnits(storeDir, cat);
+    const next = units.filter((u) => u.hash !== hash);
+    if (next.length !== units.length) {
+      await Bun.write(categoryFile(storeDir, cat), renderCategoryFile(cat, next));
+      const meta = await readTasteMeta(storeDir);
+      delete meta.entries[hash];
+      await writeTasteMeta(storeDir, meta);
+      return true;
+    }
+  }
+  return false;
+}
+
+function negativesFile(storeDir: string): string {
+  return join(storeDir, "_negatives.json");
+}
+
+export async function readNegatives(storeDir: string): Promise<string[]> {
+  const f = Bun.file(negativesFile(storeDir));
+  try {
+    if (await f.exists()) return await f.json();
+  } catch {
+    // intentional: corrupted negatives — start fresh
+  }
+  return [];
+}
+
+/** Record a killed unit's dedupe_key so it isn't re-proposed (design §10). */
+export async function recordNegative(storeDir: string, dedupeKey: string): Promise<void> {
+  const negs = await readNegatives(storeDir);
+  if (!negs.includes(dedupeKey)) {
+    negs.push(dedupeKey);
+    await mkdir(storeDir, { recursive: true });
+    await Bun.write(negativesFile(storeDir), JSON.stringify(negs, null, 2));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Search — BM25 × strength × decay, category-prefiltered, top-K + floor (§7.2)
 // ---------------------------------------------------------------------------
 

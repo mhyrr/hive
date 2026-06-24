@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { UsageError } from "../lib/errors";
@@ -6,10 +6,25 @@ import { ensureHiveScaffold } from "../lib/paths";
 import { formatUsd } from "../lib/pricing";
 import { loadTranscripts } from "../lib/transcript";
 import { segmentWindows } from "../lib/taste-segment";
-import { runTasteExtract, type TasteExtractResult } from "../lib/taste-extract";
+import { runTasteExtract, validateTasteCandidate, type TasteExtractResult } from "../lib/taste-extract";
+import {
+  generalTasteDir,
+  listPendingUnits,
+  projectTasteDir,
+  readNegatives,
+  recordNegative,
+  removeUnit,
+  setUnitStatus,
+  writeTasteUnit,
+  type TasteUnit,
+} from "../lib/taste-store";
 import type { TasteCandidate } from "../lib/taste-types";
 
 const USAGE = `Usage:
+  hive taste review [options]             Curate pending candidates: y/n keypress stepper
+    --candidates <path...>               Import candidate JSON (from a run) as pending first
+    --project <name>                     Review a project's store (default: cross-project)
+
   hive taste extract [options]            Mine taste candidates from transcripts (design §13)
 
   Sources (pick one; defaults to the last 24h):
@@ -174,10 +189,225 @@ async function extractCommand(rest: string[]): Promise<void> {
   if (p.json) console.log(JSON.stringify(result, null, 2));
 }
 
+// ---------------------------------------------------------------------------
+// `hive taste review` — a y/n keypress stepper (design §10)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read single keypresses. In a TTY this is raw mode (no Enter needed); under
+ * piped input it consumes one non-whitespace char per call (so it's testable
+ * with `echo "y n q" | hive taste review`).
+ */
+function makeKeyReader() {
+  const stdin = process.stdin;
+  const isTTY = Boolean(stdin.isTTY);
+  if (isTTY && stdin.setRawMode) stdin.setRawMode(true);
+  stdin.resume();
+  let buffer = "";
+  const waiters: Array<(c: string) => void> = [];
+  const flush = () => {
+    while (waiters.length > 0) {
+      let ch = "";
+      while (buffer.length > 0) {
+        const c = buffer[0]!;
+        buffer = buffer.slice(1);
+        if (c === "\n" || c === "\r" || c === " " || c === "\t") continue;
+        ch = c;
+        break;
+      }
+      if (!ch) return;
+      waiters.shift()!(ch);
+    }
+  };
+  const onData = (d: Buffer) => {
+    buffer += d.toString("utf-8");
+    flush();
+  };
+  // On EOF (piped input runs out, or the stream closes), resolve any waiter as
+  // quit so the loop ends cleanly instead of hanging.
+  const onEnd = () => {
+    while (waiters.length > 0) waiters.shift()!("q");
+  };
+  stdin.on("data", onData);
+  stdin.on("end", onEnd);
+  return {
+    next(): Promise<string> {
+      return new Promise((res) => {
+        waiters.push(res);
+        flush();
+      });
+    },
+    close() {
+      stdin.off("data", onData);
+      stdin.off("end", onEnd);
+      if (isTTY && stdin.setRawMode) stdin.setRawMode(false);
+      stdin.pause();
+    },
+  };
+}
+
+function wrap(text: string, width: number, indent: string): string {
+  const words = (text || "").trim().split(/\s+/);
+  const out: string[] = [];
+  let line = indent;
+  for (const w of words) {
+    if (line.length + 1 + w.length > width && line.trim()) {
+      out.push(line);
+      line = indent + w;
+    } else {
+      line = line === indent ? indent + w : `${line} ${w}`;
+    }
+  }
+  if (line.trim()) out.push(line);
+  return out.join("\n");
+}
+
+function renderCandidate(u: TasteUnit, idx: number, total: number): string {
+  const W = 74;
+  const bar = "─".repeat(W);
+  const glob = u.scope.glob ? `  ${u.scope.glob}` : "";
+  const lines: string[] = [];
+  lines.push(`  taste review   ${idx + 1} / ${total}`);
+  lines.push(bar);
+  lines.push(
+    `  ${u.category}${u.secondary_category ? ` +${u.secondary_category}` : ""}  ·  ${u.tier}  ·  ${u.scope.kind}${glob}  ·  ${u.reason_source}  ·  seen ${u.recurrence}×`,
+  );
+  lines.push("");
+  lines.push("  RULE");
+  lines.push(wrap(u.rule_statement, W, "    "));
+  lines.push("");
+  lines.push("  WHY");
+  lines.push(wrap(u.reasoning, W, "    "));
+  if (u.canonical_example?.bad || u.canonical_example?.good) {
+    lines.push("");
+    lines.push("  EXAMPLE");
+    if (u.canonical_example.bad) lines.push(wrap(`✗ ${u.canonical_example.bad}`, W, "    "));
+    if (u.canonical_example.good) lines.push(wrap(`✓ ${u.canonical_example.good}`, W, "    "));
+  }
+  if (u.check_sketch) {
+    lines.push("");
+    lines.push("  CHECK");
+    lines.push(wrap(u.check_sketch, W, "    "));
+  }
+  if (u.ladders_up_hint) {
+    lines.push("");
+    lines.push("  LADDERS UP");
+    lines.push(wrap(`↑ ${u.ladders_up_hint}`, W, "    "));
+  }
+  lines.push("");
+  lines.push("  EVIDENCE");
+  for (const e of u.evidence) lines.push(wrap(`"${e.quote}"  [${e.anchor.id}]`, W, "    "));
+  lines.push("");
+  lines.push(bar);
+  lines.push("  [y] approve → store     [n] reject     [s] skip     [q] quit");
+  return lines.join("\n");
+}
+
+interface ReviewArgs {
+  candidates: string[];
+  project?: string;
+}
+
+function parseReviewArgs(rest: string[]): ReviewArgs {
+  const a: ReviewArgs = { candidates: [] };
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    if (arg === "--candidates") {
+      while (i + 1 < rest.length && !rest[i + 1]!.startsWith("--")) a.candidates.push(rest[++i]!);
+    } else if (arg === "--project") {
+      const v = rest[i + 1];
+      if (v === undefined || v.startsWith("--")) throw new UsageError(`--project requires a value\n\n${USAGE}`);
+      a.project = v;
+      i += 1;
+    } else {
+      throw new UsageError(`Unknown option: ${arg}\n\n${USAGE}`);
+    }
+  }
+  return a;
+}
+
+async function reviewCommand(rest: string[]): Promise<void> {
+  const paths = await ensureHiveScaffold();
+  const a = parseReviewArgs(rest);
+  const storeDir = a.project ? projectTasteDir(paths, a.project) : generalTasteDir(paths);
+
+  // Optional import: seed candidate JSON into the store as pending units.
+  if (a.candidates.length > 0) {
+    let imported = 0;
+    for (const f of a.candidates) {
+      let arr: unknown;
+      try {
+        arr = JSON.parse(await readFile(f, "utf-8"));
+      } catch {
+        console.error(`  ! could not read ${f}`);
+        continue;
+      }
+      for (const raw of Array.isArray(arr) ? arr : []) {
+        const c = validateTasteCandidate(raw);
+        if (c) {
+          await writeTasteUnit(storeDir, c, { status: "pending" });
+          imported++;
+        }
+      }
+    }
+    console.error(`imported ${imported} candidate(s) as pending`);
+  }
+
+  const negatives = new Set(await readNegatives(storeDir));
+  const pending = (await listPendingUnits(storeDir)).filter((u) => !negatives.has(u.dedupe_key));
+  if (pending.length === 0) {
+    console.log("No pending taste candidates to review.");
+    return;
+  }
+
+  const reader = makeKeyReader();
+  let approved = 0;
+  let rejected = 0;
+  let skipped = 0;
+  let i = 0;
+  try {
+    for (; i < pending.length; i++) {
+      const u = pending[i]!;
+      process.stdout.write("\x1b[2J\x1b[H"); // clear + home
+      process.stdout.write(`${renderCandidate(u, i, pending.length)}\n`);
+      let key = "";
+      while (!["y", "n", "s", "q"].includes(key)) {
+        const k = await reader.next();
+        key = k === "\x03" ? "q" : k.toLowerCase();
+      }
+      if (key === "y") {
+        await setUnitStatus(storeDir, u.hash, "active");
+        approved++;
+      } else if (key === "n") {
+        await removeUnit(storeDir, u.hash);
+        await recordNegative(storeDir, u.dedupe_key);
+        rejected++;
+      } else if (key === "s") {
+        skipped++;
+      } else {
+        break; // quit
+      }
+    }
+  } finally {
+    reader.close();
+  }
+
+  process.stdout.write("\x1b[2J\x1b[H");
+  const remaining = pending.length - approved - rejected - skipped;
+  console.log(
+    `taste review — ${approved} approved, ${rejected} rejected, ${skipped} skipped` +
+      (remaining > 0 ? `, ${remaining} left` : ""),
+  );
+  if (approved > 0) console.log(`approved units are now active in ${storeDir}`);
+}
+
 export async function tasteCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
   if (subcommand === "extract") {
     return extractCommand(args.slice(1));
+  }
+  if (subcommand === "review") {
+    return reviewCommand(args.slice(1));
   }
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
     console.log(USAGE);

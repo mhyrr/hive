@@ -4,8 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  listPendingUnits,
+  readNegatives,
   readTasteUnits,
+  recordNegative,
+  removeUnit,
   searchTasteStore,
+  setUnitStatus,
   unitHash,
   writeTasteUnit,
 } from "./taste-store";
@@ -124,5 +129,38 @@ describe("searchTasteStore", () => {
     await searchTasteStore(dir, "uniqueness constraint cardinality", { noBump: true });
     const after = await Bun.file(join(dir, "_meta.json")).json();
     expect(after.entries[unitHash(candidate())].recallCount).toBe(0);
+  });
+});
+
+describe("curation lifecycle", () => {
+  test("listPendingUnits returns only pending units", async () => {
+    await writeTasteUnit(dir, candidate());
+    await writeTasteUnit(dir, candidate({ category: "PROCESS", dedupe_key: "p", reasoning: "do the asked work first" }), { status: "active" });
+    const pending = await listPendingUnits(dir);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.category).toBe("DESIGN");
+  });
+
+  test("setUnitStatus promotes pending → active", async () => {
+    const { hash } = await writeTasteUnit(dir, candidate());
+    expect(await setUnitStatus(dir, hash, "active")).toBe(true);
+    const u = (await readTasteUnits(dir, "DESIGN"))[0]!;
+    expect(u.status).toBe("active");
+    expect(await listPendingUnits(dir)).toHaveLength(0);
+  });
+
+  test("removeUnit drops the unit and its meta entry", async () => {
+    const { hash } = await writeTasteUnit(dir, candidate());
+    expect(await removeUnit(dir, hash)).toBe(true);
+    expect(await readTasteUnits(dir, "DESIGN")).toHaveLength(0);
+    const meta = await Bun.file(join(dir, "_meta.json")).json();
+    expect(meta.entries[hash]).toBeUndefined();
+  });
+
+  test("recordNegative dedupes and persists killed dedupe_keys", async () => {
+    await recordNegative(dir, "trace-all-read-paths");
+    await recordNegative(dir, "trace-all-read-paths");
+    await recordNegative(dir, "other");
+    expect((await readNegatives(dir)).sort()).toEqual(["other", "trace-all-read-paths"]);
   });
 });
