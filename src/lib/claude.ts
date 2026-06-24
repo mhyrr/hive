@@ -55,7 +55,14 @@ function spawnClaude(
     const child = spawn(bin, args, {
       // Force OAuth/subscription path. ANTHROPIC_API_KEY would route through
       // the paid API and bypass the harness entirely.
-      env: { ...process.env, ANTHROPIC_API_KEY: undefined },
+      //
+      // HIVE_IDENTITY_IN_PROMPT=1 suppresses the SessionStart identity hook for
+      // this one-shot extraction subprocess. Without it the hook injects the
+      // full ~63KB HIVE/Maya identity, so a cheap extractor runs *as Maya* —
+      // verbose, slow, and off-task (observed: a Haiku classify ballooning to
+      // 9k output tokens / 159s). Extraction passes carry their own system
+      // prompt and disallow tools; they must not inherit the interactive persona.
+      env: { ...process.env, ANTHROPIC_API_KEY: undefined, HIVE_IDENTITY_IN_PROMPT: "1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -69,11 +76,25 @@ function spawnClaude(
     );
 
     if (signal) {
+      let killTimer: ReturnType<typeof setTimeout> | null = null;
       const onAbort = () => {
         child.kill("SIGTERM");
+        // Escalate if the child ignores SIGTERM, so an aborted call always
+        // settles via 'close' instead of leaving the promise pending forever.
+        // Mirrors the SIGTERM→grace→SIGKILL pattern in campaign/executor.ts.
+        killTimer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // intentional: process already gone
+          }
+        }, 3000);
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      child.on("close", () => signal.removeEventListener("abort", onAbort));
+      child.on("close", () => {
+        if (killTimer) clearTimeout(killTimer);
+        signal.removeEventListener("abort", onAbort);
+      });
     }
 
     child.stdin.write(stdinPayload);
@@ -86,6 +107,10 @@ export async function completeClaudeText(input: {
   systemPrompt: string;
   userContent: string;
   signal?: AbortSignal;
+  /** Override the user's global `alwaysThinkingEnabled` for this one-shot call.
+   * Extended thinking adds large latency + hidden output tokens; classification
+   * and extraction passes don't need it. Default: inherit the user's setting. */
+  disableThinking?: boolean;
 }): Promise<ClaudeTextCompletion> {
   const bin = resolveClaudeBin();
   const startedAt = Date.now();
@@ -123,6 +148,14 @@ export async function completeClaudeText(input: {
     "--max-turns", "1",
     "--permission-mode", "bypassPermissions",
   ];
+
+  // Suppress extended thinking when asked. The user's global
+  // `alwaysThinkingEnabled` otherwise applies to every spawned `claude --print`,
+  // burning thousands of hidden reasoning tokens (and ~60-90s) before a tiny
+  // extraction answer. `--settings` merges on top of the user config.
+  if (input.disableThinking) {
+    args.push("--settings", JSON.stringify({ alwaysThinkingEnabled: false }));
+  }
 
   // Pass the user prompt over stdin to avoid argv length limits and any
   // shell-quoting traps for prompts containing newlines, quotes, or markdown.

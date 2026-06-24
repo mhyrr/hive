@@ -82,11 +82,24 @@ function spawnGemini(
     );
 
     if (signal) {
+      let killTimer: ReturnType<typeof setTimeout> | null = null;
       const onAbort = () => {
         child.kill("SIGTERM");
+        // Escalate to SIGKILL if SIGTERM is ignored, so an aborted call always
+        // settles via 'close' instead of hanging. Mirrors campaign/executor.ts.
+        killTimer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // intentional: process already gone
+          }
+        }, 3000);
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      child.on("close", () => signal.removeEventListener("abort", onAbort));
+      child.on("close", () => {
+        if (killTimer) clearTimeout(killTimer);
+        signal.removeEventListener("abort", onAbort);
+      });
     }
 
     // Gemini reads stdin and appends it to -p prompt, so we pipe the user
