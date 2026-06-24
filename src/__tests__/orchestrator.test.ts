@@ -8,6 +8,9 @@ import { runNightly } from "../lib/orchestrator";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 import { appendProjectMemory, entryHash, readProjectMemorySnapshot } from "../lib/memory";
 import type { ModelCaller } from "../lib/extract";
+import { parseTranscriptContent, type LoadedTranscript } from "../lib/transcript";
+import { loadUsageSummary } from "../lib/pricing";
+import { projectTasteDir, readTasteUnits } from "../lib/taste-store";
 
 // ---------------------------------------------------------------------------
 // Smart model stub — pattern-matches on the system prompt to choose what to
@@ -21,13 +24,36 @@ interface StubBehavior {
   failProjectsB?: Set<string>;
   failC?: boolean;
   failV?: boolean;
+  // Taste track
+  taFlagAll?: boolean; // flag every window shown to the TA classifier
+  tbCandidates?: string; // TB JSON returned for every TB call
+  tcDecisions?: string; // TC coherence JSON returned for every TC call
+  failTASessionFiles?: Set<string>; // throw TA when its content mentions one
 }
 
 function makeStub(behavior: StubBehavior): ModelCaller {
   return async (input) => {
     let text: string;
     let model = "claude-sonnet-4-6";
-    if (input.systemPrompt.includes("verifier for HIVE")) {
+    if (input.systemPrompt.includes("locating DIVERGENCE")) {
+      // Pass TA (flag) — Haiku.
+      model = "claude-haiku-4-5";
+      for (const sf of behavior.failTASessionFiles ?? []) {
+        if (input.userContent.includes(sf)) throw new Error(`stubbed TA failure (${sf})`);
+      }
+      const ids = behavior.taFlagAll
+        ? [...input.userContent.matchAll(/window (\S+:\d+)/g)].map((m) => m[1])
+        : [];
+      text = JSON.stringify(ids.map((id) => ({ windowId: id, type_guess: "CORRECTION" })));
+    } else if (input.systemPrompt.includes("extract durable TASTE")) {
+      // Pass TB (analyze) — Opus.
+      model = "claude-opus-4-6";
+      text = behavior.tbCandidates ?? "[]";
+    } else if (input.systemPrompt.includes("consolidation gate for a taste-memory")) {
+      // Pass TC (consolidate/gate) — Opus.
+      model = "claude-opus-4-6";
+      text = behavior.tcDecisions ?? "[]";
+    } else if (input.systemPrompt.includes("verifier for HIVE")) {
       // Pass V
       model = "claude-opus-4-6";
       if (behavior.failV) throw new Error("stubbed V failure");
@@ -374,5 +400,162 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
     expect(result.passes.F.detail).toContain("verify failed");
     expect(result.passes.dashboard.status).toBe("skipped");
     expect(result.errors.some((e) => e.includes("Pass V"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Taste track (TA → TB → TC), sequenced after the fact track
+// ---------------------------------------------------------------------------
+
+let tcn = 0;
+/** A correction transcript whose anchors live in `<project>.jsonl`, so windowIds
+ *  read `<project>.jsonl:<line>` — lets a stub key TA failures by project. */
+function tasteSession(project: string): LoadedTranscript {
+  const sessionFile = `/Users/x/.claude/projects/-p/${project}.jsonl`;
+  const lines = [
+    { type: "user", uuid: `u${tcn++}`, parentUuid: null, timestamp: "t", message: { role: "user", content: "build a schema" } },
+    {
+      type: "assistant", uuid: `a${tcn++}`, parentUuid: null, timestamp: "t",
+      message: { role: "assistant", content: [{ type: "text", text: "done" }, { type: "tool_use", id: `tu${tcn++}`, name: "Edit", input: { file_path: "/x/schema.sql", old_string: "a", new_string: "b" } }] },
+    },
+    { type: "user", uuid: `u${tcn++}`, parentUuid: null, timestamp: "t", message: { role: "user", content: "no, use a foreign key instead" } },
+  ];
+  const events = parseTranscriptContent(lines.map((l) => JSON.stringify(l)).join("\n"), {
+    sessionFile, source: "claude", project,
+  });
+  return { sessionFile, source: "claude", project, events };
+}
+
+function tasteLoader(byProject: Record<string, LoadedTranscript[]>): typeof import("../lib/transcript").loadTranscripts {
+  return async (opts) => byProject[opts.project ?? ""] ?? [];
+}
+
+const TB_ONE_CANDIDATE = JSON.stringify([
+  {
+    category: "IMPLEMENTATION",
+    tier: "FUZZY",
+    scope: { kind: "project" },
+    reasoning: "Integrity belongs in the schema; prefer a foreign key over an app-level check.",
+    delta: { before: "plain id column", after: "foreign key" },
+    reason_source: "stated",
+    rule_statement: "SQL relations use foreign keys",
+    canonical_example: { bad: "user_id int", good: "user_id references users(id)" },
+    check_sketch: null,
+    evidence: [{ anchor: { sessionFile: "f", id: "u3", ts: null }, quote: "no, use a foreign key instead", confidence: 0.9 }],
+    dedupe_key: "sql-foreign-keys",
+    provenance: "human correction",
+  },
+]);
+
+describe("runNightly — taste track", () => {
+  test("runs TA→TB→TC for a project, writes artifacts + store unit + usage", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha");
+
+    const result = await runNightly({
+      paths,
+      date,
+      caller: makeStub({ taFlagAll: true, tbCandidates: TB_ONE_CANDIDATE, tcDecisions: "[]" }),
+      transcriptLoader: tasteLoader({ alpha: [tasteSession("alpha")] }),
+    });
+
+    expect(result.passes.TA[0]?.status).toBe("complete");
+    expect(result.passes.TB[0]?.status).toBe("complete");
+    expect(result.passes.TC[0]?.status).toBe("complete");
+
+    const runDir = join(paths.memoryRunsDir, date);
+    const flags = JSON.parse(await Bun.file(join(runDir, "taste-flags.alpha.json")).text());
+    expect(flags.length).toBeGreaterThanOrEqual(1);
+    const tb = JSON.parse(await Bun.file(join(runDir, "candidates.TB.alpha.json")).text());
+    expect(tb.length).toBe(1);
+    expect(existsSync(join(runDir, "taste-decisions.json"))).toBe(true);
+    expect(existsSync(join(runDir, "taste-decisions.md"))).toBe(true);
+
+    // TC wrote the unit to the store (holding — single session, below the gate).
+    const units = await readTasteUnits(projectTasteDir(paths, "alpha"), "IMPLEMENTATION");
+    expect(units).toHaveLength(1);
+    expect(units[0]?.status).toBe("holding");
+
+    // Usage records for every taste pass, with the right models.
+    const usage = await loadUsageSummary(paths, date);
+    const ta = usage.records.find((r) => r.pass === "TA");
+    const tbU = usage.records.find((r) => r.pass === "TB");
+    const tcU = usage.records.find((r) => r.pass === "TC");
+    expect(ta?.model).toBe("claude-haiku-4-5");
+    expect(tbU?.model).toBe("claude-opus-4-6");
+    expect(tcU?.model).toBe("claude-opus-4-6");
+  });
+
+  test("--no-taste skips the taste track entirely", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha");
+
+    let tasteLoaderCalled = false;
+    const result = await runNightly({
+      paths,
+      date,
+      taste: false,
+      caller: makeStub({ taFlagAll: true, tbCandidates: TB_ONE_CANDIDATE }),
+      transcriptLoader: (async (o) => { tasteLoaderCalled = true; return tasteLoader({ alpha: [tasteSession("alpha")] })(o); }) as typeof import("../lib/transcript").loadTranscripts,
+    });
+
+    expect(tasteLoaderCalled).toBe(false);
+    expect(result.passes.TA[0]?.status).toBe("skipped");
+    expect(result.passes.TA[0]?.detail).toContain("--no-taste");
+    expect(existsSync(join(paths.memoryRunsDir, date, "taste-flags.alpha.json"))).toBe(false);
+  });
+
+  test("dry-run runs TA/TB but skips TC and the store write", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha");
+
+    const result = await runNightly({
+      paths,
+      date,
+      dryRun: true,
+      caller: makeStub({ taFlagAll: true, tbCandidates: TB_ONE_CANDIDATE }),
+      transcriptLoader: tasteLoader({ alpha: [tasteSession("alpha")] }),
+    });
+
+    expect(result.passes.TA[0]?.status).toBe("complete");
+    expect(result.passes.TB[0]?.status).toBe("complete");
+    expect(result.passes.TC[0]?.status).toBe("skipped");
+    expect(result.passes.TC[0]?.detail).toContain("dry-run");
+
+    const runDir = join(paths.memoryRunsDir, date);
+    expect(existsSync(join(runDir, "candidates.TB.alpha.json"))).toBe(true); // TB artifact written
+    expect(existsSync(join(runDir, "taste-decisions.json"))).toBe(false); // TC artifact NOT written
+    expect(await readTasteUnits(projectTasteDir(paths, "alpha"))).toHaveLength(0); // no store mutation
+  });
+
+  test("one project's TA failure doesn't block another", async () => {
+    const paths = await freshHomeWith(["alpha", "bravo"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "bravo");
+
+    const result = await runNightly({
+      paths,
+      date,
+      caller: makeStub({
+        taFlagAll: true,
+        tbCandidates: TB_ONE_CANDIDATE,
+        tcDecisions: "[]",
+        failTASessionFiles: new Set(["alpha.jsonl"]),
+      }),
+      transcriptLoader: tasteLoader({ alpha: [tasteSession("alpha")], bravo: [tasteSession("bravo")] }),
+    });
+
+    const alphaTA = result.passes.TA.find((p) => p.pass === "TA.alpha");
+    const bravoTC = result.passes.TC.find((p) => p.pass === "TC.bravo");
+    expect(alphaTA?.status).toBe("failed");
+    expect(bravoTC?.status).toBe("complete");
+    expect(result.errors.some((e) => e.includes("Pass TA/TB (alpha)"))).toBe(true);
+    // Bravo still wrote its unit; alpha did not.
+    expect(await readTasteUnits(projectTasteDir(paths, "bravo"))).toHaveLength(1);
+    expect(await readTasteUnits(projectTasteDir(paths, "alpha"))).toHaveLength(0);
   });
 });

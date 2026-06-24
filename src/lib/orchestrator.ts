@@ -19,7 +19,7 @@
 //
 // docs/specs/2026-04-26-memory-design.md §Group 8
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { HivePaths } from "./paths";
@@ -36,6 +36,15 @@ import { applyDecisions } from "./apply";
 import { promoteReflectionsBatch } from "./reflections";
 import { buildDashboard } from "./dashboard";
 import { listProjects } from "./paths";
+import { loadTranscripts } from "./transcript";
+import { runProjectTasteExtract } from "./taste-extract";
+import {
+  mergeConsolidateResults,
+  runTasteConsolidate,
+  writeTasteDecisions,
+  type TasteConsolidateResult,
+} from "./taste-consolidate";
+import { appendUsageRecord, estimateCost } from "./pricing";
 
 // ---------------------------------------------------------------------------
 // Result shape
@@ -67,6 +76,10 @@ export interface NightlyResult {
     F: PassReport;
     P: PassReport;
     dashboard: PassReport;
+    // Taste track (per project). TA flag → TB analyze → TC consolidate/gate.
+    TA: PassReport[];
+    TB: PassReport[];
+    TC: PassReport[];
   };
   artifactsDir: string;
   briefingPath: string | null;
@@ -156,6 +169,10 @@ export interface RunNightlyOptions {
   date?: string;
   dryRun?: boolean;
   caller?: ModelCaller;
+  /** Run the taste track (TA→TB→TC). Default true; `--no-taste` sets false. */
+  taste?: boolean;
+  /** Injectable transcript reader (testing seam). Defaults to the real loader. */
+  transcriptLoader?: typeof loadTranscripts;
   onProgress?: (event: ProgressEvent) => void;
 }
 
@@ -184,6 +201,9 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       F: { pass: "F", status: "skipped" },
       P: { pass: "P", status: "skipped" },
       dashboard: { pass: "dashboard", status: "skipped" },
+      TA: [],
+      TB: [],
+      TC: [],
     },
     artifactsDir: join(paths.memoryRunsDir, date),
     briefingPath: null,
@@ -231,6 +251,9 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     result.passes.B = [{ pass: "B", status: "skipped", detail: "trivial day" }];
     result.passes.C = { pass: "C", status: "skipped", detail: "trivial day" };
     result.passes.V = { pass: "V", status: "skipped", detail: "trivial day" };
+    result.passes.TA = [{ pass: "TA", status: "skipped", detail: "trivial day" }];
+    result.passes.TB = [{ pass: "TB", status: "skipped", detail: "trivial day" }];
+    result.passes.TC = [{ pass: "TC", status: "skipped", detail: "trivial day" }];
     if (!dryRun) {
       result.briefingPath = await copyStubToBriefings(paths, date, stub);
       result.passes.F = { pass: "F", status: "skipped", detail: "stub-only briefing copied" };
@@ -435,7 +458,191 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     }
   }
 
+  // ---- Taste track (TA → TB → TC) -------------------------------------------
+  // Sequenced AFTER the fact track, not concurrent with B/C/V: nested
+  // `claude --print` subprocesses contend, so the design's "concurrently" is
+  // overridden by the empirical lesson — run the claude-heavy passes in series.
+  // Independent of the fact track's success (it reads transcripts, not V's
+  // output), so it runs even if V/F failed.
+  if (options.taste ?? true) {
+    await runTasteTrack({
+      paths,
+      date,
+      dryRun,
+      condition,
+      caller,
+      emit,
+      result,
+      transcriptLoader: options.transcriptLoader ?? loadTranscripts,
+    });
+  } else {
+    const skip = (pass: string): PassReport => ({
+      pass,
+      status: "skipped",
+      detail: "disabled via --no-taste",
+    });
+    result.passes.TA = [skip("TA")];
+    result.passes.TB = [skip("TB")];
+    result.passes.TC = [skip("TC")];
+  }
+
   result.finishedAt = new Date().toISOString();
   result.totalDurationMs = nowMs() - startMs;
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Taste track — per project, sequential: TA(flag) → TB(analyze) → TC(gate).
+//
+// Restartability mirrors the fact track: each project deletes its TA/TB
+// artifacts at attempt start, and the combined taste-decisions.{json,md} is
+// cleared at track start. Failure isolation: one project's TA/TB failure skips
+// only that project; a TC failure leaves the project's TA/TB artifacts intact
+// (mirrors Pass V→F). On --dry-run, TA/TB run and write artifacts but TC (the
+// store writer) is skipped — the analogue of F being skipped on dry-run.
+// ---------------------------------------------------------------------------
+
+interface TasteTrackArgs {
+  paths: HivePaths;
+  date: string;
+  dryRun: boolean;
+  condition: ConditionReport;
+  caller?: ModelCaller;
+  emit: (event: ProgressEvent) => void;
+  result: NightlyResult;
+  transcriptLoader: typeof loadTranscripts;
+}
+
+async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
+  const { paths, date, dryRun, condition, caller, emit, result, transcriptLoader } = args;
+  const runDir = join(paths.memoryRunsDir, date);
+  // Anchor the transcript window to the run date, matching condition's window
+  // (so a retroactive `--date` covers the named day, not the wall clock).
+  const now = new Date(`${date}T23:59:59.999Z`);
+
+  // Combined TC artifact — clear stale at track start (restartability).
+  await rm(join(runDir, "taste-decisions.json"), { force: true });
+  await rm(join(runDir, "taste-decisions.md"), { force: true });
+
+  const targets = condition.projects.filter(projectHasSignal);
+  const tcResults: TasteConsolidateResult[] = [];
+
+  for (const p of targets) {
+    const projectId = p.projectName;
+
+    // ---- TA + TB (per-project batched extraction) ----
+    const flagsPath = join(runDir, `taste-flags.${projectId}.json`);
+    const tbPath = join(runDir, `candidates.TB.${projectId}.json`);
+    await rm(flagsPath, { force: true });
+    await rm(tbPath, { force: true });
+
+    emit({ type: "pass-start", pass: `TA.${projectId}` });
+    let extract: Awaited<ReturnType<typeof runProjectTasteExtract>>;
+    try {
+      const loaded = await transcriptLoader({ project: projectId, hoursWindow: condition.hoursWindow, now });
+      const { value, durationMs } = await timed(() => runProjectTasteExtract(loaded, { caller }));
+      extract = value;
+      await mkdir(runDir, { recursive: true });
+      await Bun.write(flagsPath, JSON.stringify(value.flags, null, 2));
+      await Bun.write(tbPath, JSON.stringify(value.candidates, null, 2));
+      for (const rec of value.usageRecords) {
+        await appendUsageRecord(paths, date, {
+          pass: rec.pass,
+          project: projectId,
+          provider: rec.usage.provider,
+          model: rec.usage.model,
+          inputTokens: rec.usage.inputTokens ?? 0,
+          outputTokens: rec.usage.outputTokens ?? 0,
+          durationMs: rec.usage.durationMs,
+          cost: estimateCost({
+            provider: rec.usage.provider,
+            model: rec.usage.model,
+            inputTokens: rec.usage.inputTokens ?? 0,
+            outputTokens: rec.usage.outputTokens ?? 0,
+          }),
+        });
+      }
+      const taReport: PassReport = {
+        pass: `TA.${projectId}`,
+        status: "complete",
+        detail: `${value.windowCount} window(s) · ${value.flaggedCount} flagged`,
+        durationMs,
+      };
+      result.passes.TA.push(taReport);
+      emit({ type: "pass-complete", report: taReport });
+      const tbReport: PassReport = {
+        pass: `TB.${projectId}`,
+        status: "complete",
+        detail: `${value.candidates.length} candidate(s), ${value.rejected.candidates} rejected`,
+      };
+      result.passes.TB.push(tbReport);
+      emit({ type: "pass-complete", report: tbReport });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const taReport: PassReport = { pass: `TA.${projectId}`, status: "failed", error: msg };
+      result.passes.TA.push(taReport);
+      result.passes.TB.push({ pass: `TB.${projectId}`, status: "skipped", detail: "extract failed" });
+      emit({ type: "pass-failed", report: taReport });
+      result.errors.push(`Pass TA/TB (${projectId}): ${msg}`);
+      continue; // one project's failure never blocks the others
+    }
+
+    // ---- TC (consolidate/gate) — skipped on dry-run (it is the store writer) ----
+    if (dryRun) {
+      result.passes.TC.push({ pass: `TC.${projectId}`, status: "skipped", detail: "dry-run" });
+      continue;
+    }
+    if (extract.candidates.length === 0) {
+      result.passes.TC.push({ pass: `TC.${projectId}`, status: "skipped", detail: "no candidates" });
+      continue;
+    }
+    emit({ type: "pass-start", pass: `TC.${projectId}` });
+    try {
+      const { value: tc, durationMs } = await timed(() =>
+        runTasteConsolidate(extract.candidates, { paths, projectId, now: date, caller }),
+      );
+      tcResults.push(tc);
+      if (tc.usage) {
+        await appendUsageRecord(paths, date, {
+          pass: "TC",
+          project: projectId,
+          provider: tc.usage.provider,
+          model: tc.usage.model,
+          inputTokens: tc.usage.inputTokens ?? 0,
+          outputTokens: tc.usage.outputTokens ?? 0,
+          durationMs: tc.usage.durationMs,
+          cost: estimateCost({
+            provider: tc.usage.provider,
+            model: tc.usage.model,
+            inputTokens: tc.usage.inputTokens ?? 0,
+            outputTokens: tc.usage.outputTokens ?? 0,
+          }),
+        });
+      }
+      const r: PassReport = {
+        pass: `TC.${projectId}`,
+        status: "complete",
+        detail: `+${tc.written} written (${tc.reviewEligible} review-eligible, ${tc.holding} holding)`,
+        durationMs,
+      };
+      result.passes.TC.push(r);
+      emit({ type: "pass-complete", report: r });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const r: PassReport = { pass: `TC.${projectId}`, status: "failed", error: msg };
+      result.passes.TC.push(r);
+      emit({ type: "pass-failed", report: r });
+      result.errors.push(`Pass TC (${projectId}): ${msg}`);
+    }
+  }
+
+  // One combined decisions artifact for the morning read (skipped on dry-run —
+  // TC didn't run). taste-decisions.md replaces the deprecated taste.md.
+  if (!dryRun && tcResults.length > 0) {
+    try {
+      await writeTasteDecisions(runDir, mergeConsolidateResults(tcResults), date);
+    } catch (err) {
+      result.errors.push(`taste-decisions write: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 }
