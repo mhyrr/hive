@@ -115,36 +115,24 @@ export async function completeClaudeText(input: {
   const bin = resolveClaudeBin();
   const startedAt = Date.now();
 
-  // Tools are forbidden for one-shot extraction. We pass the entire context
-  // in the user message; the model must reason from it, not go fetch files.
-  // Use a single comma-separated string so commander's variadic <tools...>
-  // consumes exactly one arg and terminates at the next flag.
-  const denyTools = [
-    "Bash",
-    "Edit",
-    "Write",
-    "Read",
-    "Glob",
-    "Grep",
-    "Agent",
-    "NotebookEdit",
-    "WebFetch",
-    "WebSearch",
-    "Task",
-    "TaskCreate",
-    "TaskUpdate",
-    "TaskGet",
-    "TaskList",
-    "TaskOutput",
-    "TaskStop",
-  ].join(",");
-
+  // Tools are forbidden for one-shot extraction. We pass the entire context in
+  // the user message; the model must reason from it, not go fetch files.
+  //
+  // A denylist of built-ins is not enough: in a repo with project MCP servers
+  // and skill injection, the model could still reach for `mcp__*`, `Skill`, or
+  // `ToolSearch`, emit a tool_use, and trip `--max-turns 1` with
+  // `error_max_turns` (observed: a 27-window Haiku classify failing this way).
+  // Lock it down to ZERO tools instead:
+  //   --tools ""            disables every built-in tool (per claude --help)
+  //   --strict-mcp-config   with no --mcp-config, loads zero MCP servers
+  // Now the model can only produce text, so a stray tool_use is impossible.
   const args = [
     "--print",
     "--output-format", "json",
     "--model", input.modelId,
     "--system-prompt", input.systemPrompt,
-    "--disallowedTools", denyTools,
+    "--tools", "",
+    "--strict-mcp-config",
     "--max-turns", "1",
     "--permission-mode", "bypassPermissions",
   ];
