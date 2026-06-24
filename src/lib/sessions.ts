@@ -28,9 +28,9 @@ export interface RankedExchange {
   alwaysInclude: boolean;
 }
 
-type SessionSource = "claude" | "codex";
+export type SessionSource = "claude" | "codex";
 
-interface RecentSessionBundle {
+export interface RecentSessionBundle {
   source: SessionSource;
   locator: string;
   files: string[];
@@ -47,7 +47,7 @@ const REDACT_PATTERNS = [
   /npm_[a-zA-Z0-9]{36,}/g, // npm tokens
 ];
 
-function redact(text: string): string {
+export function redact(text: string): string {
   let result = text;
   for (const pattern of REDACT_PATTERNS) {
     result = result.replace(pattern, "[REDACTED]");
@@ -179,7 +179,7 @@ function readFirstLine(path: string, maxBytes = 1_000_000): string | null {
   }
 }
 
-function readCodexCwd(jsonlPath: string): string | null {
+export function readCodexCwd(jsonlPath: string): string | null {
   const firstLine = readFirstLine(jsonlPath);
   if (!firstLine) return null;
 
@@ -227,7 +227,7 @@ function findRecentCodexSessions(
 /**
  * Find all supported session transcripts modified in the last N hours.
  */
-function findRecentSessions(hoursAgo: number = 24, now: Date = new Date()): RecentSessionBundle[] {
+export function findRecentSessions(hoursAgo: number = 24, now: Date = new Date()): RecentSessionBundle[] {
   return [
     ...findRecentClaudeSessions(hoursAgo, now),
     ...findRecentCodexSessions(hoursAgo, now),
@@ -281,14 +281,14 @@ async function resolveCodexProjectName(cwd: string): Promise<string> {
   return matches[0]?.projectId ?? cwd;
 }
 
-async function resolveProjectName(bundle: RecentSessionBundle): Promise<string> {
+export async function resolveProjectName(bundle: RecentSessionBundle): Promise<string> {
   if (bundle.source === "codex") {
     return resolveCodexProjectName(bundle.locator);
   }
   return resolveClaudeProjectName(bundle.locator);
 }
 
-function extractTextFromContent(content: unknown): string {
+export function extractTextFromContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
 
@@ -308,7 +308,7 @@ function extractTextFromContent(content: unknown): string {
   return textParts.join("\n");
 }
 
-function shouldSkipUserText(text: string): boolean {
+export function shouldSkipUserText(text: string): boolean {
   // Codex persists AGENTS.md as a user-role instruction block at session start.
   if (text.startsWith("# AGENTS.md instructions")) return true;
 
