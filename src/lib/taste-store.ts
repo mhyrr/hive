@@ -33,7 +33,24 @@ import { TASTE_CATEGORIES, type TasteCandidate, type TasteCategory } from "./tas
 // Stored shape
 // ---------------------------------------------------------------------------
 
-export type TasteUnitStatus = "pending" | "active";
+/**
+ * Lifecycle, in order (design §8.2, §10):
+ *   holding  — written, below the recurrence gate. Accumulates recurrence across
+ *              nights; never retrieved into a session, never surfaced to review.
+ *              This is the design's "first-sighting waits in a pending state."
+ *   pending  — past the recurrence (+ replay) gate, awaiting human sign-off.
+ *              `hive taste review` walks exactly these.
+ *   active   — human-approved canon; retrievable into working sessions.
+ * A unit only ever moves forward (see maxStatus) — re-observation never demotes.
+ */
+export type TasteUnitStatus = "holding" | "pending" | "active";
+
+const STATUS_RANK: Record<TasteUnitStatus, number> = { holding: 0, pending: 1, active: 2 };
+
+/** Monotonic lifecycle: re-observing a unit can promote it, never demote it. */
+function maxStatus(a: TasteUnitStatus, b: TasteUnitStatus): TasteUnitStatus {
+  return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
+}
 
 /** A taste candidate as persisted, plus store-managed lifecycle fields. */
 export interface TasteUnit extends TasteCandidate {
@@ -41,7 +58,7 @@ export interface TasteUnit extends TasteCandidate {
   hash: string;
   /** Times this judgment has been observed (TC bumps; recurrence gate reads). */
   recurrence: number;
-  /** pending until TC promotes on recurrence/confirmation (design §8.2). */
+  /** holding → pending → active (design §8.2). */
   status: TasteUnitStatus;
   firstSeen: string;
   lastSeen: string;
@@ -190,18 +207,25 @@ export interface WriteTasteResult {
 /**
  * Upsert a candidate into its category file. A re-observed unit (same hash)
  * bumps recurrence and lastSeen rather than duplicating; a new unit is created
- * `pending` with a fresh meta entry. Reorganizes, never destroys evidence
- * (design §4e): a re-observation merges its evidence anchors in.
+ * `pending` (the default; TC passes `holding` explicitly for first-sightings)
+ * with a fresh meta entry. Reorganizes, never destroys evidence (design §4e):
+ * a re-observation merges its evidence anchors in.
+ *
+ * `addRecurrence` is how much to credit this observation. Default 1 (one more
+ * night/session). TC passes the count of *distinct sessions* a judgment recurred
+ * across within a single run, so a historical sweep can surface a genuinely
+ * recurring rule on its first consolidation instead of waiting N nights.
  */
 export async function writeTasteUnit(
   storeDir: string,
   candidate: TasteCandidate,
-  opts: { now?: string; status?: TasteUnitStatus } = {},
+  opts: { now?: string; status?: TasteUnitStatus; addRecurrence?: number } = {},
 ): Promise<WriteTasteResult> {
   await mkdir(storeDir, { recursive: true });
   const category = candidate.category;
   const hash = unitHash(candidate);
   const now = opts.now ?? new Date().toISOString().slice(0, 10);
+  const add = Math.max(1, Math.floor(opts.addRecurrence ?? 1));
 
   const existing = await readTasteUnits(storeDir, category);
   const idx = existing.findIndex((u) => u.hash === hash);
@@ -216,8 +240,9 @@ export async function writeTasteUnit(
     unit = {
       ...candidate,
       hash,
-      recurrence: prev.recurrence + 1,
-      status: opts.status ?? prev.status,
+      recurrence: prev.recurrence + add,
+      // Monotonic: a re-observation can promote (holding→pending) but never demote.
+      status: maxStatus(prev.status, opts.status ?? prev.status),
       firstSeen: prev.firstSeen,
       lastSeen: now,
       evidence: mergedEvidence,
@@ -228,7 +253,7 @@ export async function writeTasteUnit(
     unit = {
       ...candidate,
       hash,
-      recurrence: 1,
+      recurrence: add,
       status: opts.status ?? "pending",
       firstSeen: now,
       lastSeen: now,

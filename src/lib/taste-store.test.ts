@@ -87,6 +87,32 @@ describe("writeTasteUnit + readTasteUnits", () => {
     expect(await readTasteUnits(dir)).toHaveLength(2);
   });
 
+  test("status is monotonic — re-observing never demotes an active unit", async () => {
+    const { hash } = await writeTasteUnit(dir, candidate(), { status: "active" });
+    // A later observation arrives as a fresh pending sighting; it must not demote.
+    const r = await writeTasteUnit(dir, candidate(), { status: "pending" });
+    expect(r.isNew).toBe(false);
+    const u = (await readTasteUnits(dir, "DESIGN"))[0]!;
+    expect(u.hash).toBe(hash);
+    expect(u.status).toBe("active");
+  });
+
+  test("a holding first-sighting promotes to pending on re-observation", async () => {
+    await writeTasteUnit(dir, candidate(), { status: "holding" });
+    expect(await listPendingUnits(dir)).toHaveLength(0);
+    await writeTasteUnit(dir, candidate(), { status: "pending" });
+    const pending = await listPendingUnits(dir);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.status).toBe("pending");
+  });
+
+  test("addRecurrence credits multiple distinct sessions at once", async () => {
+    const r1 = await writeTasteUnit(dir, candidate(), { status: "holding", addRecurrence: 3 });
+    expect(r1.recurrence).toBe(3);
+    const r2 = await writeTasteUnit(dir, candidate(), { addRecurrence: 2 });
+    expect(r2.recurrence).toBe(5);
+  });
+
   test("round-trips all structured fields through the JSON-in-comment", async () => {
     await writeTasteUnit(dir, candidate({ scope: { kind: "general-taste", glob: "**/*.sql" }, ladders_up_hint: "exhaustive enumeration" }));
     const u = (await readTasteUnits(dir, "DESIGN"))[0]!;

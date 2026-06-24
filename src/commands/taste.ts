@@ -1,12 +1,18 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { UsageError } from "../lib/errors";
-import { ensureHiveScaffold } from "../lib/paths";
+import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 import { formatUsd } from "../lib/pricing";
+import { resolveProjectFromCwd } from "../lib/project";
 import { loadTranscripts } from "../lib/transcript";
 import { segmentWindows } from "../lib/taste-segment";
 import { runTasteExtract, validateTasteCandidate, type TasteExtractResult } from "../lib/taste-extract";
+import {
+  runTasteConsolidate,
+  writeTasteDecisions,
+  type TasteConsolidateResult,
+} from "../lib/taste-consolidate";
 import {
   generalTasteDir,
   listPendingUnits,
@@ -24,6 +30,13 @@ const USAGE = `Usage:
   hive taste review [options]             Curate pending candidates: y/n keypress stepper
     --candidates <path...>               Import candidate JSON (from a run) as pending first
     --project <name>                     Review a project's store (default: cross-project)
+
+  hive taste consolidate [options]        Pass TC — gate + cohere TB candidates into the store
+    --candidates <path...>               Candidate JSON (TB output) to consolidate (required)
+    --project <name>                     Project context (default: resolved from cwd)
+    --min-recurrence <N>                 Recurrence needed for review-eligibility (default 2)
+    --out <dir>                          Where to write taste-decisions.{json,md}
+    --json                               Print the full result JSON to stdout
 
   hive taste extract [options]            Mine taste candidates from transcripts (design §13)
 
@@ -326,10 +339,34 @@ function parseReviewArgs(rest: string[]): ReviewArgs {
   return a;
 }
 
+/**
+ * Stores a review pass should walk. The cross-project (general) store is ALWAYS
+ * included — a `general-taste` unit consolidated under a project still lands
+ * there, and would otherwise be invisible to `review --project X`. With a
+ * project, walk general + that project; without, walk general + every project
+ * store so nothing pending is ever stranded.
+ */
+async function reviewStoreDirs(paths: HivePaths, project?: string): Promise<string[]> {
+  const dirs = new Set<string>([generalTasteDir(paths)]);
+  if (project) {
+    dirs.add(projectTasteDir(paths, project));
+  } else {
+    try {
+      for (const e of await readdir(paths.memoryProjectsDir, { withFileTypes: true })) {
+        if (e.isDirectory()) dirs.add(projectTasteDir(paths, e.name));
+      }
+    } catch {
+      // intentional: no project stores yet — general store alone is fine
+    }
+  }
+  return [...dirs];
+}
+
 async function reviewCommand(rest: string[]): Promise<void> {
   const paths = await ensureHiveScaffold();
   const a = parseReviewArgs(rest);
-  const storeDir = a.project ? projectTasteDir(paths, a.project) : generalTasteDir(paths);
+  // Manual seeds land in the project store if --project is given, else general.
+  const importDir = a.project ? projectTasteDir(paths, a.project) : generalTasteDir(paths);
 
   // Optional import: seed candidate JSON into the store as pending units.
   if (a.candidates.length > 0) {
@@ -345,7 +382,7 @@ async function reviewCommand(rest: string[]): Promise<void> {
       for (const raw of Array.isArray(arr) ? arr : []) {
         const c = validateTasteCandidate(raw);
         if (c) {
-          await writeTasteUnit(storeDir, c, { status: "pending" });
+          await writeTasteUnit(importDir, c, { status: "pending" });
           imported++;
         }
       }
@@ -353,8 +390,15 @@ async function reviewCommand(rest: string[]): Promise<void> {
     console.error(`imported ${imported} candidate(s) as pending`);
   }
 
-  const negatives = new Set(await readNegatives(storeDir));
-  const pending = (await listPendingUnits(storeDir)).filter((u) => !negatives.has(u.dedupe_key));
+  // Collect pending across every relevant store, tagging each unit with the
+  // store it lives in so approve/reject targets the right file.
+  const pending: { unit: TasteUnit; storeDir: string }[] = [];
+  for (const dir of await reviewStoreDirs(paths, a.project)) {
+    const negatives = new Set(await readNegatives(dir));
+    for (const u of await listPendingUnits(dir)) {
+      if (!negatives.has(u.dedupe_key)) pending.push({ unit: u, storeDir: dir });
+    }
+  }
   if (pending.length === 0) {
     console.log("No pending taste candidates to review.");
     return;
@@ -367,7 +411,7 @@ async function reviewCommand(rest: string[]): Promise<void> {
   let i = 0;
   try {
     for (; i < pending.length; i++) {
-      const u = pending[i]!;
+      const { unit: u, storeDir } = pending[i]!;
       process.stdout.write("\x1b[2J\x1b[H"); // clear + home
       process.stdout.write(`${renderCandidate(u, i, pending.length)}\n`);
       let key = "";
@@ -398,13 +442,145 @@ async function reviewCommand(rest: string[]): Promise<void> {
     `taste review — ${approved} approved, ${rejected} rejected, ${skipped} skipped` +
       (remaining > 0 ? `, ${remaining} left` : ""),
   );
-  if (approved > 0) console.log(`approved units are now active in ${storeDir}`);
+  if (approved > 0) console.log(`approved units are now active.`);
+}
+
+// ---------------------------------------------------------------------------
+// `hive taste consolidate` — Pass TC over TB candidates (design §8)
+// ---------------------------------------------------------------------------
+
+interface ConsolidateArgs {
+  candidates: string[];
+  project?: string;
+  minRecurrence?: number;
+  out?: string;
+  json: boolean;
+}
+
+function parseConsolidateArgs(rest: string[]): ConsolidateArgs {
+  const a: ConsolidateArgs = { candidates: [], json: false };
+  const take = (flag: string, i: number): string => {
+    const v = rest[i + 1];
+    if (v === undefined || v.startsWith("--")) throw new UsageError(`${flag} requires a value\n\n${USAGE}`);
+    return v;
+  };
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    if (arg === "--candidates") {
+      while (i + 1 < rest.length && !rest[i + 1]!.startsWith("--")) a.candidates.push(rest[++i]!);
+    } else if (arg === "--project") {
+      a.project = take("--project", i);
+      i += 1;
+    } else if (arg === "--min-recurrence") {
+      a.minRecurrence = Number(take("--min-recurrence", i));
+      if (Number.isNaN(a.minRecurrence)) throw new UsageError(`--min-recurrence must be a number\n\n${USAGE}`);
+      i += 1;
+    } else if (arg === "--out") {
+      a.out = take("--out", i);
+      i += 1;
+    } else if (arg === "--json") {
+      a.json = true;
+    } else {
+      throw new UsageError(`Unknown option: ${arg}\n\n${USAGE}`);
+    }
+  }
+  return a;
+}
+
+async function loadCandidates(files: string[]): Promise<{ candidates: TasteCandidate[]; rejected: number }> {
+  const candidates: TasteCandidate[] = [];
+  let rejected = 0;
+  for (const f of files) {
+    let arr: unknown;
+    try {
+      arr = JSON.parse(await readFile(f, "utf-8"));
+    } catch {
+      console.error(`  ! could not read ${f}`);
+      continue;
+    }
+    for (const raw of Array.isArray(arr) ? arr : []) {
+      const c = validateTasteCandidate(raw);
+      if (c) candidates.push(c);
+      else rejected++;
+    }
+  }
+  return { candidates, rejected };
+}
+
+function printConsolidateSummary(r: TasteConsolidateResult): void {
+  const line = (s = "") => console.error(s);
+  line();
+  line("=== taste consolidate (Pass TC) — summary ===");
+  line(`written            : ${r.written}  (${r.reviewEligible} review-eligible, ${r.holding} holding)`);
+  line(`fact handoffs       : ${r.handoffsToFacts.length}  (CONTEXTUAL → fact candidates)`);
+  line(`dropped             : ${r.droppedNoise} noise · ${r.droppedNegative} negatives`);
+  line(`conflicts / tensions: ${r.conflicts.length} / ${r.tensions.length}`);
+  if (r.usage) line(`coherence call      : ${formatUsd(r.usage.usd)} (${r.usage.model})`);
+  if (r.newPrincipleProposals.length) {
+    line();
+    line("new-principle proposals:");
+    for (const p of r.newPrincipleProposals) line(`  · ${p}`);
+  }
+  if (r.tensions.length) {
+    line();
+    line("tensions (need your call):");
+    for (const d of r.tensions) line(`  ! ${d.dedupe_key} — ${d.tension_note ?? "(no note)"}`);
+  }
+  if (r.errors.length) {
+    line();
+    line(`errors (${r.errors.length}) — isolated:`);
+    for (const e of r.errors) line(`  ! ${e}`);
+  }
+}
+
+async function consolidateCommand(rest: string[]): Promise<void> {
+  const paths = await ensureHiveScaffold();
+  const a = parseConsolidateArgs(rest);
+  if (a.candidates.length === 0) {
+    throw new UsageError(`taste consolidate needs --candidates <path...>\n\n${USAGE}`);
+  }
+  const projectId = a.project ?? resolveProjectFromCwd();
+  if (!projectId) {
+    throw new UsageError(`Could not resolve a project from the current directory — pass --project <name>.\n\n${USAGE}`);
+  }
+  const date = new Date().toISOString().slice(0, 10);
+
+  const { candidates, rejected } = await loadCandidates(a.candidates);
+  console.error(
+    `=== HIVE taste consolidate · ${date} · project=${projectId} ===\n` +
+      `loaded ${candidates.length} candidate(s)${rejected ? ` (${rejected} rejected)` : ""}`,
+  );
+  if (candidates.length === 0) {
+    console.error("No valid candidates to consolidate.");
+    return;
+  }
+
+  const result = await runTasteConsolidate(candidates, {
+    paths,
+    projectId,
+    minRecurrence: a.minRecurrence,
+    onProgress: (m) => console.error(`  · ${m}`),
+  });
+
+  printConsolidateSummary(result);
+
+  const outDir = a.out ?? join(paths.memoryRunsDir, date);
+  const { json, md } = await writeTasteDecisions(outDir, result, date);
+  console.log(`\nDecisions → ${md}`);
+  console.log(`           ${json}`);
+  if (result.reviewEligible > 0) {
+    console.log(`\n${result.reviewEligible} unit(s) are review-eligible — run \`hive taste review${a.project ? ` --project ${a.project}` : ""}\`.`);
+  }
+  if (a.json) console.log(JSON.stringify(result, null, 2));
 }
 
 export async function tasteCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
   if (subcommand === "extract") {
     return extractCommand(args.slice(1));
+  }
+  if (subcommand === "consolidate") {
+    return consolidateCommand(args.slice(1));
   }
   if (subcommand === "review") {
     return reviewCommand(args.slice(1));
