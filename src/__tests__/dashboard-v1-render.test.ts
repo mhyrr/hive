@@ -4,12 +4,34 @@ import {
   renderOpenQuestions,
   renderRecentMemory,
   renderRunUsage,
+  renderTasteTrack,
 } from "../lib/dashboard/render";
 import type {
   OpenQuestion,
   RecentMemoryEntry,
   RunUsageSnapshot,
+  TasteTrackSnapshot,
 } from "../lib/dashboard/collect";
+
+function tasteSnap(over: Partial<TasteTrackSnapshot> = {}): TasteTrackSnapshot {
+  return {
+    date: "2026-06-25",
+    available: true,
+    written: 3,
+    reviewEligible: 1,
+    holding: 2,
+    conflicts: 0,
+    tensions: 0,
+    handoffs: 0,
+    droppedNoise: 0,
+    droppedNegative: 0,
+    replayPassed: 1,
+    replayInconclusive: 0,
+    newPrincipleProposals: [],
+    reviewEligibleUnits: [{ dedupeKey: "use-uuid", category: "IMPLEMENTATION", tier: "FUZZY", recurrence: 2, laddersUpTo: "As simple as possible" }],
+    ...over,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // renderOpenQuestions
@@ -194,5 +216,65 @@ describe("renderRunUsage", () => {
     const html = renderRunUsage(snap);
     expect(html).toContain("2026-04-26");
     expect(html).toContain("1 pass"); // singular
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRunUsage — taste pass labels
+// ---------------------------------------------------------------------------
+
+describe("renderRunUsage taste labels", () => {
+  test("taste passes get a human label; fact passes stay bare", () => {
+    const snap: RunUsageSnapshot = {
+      date: "2026-06-25",
+      available: true,
+      totalInputTokens: 100,
+      totalOutputTokens: 100,
+      totalUsd: 0.01,
+      totalUsdFormatted: "$0.0100",
+      passes: [
+        { pass: "TC", project: "alpha", provider: "anthropic", model: "claude-opus-4-6", inputTokens: 50, outputTokens: 50, usd: 0.005, usdFormatted: "$0.0050", durationMs: 100 },
+        { pass: "TR", project: "alpha", provider: "anthropic", model: "claude-sonnet-4-6", inputTokens: 50, outputTokens: 50, usd: 0.005, usdFormatted: "$0.0050", durationMs: 100 },
+        { pass: "B", project: "alpha", provider: "anthropic", model: "claude-sonnet-4-6", inputTokens: 0, outputTokens: 0, usd: 0, usdFormatted: "$0.0000", durationMs: 0 },
+      ],
+    };
+    const html = renderRunUsage(snap);
+    expect(html).toContain("Pass TC · taste consolidate");
+    expect(html).toContain("Pass TR · taste replay");
+    expect(html).toContain("Pass B</strong>"); // fact pass unlabeled
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderTasteTrack
+// ---------------------------------------------------------------------------
+
+describe("renderTasteTrack", () => {
+  test("no taste run on file renders nothing", () => {
+    expect(renderTasteTrack(undefined)).toBe("");
+    expect(renderTasteTrack(tasteSnap({ available: false }))).toBe("");
+  });
+
+  test("surfaces the review-eligible queue, counts, and replay verdicts", () => {
+    const html = renderTasteTrack(tasteSnap());
+    expect(html).toContain("Taste track");
+    expect(html).toContain("1 awaiting review");
+    expect(html).toContain("review-eligible");
+    expect(html).toContain("replay-confirmed");
+    // The actionable unit + its ladder, plus the review CTA.
+    expect(html).toContain("use-uuid");
+    expect(html).toContain("As simple as possible");
+    expect(html).toContain("hive taste review");
+  });
+
+  test("inconclusive holds, conflicts, and proposals surface when present", () => {
+    const html = renderTasteTrack(
+      tasteSnap({ reviewEligible: 0, reviewEligibleUnits: [], replayInconclusive: 2, conflicts: 1, newPrincipleProposals: ["a new principle may be emerging"] }),
+    );
+    expect(html).toContain("replay-inconclusive (held)");
+    expect(html).toContain("conflicts");
+    expect(html).toContain("Nothing review-eligible");
+    expect(html).toContain("New-principle proposals");
+    expect(html).toContain("a new principle may be emerging");
   });
 });

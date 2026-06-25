@@ -209,6 +209,7 @@ export type DashboardData = {
   openQuestions: OpenQuestion[];
   recentMemory: RecentMemoryEntry[];
   runUsage: RunUsageSnapshot;
+  tasteTrack: TasteTrackSnapshot;
   latestReflection: ReflectionDay | null;
 };
 
@@ -848,11 +849,112 @@ export async function collectRunUsage(
 }
 
 // ---------------------------------------------------------------------------
+// Taste track (TA → TB → TC + replay) — the nightly's judgment-memory pass.
+// Sourced from runs/{date}/taste-decisions.json (the merged TasteConsolidate
+// result TC writes); the data exists per run, it just wasn't surfaced.
+// ---------------------------------------------------------------------------
+
+export type TasteTrackUnit = {
+  dedupeKey: string;
+  category: string;
+  tier: string;
+  recurrence: number;
+  laddersUpTo: string | null;
+};
+
+export type TasteTrackSnapshot = {
+  date: string;
+  available: boolean;
+  written: number;
+  reviewEligible: number;
+  holding: number;
+  conflicts: number;
+  tensions: number;
+  handoffs: number;
+  droppedNoise: number;
+  droppedNegative: number;
+  /** Decisions whose replay verdict confirmed the rule (design §9). */
+  replayPassed: number;
+  /** Decisions held because replay couldn't decide (thin corpus / failed judge). */
+  replayInconclusive: number;
+  newPrincipleProposals: string[];
+  /** The units `hive taste review` will walk — the actionable queue. */
+  reviewEligibleUnits: TasteTrackUnit[];
+};
+
+export async function collectTasteTrack(
+  paths: HivePaths,
+  date: string = new Date().toISOString().slice(0, 10),
+): Promise<TasteTrackSnapshot> {
+  const empty: TasteTrackSnapshot = {
+    date,
+    available: false,
+    written: 0,
+    reviewEligible: 0,
+    holding: 0,
+    conflicts: 0,
+    tensions: 0,
+    handoffs: 0,
+    droppedNoise: 0,
+    droppedNegative: 0,
+    replayPassed: 0,
+    replayInconclusive: 0,
+    newPrincipleProposals: [],
+    reviewEligibleUnits: [],
+  };
+
+  const raw = await safeReadFile(join(paths.memoryRunsDir, date, "taste-decisions.json"));
+  if (!raw) return empty;
+  let r: Record<string, unknown>;
+  try {
+    r = JSON.parse(raw);
+  } catch {
+    return empty; // intentional: a half-written/corrupt artifact reads as "no taste run"
+  }
+
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const len = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
+  const decisions = Array.isArray(r.decisions) ? (r.decisions as Array<Record<string, unknown>>) : [];
+
+  const reviewEligibleUnits: TasteTrackUnit[] = decisions
+    .filter((d) => d.reviewEligible === true && d.status)
+    .map((d) => ({
+      dedupeKey: typeof d.dedupe_key === "string" ? d.dedupe_key : "(unknown)",
+      category: typeof d.category === "string" ? d.category : "—",
+      tier: typeof d.tier === "string" ? d.tier : "—",
+      recurrence: num(d.recurrence),
+      laddersUpTo: typeof d.ladders_up_to === "string" ? d.ladders_up_to : null,
+    }))
+    .slice(0, 12);
+
+  const replayOf = (d: Record<string, unknown>) => (d.replay && typeof d.replay === "object" ? (d.replay as Record<string, unknown>) : null);
+
+  return {
+    date,
+    available: true,
+    written: num(r.written),
+    reviewEligible: num(r.reviewEligible),
+    holding: num(r.holding),
+    conflicts: len(r.conflicts),
+    tensions: len(r.tensions),
+    handoffs: len(r.handoffsToFacts),
+    droppedNoise: num(r.droppedNoise),
+    droppedNegative: num(r.droppedNegative),
+    replayPassed: decisions.filter((d) => replayOf(d)?.passed === true).length,
+    replayInconclusive: decisions.filter((d) => replayOf(d)?.inconclusive === true).length,
+    newPrincipleProposals: Array.isArray(r.newPrincipleProposals)
+      ? (r.newPrincipleProposals as unknown[]).filter((p): p is string => typeof p === "string")
+      : [],
+    reviewEligibleUnits,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Top-level
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, latestReflection] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, tasteTrack, latestReflection] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -863,6 +965,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectOpenQuestions(paths),
     collectRecentMemory(paths),
     collectRunUsage(paths),
+    collectTasteTrack(paths),
     collectLatestReflection(paths),
   ]);
 
@@ -884,6 +987,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     openQuestions,
     recentMemory,
     runUsage,
+    tasteTrack,
     latestReflection,
   };
 }

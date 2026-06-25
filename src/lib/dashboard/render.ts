@@ -22,6 +22,7 @@ import type {
   RecentMemoryEntry,
   ReflectionDay,
   RunUsageSnapshot,
+  TasteTrackSnapshot,
   TicketsPageData,
   EpicBoard,
 } from "./collect";
@@ -863,6 +864,14 @@ ${rows}
 </section>`;
 }
 
+/** Human labels for the taste-track passes so the cost table reads legibly. */
+const PASS_LABELS: Record<string, string> = {
+  TA: "taste flag",
+  TB: "taste analyze",
+  TC: "taste consolidate",
+  TR: "taste replay",
+};
+
 export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
   if (!usage || !usage.available) {
     const date = usage?.date ?? new Date().toISOString().slice(0, 10);
@@ -877,8 +886,10 @@ export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
     .map((p) => {
       const projectLabel = p.project ? ` · ${escapeHtml(p.project)}` : "";
       const duration = p.durationMs ? `${(p.durationMs / 1000).toFixed(1)}s` : "—";
+      const tasteLabel = PASS_LABELS[p.pass];
+      const passCell = tasteLabel ? `Pass ${escapeHtml(p.pass)} · ${escapeHtml(tasteLabel)}` : `Pass ${escapeHtml(p.pass)}`;
       return `<tr>
-  <td><strong>Pass ${escapeHtml(p.pass)}</strong>${projectLabel}</td>
+  <td><strong>${passCell}</strong>${projectLabel}</td>
   <td>${escapeHtml(p.model)}</td>
   <td class="num">${p.inputTokens.toLocaleString()}</td>
   <td class="num">${p.outputTokens.toLocaleString()}</td>
@@ -909,6 +920,69 @@ ${rows}
       </tbody>
     </table>
   </div>
+</section>`;
+}
+
+/**
+ * The taste track (TA flag → TB analyze → TC consolidate + replay): what the
+ * night learned about judgment. Surfaces the actionable `review-eligible` queue
+ * and the gate's bookkeeping. Renders nothing when no taste run is on file.
+ */
+export function renderTasteTrack(taste: TasteTrackSnapshot | undefined): string {
+  if (!taste || !taste.available) return "";
+
+  const stat = (label: string, n: number, emphasis = false): string =>
+    `<li><span class="num">${emphasis ? `<strong>${n}</strong>` : n}</span> ${escapeHtml(label)}</li>`;
+
+  const counts = [
+    stat("review-eligible", taste.reviewEligible, true),
+    stat("written", taste.written),
+    stat("holding", taste.holding),
+    stat("replay-confirmed", taste.replayPassed),
+    ...(taste.replayInconclusive ? [stat("replay-inconclusive (held)", taste.replayInconclusive)] : []),
+    ...(taste.conflicts ? [stat("conflicts", taste.conflicts)] : []),
+    ...(taste.tensions ? [stat("tensions", taste.tensions)] : []),
+    ...(taste.handoffs ? [stat("→ fact candidates", taste.handoffs)] : []),
+  ].join("\n");
+
+  const queue = taste.reviewEligibleUnits.length
+    ? `<table class="run-usage-table">
+      <thead><tr><th>Rule</th><th>Category</th><th>Tier</th><th>Seen</th><th>Ladders up to</th></tr></thead>
+      <tbody>
+${taste.reviewEligibleUnits
+  .map(
+    (u) => `<tr>
+  <td><strong>${escapeHtml(u.dedupeKey)}</strong></td>
+  <td>${escapeHtml(u.category)}</td>
+  <td>${escapeHtml(u.tier)}</td>
+  <td class="num">${u.recurrence}×</td>
+  <td>${u.laddersUpTo ? escapeHtml(u.laddersUpTo) : "—"}</td>
+</tr>`,
+  )
+  .join("\n")}
+      </tbody>
+    </table>
+    <p class="kicker">Run <code>hive taste review</code> to approve, edit, or kill these.</p>`
+    : `<p>Nothing review-eligible — judgments accumulating in holding.</p>`;
+
+  const proposals = taste.newPrincipleProposals.length
+    ? `<div class="taste-proposals"><h3>New-principle proposals</h3><ul>${taste.newPrincipleProposals
+        .map((p) => `<li>${escapeHtml(p)}</li>`)
+        .join("")}</ul></div>`
+    : "";
+
+  return `
+<section class="section" id="section-taste-track">
+  <div class="section-head">
+    <h2>Taste track</h2>
+    <span class="kicker">${escapeHtml(taste.date)} · ${taste.reviewEligible} awaiting review</span>
+  </div>
+  <hr class="amber"/>
+  <ul class="taste-stats">
+${counts}
+  </ul>
+  ${queue}
+  ${proposals}
 </section>`;
 }
 
@@ -1008,6 +1082,7 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     renderOpenQuestions(data.openQuestions),
     renderRecentMemory(data.recentMemory),
     renderRunUsage(data.runUsage),
+    renderTasteTrack(data.tasteTrack),
     renderRuns(data.runs, c),
     renderArchive(data, c),
     renderTickets(data.tickets, c),

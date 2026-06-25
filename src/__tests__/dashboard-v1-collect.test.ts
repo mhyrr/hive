@@ -7,6 +7,7 @@ import {
   collectOpenQuestions,
   collectRecentMemory,
   collectRunUsage,
+  collectTasteTrack,
 } from "../lib/dashboard/collect";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 import {
@@ -229,5 +230,72 @@ describe("collectRunUsage", () => {
     expect(b?.project).toBe("alpha");
     const v = snap.passes.find((p) => p.pass === "V");
     expect(v?.project).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// collectTasteTrack
+// ---------------------------------------------------------------------------
+
+describe("collectTasteTrack", () => {
+  const date = "2026-06-25";
+
+  async function writeDecisions(paths: HivePaths, obj: unknown): Promise<void> {
+    const dir = join(paths.memoryRunsDir, date);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "taste-decisions.json"), JSON.stringify(obj, null, 2));
+  }
+
+  test("no artifact → unavailable, all zeros", async () => {
+    const paths = await freshHome();
+    const snap = await collectTasteTrack(paths, date);
+    expect(snap.available).toBe(false);
+    expect(snap.written).toBe(0);
+    expect(snap.reviewEligibleUnits).toEqual([]);
+  });
+
+  test("summarizes counts, replay verdicts, and the review-eligible queue", async () => {
+    const paths = await freshHome();
+    await writeDecisions(paths, {
+      written: 3,
+      reviewEligible: 1,
+      holding: 2,
+      conflicts: [{ dedupe_key: "x" }],
+      tensions: [],
+      handoffsToFacts: [{ dedupe_key: "fact" }],
+      droppedNoise: 4,
+      droppedNegative: 1,
+      newPrincipleProposals: ["maybe a new principle is emerging"],
+      decisions: [
+        { dedupe_key: "use-uuid", category: "IMPLEMENTATION", tier: "FUZZY", recurrence: 2, reviewEligible: true, status: "pending", ladders_up_to: "As simple as possible", replay: { passed: true, inconclusive: false } },
+        { dedupe_key: "held-thin", category: "DESIGN", tier: "FUZZY", recurrence: 2, reviewEligible: false, status: "holding", ladders_up_to: null, replay: { passed: false, inconclusive: true } },
+        { dedupe_key: "first-sight", category: "PROCESS", tier: "FUZZY", recurrence: 1, reviewEligible: false, status: "holding", replay: null },
+      ],
+    });
+
+    const snap = await collectTasteTrack(paths, date);
+    expect(snap.available).toBe(true);
+    expect(snap.written).toBe(3);
+    expect(snap.reviewEligible).toBe(1);
+    expect(snap.holding).toBe(2);
+    expect(snap.conflicts).toBe(1);
+    expect(snap.handoffs).toBe(1);
+    expect(snap.droppedNoise).toBe(4);
+    expect(snap.replayPassed).toBe(1);
+    expect(snap.replayInconclusive).toBe(1);
+    expect(snap.newPrincipleProposals).toEqual(["maybe a new principle is emerging"]);
+    // Only the review-eligible unit makes the actionable queue.
+    expect(snap.reviewEligibleUnits).toHaveLength(1);
+    expect(snap.reviewEligibleUnits[0]!.dedupeKey).toBe("use-uuid");
+    expect(snap.reviewEligibleUnits[0]!.laddersUpTo).toBe("As simple as possible");
+  });
+
+  test("a corrupt artifact reads as unavailable, never throws", async () => {
+    const paths = await freshHome();
+    const dir = join(paths.memoryRunsDir, date);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "taste-decisions.json"), "{ not valid json");
+    const snap = await collectTasteTrack(paths, date);
+    expect(snap.available).toBe(false);
   });
 });
