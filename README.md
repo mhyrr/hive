@@ -1,8 +1,9 @@
 # <img src="img/logo.svg" alt="" width="32" height="32"> Hive
 
-HIVE is an identity, memory, and council layer for CLI coding agents.
-Claude Code is the default runtime; Pi and Codex are opt-in interactive
-harnesses with `hive -3` and `hive -x`.
+HIVE wraps the subscription coding CLI you already run — Claude Code by
+default, Codex (`hive -x`) or Pi (`hive -3`) on opt-in — and gives the
+agent a memory, a ticket queue, and a nightly reflection loop. Identity is
+the substrate that carries all three across sessions.
 
 The AI agent ecosystem has claws, hippos, and filing cabinets. They want to own your stack with databases and local embedding servers. HIVE takes the best ideas from all of them
 and re-implements them in a lightweight shell around subscription CLIs. No
@@ -11,32 +12,42 @@ Everything is markdown files in `~/.hive/`, tracked by git,
 readable by humans.
 
 The coding harness handles the conversation, tools, and file I/O. HIVE adds
-what the harness does not remember on its own:
+what it doesn't remember on its own, most valuable first:
 
-- **Persistent identity** that carries across sessions
-- **Three-layer project memory** (log, knowledge, index) with BM25 search and decay
-- **Multi-model council** with standard and adversarial dialectic modes
-- **Per-project ticket tracking** in markdown
-- **Heartbeat**: a stateless agent that wakes periodically, checks project state, and dispatches work within defined trust boundaries
-- **Autonomous dispatch**: background goal execution with timeout, kill, and status tracking
-- **Morning Edition dashboard**: a single-page broadsheet at `~/.hive/dashboard/index.html` (or live at `127.0.0.1:7777`) that pulls health, tickets, runs, memory, and the morning briefing into one glanceable surface
-- **Nightly extraction**: reads Claude Code session transcripts (JSONL), distills key insights, and promotes durable learnings into project memory automatically
-- **Language stacks**: bundles of domain knowledge (Iron Laws, patterns, idioms) packaged as Claude Code skills, auto-detected per project and loaded on demand
-- **Local MCP**: Provides a consistency layer that ties all of this together without a database.
-- **Harness routing**: `hive` launches Claude Code by default; `hive -3`
-  launches Pi and `hive -x` launches Codex with HIVE identity and MCP reach.
+- **Wraps your CLI** — `hive` launches Claude Code (or Codex with `-x`, Pi
+  with `-3`) already carrying identity, project memory, and MCP reach.
+- **Project memory** — three layers (log, knowledge, index) with BM25
+  search and decay, so knowledge compounds instead of resetting.
+- **Tickets** — per-project bugs, features, tasks, epics, and chores as
+  markdown the agent can plan against.
+- **Reflection & taste** — a nightly pass distills your sessions into
+  verified canon and an optional taste layer. Tell the agent once, it
+  sticks.
+- **Identity (the substrate)** — SOUL / IDENTITY / SELF carry who the agent
+  is across every session, so memory and reflection have something to
+  attach to.
 
-_Runs on subscription CLIs directly. Claude Code covers the default path;
-Pi and Codex use whatever provider/model configuration those CLIs own._
+Smaller surfaces sit underneath: a multi-model council, a heartbeat that
+dispatches background work, a morning dashboard, language-stack skills, and
+the local MCP server that ties it together. Details below.
 
 ## What It Does
 
-**Persistent identity.** 
+Sections run most valuable first — the top group is why HIVE exists.
 
-- SOUL.md, IDENTITY.md, and SELF.md live in `~/.hive/` and define who your AI is, what it values, and how it works with you. Claude Code gets this through the user-level SessionStart hook; Codex gets it through `~/.codex/AGENTS.md`, refreshed eagerly by `hive -x` and by its own SessionStart hook. Identity persists across projects and sessions.
-- Inspired by [OpenClaw](https://openclaw.ai/)
+**Wraps your CLI.**
 
-**Project memory.** 
+- `hive` launches the coding CLI you already run with HIVE identity,
+  project memory, and MCP reach already wired in. Claude Code is the
+  default; `hive -x` launches Codex and `hive -3` launches Pi. Each harness
+  receives the same identity through its native integration point — a
+  SessionStart hook for Claude Code, `~/.codex/AGENTS.md` for Codex, a
+  generated `-e` extension for Pi. See [Interactive
+  Harnesses](#interactive-harnesses) for the full routing matrix.
+- The harness still owns the conversation, tools, and file I/O. HIVE adds
+  only what it doesn't remember on its own.
+
+**Project memory.**
 
 - Facts, conventions, decisions, and open questions accumulate in `~/.hive/memory/projects/<name>/`. Agents read and write this through MCP tools. Knowledge compounds over time instead of starting fresh every session.
 - New projects skip the cold start: `hive project bootstrap [--infer]` scans a registered repo and seeds candidate facts (stack, build/test/CI, conventions, architecture summary). The nightly verifier admits what's canon-worthy. See `docs/memory-architecture.md` for the candidate-writer paths.
@@ -50,46 +61,32 @@ search as the base retrieval layer. No embeddings needed at this scale.
 progressive disclosure — lightweight index at session start, details
 on demand.
 
-**Multi-model council.** 
-
-- Send the same question to Claude, GPT, Gemini, and local models simultaneously. Each model gives an independent position. The current agent acts as chair and synthesizes agreement and disagreement. Useful for architecture decisions, tradeoff analysis, and anything where multiple perspectives help.
-- Ask the models to pick sides and debate over multiple rounds.
-- Inspired by [Perplexity](https://perplexity.ai/): multi-model council —
-the same question to multiple models in parallel, synthesized into
-one answer. Perplexity does this for search; HIVE does it for
-architecture decisions and tradeoff analysis.
-
-**Ticket tracking.** 
+**Tickets.**
 
 - Per-project tickets stored as markdown files with YAML frontmatter at `~/.hive/projects/<name>/tickets/`. Bugs, features, tasks, epics, and chores with priorities, tags, dependencies, and timestamped notes. 
 - Tickets live under `~/.hive/`, not in the repo — they're a personal working surface for one developer's human+agent loop, not a team coordination layer. Each dev on a project opts into HIVE independently; team-wide work still belongs in GitHub Issues, Linear, or whatever your team already uses.
 - Inspired by [Beads](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a): per-project ticket tracking with dependencies, priorities, and agent-readable markdown — work graphs the AI can plan against.
 
-**Heartbeat and Autonomous dispatch.**
+**Reflection & taste.**
 
-- A stateless agent triggered periodically via launchd. Each tick is a fresh `--print` invocation — no persistent session. A deterministic trigger gate checks for actual changes (new commits, file modifications, ticket updates) before invoking the model, so empty ticks cost nothing. The heartbeat reads standing orders (`HEARTBEAT.md`), checks git status, tickets, memory, and dispatch runs, then acts on what it finds.
-- It can autonomously dispatch standalone tasks (docs, chores), close completed tickets, consolidate memory, and surface recommendations. Trust boundaries are defined per project in the standing orders file.
-- `hive dispatch "<goal>"` spawns a background Claude session with the maya-executor agent in a git worktree. The executor plans, builds, tests, and merges. Configurable timeout (default 30m). `hive kill` to stop, `hive ps` for status with failure details. The heartbeat can trigger dispatches on its own for authorized work categories.
-- Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw)
+- The reason memory compounds without you curating it. A launchd job runs at 2am and walks a five-pass pipeline over the last 24 hours: condition (rank Claude Code + Codex session exchanges by signal × novelty), Sonnet extracts per-project candidates, Sonnet extracts cross-project reflections, Opus verifies and writes the morning briefing, then a mechanical pass lands accepted decisions to canon. Cost is typically $1–3/night; every run is auditable in `~/.hive/memory/runs/{DATE}/`.
+- Corrections and preferences you give in any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — flow as candidates to the night, get verified, and apply in every future session. Tell the agent once, it sticks forever.
+- The most durable craft principles can be promoted into an optional **taste layer** (`~/.hive/taste/principles.md`) that loads last and loudest in every session — the agent's accumulated judgment, not just its facts.
 
-**Morning Edition dashboard.**
+**Identity — the substrate.**
 
-- A single-page broadsheet that pulls everything HIVE knows into one surface. Per-project health (heartbeat status, last tick, dispatch results), ticket buckets (ready / in-progress / blocked, sorted by priority and age), recent dispatch runs with status and duration, recent memory writes (facts, conventions, decisions, open questions), the morning briefing from the nightly verifier, and the previous night's pipeline cost breakdown by pass.
-- Two surfaces, one renderer: `hive dashboard build` writes a static `~/.hive/dashboard/index.html` (rebuilt by the nightly job at 2am); `hive dashboard serve` runs an interactive server on `127.0.0.1:7777` with action buttons for closing tickets, dispatching, and memory writes. Both backed by pure data collectors in `src/lib/dashboard/collect.ts` — easy to test, easy to extend.
-- Inline CSS, system fonts, no framework, no network requests. Looks like a financial broadsheet and reads like one — designed to be glanced at over coffee, not navigated.
-- See [docs/dashboard.md](docs/dashboard.md) for the full reference.
+- SOUL.md, IDENTITY.md, and SELF.md in `~/.hive/` define who the agent is, what it values, and how it works with you. This is the infrastructure the rest sits on — it scopes memory and reflection to a project and carries them across sessions. Claude Code loads it through the user-level SessionStart hook; Codex through `~/.codex/AGENTS.md`, refreshed by `hive -x` and its own SessionStart hook; Pi through a generated extension.
+- Inspired by [OpenClaw](https://openclaw.ai/).
 
-**Nightly extraction.**
+### Also included
 
-- A launchd job runs at 2am nightly. It walks a five-pass pipeline against the last 24 hours of activity: condition (rank Claude Code + Codex session exchanges by signal × novelty), Sonnet extracts per-project candidates, Sonnet extracts cross-project reflections, Opus verifies and writes the morning briefing, then mechanical apply lands accepted decisions to canon and rebuilds the dashboard. Cost typically $1–3/night; everything is auditable in `~/.hive/memory/runs/{DATE}/`.
-- This means corrections and preferences you give during any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — flow as candidates to the night, get verified, and apply in every future session. Tell the AI once, it sticks forever.
+Smaller surfaces — reach for them when a project needs them.
 
-**Language stacks.**
-
-- A stack bundles domain knowledge — Iron Laws, patterns, idioms — as Claude Code skills. Install with `hive stack install elixir` and the skills sync into `~/.claude/skills/` so every session can load them on demand (~50 tokens per description at startup, full skill content loads only when invoked).
-- Stacks are auto-detected per project: `mix.exs` → elixir, `package.json` → typescript, `Cargo.toml` → rust, `pyproject.toml` → python. A session-start hint nudges the agent to load the matching skill before recommending on domain-specific patterns (Phoenix contexts, Ecto, LiveView, OTP, React, Next.js, types).
-- Current stacks: **elixir** (Phoenix contexts, Ecto, LiveView, Oban, OTP idioms, testing, security) and **typescript** (React, Next.js, advanced types). Run `hive stack list` to see what's installed, `hive stack init <name>` to scaffold your own.
-- Elixir content lifted from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix). TypeScript content lifted from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills). Both MIT.
+- **Multi-model council.** Send one question to Claude, GPT, Gemini, and local models in parallel; the current agent chairs and synthesizes agreement and disagreement. Standard or adversarial-dialectic modes. `hive council "<question>"`. Inspired by [Perplexity](https://perplexity.ai/).
+- **Heartbeat & autonomous dispatch.** A stateless agent wakes on a timer, checks project state behind a deterministic trigger gate (no changes, no model call, no cost), and can dispatch well-specified work to a background executor in a git worktree that plans, builds, tests, and merges. `hive dispatch "<goal>"`, `hive ps`, `hive kill`. Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw).
+- **Morning Edition dashboard.** A single-page broadsheet pulling health, tickets, runs, recent memory, and the morning briefing into one surface — a static `~/.hive/dashboard/index.html` or an interactive server at `127.0.0.1:7777`. `hive dashboard`. See [docs/dashboard.md](docs/dashboard.md).
+- **Language stacks.** Domain-knowledge bundles — Iron Laws, patterns, idioms — packaged as Claude Code skills and auto-detected per project (`mix.exs` → elixir, `package.json` → typescript). Ships **elixir** and **typescript**; `hive stack init <name>` scaffolds your own. Elixir content from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix), TypeScript from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills) (both MIT).
+- **Local MCP server.** The consistency layer that exposes memory, tickets, and council to every harness — markdown underneath, no database.
 
 ## Quick Start
 
@@ -370,21 +367,15 @@ lost updates.
 
 ## Automation: Auto-dispatch
 
-Tickets tagged `auto-dispatch` are picked up by the heartbeat agent for
-autonomous execution. The workflow:
+Tickets tagged `auto-dispatch` (via `hive ticket dispatch TK-005`) are
+picked up by the heartbeat for autonomous execution — but only when they're
+open, unblocked by `depends`, and authorized in the project's
+`HEARTBEAT.md`. The heartbeat runs `hive dispatch "<goal>" --ticket <id>`
+for ready tickets and logs every dispatch to `inbox.md`.
 
-1. **Tag a ticket:** `hive ticket dispatch TK-005` adds the `auto-dispatch` tag
-2. **Heartbeat picks it up:** The context brief highlights auto-dispatch tickets with dependency status
-3. **Dependency gating:** If a ticket has unresolved `depends`, the heartbeat skips it and notes why
-4. **Dispatch:** The heartbeat runs `hive dispatch "<goal>" --ticket <id>` for ready tickets
-
-This is controlled by the standing orders in each project's `HEARTBEAT.md`.
-Only tickets that are open, tagged `auto-dispatch`, and have all dependencies
-resolved will be dispatched. The heartbeat logs every dispatch to `inbox.md`.
-
-Use `auto-dispatch` for work that's well-specified and safe for autonomous
-execution: documentation tasks, chores, standalone features with clear specs.
-Don't tag anything that needs human judgment on approach.
+Reserve it for well-specified, low-judgment work: docs, chores, standalone
+features with clear specs. Don't tag anything that needs a human call on
+approach.
 
 ## File Layout
 
@@ -445,9 +436,9 @@ bun test
 
 ## Design Values
 
-**Identity over infrastructure.** The interesting part of AI
-coordination is who the AI is, what it remembers, and who else it
-can consult.
+**Memory over infrastructure.** The interesting part of AI coordination is
+what the agent remembers and how it sharpens over time — not the plumbing
+underneath. Keep the plumbing thin.
 
 **Files over databases.** `cat ~/.hive/SOUL.md` tells you who your AI
 is. No dashboard required.
