@@ -8,7 +8,7 @@ import { runNightly } from "../lib/orchestrator";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 import { appendProjectMemory, entryHash, readProjectMemorySnapshot } from "../lib/memory";
 import type { ModelCaller } from "../lib/extract";
-import { parseTranscriptContent, type LoadedTranscript } from "../lib/transcript";
+import { parseTranscriptContent, type LoadedTranscript, type TranscriptEvent } from "../lib/transcript";
 import { loadUsageSummary } from "../lib/pricing";
 import { projectTasteDir, readTasteUnits } from "../lib/taste-store";
 
@@ -28,6 +28,7 @@ interface StubBehavior {
   taFlagAll?: boolean; // flag every window shown to the TA classifier
   tbCandidates?: string; // TB JSON returned for every TB call
   tcDecisions?: string; // TC coherence JSON returned for every TC call
+  replayFlags?: Record<string, string[]>; // replay judge: dedupe_key → flagged window ids
   failTASessionFiles?: Set<string>; // throw TA when its content mentions one
 }
 
@@ -53,6 +54,11 @@ function makeStub(behavior: StubBehavior): ModelCaller {
       // Pass TC (consolidate/gate) — Opus.
       model = "claude-opus-4-6";
       text = behavior.tcDecisions ?? "[]";
+    } else if (input.systemPrompt.includes("validating candidate taste rules")) {
+      // Replay judge (TR) — Sonnet.
+      model = "claude-sonnet-4-6";
+      const flags = behavior.replayFlags ?? {};
+      text = JSON.stringify(Object.entries(flags).map(([dedupe_key, flagged]) => ({ dedupe_key, flagged })));
     } else if (input.systemPrompt.includes("verifier for HIVE")) {
       // Pass V
       model = "claude-opus-4-6";
@@ -430,6 +436,52 @@ function tasteLoader(byProject: Record<string, LoadedTranscript[]>): typeof impo
   return async (opts) => byProject[opts.project ?? ""] ?? [];
 }
 
+// --- Replay (TR) fixtures: a wider 90d historical corpus to validate against ---
+let hseq = 0;
+function hev(role: TranscriptEvent["role"], text: string, sf: string): TranscriptEvent {
+  hseq++;
+  return { anchor: { sessionFile: sf, id: `h${hseq}`, line: hseq, ts: null }, parentId: null, source: "claude", project: "alpha", role, kind: "message", text };
+}
+/** One window each: a correction (human redirects) and an accepted (no reaction). */
+function histCorrection(i: number): LoadedTranscript {
+  const sf = `/h/hist-c${i}.jsonl`;
+  return { sessionFile: sf, source: "claude", project: "alpha", events: [hev("assistant", "here is the code", sf), hev("user", "no, that's wrong, use X instead", sf)] };
+}
+function histAccepted(i: number): LoadedTranscript {
+  const sf = `/h/hist-a${i}.jsonl`;
+  return { sessionFile: sf, source: "claude", project: "alpha", events: [hev("assistant", "shipped it", sf), hev("assistant", "added the docs", sf)] };
+}
+/** 5 corrections (w0..w4) + 5 accepted (w5..w9): a non-thin, balanced corpus. */
+function historicalCorpus(): LoadedTranscript[] {
+  return [...[0, 1, 2, 3, 4].map(histCorrection), ...[0, 1, 2, 3, 4].map(histAccepted)];
+}
+
+/** since-set ⇒ the 90d replay corpus; otherwise ⇒ the 24h TA/TB session. */
+function replayLoader(): typeof import("../lib/transcript").loadTranscripts {
+  return async (opts) => (opts.since ? historicalCorpus() : [tasteSession("alpha")]);
+}
+
+/** Same rule as TB_ONE_CANDIDATE but with evidence in TWO sessions → recurrence 2. */
+const TB_RECURRING = JSON.stringify([
+  {
+    category: "IMPLEMENTATION",
+    tier: "FUZZY",
+    scope: { kind: "project" },
+    reasoning: "Integrity belongs in the schema; prefer a foreign key over an app-level check.",
+    delta: { before: "plain id column", after: "foreign key" },
+    reason_source: "stated",
+    rule_statement: "SQL relations use foreign keys",
+    canonical_example: { bad: "user_id int", good: "user_id references users(id)" },
+    check_sketch: null,
+    evidence: [
+      { anchor: { sessionFile: "s1.jsonl", id: "u3", ts: null }, quote: "no, use a foreign key instead", confidence: 0.9 },
+      { anchor: { sessionFile: "s2.jsonl", id: "u7", ts: null }, quote: "again, foreign key", confidence: 0.9 },
+    ],
+    dedupe_key: "sql-foreign-keys",
+    provenance: "human correction across two sessions",
+  },
+]);
+
 const TB_ONE_CANDIDATE = JSON.stringify([
   {
     category: "IMPLEMENTATION",
@@ -489,6 +541,38 @@ describe("runNightly — taste track", () => {
     expect(ta?.model).toBe("claude-haiku-4-5");
     expect(tbU?.model).toBe("claude-opus-4-6");
     expect(tcU?.model).toBe("claude-opus-4-6");
+  });
+
+  test("replay (TR) runs hermetically: a recurring FUZZY candidate that passes replay → pending + a TR usage record", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha");
+
+    const result = await runNightly({
+      paths,
+      date,
+      caller: makeStub({
+        taFlagAll: true,
+        tbCandidates: TB_RECURRING,
+        tcDecisions: "[]",
+        replayFlags: { "sql-foreign-keys": ["w0", "w1", "w2", "w3", "w4"] }, // flag the 5 real corrections
+      }),
+      transcriptLoader: replayLoader(),
+    });
+
+    expect(result.passes.TC[0]?.status).toBe("complete");
+
+    // Recurrence 2 cleared the gate AND replay predicted the corrections → pending.
+    const units = await readTasteUnits(projectTasteDir(paths, "alpha"), "IMPLEMENTATION");
+    expect(units).toHaveLength(1);
+    expect(units[0]?.status).toBe("pending");
+    expect(units[0]?.recurrence).toBe(2);
+
+    // A TR usage record landed, billed to the mid-tier judge model.
+    const usage = await loadUsageSummary(paths, date);
+    const tr = usage.records.find((r) => r.pass === "TR");
+    expect(tr).toBeDefined();
+    expect(tr?.model).toBe("claude-sonnet-4-6");
   });
 
   test("--no-taste skips the taste track entirely", async () => {

@@ -38,6 +38,7 @@ import { buildDashboard } from "./dashboard";
 import { listProjects } from "./paths";
 import { loadTranscripts } from "./transcript";
 import { runProjectTasteExtract } from "./taste-extract";
+import { buildReplayCorpus, type ReplayCorpus } from "./taste-replay";
 import {
   mergeConsolidateResults,
   runTasteConsolidate,
@@ -502,6 +503,9 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
 // store writer) is skipped — the analogue of F being skipped on dry-run.
 // ---------------------------------------------------------------------------
 
+/** Replay's eval corpus spans a wider window than TA/TB's 24h (design §9). */
+const REPLAY_WINDOW_DAYS = 90;
+
 interface TasteTrackArgs {
   paths: HivePaths;
   date: string;
@@ -596,12 +600,46 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
       result.passes.TC.push({ pass: `TC.${projectId}`, status: "skipped", detail: "no candidates" });
       continue;
     }
+    // Replay eval corpus (design §9) — built from a WIDER 90d window than
+    // TA/TB's 24h, and only when there are FUZZY candidates replay could gate
+    // (skip the I/O otherwise). Passed INTO TC to keep it disk-free + hermetic.
+    // A load failure leaves the corpus null (replay-enabled but inconclusive →
+    // candidates HOLD), never undefined (which would disable replay = fail open).
+    let replayCorpus: ReplayCorpus | null | undefined;
+    if (extract.candidates.some((c) => c.tier === "FUZZY")) {
+      replayCorpus = null; // enabled; stays null on load failure → inconclusive → hold
+      try {
+        const since = new Date(now.getTime() - REPLAY_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+        const history = await transcriptLoader({ project: projectId, since, now });
+        replayCorpus = buildReplayCorpus(history.flatMap((t) => t.events));
+      } catch (err) {
+        result.errors.push(`replay corpus (${projectId}): ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     emit({ type: "pass-start", pass: `TC.${projectId}` });
     try {
       const { value: tc, durationMs } = await timed(() =>
-        runTasteConsolidate(extract.candidates, { paths, projectId, now: date, caller }),
+        runTasteConsolidate(extract.candidates, { paths, projectId, now: date, caller, replayCorpus }),
       );
       tcResults.push(tc);
+      if (tc.replayUsage) {
+        await appendUsageRecord(paths, date, {
+          pass: "TR",
+          project: projectId,
+          provider: tc.replayUsage.provider,
+          model: tc.replayUsage.model,
+          inputTokens: tc.replayUsage.inputTokens ?? 0,
+          outputTokens: tc.replayUsage.outputTokens ?? 0,
+          durationMs: tc.replayUsage.durationMs,
+          cost: estimateCost({
+            provider: tc.replayUsage.provider,
+            model: tc.replayUsage.model,
+            inputTokens: tc.replayUsage.inputTokens ?? 0,
+            outputTokens: tc.replayUsage.outputTokens ?? 0,
+          }),
+        });
+      }
       if (tc.usage) {
         await appendUsageRecord(paths, date, {
           pass: "TC",
