@@ -55,7 +55,7 @@ const DESTRUCTIVE_CMD = /\b(rm|rmdir|unlink|mv|git mv|git rm)\b/i;
 // vs. a bare acknowledgement ("ok", "yes", "thanks") that isn't a divergence.
 const MIN_POST_ACTION_LEN = 12;
 
-interface Locus {
+export interface Locus {
   index: number;
   kind: LocusKind;
   cues: string[];
@@ -119,6 +119,15 @@ function detectLoci(events: TranscriptEvent[], o: Required<SegmentOptions>): Loc
   }
 
   return loci;
+}
+
+/**
+ * Public entry to the mechanical locus detector (the replay corpus labels its
+ * windows with this — design §9). Resolves option defaults so callers pass a
+ * partial `SegmentOptions`; `detectLoci` itself wants the fully-resolved shape.
+ */
+export function findLoci(events: TranscriptEvent[], opts: SegmentOptions = {}): Locus[] {
+  return detectLoci(events, { ...DEFAULTS, ...opts });
 }
 
 /**
