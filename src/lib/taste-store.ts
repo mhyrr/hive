@@ -365,7 +365,10 @@ export async function searchTasteStore(
   const topK = opts.topK ?? 5;
   const floor = opts.floor ?? 0.25;
 
-  const units = await readTasteUnits(storeDir, opts.category);
+  // Retrieval guard (design §7.2): only ACTIVE (human-approved) units may enter
+  // a working session. holding/pending are accumulating/awaiting-review — never
+  // retrieved, so an un-curated judgment can't leak into context as if it were canon.
+  const units = (await readTasteUnits(storeDir, opts.category)).filter((u) => u.status === "active");
   if (units.length === 0) return [];
 
   const meta = await readTasteMeta(storeDir);

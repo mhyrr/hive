@@ -124,8 +124,8 @@ describe("writeTasteUnit + readTasteUnits", () => {
 
 describe("searchTasteStore", () => {
   test("returns the relevant unit and respects the category prefilter", async () => {
-    await writeTasteUnit(dir, candidate());
-    await writeTasteUnit(dir, candidate({ category: "PROCESS", dedupe_key: "dont-deflect", reasoning: "Do the asked work before filing tangential tickets about momentum." }));
+    await writeTasteUnit(dir, candidate(), { status: "active" });
+    await writeTasteUnit(dir, candidate({ category: "PROCESS", dedupe_key: "dont-deflect", reasoning: "Do the asked work before filing tangential tickets about momentum." }), { status: "active" });
 
     const hits = await searchTasteStore(dir, "uniqueness constraint query cardinality");
     expect(hits.length).toBeGreaterThanOrEqual(1);
@@ -135,12 +135,25 @@ describe("searchTasteStore", () => {
     expect(processHits.every((h) => h.unit.category === "PROCESS")).toBe(true);
   });
 
+  test("only ACTIVE units are retrievable — holding/pending never leak into a session (design §7.2)", async () => {
+    await writeTasteUnit(dir, candidate({ dedupe_key: "hold" }), { status: "holding" });
+    await writeTasteUnit(dir, candidate({ dedupe_key: "pend", reasoning: "Trace every consumer of an invariant before relaxing it." }), { status: "pending" });
+    // A holding/pending store yields nothing — not yet canon.
+    expect(await searchTasteStore(dir, "uniqueness constraint cardinality invariant consumer")).toEqual([]);
+
+    // Approving it (→ active) makes it retrievable.
+    await writeTasteUnit(dir, candidate({ dedupe_key: "hold" }), { status: "active" });
+    const hits = await searchTasteStore(dir, "uniqueness constraint cardinality");
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.unit.dedupe_key).toBe("hold");
+  });
+
   test("an empty store returns no hits", async () => {
     expect(await searchTasteStore(dir, "anything")).toEqual([]);
   });
 
   test("a recall bumps the unit's decay metadata (retrieval strengthening)", async () => {
-    await writeTasteUnit(dir, candidate());
+    await writeTasteUnit(dir, candidate(), { status: "active" });
     const before = await Bun.file(join(dir, "_meta.json")).json();
     const h = unitHash(candidate());
     expect(before.entries[h].recallCount).toBe(0);
@@ -151,7 +164,7 @@ describe("searchTasteStore", () => {
   });
 
   test("noBump leaves the decay metadata untouched", async () => {
-    await writeTasteUnit(dir, candidate());
+    await writeTasteUnit(dir, candidate(), { status: "active" });
     await searchTasteStore(dir, "uniqueness constraint cardinality", { noBump: true });
     const after = await Bun.file(join(dir, "_meta.json")).json();
     expect(after.entries[unitHash(candidate())].recallCount).toBe(0);
