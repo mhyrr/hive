@@ -34,6 +34,13 @@ import { parseExtractionJson, type ModelCaller } from "./extract";
 import { appendCandidate, type CandidateInput } from "./memory";
 import type { HivePaths } from "./paths";
 import { estimateCost } from "./pricing";
+import {
+  replayCandidates,
+  type ReplayCorpus,
+  type ReplayRuleResult,
+  type ReplayThresholds,
+  type ReplayUsage,
+} from "./taste-replay";
 import { buildTasteLayer } from "./taste";
 import {
   readNegatives,
@@ -210,6 +217,8 @@ export interface TasteDecision {
   withinRunRecurrence: number;
   reviewEligible: boolean;
   humanConfirmed: boolean;
+  /** Replay verdict (design §9), non-null only when this candidate was judged. */
+  replay: ReplayRuleResult | null;
   /** The lifecycle state written to the store (null when not written). */
   status: TasteUnitStatus | null;
   coherence: Coherence | null;
@@ -240,6 +249,8 @@ export interface TasteConsolidateResult {
     model: string;
     usd: number;
   } | null;
+  /** Replay judge usage (design §9), separate from the coherence call's. */
+  replayUsage: ReplayUsage | null;
   errors: string[];
 }
 
@@ -306,6 +317,18 @@ export interface ConsolidateOptions {
   now?: string;
   /** Recurrence needed to become review-eligible (design §8.2). Default 2. */
   minRecurrence?: number;
+  /**
+   * Replay eval corpus (design §9), passed IN to keep TC disk-free and
+   * hermetically testable (mirrors the orchestrator's transcriptLoader seam).
+   * Semantics:
+   *   undefined → replay DISABLED — recurrence-only gate (backward compatible).
+   *   null / thin → replay INCONCLUSIVE — FUZZY/recurrence-cleared candidates
+   *                 stay in holding (precision-weighted: never promote on no evidence).
+   *   valid corpus → the one judge call runs over the eligible set.
+   */
+  replayCorpus?: ReplayCorpus | null;
+  /** Override the replay precision/recall/sample thresholds (design §9). */
+  replayThresholds?: Partial<ReplayThresholds>;
   /** Also write CONTEXTUAL handoffs to the fact candidates queue. Default true. */
   writeHandoffs?: boolean;
   onProgress?: (m: string) => void;
@@ -333,6 +356,7 @@ export async function runTasteConsolidate(
     droppedNoise: 0,
     droppedNegative: 0,
     usage: null,
+    replayUsage: null,
     errors: [],
   };
 
@@ -446,19 +470,69 @@ export async function runTasteConsolidate(
   // Built from the same set the model saw (re-observations excluded).
   const existingByKey = new Map(existingForConflict.map((u) => [u.dedupe_key, u]));
 
+  // --- Stage 2b: gate inputs + replay validation (design §9) -----------------
+  // Pre-compute each candidate's recurrence + human-confirmation so we can pick
+  // the replay-eligible set, then run ONE judge call over it. Replay slots
+  // between the recurrence gate and the store write: recurrence says "this
+  // happened more than once," replay says "and a rule for it actually predicts
+  // the corrections." Both must pass (humanConfirmed bypasses both).
+  interface GateInput {
+    d: DedupedCandidate;
+    coh: CoherenceDecision | null;
+    prior: TasteUnit | undefined;
+    combined: number;
+    humanConfirmed: boolean;
+    recurrencePasses: boolean;
+  }
+  const gate: GateInput[] = deduped.map((d) => {
+    const coh = coherenceByKey.get(d.candidate.dedupe_key) ?? null;
+    const prior = existingAll.find((u) => u.hash === d.hash);
+    const combined = (prior?.recurrence ?? 0) + d.distinctSessions;
+    const humanConfirmed = coh?.human_confirmed ?? false;
+    return { d, coh, prior, combined, humanConfirmed, recurrencePasses: combined >= minRecurrence };
+  });
+
+  // Replay runs ONLY on candidates that already cleared recurrence AND are FUZZY
+  // AND aren't humanConfirmed — bounds the judge to the handful that matter.
+  // DETERMINISTIC skips replay (its checks aren't compiled until phase 3);
+  // humanConfirmed bypasses it. `replayCorpus === undefined` disables replay
+  // (recurrence-only gate, backward compatible). One call, sequenced AFTER the
+  // coherence call above — never concurrent (nested-claude contention).
+  const replayEnabled = opts.replayCorpus !== undefined;
+  const replayByKey = new Map<string, ReplayRuleResult>();
+  if (replayEnabled) {
+    const eligible = gate.filter(
+      (g) => g.d.candidate.tier === "FUZZY" && g.recurrencePasses && !g.humanConfirmed,
+    );
+    if (eligible.length > 0) {
+      const rep = await replayCandidates(
+        eligible.map((g) => g.d.candidate),
+        opts.replayCorpus ?? null,
+        { caller: opts.caller, thresholds: opts.replayThresholds, onProgress: log },
+      );
+      for (const [k, v] of rep.byKey) replayByKey.set(k, v);
+      result.replayUsage = rep.usage;
+      if (rep.errors.length) result.errors.push(...rep.errors);
+    }
+  }
+
   // --- Stage 3: route, gate, write -------------------------------------------
   let orthogonalEligible = 0;
-  for (const d of deduped) {
+  for (const g of gate) {
+    const { d, coh, prior, combined, humanConfirmed, recurrencePasses } = g;
     const c = d.candidate;
     const dir = storeDirForScope(paths, projectId, c.scope.kind);
-    const coh = coherenceByKey.get(c.dedupe_key) ?? null;
 
-    // Prior recurrence + lifecycle from any existing same-hash unit.
-    const prior = existingAll.find((u) => u.hash === d.hash);
-    const priorRecurrence = prior?.recurrence ?? 0;
-    const combined = priorRecurrence + d.distinctSessions;
-    const humanConfirmed = coh?.human_confirmed ?? false;
-    const reviewEligible = combined >= minRecurrence || humanConfirmed;
+    // Replay AND-s into the gate for the eligible set only; everything else
+    // (DETERMINISTIC, humanConfirmed, recurrence-failures, replay-off) is not
+    // gated by replay. A missing verdict for an eligible candidate means
+    // inconclusive (thin corpus / failed judge) ⇒ hold, never promote.
+    const replay = replayByKey.get(c.dedupe_key) ?? null;
+    let replayPasses = true;
+    if (replayEnabled && c.tier === "FUZZY" && recurrencePasses && !humanConfirmed) {
+      replayPasses = replay?.passed ?? false;
+    }
+    const reviewEligible = humanConfirmed || (recurrencePasses && replayPasses);
 
     // Never demote an already-active unit; otherwise gate decides holding/pending.
     const target: TasteUnitStatus =
@@ -503,6 +577,7 @@ export async function runTasteConsolidate(
       withinRunRecurrence: d.distinctSessions,
       reviewEligible,
       humanConfirmed,
+      replay,
       status,
       coherence: coh?.coherence ?? null,
       ladders_up_to: coh?.ladders_up_to ?? null,
@@ -544,6 +619,7 @@ function emptyDecision(c: TasteCandidate, routed: RouteTarget): TasteDecision {
     withinRunRecurrence: 0,
     reviewEligible: false,
     humanConfirmed: false,
+    replay: null,
     status: null,
     coherence: null,
     ladders_up_to: null,
@@ -575,6 +651,7 @@ export function mergeConsolidateResults(
     droppedNoise: 0,
     droppedNegative: 0,
     usage: null,
+    replayUsage: null,
     errors: [],
   };
   for (const r of results) {
@@ -597,6 +674,16 @@ export function mergeConsolidateResults(
         merged.usage.outputTokens = (merged.usage.outputTokens ?? 0) + (r.usage.outputTokens ?? 0);
         merged.usage.durationMs = (merged.usage.durationMs ?? 0) + (r.usage.durationMs ?? 0);
         merged.usage.usd += r.usage.usd;
+      }
+    }
+    if (r.replayUsage) {
+      if (!merged.replayUsage) {
+        merged.replayUsage = { ...r.replayUsage };
+      } else {
+        merged.replayUsage.inputTokens = (merged.replayUsage.inputTokens ?? 0) + (r.replayUsage.inputTokens ?? 0);
+        merged.replayUsage.outputTokens = (merged.replayUsage.outputTokens ?? 0) + (r.replayUsage.outputTokens ?? 0);
+        merged.replayUsage.durationMs = (merged.replayUsage.durationMs ?? 0) + (r.replayUsage.durationMs ?? 0);
+        merged.replayUsage.usd += r.replayUsage.usd;
       }
     }
   }

@@ -20,6 +20,7 @@ import {
   unitHash,
   writeTasteUnit,
 } from "./taste-store";
+import type { ReplayCorpus } from "./taste-replay";
 import type { TasteCandidate } from "./taste-types";
 
 const PROJECT = "demo";
@@ -54,6 +55,48 @@ function stubCaller(decisions: Partial<CoherenceDecision>[]): ModelCaller {
     totalTokens: 150,
     durationMs: 5,
   });
+}
+
+/**
+ * Routes by system prompt: coherence decisions for the TC call, replay
+ * judgments for the replay judge call (both share TC's single `caller` seam).
+ */
+function dualCaller(
+  decisions: Partial<CoherenceDecision>[],
+  replayFlags: Record<string, string[]>,
+): ModelCaller {
+  return async (input) => {
+    const isReplay = input.systemPrompt.startsWith("You are validating candidate taste rules");
+    const payload = isReplay
+      ? Object.entries(replayFlags).map(([dedupe_key, flagged]) => ({ dedupe_key, flagged }))
+      : decisions;
+    return { provider: input.provider, model: input.modelId, text: JSON.stringify(payload), inputTokens: 100, outputTokens: 20, durationMs: 3 };
+  };
+}
+
+/** A balanced 3+3 replay corpus (events unused by the stub judge). */
+function replayCorpus(): ReplayCorpus {
+  const w = (windowId: string, label: "correction" | "accepted"): ReplayCorpus["windows"][number] => ({
+    windowId,
+    label,
+    sessionFile: "h.jsonl",
+    events: [],
+  });
+  return {
+    windows: [w("w0", "correction"), w("w1", "correction"), w("w2", "correction"), w("w3", "accepted"), w("w4", "accepted"), w("w5", "accepted")],
+    positives: 3,
+    negatives: 3,
+  };
+}
+
+const REPLAY_T = { minWindows: 4, minPositives: 2, minNegatives: 2, sample: 4 };
+
+/** Two same-hash candidates from distinct sessions → recurrence 2 (clears the gate). */
+function recurringPair(over: Partial<TasteCandidate> = {}): TasteCandidate[] {
+  return [
+    candidate(over),
+    candidate({ ...over, evidence: [{ anchor: { sessionFile: "s2.jsonl", id: "u9", ts: null }, quote: "again", confidence: 0.8 }] }),
+  ];
 }
 
 let home: string;
@@ -231,6 +274,94 @@ describe("scope routing + resilience", () => {
   });
 });
 
+describe("replay gate (design §9)", () => {
+  test("a recurring FUZZY candidate that PASSES replay becomes review-eligible", async () => {
+    const r = await runTasteConsolidate(
+      recurringPair(),
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }], { "trace-all-read-paths": ["w0", "w1"] }), {
+        replayCorpus: replayCorpus(),
+        replayThresholds: REPLAY_T,
+      }),
+    );
+    expect(r.reviewEligible).toBe(1);
+    expect(r.decisions[0]!.replay?.passed).toBe(true);
+    expect(r.decisions[0]!.status).toBe("pending");
+    expect(r.replayUsage).not.toBeNull();
+  });
+
+  test("a recurring FUZZY candidate that FAILS replay stays in holding (recurrence alone is not enough)", async () => {
+    const r = await runTasteConsolidate(
+      recurringPair(),
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }], { "trace-all-read-paths": ["w3"] }), {
+        replayCorpus: replayCorpus(),
+        replayThresholds: REPLAY_T,
+      }),
+    );
+    expect(r.reviewEligible).toBe(0);
+    expect(r.holding).toBe(1);
+    expect(r.decisions[0]!.replay?.passed).toBe(false);
+    expect(r.decisions[0]!.status).toBe("holding");
+  });
+
+  test("DETERMINISTIC candidates skip replay and promote on recurrence alone", async () => {
+    const r = await runTasteConsolidate(
+      recurringPair({ tier: "DETERMINISTIC", check_sketch: "grep for the thing" }),
+      // A failing replay map is supplied; DETERMINISTIC must ignore it.
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }], { "trace-all-read-paths": ["w3"] }), {
+        replayCorpus: replayCorpus(),
+        replayThresholds: REPLAY_T,
+      }),
+    );
+    expect(r.reviewEligible).toBe(1);
+    expect(r.decisions[0]!.replay).toBeNull(); // never judged
+    expect(r.replayUsage).toBeNull(); // no eligible FUZZY candidate → no judge call
+  });
+
+  test("humanConfirmed bypasses replay entirely", async () => {
+    const r = await runTasteConsolidate(
+      [candidate()],
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal", human_confirmed: true }], { "trace-all-read-paths": ["w3"] }), {
+        replayCorpus: replayCorpus(),
+        replayThresholds: REPLAY_T,
+      }),
+    );
+    expect(r.reviewEligible).toBe(1);
+    expect(r.decisions[0]!.replay).toBeNull();
+    expect(r.replayUsage).toBeNull();
+  });
+
+  test("a thin replay corpus holds a recurring FUZZY candidate (inconclusive, never fail open)", async () => {
+    const thin: ReplayCorpus = {
+      windows: [
+        { windowId: "w0", label: "correction", sessionFile: "h", events: [] },
+        { windowId: "w1", label: "accepted", sessionFile: "h", events: [] },
+      ],
+      positives: 1,
+      negatives: 1,
+    };
+    const r = await runTasteConsolidate(
+      recurringPair(),
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }], { "trace-all-read-paths": ["w0", "w1"] }), {
+        replayCorpus: thin,
+        replayThresholds: REPLAY_T,
+      }),
+    );
+    expect(r.reviewEligible).toBe(0);
+    expect(r.holding).toBe(1);
+    expect(r.decisions[0]!.replay?.inconclusive).toBe(true);
+  });
+
+  test("replay disabled (no corpus) gates on recurrence alone — backward compatible", async () => {
+    const r = await runTasteConsolidate(
+      recurringPair(),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }])),
+    );
+    expect(r.reviewEligible).toBe(1);
+    expect(r.decisions[0]!.replay).toBeNull();
+    expect(r.replayUsage).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // mergeConsolidateResults — combine per-project TC results into one artifact
 // ---------------------------------------------------------------------------
@@ -249,6 +380,7 @@ describe("mergeConsolidateResults", () => {
       droppedNoise: 0,
       droppedNegative: 0,
       usage: null,
+      replayUsage: null,
       errors: [],
       ...over,
     };
