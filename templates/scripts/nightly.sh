@@ -17,6 +17,20 @@ echo "=== HIVE nightly: $DATE $(date +%H:%M:%S) ==="
 
 HIVE="${HIVE_BIN:-$(which hive 2>/dev/null || echo "$HOME/.local/bin/hive")}"
 
+# Subscription OAuth token (from `claude setup-token`) for the detached launchd
+# context. At 2am there is no GUI session, so claude's Keychain OAuth refresh
+# stalls for ~an hour mid-run (TK-130). A long-lived token in the environment
+# switches claude to the keychain-independent `oauth_token` auth path — no
+# refresh, no stall. The file is 0600 and holds only the raw token. If it is
+# absent we fall back to Keychain OAuth (which may stall under launchd).
+OAUTH_TOKEN_FILE="${HIVE_OAUTH_TOKEN_FILE:-$HOME/.hive/.oauth-token}"
+if [ -s "$OAUTH_TOKEN_FILE" ]; then
+  export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$OAUTH_TOKEN_FILE")"
+  echo "auth: long-lived OAuth token ($OAUTH_TOKEN_FILE) — Keychain bypassed"
+else
+  echo "WARN: $OAUTH_TOKEN_FILE missing/empty — using Keychain OAuth (may stall under launchd, TK-130)"
+fi
+
 # Pick a GNU-compatible timeout (coreutils). macOS doesn't ship one by default.
 TIMEOUT_BIN=""
 if command -v gtimeout >/dev/null 2>&1; then
