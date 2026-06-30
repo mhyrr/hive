@@ -6,7 +6,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { completeClaudeText } from "./claude";
+import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
 import { readProjectMemorySnapshot } from "./memory";
 import type { ConditionReport, ProjectSignal } from "./condition";
@@ -342,7 +342,7 @@ export type ModelCaller = (input: {
 }) => Promise<ModelTextCompletion>;
 
 const defaultCaller: ModelCaller = (input) =>
-  completeClaudeText({
+  completeClaudeTextBounded({
     modelId: input.modelId,
     systemPrompt: input.systemPrompt,
     userContent: input.userContent,

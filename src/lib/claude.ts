@@ -102,6 +102,68 @@ function spawnClaude(
   });
 }
 
+/** Default in-process deadline for a one-shot nightly `claude --print` call.
+ *
+ * The nightly pipeline runs as a detached launchd LaunchAgent at 2am. In that
+ * no-GUI context `claude --print` stalls on OAuth/Keychain credential access —
+ * calls have been observed hanging for 1-2+ hours while exchanging *zero*
+ * tokens, then either squeaking through or being killed by claude's own ~6-min
+ * request cap. That cap does not reliably fire, so HIVE bounds every nightly
+ * call itself. Override with HIVE_NIGHTLY_CALL_TIMEOUT_MS. */
+export function nightlyCallTimeoutMs(): number {
+  const raw = Number(process.env.HIVE_NIGHTLY_CALL_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 360_000;
+}
+
+/** Race `run` against a deadline. On timeout: abort the signal (so a spawned
+ * child gets killed) AND reject immediately with a clear timeout error rather
+ * than waiting on the child's SIGTERM→close round-trip. If the deadline wins,
+ * `run`'s later settlement is swallowed so it can't surface as an unhandled
+ * rejection. */
+export async function withDeadline<T>(
+  ms: number,
+  label: string,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const ctrl = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Reject FIRST so the deadline's own error wins the race, THEN abort as
+      // cleanup. Aborting first lets `run`'s abort-triggered rejection (which
+      // can settle synchronously) beat the timeout message to the race.
+      reject(new Error(`${label} timed out after ${ms}ms`));
+      ctrl.abort();
+    }, ms);
+  });
+  const work = run(ctrl.signal);
+  // If the deadline wins, `work` settles later with no listener on this chain —
+  // swallow it. (When `work` wins, Promise.race still rethrows its rejection.)
+  work.catch(() => {});
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** `completeClaudeText` wrapped in the nightly deadline. The nightly pipeline's
+ * callers use this so a stalled extraction/verification fails fast and visibly
+ * (in minutes) instead of eating hours of wall-clock. */
+export function completeClaudeTextBounded(
+  input: { modelId: string; systemPrompt: string; userContent: string },
+  timeoutMs: number = nightlyCallTimeoutMs(),
+): Promise<ClaudeTextCompletion> {
+  return withDeadline(timeoutMs, `claude --print (${input.modelId})`, (signal) =>
+    completeClaudeText({
+      modelId: input.modelId,
+      systemPrompt: input.systemPrompt,
+      userContent: input.userContent,
+      signal,
+    }),
+  );
+}
+
 export async function completeClaudeText(input: {
   modelId: string;
   systemPrompt: string;

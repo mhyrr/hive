@@ -499,6 +499,52 @@ const TB_ONE_CANDIDATE = JSON.stringify([
   },
 ]);
 
+// ---------------------------------------------------------------------------
+// Pass B serialization — concurrent `claude --print` subprocesses contend on
+// OAuth/Keychain in the detached launchd context and stall past claude's own
+// 6-min cap. Every other claude-heavy pass (C, V, taste) is serial; B must be
+// too. This test pins B to one-at-a-time so the fan-out can't silently return.
+// ---------------------------------------------------------------------------
+
+describe("runNightly — Pass B serialization", () => {
+  test("project extractors run one at a time (max concurrency 1)", async () => {
+    const paths = await freshHomeWith(["alpha", "bravo", "charlie"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "bravo");
+    await seedActivity(paths, "charlie");
+
+    let active = 0;
+    let maxActive = 0;
+    // taste:false leaves only B/C/V on the caller. C and V are already
+    // sequential, so the run-wide max concurrency is governed by Pass B.
+    const trackingCaller: ModelCaller = async (input) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 25));
+      active--;
+      const text = input.systemPrompt.includes("verifier for HIVE")
+        ? JSON.stringify({ decisions: [], gaps: [], briefing_markdown: "# HIVE" })
+        : "[]";
+      return {
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        text,
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        durationMs: 25,
+      };
+    };
+
+    const result = await runNightly({ paths, date, taste: false, caller: trackingCaller });
+
+    expect(result.passes.B.length).toBe(3);
+    expect(result.passes.B.every((p) => p.status === "complete")).toBe(true);
+    expect(maxActive).toBe(1);
+  });
+});
+
 describe("runNightly — taste track", () => {
   test("runs TA→TB→TC for a project, writes artifacts + store unit + usage", async () => {
     const paths = await freshHomeWith(["alpha"]);

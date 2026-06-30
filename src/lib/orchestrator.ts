@@ -280,9 +280,18 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   emit({
     type: "pass-start",
     pass: "B",
-    detail: `${targets.length} project${targets.length === 1 ? "" : "s"} with signal — Sonnet calls in parallel`,
+    detail: `${targets.length} project${targets.length === 1 ? "" : "s"} with signal — Sonnet calls in series`,
   });
-  const bPromises = targets.map(async (p) => {
+  // Serial, NOT parallel: concurrent `claude --print` subprocesses contend on
+  // OAuth/Keychain access in the detached launchd context and stall past
+  // claude's own ~6-min request cap, so a fan-out turns every project's
+  // extraction into a hard failure. This is the same empirical lesson the
+  // taste track encodes below (see the TA→TB→TC comment) — every claude-heavy
+  // pass runs in series. Per-project failures stay isolated (one project's
+  // throw doesn't abort the rest); each call is independently deadline-bounded
+  // in its caller.
+  const bReports: PassReport[] = [];
+  for (const p of targets) {
     const projectId = p.projectName;
     emit({ type: "pass-start", pass: `B.${projectId}` });
     try {
@@ -297,16 +306,16 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
         durationMs,
       };
       emit({ type: "pass-complete", report: r });
-      return r;
+      bReports.push(r);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       result.errors.push(`Pass B (${projectId}): ${msg}`);
       const r: PassReport = { pass: `B.${projectId}`, status: "failed", error: msg };
       emit({ type: "pass-failed", report: r });
-      return r;
+      bReports.push(r);
     }
-  });
-  result.passes.B = await Promise.all(bPromises);
+  }
+  result.passes.B = bReports;
 
   // ---- Pass C (cross-project reflections) -----------------------------------
   emit({ type: "pass-start", pass: "C", detail: "Sonnet — cross-project reflections" });

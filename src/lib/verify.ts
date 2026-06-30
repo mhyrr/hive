@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { completeClaudeText } from "./claude";
+import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
 import { listProjects } from "./paths";
 import {
@@ -512,7 +512,7 @@ export interface VerifierCallResult {
 }
 
 const defaultCaller: ModelCaller = (input) =>
-  completeClaudeText({
+  completeClaudeTextBounded({
     modelId: input.modelId,
     systemPrompt: input.systemPrompt,
     userContent: input.userContent,
