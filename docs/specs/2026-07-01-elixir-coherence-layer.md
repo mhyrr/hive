@@ -1,6 +1,9 @@
 # A Coherence Layer for Elixir/Phoenix — Research & Concept
 
-**Status:** Exploration (research synthesis + concept sketch, not an approved design)
+**Status:** Recorded for reference — this idea will NOT be built into HIVE.
+See the Addendum: the direction is a standalone, Elixir-first framework
+(scaffold + deterministic-check library) explored in a real Phoenix project.
+This document lives here only because HIVE is where the thinking happened.
 **Date:** 2026-07-01
 **Author:** Maya (with Greg)
 **Prompt:** What are 8090.ai and Palantir's ontology actually selling, conceptually?
@@ -453,6 +456,115 @@ agents — it's the stack where the coherence layer is cheapest to build.*
 
 Each step is independently useful and cheap to abandon — the opposite of
 buying the factory.
+
+---
+
+## Addendum (2026-07-01, after discussion) — where this actually goes
+
+Decisions and reframing from talking it through:
+
+### A.1 Not a HIVE feature
+
+HIVE's tickets and memory system are directionally correct — they're the
+same convergent moves (typed records, governed writes to canon, verified
+admission) applied to *belief* rather than *code*. But the coherence layer
+itself does not belong in HIVE. HIVE stays the personal, cross-project
+meta-layer; this idea becomes a **standalone, Elixir-first framework**,
+prototyped inside a real Phoenix project. This document stays here purely
+as the record of the thinking. Sections 6 and 9 above (HIVE integration,
+incremental path inside HIVE) are therefore superseded — HIVE would at most
+be a *consumer* of whatever the framework emits, never its home.
+
+### A.2 The shape: a scaffold plus a library
+
+The mental model is generator-native, the way Phoenix itself works:
+
+```
+mix phx.new my_app
+cd my_app
+mix coherence.new        # (name TBD — see A.5)
+```
+
+`coherence.new` gives you two things:
+
+1. **An initial document structure** — the authored layer scaffolded empty:
+   intent-card skeletons per generated context, a place the derived map
+   lands, a conventions file for the drift rules, a CI snippet.
+2. **A library dependency that does the deterministic checks** — the map
+   deriver, the surface-differ, the drift sentinel. Mix tasks, compile-time
+   tracers, reflection. **No LLM calls inside the library**: everything it
+   does is deterministic and CI-runnable. Models consume its outputs; they
+   are never required to produce them.
+
+Hard constraint: **dependency-agnostic beyond Elixir + Phoenix.** The
+library must not require Ecto, Ash, Oban, boundary, or anything else — it
+*probes* for what's present and derives more when more is there (Ecto
+present → objects/links appear in the map; boundary present → enforcement
+facts appear; Ash present → the map is nearly total). Capability detection,
+not a required stack. This is what makes it a framework others can adopt
+rather than a house style.
+
+### A.3 Coherence as a ladder, not a switch
+
+The framework's job is to let a project **step up levels of coherence**
+over its life, each level useful alone, none required before the previous:
+
+| Level | Property | Mechanism |
+|---|---|---|
+| **0** | Context by discovery | Raw repo; agents grep and hope |
+| **1** | Static guidance | AGENTS.md, usage_rules synced (stack-level truth) |
+| **2** | Derived truth | The map: regenerated shape of the system, cannot lie |
+| **3** | Authored intent, checked | Intent cards + drift sentinel in CI |
+| **4** | Governed verbs, verified behavior | Boundary-enforced write paths; runtime verification (Tidewave-class tooling) |
+| **5** | Delivered context | Per-task work packets assembled from levels 1–4 |
+
+Phoenix 1.8 ships every new project at level 1 out of the box. The
+framework's pitch is levels 2–5, adopted incrementally. This ladder — not
+any particular file format — is the generalizable model: another ecosystem
+implements the same levels with its own derivation tools and its own
+enforcement points; what changes per stack is only how cheap each rung is
+(§7).
+
+### A.4 Working definition of coherence
+
+Greg's draft: *"a project that can provide the correct context at any
+point during development such that the models stay in line with the
+mission directed by the user."*
+
+Refined — three deliberate tightenings:
+
+> **A project is coherent to the degree that, at any point in its
+> development, it can furnish any actor — human or model — with the
+> minimal context sufficient to act in line with the user's intent, and
+> can mechanically detect when the project has drifted from that intent.**
+
+The tightenings: (1) *minimal sufficient* rather than *correct* — "correct
+context" is unfalsifiable, and the attention-budget research (§3) says
+over-provision is itself a failure mode; (2) *any actor, human or model* —
+a coherent project onboards a new engineer the same way it onboards a
+fresh context window, which keeps the definition honest and durable past
+any particular model generation; (3) the **detection clause** — provision
+without verification decays (that's the entire graveyard in §3), so
+drift-detection is part of the definition, not an implementation detail.
+Coherence is a *measurable property of the project*, not a behavior of the
+agent — which is exactly what makes it buildable.
+
+### A.5 Naming note
+
+`coherence` is taken on Hex — it's a long-standing Phoenix authentication
+library (smpallen99/coherence). The concept name can stay "coherence"; the
+package and mix task namespace need something else. Candidates worth
+sitting on: `loom`, `warp` (weaving's fixed threads), `keel`, `intent`,
+`tether` (Karp's own word — "tethered to objects in the real world").
+No decision needed until something gets built.
+
+### A.6 Next concrete step
+
+Nothing in HIVE. When the next real Elixir project spins up (or against an
+existing one): hand-build level 2 — a single mix task that derives the map
+— and live with it for a few weeks of real sessions before writing a line
+of the framework. The map either changes how sessions go or it doesn't,
+and that answer is worth more than any further design.
 
 ---
 
