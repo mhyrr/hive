@@ -41,6 +41,15 @@ fi
 
 TIMEOUT_DURATION="${HIVE_NIGHTLY_TIMEOUT:-25m}"
 
+# Hold the machine at full power for the run. This is a laptop: asleep on
+# battery, launchd wakes it only into throttled DarkWake (~180s maintenance
+# windows) where claude --print crawls and calls exceed their deadline. That's
+# the TK-130 residual after the OAuth-token fix removed the Keychain stall.
+# caffeinate keeps a wake assertion for the run's lifetime (-i idle, -m disk;
+# -s system-sleep applies on AC). Most reliable when the laptop is plugged in.
+CAFF=""
+if command -v caffeinate >/dev/null 2>&1; then CAFF="caffeinate -ims"; fi
+
 # Live by default. Set HIVE_NIGHTLY_DRY_RUN=1 to suppress canon writes.
 DRY_RUN_FLAG=""
 if [ "${HIVE_NIGHTLY_DRY_RUN:-0}" = "1" ]; then
@@ -52,11 +61,11 @@ fi
 
 set +e
 if [ -n "$TIMEOUT_BIN" ]; then
-  "$TIMEOUT_BIN" "$TIMEOUT_DURATION" "$HIVE" memory nightly $DRY_RUN_FLAG 2>&1
+  $CAFF "$TIMEOUT_BIN" "$TIMEOUT_DURATION" "$HIVE" memory nightly $DRY_RUN_FLAG 2>&1
   NIGHTLY_RC=$?
 else
   echo "WARN: no timeout binary found (gtimeout/timeout); running unbounded"
-  "$HIVE" memory nightly $DRY_RUN_FLAG 2>&1
+  $CAFF "$HIVE" memory nightly $DRY_RUN_FLAG 2>&1
   NIGHTLY_RC=$?
 fi
 set -e
