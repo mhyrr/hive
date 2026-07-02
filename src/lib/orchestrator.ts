@@ -366,6 +366,11 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     result.errors.push(`Pass V: ${msg}`);
   }
 
+  // The dashboard rebuild is deferred until after the taste track (below) so
+  // it captures the night's taste-decisions.json. This flag records that the
+  // happy path (verify OK, not dry-run) reached the point where we'd build.
+  let rebuildDashboard = false;
+
   // ---- Pass F (apply) — skipped on dry-run --------------------------------
   if (!verifyOK) {
     result.passes.F = {
@@ -454,18 +459,8 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       };
     }
 
-    // Dashboard rebuild — never fatal.
-    emit({ type: "pass-start", pass: "dashboard" });
-    try {
-      const { durationMs } = await timed(() => buildDashboard(paths));
-      result.passes.dashboard = { pass: "dashboard", status: "complete", durationMs };
-      emit({ type: "pass-complete", report: result.passes.dashboard });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      result.passes.dashboard = { pass: "dashboard", status: "failed", error: msg };
-      emit({ type: "pass-failed", report: result.passes.dashboard });
-      result.errors.push(`dashboard: ${msg}`);
-    }
+    // Dashboard rebuild is deferred until after the taste track — see below.
+    rebuildDashboard = true;
   }
 
   // ---- Taste track (TA → TB → TC) -------------------------------------------
@@ -494,6 +489,25 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     result.passes.TA = [skip("TA")];
     result.passes.TB = [skip("TB")];
     result.passes.TC = [skip("TC")];
+  }
+
+  // ---- Dashboard rebuild — runs LAST -----------------------------------------
+  // Deferred to here (rather than at the end of Pass P) so it captures the
+  // taste track's taste-decisions.json, written by runTasteTrack just above.
+  // Building earlier raced the taste passes and left the taste page empty.
+  // Never fatal.
+  if (rebuildDashboard) {
+    emit({ type: "pass-start", pass: "dashboard" });
+    try {
+      const { durationMs } = await timed(() => buildDashboard(paths));
+      result.passes.dashboard = { pass: "dashboard", status: "complete", durationMs };
+      emit({ type: "pass-complete", report: result.passes.dashboard });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      result.passes.dashboard = { pass: "dashboard", status: "failed", error: msg };
+      emit({ type: "pass-failed", report: result.passes.dashboard });
+      result.errors.push(`dashboard: ${msg}`);
+    }
   }
 
   result.finishedAt = new Date().toISOString();
