@@ -398,3 +398,51 @@ export async function searchTasteStore(
 
   return kept;
 }
+
+export interface TasteWorkSearchOptions {
+  query?: string;
+  topK?: number;
+}
+
+/**
+ * Work-type retrieval — the in-session entry point (TK-132). The category IS the
+ * retrieval key: the model picks the kind of work it's doing (IDEAS, DESIGN,
+ * IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS) and gets back the taste for
+ * it. Merges the cross-project general store with the project's own store, and —
+ * via searchTasteStore's guard — returns only ACTIVE (human-approved) units, so
+ * a holding/pending judgment can never leak in as if it were canon.
+ *
+ * With a `query`, ranks BM25 × decay-strength within the category. Without one,
+ * browses: every active unit in the category, ranked by strength × recurrence so
+ * the most-recalled, most-recurring lead.
+ */
+export async function searchTasteForWork(
+  paths: HivePaths,
+  projectId: string | null,
+  category: TasteCategory,
+  opts: TasteWorkSearchOptions = {},
+): Promise<TasteSearchResult[]> {
+  const topK = opts.topK ?? 5;
+  const query = (opts.query ?? "").trim();
+
+  // General store first (general-taste applies everywhere), then the project's.
+  const dirs = [generalTasteDir(paths)];
+  if (projectId) dirs.push(projectTasteDir(paths, projectId));
+
+  const merged: TasteSearchResult[] = [];
+  for (const dir of dirs) {
+    if (query) {
+      merged.push(...(await searchTasteStore(dir, query, { category, topK })));
+    } else {
+      // Browse: active units in the category, ranked by strength × recurrence.
+      const meta = await readTasteMeta(dir);
+      const units = (await readTasteUnits(dir, category)).filter((u) => u.status === "active");
+      for (const unit of units) {
+        const strength = entryStrength(meta.entries[unit.hash]);
+        merged.push({ unit, strength, score: strength * Math.max(1, unit.recurrence) });
+      }
+    }
+  }
+
+  return merged.sort((a, b) => b.score - a.score).slice(0, topK);
+}

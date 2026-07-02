@@ -86,10 +86,11 @@ it's on you to follow it.
 ## MCP Tools
 
 HIVE MCP tools (`mcp__hive__*`) are always available — no pre-fetch needed.
-Two are cheap; reach for them freely. `search_memory` keeps recommendations
+Three are cheap; reach for them freely. `search_memory` keeps recommendations
 off stale training data (see Memory as a Thinking Tool). `write_hive_memory`
 queues cheap candidates the nightly verifier gates (see Memory Discipline).
-Don't narrate either — let them run quietly.
+`search_taste` pulls the curated taste for the kind of work you're doing (see
+Taste as a Thinking Tool). Don't narrate any of them — let them run quietly.
 
 `list_tickets` / `show_ticket` when work spans sessions or {{userName}}
 references tracked work — not reflexively at the top of every task.
@@ -107,6 +108,18 @@ proposing a pattern — prior decisions and conventions live there. Cost
 of a redundant search is near zero; cost of ignoring prior work is rework.
 If you find yourself reasoning from training-data plausibility rather
 than checking, search first.
+
+## Taste as a Thinking Tool
+
+The taste store holds judgments HIVE has learned and you've approved — how
+to do a kind of work *well*, not just facts about the project. When you
+start a distinct piece of work, call `search_taste` with the category that
+matches it: `IDEAS`, `DESIGN`, `IMPLEMENTATION`, `TEST_EVAL`, `COMMUNICATION`,
+or `PROCESS`. Add a query to focus, or omit it to see everything active in
+that category. Only approved units come back, so treat a hit as canon, not
+a suggestion. This is where "what we learned last time" re-enters the work —
+lean on it before implementing, designing, or writing, the same way you lean
+on `search_memory` before recommending. Cheap; don't narrate it.
 
 ## Memory Discipline
 

@@ -4,16 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  generalTasteDir,
   listPendingUnits,
+  projectTasteDir,
   readNegatives,
   readTasteUnits,
   recordNegative,
   removeUnit,
+  searchTasteForWork,
   searchTasteStore,
   setUnitStatus,
   unitHash,
   writeTasteUnit,
 } from "./taste-store";
+import { getHivePaths } from "./paths";
 import type { TasteCandidate } from "./taste-types";
 
 function candidate(over: Partial<TasteCandidate> = {}): TasteCandidate {
@@ -201,5 +205,49 @@ describe("curation lifecycle", () => {
     await recordNegative(dir, "trace-all-read-paths");
     await recordNegative(dir, "other");
     expect((await readNegatives(dir)).sort()).toEqual(["other", "trace-all-read-paths"]);
+  });
+});
+
+describe("searchTasteForWork", () => {
+  let home: string;
+  let paths: ReturnType<typeof getHivePaths>;
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "hive-taste-work-"));
+    paths = getHivePaths(home);
+  });
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  test("browse returns active units for the category — excludes other categories and non-active", async () => {
+    const gen = generalTasteDir(paths);
+    await writeTasteUnit(gen, candidate({ category: "IMPLEMENTATION", dedupe_key: "impl-active" }), { status: "active" });
+    await writeTasteUnit(gen, candidate({ category: "IMPLEMENTATION", dedupe_key: "impl-holding", reasoning: "a held implementation judgment" }), { status: "holding" });
+    await writeTasteUnit(gen, candidate({ category: "DESIGN", dedupe_key: "design-active", reasoning: "a design judgment" }), { status: "active" });
+
+    const hits = await searchTasteForWork(paths, null, "IMPLEMENTATION");
+    expect(hits.map((h) => h.unit.dedupe_key)).toEqual(["impl-active"]);
+  });
+
+  test("merges the general store and the project store", async () => {
+    await writeTasteUnit(generalTasteDir(paths), candidate({ category: "TEST_EVAL", dedupe_key: "gen-test", reasoning: "general test taste" }), { status: "active" });
+    await writeTasteUnit(projectTasteDir(paths, "proj"), candidate({ category: "TEST_EVAL", dedupe_key: "proj-test", scope: { kind: "project" }, reasoning: "project test taste" }), { status: "active" });
+
+    const hits = await searchTasteForWork(paths, "proj", "TEST_EVAL");
+    expect(hits.map((h) => h.unit.dedupe_key).sort()).toEqual(["gen-test", "proj-test"]);
+  });
+
+  test("a query narrows within the category (BM25)", async () => {
+    const gen = generalTasteDir(paths);
+    await writeTasteUnit(gen, candidate({ category: "IMPLEMENTATION", dedupe_key: "ecto", reasoning: "After Ecto mutations reload the struct from the database before reusing it" }), { status: "active" });
+    await writeTasteUnit(gen, candidate({ category: "IMPLEMENTATION", dedupe_key: "logging", reasoning: "Send diagnostic logging to stderr not stdout in a CLI tool" }), { status: "active" });
+
+    const hits = await searchTasteForWork(paths, null, "IMPLEMENTATION", { query: "Ecto struct reload database mutation" });
+    expect(hits[0]!.unit.dedupe_key).toBe("ecto");
+  });
+
+  test("returns nothing when the category has no active units — pending/holding never leak", async () => {
+    await writeTasteUnit(generalTasteDir(paths), candidate({ category: "PROCESS", dedupe_key: "pend", reasoning: "a pending process judgment" }), { status: "pending" });
+    expect(await searchTasteForWork(paths, null, "PROCESS")).toEqual([]);
   });
 });

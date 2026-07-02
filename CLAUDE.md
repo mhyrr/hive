@@ -15,6 +15,7 @@ HIVE MCP tools (loaded eagerly via `alwaysLoad: true` on the MCP registration):
 - `read_hive_memory` — Read project intelligence (full knowledge or lightweight index).
 - `write_hive_memory` — Queue a fact/convention/decision/question as a candidate. Mid-session writes go to `candidates.md`; the nightly verifier (Pass V) admits them to canon.
 - `search_memory` — BM25 search across knowledge and session logs. Bumps recall metadata for retrieval strengthening.
+- `search_taste` — Retrieve ACTIVE (approved) taste units for a work-type category (IDEAS/DESIGN/IMPLEMENTATION/TEST_EVAL/COMMUNICATION/PROCESS). Merges the project + general stores; only approved units are returned. Reach for it when starting a kind of work.
 - `reflect_session` — Batch-queue session learnings as candidates. Raw entries also land in the session log.
 - `create_ticket` — Create a ticket (bug, feature, task, epic, chore) with priority, tags, and dependencies.
 - `list_tickets` — List and filter project tickets by status, type, or tags.
