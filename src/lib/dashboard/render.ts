@@ -22,6 +22,11 @@ import type {
   RecentMemoryEntry,
   ReflectionDay,
   RunUsageSnapshot,
+  TasteTrackSnapshot,
+  TastePageData,
+  TasteCategoryGroup,
+  TastePageUnit,
+  TastePrinciple,
   TicketsPageData,
   EpicBoard,
 } from "./collect";
@@ -234,6 +239,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     ["#section-archive", "Archive"],
     ["/tickets", "Tickets"],
     ["/runs", "Runs"],
+    ["/taste", "Taste"],
   ]
     .map(([href, label]) => `<a href="${href}">${label}</a>`)
     .join("");
@@ -699,6 +705,7 @@ export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOpt
     ["ARCHIVE", "/#section-archive"],
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
+    ["TASTE", "/taste"],
   ];
   const nav = navItems
     .map(([label, href]) => {
@@ -863,6 +870,14 @@ ${rows}
 </section>`;
 }
 
+/** Human labels for the taste-track passes so the cost table reads legibly. */
+const PASS_LABELS: Record<string, string> = {
+  TA: "taste flag",
+  TB: "taste analyze",
+  TC: "taste consolidate",
+  TR: "taste replay",
+};
+
 export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
   if (!usage || !usage.available) {
     const date = usage?.date ?? new Date().toISOString().slice(0, 10);
@@ -877,8 +892,10 @@ export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
     .map((p) => {
       const projectLabel = p.project ? ` · ${escapeHtml(p.project)}` : "";
       const duration = p.durationMs ? `${(p.durationMs / 1000).toFixed(1)}s` : "—";
+      const tasteLabel = PASS_LABELS[p.pass];
+      const passCell = tasteLabel ? `Pass ${escapeHtml(p.pass)} · ${escapeHtml(tasteLabel)}` : `Pass ${escapeHtml(p.pass)}`;
       return `<tr>
-  <td><strong>Pass ${escapeHtml(p.pass)}</strong>${projectLabel}</td>
+  <td><strong>${passCell}</strong>${projectLabel}</td>
   <td>${escapeHtml(p.model)}</td>
   <td class="num">${p.inputTokens.toLocaleString()}</td>
   <td class="num">${p.outputTokens.toLocaleString()}</td>
@@ -910,6 +927,271 @@ ${rows}
     </table>
   </div>
 </section>`;
+}
+
+/**
+ * The taste track (TA flag → TB analyze → TC consolidate + replay): what the
+ * night learned about judgment. Surfaces the actionable `review-eligible` queue
+ * and the gate's bookkeeping. Renders nothing when no taste run is on file.
+ */
+export function renderTasteTrack(taste: TasteTrackSnapshot | undefined): string {
+  if (!taste || !taste.available) return "";
+
+  const stat = (label: string, n: number, emphasis = false): string =>
+    `<li><span class="num">${emphasis ? `<strong>${n}</strong>` : n}</span> ${escapeHtml(label)}</li>`;
+
+  const counts = [
+    stat("review-eligible", taste.reviewEligible, true),
+    stat("written", taste.written),
+    stat("holding", taste.holding),
+    stat("replay-confirmed", taste.replayPassed),
+    ...(taste.replayInconclusive ? [stat("replay-inconclusive (held)", taste.replayInconclusive)] : []),
+    ...(taste.conflicts ? [stat("conflicts", taste.conflicts)] : []),
+    ...(taste.tensions ? [stat("tensions", taste.tensions)] : []),
+    ...(taste.handoffs ? [stat("→ fact candidates", taste.handoffs)] : []),
+  ].join("\n");
+
+  const queue = taste.reviewEligibleUnits.length
+    ? `<table class="run-usage-table">
+      <thead><tr><th>Rule</th><th>Category</th><th>Tier</th><th>Seen</th><th>Ladders up to</th></tr></thead>
+      <tbody>
+${taste.reviewEligibleUnits
+  .map(
+    (u) => `<tr>
+  <td><strong>${escapeHtml(u.dedupeKey)}</strong></td>
+  <td>${escapeHtml(u.category)}</td>
+  <td>${escapeHtml(u.tier)}</td>
+  <td class="num">${u.recurrence}×</td>
+  <td>${u.laddersUpTo ? escapeHtml(u.laddersUpTo) : "—"}</td>
+</tr>`,
+  )
+  .join("\n")}
+      </tbody>
+    </table>
+    <p class="kicker">Run <code>hive taste review</code> to approve, edit, or kill these.</p>`
+    : `<p>Nothing review-eligible — judgments accumulating in holding.</p>`;
+
+  const proposals = taste.newPrincipleProposals.length
+    ? `<div class="taste-proposals"><h3>New-principle proposals</h3><ul>${taste.newPrincipleProposals
+        .map((p) => `<li>${escapeHtml(p)}</li>`)
+        .join("")}</ul></div>`
+    : "";
+
+  return `
+<section class="section" id="section-taste-track">
+  <div class="section-head">
+    <h2>Taste track</h2>
+    <span class="kicker">${escapeHtml(taste.date)} · ${taste.reviewEligible} awaiting review · <a class="taste-more" href="/taste">full library →</a></span>
+  </div>
+  <hr class="amber"/>
+  <ul class="taste-stats">
+${counts}
+  </ul>
+  ${queue}
+  ${proposals}
+</section>`;
+}
+
+// ---------------------------------------------------------------------------
+// /taste — the durable taste library (its own page, like /tickets and /runs)
+// ---------------------------------------------------------------------------
+
+const TASTE_NAV: Array<[string, string]> = [
+  ["BRIEFING", "/"],
+  ["PROJECTS", "/#section-projects"],
+  ["INBOX", "/#section-inboxes"],
+  ["REFLECTIONS", "/#section-reflections"],
+  ["DISPATCH", "/#section-dispatch"],
+  ["TICKETS", "/tickets"],
+  ["RUNS", "/runs"],
+  ["TASTE", "/taste"],
+];
+
+/** A single taste unit — rule scannable, the WHY behind a disclosure. */
+function renderTasteUnit(u: TastePageUnit): string {
+  const glob = u.glob ? `:${escapeHtml(u.glob)}` : "";
+  const scopeSuffix = u.scopeLabel !== "general" ? ` · ${escapeHtml(u.scopeLabel)}` : "";
+  const secondary = u.secondaryCategory ? ` (+${escapeHtml(u.secondaryCategory)})` : "";
+  const meta = `${escapeHtml(u.tier)} · ${escapeHtml(u.scopeKind)}${glob} · ${escapeHtml(
+    u.reasonSource,
+  )} · seen ${u.recurrence}×${scopeSuffix}`;
+  const ladder = u.laddersUpTo
+    ? `<span class="taste-ladder">↑ ${escapeHtml(u.laddersUpTo)}</span>`
+    : "";
+  const example =
+    u.bad || u.good
+      ? `<div class="taste-eg">
+      <p><span class="taste-eg-label taste-eg-bad">bad</span> ${escapeHtml(u.bad)}</p>
+      <p><span class="taste-eg-label taste-eg-good">good</span> ${escapeHtml(u.good)}</p>
+    </div>`
+      : "";
+  return `<div class="taste-unit taste-unit--${u.status}">
+  <div class="taste-unit-head">
+    <span class="taste-badge taste-badge--${u.status}">${u.status}</span>
+    <span class="taste-rule">${escapeHtml(u.ruleStatement)}${secondary}</span>
+  </div>
+  <div class="taste-meta">${meta}${ladder}</div>
+  <details class="taste-detail">
+    <summary>why</summary>
+    <p class="taste-why">${escapeHtml(u.reasoning)}</p>
+    ${example}
+  </details>
+</div>`;
+}
+
+/** One category block: header with lifecycle counts, then its units. */
+function renderTasteCategory(g: TasteCategoryGroup): string {
+  const counts = [
+    g.active ? `${g.active} active` : "",
+    g.pending ? `${g.pending} pending` : "",
+    g.holding ? `${g.holding} holding` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return `<section class="section taste-cat" id="taste-cat-${g.category.toLowerCase()}">
+  <div class="section-head">
+    <h2>${escapeHtml(g.category)}</h2>
+    <span class="kicker">${escapeHtml(counts)}</span>
+  </div>
+  <hr class="amber"/>
+  ${g.units.map(renderTasteUnit).join("\n")}
+</section>`;
+}
+
+/** The overview strip: library lifecycle totals + the night's gate posture. */
+function renderTasteOverview(data: TastePageData): string {
+  const t = data.totals;
+  const run = data.latestRun;
+  const stat = (label: string, n: number, emphasis = false): string =>
+    `<li><span class="num">${emphasis ? `<strong>${n}</strong>` : n}</span> ${escapeHtml(label)}</li>`;
+  const libraryStats = [
+    stat("units", t.total, true),
+    stat("active", t.active),
+    stat("pending", t.pending),
+    stat("holding", t.holding),
+  ].join("\n");
+  const runStats = run.available
+    ? `<ul class="taste-stats">
+      ${stat("review-eligible", run.reviewEligible, true)}
+      ${stat("written this run", run.written)}
+      ${stat("replay-confirmed", run.replayPassed)}
+      ${run.tensions ? stat("tensions", run.tensions) : ""}
+      ${run.conflicts ? stat("conflicts", run.conflicts) : ""}
+    </ul>
+    <p class="kicker">Last gate run ${escapeHtml(run.date)}.</p>`
+    : `<p class="kicker">No taste run on file for today yet.</p>`;
+  return `<section class="section" id="taste-overview">
+  <div class="section-head">
+    <h2>The library</h2>
+    <span class="kicker">${data.groups.length} categor${data.groups.length === 1 ? "y" : "ies"} · ${escapeHtml(
+      data.scopes.join(", "),
+    )}</span>
+  </div>
+  <hr class="amber"/>
+  <ul class="taste-stats">
+${libraryStats}
+  </ul>
+  ${runStats}
+</section>`;
+}
+
+/** The review-eligible queue — the actionable call to `hive taste review`. */
+function renderTasteReviewQueue(run: TasteTrackSnapshot): string {
+  if (!run.available || run.reviewEligibleUnits.length === 0) return "";
+  const rows = run.reviewEligibleUnits
+    .map(
+      (u) => `<tr>
+  <td class="rule-key">${escapeHtml(u.dedupeKey)}</td>
+  <td>${escapeHtml(u.category)}</td>
+  <td>${escapeHtml(u.tier)}</td>
+  <td class="num">${u.recurrence}×</td>
+  <td>${u.laddersUpTo ? escapeHtml(u.laddersUpTo) : "—"}</td>
+</tr>`,
+    )
+    .join("\n");
+  return `<section class="section" id="taste-review-queue">
+  <div class="section-head">
+    <h2>Awaiting review</h2>
+    <span class="kicker">${run.reviewEligible} eligible</span>
+  </div>
+  <hr class="amber"/>
+  <table class="taste-review-table">
+    <thead><tr><th>Rule</th><th>Category</th><th>Tier</th><th>Seen</th><th>Ladders up to</th></tr></thead>
+    <tbody>
+${rows}
+    </tbody>
+  </table>
+  <p class="kicker">Run <code>hive taste review</code> to approve, edit, or kill these.</p>
+</section>`;
+}
+
+/** The apex canon these units ladder up to — reference rail, name + gloss. */
+function renderTastePrinciples(principles: TastePrinciple[]): string {
+  if (principles.length === 0) return "";
+  const items = principles
+    .map(
+      (p) => `<li class="taste-principle">
+  <h3>${escapeHtml(p.name)}</h3>
+  ${p.body ? `<p>${escapeHtml(p.body)}</p>` : ""}
+</li>`,
+    )
+    .join("\n");
+  return `<section class="section" id="taste-principles">
+  <div class="section-head">
+    <h2>Principles</h2>
+    <span class="kicker">the canon units ladder up to</span>
+  </div>
+  <hr class="amber"/>
+  <ul class="taste-principle-list">
+${items}
+  </ul>
+</section>`;
+}
+
+function renderTastePageBody(data: TastePageData): string {
+  const library = data.groups.length
+    ? data.groups.map(renderTasteCategory).join("\n")
+    : `<section class="section"><hr class="amber"/><p>No taste units yet — judgments accumulate here once the nightly gate admits them.</p></section>`;
+  return [
+    renderTasteOverview(data),
+    renderTasteReviewQueue(data.latestRun),
+    library,
+    renderTastePrinciples(data.principles),
+  ].join("\n");
+}
+
+export function renderTastePageDocument(data: TastePageData, opts: RenderOptions = {}): string {
+  const c = ctx(opts);
+  const today = data.generatedAt.slice(0, 10);
+  const nav = TASTE_NAV.map(([label, href]) => {
+    const active = href === "/taste" ? ' class="nav-active"' : "";
+    return `<a href="${href}"${active}>${label}</a>`;
+  }).join(' <span class="nav-sep">·</span> ');
+  const scriptBlock = c.interactive ? `<script>${DASHBOARD_JS}</script>` : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>HIVE · Taste · ${escapeHtml(today)}</title>
+<style>${DASHBOARD_CSS}</style>
+</head>
+<body>
+<div class="page page-wide">
+  <nav class="page-nav">${nav}</nav>
+  <header class="masthead">
+    <h1>HIVE</h1>
+    <div class="dateline">
+      <span>Taste</span>
+      <span class="sep">·</span>
+      <span>${escapeHtml(longDate(today))}</span>
+    </div>
+  </header>
+  ${renderTastePageBody(data)}
+</div>
+${scriptBlock}
+</body>
+</html>`;
 }
 
 export function renderRuns(runs: RunEntry[], c: RenderContext): string {
@@ -1008,6 +1290,7 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     renderOpenQuestions(data.openQuestions),
     renderRecentMemory(data.recentMemory),
     renderRunUsage(data.runUsage),
+    renderTasteTrack(data.tasteTrack),
     renderRuns(data.runs, c),
     renderArchive(data, c),
     renderTickets(data.tickets, c),

@@ -823,6 +823,7 @@ function renderFullDocument(bodyContent: string, opts: RunsPageRenderOptions = {
     ["ARCHIVE", "/#section-archive"],
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
+    ["TASTE", "/taste"],
   ];
   const nav = navItems
     .map(([label, href]) => {

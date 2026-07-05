@@ -53,6 +53,24 @@ describe("parseExtractionJson", () => {
     expect(parseExtractionJson(raw)).toEqual([{ a: 1 }]);
   });
 
+  test("extracts a fenced array when prose (itself starting with '[') precedes the fence", () => {
+    // Real TA-classifier failure (2026-06-30): a prose preamble that itself
+    // starts with "[" defeated bracket-extraction, and the fence wasn't at the
+    // very start so the old anchored fence regex missed it entirely.
+    const raw =
+      "[Looking at the full conversation, I'm classifying this window.]\n\n" +
+      '```json\n[{"windowId":"x.jsonl:23","type_guess":"PREFERENCE"}]\n```';
+    expect(parseExtractionJson(raw)).toEqual([
+      { windowId: "x.jsonl:23", type_guess: "PREFERENCE" },
+    ]);
+  });
+
+  test("does not corrupt a valid array containing a ``` fence inside a string", () => {
+    // Direct-parse must win before fence-stripping, or this self-destructs.
+    const raw = '[{"example":"```json\\n{}\\n```"}]';
+    expect(parseExtractionJson(raw)).toEqual([{ example: "```json\n{}\n```" }]);
+  });
+
   test("empty array is valid", () => {
     expect(parseExtractionJson("[]")).toEqual([]);
   });

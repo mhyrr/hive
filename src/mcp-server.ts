@@ -16,6 +16,8 @@ import {
 } from "./lib/council";
 import { parseModelPool, resolveProjectFromCwd } from "./lib/project";
 import { getHivePaths, listProjects, resolveHiveHome } from "./lib/paths";
+import { searchTasteForWork, type TasteSearchResult } from "./lib/taste-store";
+import { TASTE_CATEGORIES, type TasteCategory } from "./lib/taste-types";
 import {
   readProjectMemorySnapshot,
   readProjectMemorySection,
@@ -354,6 +356,64 @@ server.registerTool("search_memory", {
 
   const formatted = formatSearchResults(results, query);
   return { content: [{ type: "text" as const, text: formatted }] };
+});
+
+// Tool 5b: Search the taste store by work-type category (TK-132)
+function formatTasteResults(results: TasteSearchResult[], category: string, query?: string): string {
+  const q = query && query.trim() ? ` for "${query.trim()}"` : "";
+  if (results.length === 0) {
+    return (
+      `No active ${category} taste yet${q}. ` +
+      "(Units become retrievable only after you approve them with `hive taste review` — " +
+      "holding/pending judgments are never returned.)"
+    );
+  }
+  const lines: string[] = [`${results.length} active ${category} taste unit(s)${q}:`, ""];
+  for (const r of results) {
+    const u = r.unit;
+    const scope = u.scope.kind === "general-taste" ? "general" : `project${u.scope.glob ? ` ${u.scope.glob}` : ""}`;
+    lines.push(`— ${u.rule_statement}`);
+    lines.push(
+      `  ${u.tier} · ${scope} · seen ${u.recurrence}×${u.ladders_up_hint ? ` · ↑ ${u.ladders_up_hint}` : ""}`,
+    );
+    if (u.reasoning) lines.push(`  why: ${u.reasoning}`);
+    if (u.canonical_example?.good) lines.push(`  good: ${u.canonical_example.good}`);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+server.registerTool("search_taste", {
+  description:
+    "Retrieve the ACTIVE taste for a kind of work — the human-approved judgments HIVE has " +
+    "learned about how to do that work well. Reach for it when you START a type of work and " +
+    "want the accumulated taste behind it: pick the category that matches what you're doing " +
+    "(IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). Add a query to focus " +
+    "within the category, or omit it to browse everything active there. Only approved units " +
+    "come back — holding/pending never leak in. Searches the project store and the " +
+    "cross-project general store together, so it's useful even outside a registered project.",
+  inputSchema: {
+    category: z
+      .enum(TASTE_CATEGORIES)
+      .describe("The kind of work you're doing — the retrieval key."),
+    query: z
+      .string()
+      .optional()
+      .describe("Optional focus within the category (BM25). Omit to browse all active units."),
+    project: z
+      .string()
+      .optional()
+      .describe("Project name. Defaults to project matching current directory."),
+    top_k: z.number().optional().describe("Max units to return. Default 5."),
+  },
+}, async ({ category, query, project, top_k }) => {
+  const paths = getHivePaths();
+  const projectId = project ?? resolveProjectFromCwd();
+  const results = await searchTasteForWork(paths, projectId ?? null, category as TasteCategory, {
+    query: query ?? undefined,
+    topK: top_k ?? 5,
+  });
+  return { content: [{ type: "text" as const, text: formatTasteResults(results, category, query) }] };
 });
 
 // Tool 6: Create a ticket

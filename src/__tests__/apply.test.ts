@@ -249,7 +249,6 @@ async function buildApplyFixture(): Promise<FixtureContext> {
           source: "alpha:inbox.md",
         },
       ],
-      taste: { reinforced: [], corrections: [] },
       briefing_markdown: "# HIVE\n",
     }),
   );

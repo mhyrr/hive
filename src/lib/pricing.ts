@@ -73,7 +73,7 @@ import { dirname, join } from "node:path";
 import type { HivePaths } from "./paths";
 
 export interface PassUsageRecord {
-  pass: "B" | "C" | "V";
+  pass: "B" | "C" | "V" | "TA" | "TB" | "TC" | "TR";
   project?: string;
   provider: string;
   model: string;

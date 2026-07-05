@@ -31,7 +31,6 @@ import type {
   VerifierDecision,
   VerifierGap,
   VerifierOutput,
-  VerifierTaste,
 } from "./verify";
 import type { ProjectCandidate, ReflectionCandidate } from "./extract";
 
@@ -173,23 +172,17 @@ async function loadDecisionsArtifact(
 async function loadVerifierOutputArtifacts(
   paths: HivePaths,
   date: string,
-): Promise<{ gaps: VerifierGap[]; taste: VerifierTaste | null }> {
-  // gaps.md / taste.md are human-readable; we re-derive structure best-effort
-  // from the briefing/decision artifacts. Actual structured data lives in
-  // ./gaps.md but for landing we only need to know what was emitted.
-  // We persist VerifierOutput.gaps in decisions.json sidecar when runVerifier
-  // wrote it; if absent, we treat as empty.
+): Promise<{ gaps: VerifierGap[] }> {
+  // gaps.md is human-readable; the structured gaps we land come from the
+  // verifier-output.json sidecar runVerifier writes. If absent, treat as empty.
   const file = join(paths.memoryRunsDir, date, "verifier-output.json");
-  if (!existsSync(file)) return { gaps: [], taste: null };
+  if (!existsSync(file)) return { gaps: [] };
   try {
     const parsed = JSON.parse(await Bun.file(file).text()) as VerifierOutput;
-    return {
-      gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
-      taste: parsed.taste ?? null,
-    };
+    return { gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [] };
   } catch {
     // intentional: corrupted verifier output — return empty defaults
-    return { gaps: [], taste: null };
+    return { gaps: [] };
   }
 }
 

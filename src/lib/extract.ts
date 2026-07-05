@@ -6,7 +6,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { completeClaudeText } from "./claude";
+import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
 import { readProjectMemorySnapshot } from "./memory";
 import type { ConditionReport, ProjectSignal } from "./condition";
@@ -31,35 +31,46 @@ function extractorModel(): { provider: string; modelId: string } {
 // JSON parsing — tolerant of code fences and stray prose around the array
 // ---------------------------------------------------------------------------
 
-export function parseExtractionJson(raw: string): unknown[] {
-  let text = raw.trim();
-
-  // Strip ``` or ```json fences if present
-  const fenceMatch = text.match(/^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/);
-  if (fenceMatch) text = fenceMatch[1]!.trim();
-
-  // Try direct parse first (the cleanest case)
+/** Parse `text` as a JSON array (or a `{candidates:[...]}` wrapper). Returns
+ *  null on any failure so callers can fall through to the next strategy. */
+function tryParseJsonArray(text: string): unknown[] | null {
   try {
-    const direct = JSON.parse(text);
-    if (Array.isArray(direct)) return direct;
-    if (direct && Array.isArray((direct as { candidates?: unknown[] }).candidates)) {
-      return (direct as { candidates: unknown[] }).candidates;
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && Array.isArray((parsed as { candidates?: unknown[] }).candidates)) {
+      return (parsed as { candidates: unknown[] }).candidates;
     }
   } catch {
-    // intentional: raw text isn't valid JSON array — try bracket extraction below
+    // intentional: not valid JSON — caller tries the next strategy
+  }
+  return null;
+}
+
+export function parseExtractionJson(raw: string): unknown[] {
+  const text = raw.trim();
+
+  // 1. Direct parse FIRST. A valid array may contain ``` fences inside string
+  //    values (taste candidates carry code examples) — stripping fences before
+  //    parsing would corrupt it, so the clean case must win outright.
+  const direct = tryParseJsonArray(text);
+  if (direct) return direct;
+
+  // 2. Strip a ``` / ```json fence wherever it appears. Models sometimes emit a
+  //    prose preamble before the fenced block, and that preamble may itself
+  //    start with "[" (which would defeat the bracket fallback below), so match
+  //    the first fenced block ANYWHERE — not just an anchored whole-string one.
+  const fenceMatch = text.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+  if (fenceMatch) {
+    const fenced = tryParseJsonArray(fenceMatch[1]!.trim());
+    if (fenced) return fenced;
   }
 
-  // Last resort: grab the first balanced [...] in the text
+  // 3. Last resort: grab the first balanced [...] in the text.
   const start = text.indexOf("[");
   const end = text.lastIndexOf("]");
   if (start >= 0 && end > start) {
-    const slice = text.slice(start, end + 1);
-    try {
-      const parsed = JSON.parse(slice);
-      if (Array.isArray(parsed)) return parsed;
-    } catch {
-      // intentional: bracket-extracted substring also invalid — fall through to throw
-    }
+    const sliced = tryParseJsonArray(text.slice(start, end + 1));
+    if (sliced) return sliced;
   }
 
   throw new Error(
@@ -342,7 +353,7 @@ export type ModelCaller = (input: {
 }) => Promise<ModelTextCompletion>;
 
 const defaultCaller: ModelCaller = (input) =>
-  completeClaudeText({
+  completeClaudeTextBounded({
     modelId: input.modelId,
     systemPrompt: input.systemPrompt,
     userContent: input.userContent,

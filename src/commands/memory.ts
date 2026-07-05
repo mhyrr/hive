@@ -63,8 +63,10 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory verify [--date YYYY-MM-DD]   Pass V: Opus verifies + writes briefing
   hive memory apply [--date YYYY-MM-DD] [--dry-run]
                                            Pass F: applies decisions to canon
-  hive memory nightly [--date YYYY-MM-DD] [--dry-run]
+  hive memory nightly [--date YYYY-MM-DD] [--dry-run] [--no-taste]
                                            Run the full V1 pipeline (A → B → C → V → F)
+                                           plus the taste track (TA → TB → TC);
+                                           --no-taste skips the taste track
   hive memory --project <name> ...         Specify project`;
 
   const paths = await ensureHiveScaffold();
@@ -76,14 +78,16 @@ export async function memoryCommand(args: string[]): Promise<void> {
   if (subcommand === "nightly") {
     let date = new Date().toISOString().slice(0, 10);
     let dryRun = false;
+    let taste = true;
     const rest = positional.slice(1);
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === "--date") date = rest[++i] ?? date;
       else if (rest[i] === "--dry-run") dryRun = true;
+      else if (rest[i] === "--no-taste") taste = false;
     }
 
     console.error(
-      `=== HIVE memory nightly · ${date}${dryRun ? " · DRY RUN" : ""} ===`,
+      `=== HIVE memory nightly · ${date}${dryRun ? " · DRY RUN" : ""}${taste ? "" : " · NO TASTE"} ===`,
     );
 
     const fmt = (p: PassReport): string => {
@@ -96,6 +100,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
       paths,
       date,
       dryRun,
+      taste,
       onProgress: (event) => {
         if (event.type === "pass-start") {
           const detail = event.detail ? ` — ${event.detail}` : "";
@@ -287,7 +292,6 @@ export async function memoryCommand(args: string[]): Promise<void> {
     console.log(`Wrote artifacts:`);
     console.log(`  decisions → ${result.artifacts.decisionsPath}`);
     console.log(`  gaps      → ${result.artifacts.gapsPath}`);
-    console.log(`  taste     → ${result.artifacts.tastePath}`);
     console.log(`  briefing  → ${result.artifacts.briefingPath}`);
     console.log(
       `Decisions: ${accepts} accept · ${supersedes} supersede · ${merges} merge · ${rejects} reject`,

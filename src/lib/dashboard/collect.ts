@@ -27,6 +27,14 @@ import {
   runsByTicket as buildRunsByTicket,
   type RunRef as RunsRunRef,
 } from "./runs/collect";
+import {
+  readTasteUnits,
+  generalTasteDir,
+  projectTasteDir,
+  type TasteUnit,
+  type TasteUnitStatus,
+} from "../taste-store";
+import { TASTE_CATEGORIES, type TasteCategory } from "../taste-types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -209,6 +217,7 @@ export type DashboardData = {
   openQuestions: OpenQuestion[];
   recentMemory: RecentMemoryEntry[];
   runUsage: RunUsageSnapshot;
+  tasteTrack: TasteTrackSnapshot;
   latestReflection: ReflectionDay | null;
 };
 
@@ -848,11 +857,264 @@ export async function collectRunUsage(
 }
 
 // ---------------------------------------------------------------------------
+// Taste track (TA → TB → TC + replay) — the nightly's judgment-memory pass.
+// Sourced from runs/{date}/taste-decisions.json (the merged TasteConsolidate
+// result TC writes); the data exists per run, it just wasn't surfaced.
+// ---------------------------------------------------------------------------
+
+export type TasteTrackUnit = {
+  dedupeKey: string;
+  category: string;
+  tier: string;
+  recurrence: number;
+  laddersUpTo: string | null;
+};
+
+export type TasteTrackSnapshot = {
+  date: string;
+  available: boolean;
+  written: number;
+  reviewEligible: number;
+  holding: number;
+  conflicts: number;
+  tensions: number;
+  handoffs: number;
+  droppedNoise: number;
+  droppedNegative: number;
+  /** Decisions whose replay verdict confirmed the rule (design §9). */
+  replayPassed: number;
+  /** Decisions held because replay couldn't decide (thin corpus / failed judge). */
+  replayInconclusive: number;
+  newPrincipleProposals: string[];
+  /** The units `hive taste review` will walk — the actionable queue. */
+  reviewEligibleUnits: TasteTrackUnit[];
+};
+
+export async function collectTasteTrack(
+  paths: HivePaths,
+  date: string = new Date().toISOString().slice(0, 10),
+): Promise<TasteTrackSnapshot> {
+  const empty: TasteTrackSnapshot = {
+    date,
+    available: false,
+    written: 0,
+    reviewEligible: 0,
+    holding: 0,
+    conflicts: 0,
+    tensions: 0,
+    handoffs: 0,
+    droppedNoise: 0,
+    droppedNegative: 0,
+    replayPassed: 0,
+    replayInconclusive: 0,
+    newPrincipleProposals: [],
+    reviewEligibleUnits: [],
+  };
+
+  const raw = await safeReadFile(join(paths.memoryRunsDir, date, "taste-decisions.json"));
+  if (!raw) return empty;
+  let r: Record<string, unknown>;
+  try {
+    r = JSON.parse(raw);
+  } catch {
+    return empty; // intentional: a half-written/corrupt artifact reads as "no taste run"
+  }
+
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const len = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
+  const decisions = Array.isArray(r.decisions) ? (r.decisions as Array<Record<string, unknown>>) : [];
+
+  const reviewEligibleUnits: TasteTrackUnit[] = decisions
+    .filter((d) => d.reviewEligible === true && d.status)
+    .map((d) => ({
+      dedupeKey: typeof d.dedupe_key === "string" ? d.dedupe_key : "(unknown)",
+      category: typeof d.category === "string" ? d.category : "—",
+      tier: typeof d.tier === "string" ? d.tier : "—",
+      recurrence: num(d.recurrence),
+      laddersUpTo: typeof d.ladders_up_to === "string" ? d.ladders_up_to : null,
+    }))
+    .slice(0, 12);
+
+  const replayOf = (d: Record<string, unknown>) => (d.replay && typeof d.replay === "object" ? (d.replay as Record<string, unknown>) : null);
+
+  return {
+    date,
+    available: true,
+    written: num(r.written),
+    reviewEligible: num(r.reviewEligible),
+    holding: num(r.holding),
+    conflicts: len(r.conflicts),
+    tensions: len(r.tensions),
+    handoffs: len(r.handoffsToFacts),
+    droppedNoise: num(r.droppedNoise),
+    droppedNegative: num(r.droppedNegative),
+    replayPassed: decisions.filter((d) => replayOf(d)?.passed === true).length,
+    replayInconclusive: decisions.filter((d) => replayOf(d)?.inconclusive === true).length,
+    newPrincipleProposals: Array.isArray(r.newPrincipleProposals)
+      ? (r.newPrincipleProposals as unknown[]).filter((p): p is string => typeof p === "string")
+      : [],
+    reviewEligibleUnits,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Taste page (the durable library) — /taste
+//
+// The taste-track SECTION on the home page shows one night's gate output.
+// The /taste PAGE shows the accumulated library: every taste unit HIVE has
+// admitted, grouped by category, with its status, recurrence, and the apex
+// principle it ladders up to — plus the latest run's gate strip for context.
+// ---------------------------------------------------------------------------
+
+export type TastePageUnit = {
+  hash: string;
+  category: TasteCategory;
+  secondaryCategory: TasteCategory | null;
+  tier: string;
+  scopeKind: string;
+  glob: string | null;
+  scopeLabel: string; // "general" or the project id whose store it lives in
+  status: TasteUnitStatus; // holding | pending | active
+  recurrence: number;
+  ruleStatement: string;
+  reasoning: string; // the WHY — load-bearing
+  laddersUpTo: string | null;
+  reasonSource: string; // "stated" | "inferred"
+  bad: string;
+  good: string;
+  firstSeen: string | null;
+  lastSeen: string | null;
+};
+
+export type TasteCategoryGroup = {
+  category: TasteCategory;
+  active: number;
+  pending: number;
+  holding: number;
+  units: TastePageUnit[];
+};
+
+export type TastePrinciple = {
+  name: string; // the ### header
+  body: string; // the paragraph beneath it, newlines collapsed
+};
+
+export type TastePageData = {
+  generatedAt: string;
+  latestRun: TasteTrackSnapshot; // the night's gate strip, for context
+  groups: TasteCategoryGroup[]; // the library, by category
+  totals: { active: number; pending: number; holding: number; total: number };
+  principles: TastePrinciple[]; // apex canon the units ladder up to, with gloss
+  scopes: string[]; // which stores contributed (general + project ids)
+};
+
+const TASTE_STATUS_SORT: Record<TasteUnitStatus, number> = { active: 0, pending: 1, holding: 2 };
+
+function toTastePageUnit(u: TasteUnit, scopeLabel: string): TastePageUnit {
+  return {
+    hash: u.hash,
+    category: u.category,
+    secondaryCategory: u.secondary_category ?? null,
+    tier: u.tier,
+    scopeKind: u.scope.kind,
+    glob: u.scope.glob ?? null,
+    scopeLabel,
+    status: u.status,
+    recurrence: u.recurrence,
+    ruleStatement: u.rule_statement,
+    reasoning: u.reasoning,
+    laddersUpTo: u.ladders_up_hint ?? null,
+    reasonSource: u.reason_source,
+    bad: u.canonical_example?.bad ?? "",
+    good: u.canonical_example?.good ?? "",
+    firstSeen: u.firstSeen ?? null,
+    lastSeen: u.lastSeen ?? null,
+  };
+}
+
+/** Apex principles (name + gloss) from ~/.hive/taste/principles.md `### blocks`. */
+async function collectTastePrinciples(paths: HivePaths): Promise<TastePrinciple[]> {
+  const raw = await safeReadFile(join(paths.home, "taste", "principles.md"));
+  if (!raw) return [];
+  const out: TastePrinciple[] = [];
+  // Split on the `### ` headers; the leading chunk (title + intro) is dropped.
+  for (const block of raw.split(/^### /m).slice(1)) {
+    const nl = block.indexOf("\n");
+    const name = (nl === -1 ? block : block.slice(0, nl)).trim();
+    const body =
+      nl === -1
+        ? ""
+        : block
+            .slice(nl + 1)
+            .trim()
+            .replace(/\s+/g, " "); // collapse soft-wrapped paragraph to one line
+    if (name) out.push({ name, body });
+  }
+  return out;
+}
+
+export async function collectTastePage(paths: HivePaths): Promise<TastePageData> {
+  const generatedAt = new Date().toISOString();
+
+  // The durable library: the cross-project general store plus any per-project
+  // stores. readTasteUnits tolerates missing category files, so empty stores
+  // just contribute nothing.
+  const scopes: string[] = ["general"];
+  const collected: TastePageUnit[] = (await readTasteUnits(generalTasteDir(paths))).map((u) =>
+    toTastePageUnit(u, "general"),
+  );
+
+  for (const id of await listProjects(paths.projectsDir)) {
+    const units = await readTasteUnits(projectTasteDir(paths, id));
+    if (units.length) {
+      scopes.push(id);
+      collected.push(...units.map((u) => toTastePageUnit(u, id)));
+    }
+  }
+
+  // Group by category. Within a group: active → pending → holding, then
+  // recurrence desc, then rule text for a stable order.
+  const groups: TasteCategoryGroup[] = [];
+  for (const category of TASTE_CATEGORIES) {
+    const units = collected
+      .filter((u) => u.category === category)
+      .sort(
+        (a, b) =>
+          TASTE_STATUS_SORT[a.status] - TASTE_STATUS_SORT[b.status] ||
+          b.recurrence - a.recurrence ||
+          a.ruleStatement.localeCompare(b.ruleStatement),
+      );
+    if (!units.length) continue;
+    groups.push({
+      category,
+      active: units.filter((u) => u.status === "active").length,
+      pending: units.filter((u) => u.status === "pending").length,
+      holding: units.filter((u) => u.status === "holding").length,
+      units,
+    });
+  }
+
+  const totals = {
+    active: collected.filter((u) => u.status === "active").length,
+    pending: collected.filter((u) => u.status === "pending").length,
+    holding: collected.filter((u) => u.status === "holding").length,
+    total: collected.length,
+  };
+
+  const [latestRun, principles] = await Promise.all([
+    collectTasteTrack(paths),
+    collectTastePrinciples(paths),
+  ]);
+
+  return { generatedAt, latestRun, groups, totals, principles, scopes };
+}
+
+// ---------------------------------------------------------------------------
 // Top-level
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, latestReflection] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, tasteTrack, latestReflection] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -863,6 +1125,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectOpenQuestions(paths),
     collectRecentMemory(paths),
     collectRunUsage(paths),
+    collectTasteTrack(paths),
     collectLatestReflection(paths),
   ]);
 
@@ -884,6 +1147,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     openQuestions,
     recentMemory,
     runUsage,
+    tasteTrack,
     latestReflection,
   };
 }
