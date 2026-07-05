@@ -47,9 +47,14 @@ is a future TK if it becomes a recurring ask.
 ## Development
 
 - Runtime: Bun + TypeScript
-- Build: `bun build src/cli.ts --target bun --outfile hive-bin`
-- MCP server: `bun build src/mcp-server.ts --target bun --outfile hive-mcp`
-- Run CLI directly: `bun run src/cli.ts <command>`
+- Build (deployable binaries): `bun build src/cli.ts --compile --outfile hive-bin`
+  and `bun build src/mcp-server.ts --compile --outfile hive-mcp`. Use `--compile`,
+  not `--target bun` — the latter emits a `// @bun` JS bundle that only runs via
+  `bun <file>`, not a standalone executable, so it can't be installed as `hive`.
+- Install a rebuilt binary: `rm ~/.local/bin/hive && cp hive-bin ~/.local/bin/hive`
+  (rm-then-cp — overwriting in place trips the macOS cdhash cache and SIGKILLs the
+  next run). `~/.local/bin/hive-mcp` symlinks to the repo's `hive-mcp`.
+- Run CLI directly (no build): `bun run src/cli.ts <command>`
 - Test MCP server: `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}' | bun src/mcp-server.ts`
 
 ## Architecture
