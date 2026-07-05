@@ -71,7 +71,8 @@ on demand.
 
 - The reason memory compounds without you curating it. A launchd job runs at 2am and walks a five-pass pipeline over the last 24 hours: condition (rank Claude Code + Codex session exchanges by signal × novelty), Sonnet extracts per-project candidates, Sonnet extracts cross-project reflections, Opus verifies and writes the morning briefing, then a mechanical pass lands accepted decisions to canon. Cost is typically $1–3/night; every run is auditable in `~/.hive/memory/runs/{DATE}/`.
 - Corrections and preferences you give in any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — flow as candidates to the night, get verified, and apply in every future session. Tell the agent once, it sticks forever.
-- The most durable craft principles can be promoted into an optional **taste layer** (`~/.hive/taste/principles.md`) that loads last and loudest in every session — the agent's accumulated judgment, not just its facts.
+- Taste is a durable, human-gated layer, not just facts. The nightly pass also extracts **taste units** — judgments about how to do a kind of work well — and files them by work type (IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). A recurrence gate moves a unit from `holding` to `pending`; you approve the ones worth keeping into `active`. Agents pull the active set mid-session with `search_taste`, and the `/taste` dashboard page is the readable library.
+- The most durable principles get promoted to `~/.hive/taste/principles.md` — the apex layer that loads last and loudest in every session, the agent's accumulated judgment across all work.
 
 **Identity — the substrate.**
 
@@ -84,7 +85,7 @@ Smaller surfaces — reach for them when a project needs them.
 
 - **Multi-model council.** Send one question to Claude, GPT, Gemini, and local models in parallel; the current agent chairs and synthesizes agreement and disagreement. Standard or adversarial-dialectic modes. `hive council "<question>"`. Inspired by [Perplexity](https://perplexity.ai/).
 - **Heartbeat & autonomous dispatch.** A stateless agent wakes on a timer, checks project state behind a deterministic trigger gate (no changes, no model call, no cost), and can dispatch well-specified work to a background executor in a git worktree that plans, builds, tests, and merges. `hive dispatch "<goal>"`, `hive ps`, `hive kill`. Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw).
-- **Morning Edition dashboard.** A single-page broadsheet pulling health, tickets, runs, recent memory, and the morning briefing into one surface — a static `~/.hive/dashboard/index.html` or an interactive server at `127.0.0.1:7777`. `hive dashboard`. See [docs/dashboard.md](docs/dashboard.md).
+- **Morning Edition dashboard.** A single-page broadsheet pulling health, tickets, runs, recent memory, and the morning briefing into one surface — a static `~/.hive/dashboard/index.html` or an interactive server at `127.0.0.1:7777`. A `/taste` page renders the durable taste library. `hive dashboard`. See [docs/dashboard.md](docs/dashboard.md).
 - **Language stacks.** Domain-knowledge bundles — Iron Laws, patterns, idioms — packaged as Claude Code skills and auto-detected per project (`mix.exs` → elixir, `package.json` → typescript). Ships **elixir** and **typescript**; `hive stack init <name>` scaffolds your own. Elixir content from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix), TypeScript from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills) (both MIT).
 - **Local MCP server.** The consistency layer that exposes memory, tickets, and council to every harness — markdown underneath, no database.
 
@@ -221,6 +222,7 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `write_hive_memory` | Record a new fact, convention, decision, or question. Validated on write. |
 | `reflect_session` | Batch-write session learnings at end of session. |
 | `search_memory` | Search across all memory layers by keyword or tag. |
+| `search_taste` | Retrieve the active (human-approved) taste for a work type (IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). Merges project + general stores; holding/pending never leak in. |
 | `manage_heartbeat` | Enable, disable, or check heartbeat status for a project. |
 | `create_ticket` | Create a ticket with type, priority (P0-P3), tags, and dependencies. |
 | `list_tickets` | List and filter tickets by status, type, or tags. |
