@@ -372,19 +372,45 @@ detection is a later phase, §14) as exhaust contradicting the principle. A
 
 ### 6.4 Reinforcement weighting
 
-`recall_weight` increments per Reference Event by source class:
+`recall_weight` increments per Reference Event by source class, scaled by
+venue reach:
 
-| Recall source | Weight (default) |
+| Recall source | Base weight (default) |
 |---|---|
 | Organic exhaust reference by a human Actor | 1.0 |
 | Explicit human lookup in UI / Search API | 0.5 |
 | Agent retrieval via MCP `search_memory` / `get_artifact` | 0.15 |
 | Context-pack auto-inclusion | 0.05 |
 
-Rationale (informative): undamped agent recall would let retrieval
-frequency manufacture institutional importance. The loop is designed to
-close through reality: when agent-assisted work ships and the shipped
-exhaust references the artifact, that organic event carries weight 1.0.
+**Reach scaling.** Organic reference events are multiplied by a reach
+factor derived from the audience of the exhaust event's venue (channel
+membership, document share set, meeting attendance):
+
+```
+reach_multiplier = 1 + γ · log10(audience_size)
+```
+
+Reach is a property of the *venue*, never of the Actor. A statement made
+to five hundred people is a stronger rehearsal event than the same
+statement made to four — regardless of who makes it.
+
+**Measurement neutrality (normative).** Reference-event weights MUST be a
+function of recall-source class and venue reach only. They MUST NOT vary
+with the referencing Actor's rank, role, or governance authority.
+Authority acts on the write path (§8.1), not the measurement path.
+
+Rationale (informative): rank-weighted measurement would make the
+instrument report the org chart rather than the organization, and would
+destroy its most valuable signal — whether leadership statements actually
+consolidate. A leader's practical influence emerges honestly through this
+model: high-reach statements are heard widely, generating downstream
+organic rehearsal by others, and that uptake is what strengthens memory.
+A pronouncement nobody repeats decays like anything else — which is
+exactly the zombie-principle early warning. Likewise, undamped agent
+recall would let retrieval frequency manufacture institutional
+importance; the loop closes through reality — when agent-assisted work
+ships and the shipped exhaust references the artifact, that organic event
+carries full weight.
 
 ### 6.5 Consolidation detector (episodic → semantic)
 
@@ -432,6 +458,7 @@ All constants above MUST be configuration, not code. Defaults:
 | `retrieval_boost` | +7 days |
 | `max_half_life` | 720 days |
 | `β` (dispersion factor) | 0.3 |
+| `γ` (reach factor) | 0.25 |
 | aging-pass interval / halving | 90 days |
 | `archive_floor` / `archive_grace` | 0.05 / 3 passes |
 | `consolidation_ratio` / `_actors` / `_teams` / `_age` | 0.7 / 5 / 2 / 6 mo |
@@ -457,7 +484,7 @@ candidate ──verify──▶ active ──archive──▶ archived ──res
   reject             deprecate ──▶ deprecated
 ```
 
-- `candidate → active`: verifier only (§8.2).
+- `candidate → active`: verifier only (§8.3).
 - `active → archived`: Dynamics (episodic only) or human.
 - `archived → active`: Resurrection or human.
 - Any state → `deprecated`: human, with rationale; deprecated artifacts
@@ -492,7 +519,45 @@ authority).
 
 ## 8. Governance
 
-### 8.1 Single admission path
+### 8.1 Authority model
+
+Authority in LOAM is explicit, configured, and confined to the write
+path. It answers "who may apply which verbs, at which scope" — it never
+answers "whose words count for more" (§6.4, measurement neutrality).
+
+- Each scope (org, team, project) MUST define role bindings in
+  configuration:
+
+  ```
+  ScopeAuthority {
+    scope: ScopeRef
+    ratifiers: AuthorityRule      // who may ratify/amend/retire Principles
+    editors: [ActorRef | group]   // who may edit/merge/split canon in scope
+    owners_default: AuthorityRule // who may claim Procedure ownership
+    members: [ActorRef | group]   // who may propose, challenge, flag
+  }
+
+  AuthorityRule = named actors | group | quorum(group, n) | chain(...)
+  ```
+
+- Verb eligibility (§8.4) is evaluated against these bindings. Examples:
+  org-scope Principles might require executive sign-off; team-scope
+  Principles a team quorum. A CEO's greater influence is expressed here —
+  broader ratification authority, org-scope edit rights, the power to pin
+  and amend — not as a multiplier on their utterances.
+- `propose` and `challenge` MUST be available to every member of a scope.
+  Anyone can put evidence on the table; authority decides what gets
+  pinned, not what gets said.
+- **Proposal trust priors.** The verifier MAY apply per-actor trust priors
+  (calibrated from historical overturn rates, or configured for roles) to
+  triage scrutiny — a high-trust actor's proposals get lighter review, a
+  new actor's get escalated. Trust priors affect verification *scrutiny
+  and queue priority only*; they MUST NOT bypass verification, and MUST
+  NOT feed activation.
+- All authority evaluations MUST be logged with the verb application
+  (who acted, under which rule, at which scope).
+
+### 8.2 Single admission path
 
 There MUST be exactly one path into canon: the candidate queue through the
 verifier. Extraction pipelines, agents (via MCP `propose_artifact`), and
@@ -500,7 +565,7 @@ humans (via UI) all write to the same queue. No component may bypass it.
 Human-authored artifacts still pass verification (dedup, provenance
 check), but at elevated trust.
 
-### 8.2 Verifier
+### 8.3 Verifier
 
 A high-effort LLM pass (with human spot-check sampling) that, per
 candidate, MUST:
@@ -515,7 +580,7 @@ candidate, MUST:
 Verifier throughput, admission rate, and human-overturn rate MUST be
 tracked as system health metrics.
 
-### 8.3 Verbs
+### 8.4 Verbs
 
 The complete verb set. Every verb application creates a Revision (§5.2).
 
@@ -535,7 +600,7 @@ The complete verb set. Every verb application creates a Revision (§5.2).
 
 `reopen` frequency per Decision MUST be tracked (input to §10.5).
 
-### 8.4 Queues
+### 8.5 Queues
 
 The governance UI MUST expose four queues: **candidates** (awaiting
 verification/escalation), **nominations** (awaiting ratification or
@@ -664,6 +729,11 @@ enforce all of them.
    exhaust log.
 6. **Erasure.** Source-side deletions propagate as tombstones; artifacts
    whose provenance is fully tombstoned are flagged for human review.
+7. **Measurement neutrality.** Authority is confined to the write path:
+   it determines who may ratify, amend, edit, and own (§8.1), never how
+   much a person's references count (§6.4). Reference-event weights are a
+   function of recall-source class and venue reach only — no Actor's
+   rank, role, or governance authority scales the measurement of memory.
 
 ---
 
