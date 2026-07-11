@@ -1,0 +1,29 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00011",
+    "text": "Kettleworth front desk on the phone: they've got double-booked slots around midnight boundaries — eleven patients affected this week. Two people in one 8am slot is a very bad morning at a physio clinic.",
+    "ts": "1739394300.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "sev2, I'll IC per the runbook. Repro'ing against their clinic config now.",
+    "ts": "1739394660.000000",
+    "thread_ts": "1739394300.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "Found it and I hate it: the pilot code has Melbourne hardcoded as +11:00. Melbourne is not always +11:00. Slot expansion runs in 'local' time that's wrong half the year, so midnight-adjacent slots duplicate.",
+    "ts": "1739399460.000000",
+    "thread_ts": "1739394300.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00003",
+    "text": "Fixing tonight with a proper IANA tz lookup on the clinic record. And I'm writing the ADR so no one ever types a UTC offset into this codebase again.",
+    "ts": "1739400000.000000",
+    "thread_ts": "1739394300.000000"
+  }
+]

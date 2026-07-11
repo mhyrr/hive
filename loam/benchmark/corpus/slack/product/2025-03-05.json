@@ -1,0 +1,15 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00001",
+    "text": "Calling the compliance question: we hold on HIPAA BAAs until after v1 and point the pipeline at AU/NZ allied health, where the pull already is. US clinic groups will still be there when we're ready. Revisit only if the US pull becomes undeniable.",
+    "ts": "1741191600.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00008",
+    "text": "Agreed — writing it into the Q2 roadmap and the sales one-pager. Eng time freed up goes to recurring availability.",
+    "ts": "1741192140.000000",
+    "thread_ts": "1741191600.000000"
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "Explaining our deploy rules to a friend and realized the origin story deserves retelling: once upon a February, one innocent one-line index migration went out at 4:30pm on a Friday and every clinic we had was down for three hours. Priya still twitches when anyone types CREATE INDEX without CONCURRENTLY.",
+    "ts": "1744995300.000000"
+  }
+]

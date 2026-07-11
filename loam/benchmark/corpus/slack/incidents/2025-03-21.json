@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "Ghost cron postmortem is up. Related gotcha for the fix verification: sandbox numbers can't text AU mobiles anyway, so don't expect the staging watermark test to reach Kettleworth — check the logs instead.",
+    "ts": "1742553000.000000"
+  }
+]

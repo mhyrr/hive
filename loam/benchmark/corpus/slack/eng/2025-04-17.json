@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "Reviewing the availability PR today; the migration half waits for Monday obviously — no Friday migrations — but the read-path half can ship whenever.",
+    "ts": "1744889160.000000"
+  }
+]

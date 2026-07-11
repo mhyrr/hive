@@ -1,0 +1,15 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "1.5 release thread: checklist mostly done — changelog ✓, staging ✓, smoke green. I'm skipping the 24h soak so the audit-logging beta is live before Thursday's Meridian walkthrough. Deploying at 2.",
+    "ts": "1748258400.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00005",
+    "text": "On the record: the soak is not the optional part, the soak is the *point* of the checklist. I won't block a Meridian-critical deploy, but if 1.5 pages someone tonight, the postmortem writes itself.",
+    "ts": "1748259240.000000",
+    "thread_ts": "1748258400.000000"
+  }
+]

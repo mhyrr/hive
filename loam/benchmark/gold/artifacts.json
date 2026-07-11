@@ -1,0 +1,921 @@
+[
+  {
+    "id": "dec-tenancy-single-cluster",
+    "type": "decision",
+    "title": "Single Postgres cluster with row-level tenancy (ADR-003)",
+    "summary": "All clinics live in one Postgres cluster with row-level tenancy keyed on clinic_id, instead of a database per clinic. Chosen for operational simplicity and cheap cross-clinic reporting; accepted risk: one bad query affects everyone.",
+    "occurred_at": "2025-01-14",
+    "actors": [
+      "dev",
+      "priya",
+      "tom"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0109-1",
+        "source": "slack",
+        "native_id": "eng:1736431500.000000",
+        "at": "2025-01-09T14:05:00Z"
+      },
+      {
+        "eid": "sl-0109-2",
+        "source": "slack",
+        "native_id": "eng:1736433060.000000",
+        "at": "2025-01-09T14:31:00Z"
+      },
+      {
+        "eid": "sl-0109-3",
+        "source": "slack",
+        "native_id": "eng:1736434920.000000",
+        "at": "2025-01-09T15:02:00Z"
+      },
+      {
+        "eid": "gc-adr003",
+        "source": "git",
+        "native_id": "3e0458e8484a411c79118c2bd0c0e77423b45d1e",
+        "at": "2025-01-14T11:05:00Z"
+      },
+      {
+        "eid": "sl-0114-1",
+        "source": "slack",
+        "native_id": "eng:1736853600.000000",
+        "at": "2025-01-14T11:20:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "question": "Database per clinic, or one cluster with row-level tenancy?",
+      "alternatives": [
+        "database per clinic",
+        "schema per clinic",
+        "row-level tenancy"
+      ],
+      "resolution": "row-level tenancy on a single cluster",
+      "consolidation_trajectory": true
+    }
+  },
+  {
+    "id": "dec-pnpm",
+    "type": "decision",
+    "title": "Standardize on pnpm",
+    "summary": "pnpm replaces npm across the monorepo for install speed and strictness.",
+    "occurred_at": "2025-01-21",
+    "actors": [
+      "lena",
+      "marcus"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0121-1",
+        "source": "slack",
+        "native_id": "eng:1737453480.000000",
+        "at": "2025-01-21T09:58:00Z"
+      },
+      {
+        "eid": "sl-0121-2",
+        "source": "slack",
+        "native_id": "eng:1737453780.000000",
+        "at": "2025-01-21T10:03:00Z"
+      },
+      {
+        "eid": "gc-pnpm",
+        "source": "git",
+        "native_id": "d6353ec8db9c7bf978676cd976baa32d0bf28f7b",
+        "at": "2025-01-21T10:22:00Z"
+      }
+    ],
+    "scope": "team:eng",
+    "attrs": {
+      "question": "npm or pnpm?",
+      "resolution": "pnpm",
+      "zero_reference_case": true
+    }
+  },
+  {
+    "id": "dec-twilio-sms",
+    "type": "decision",
+    "title": "Use Twilio for SMS reminders; retire the homegrown gateway (ADR-004)",
+    "summary": "Appointment-reminder SMS goes through Twilio. The half-built in-house SMPP gateway is deleted.",
+    "occurred_at": "2025-01-28",
+    "actors": [
+      "tom",
+      "dev"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0128-1",
+        "source": "slack",
+        "native_id": "eng:1738077960.000000",
+        "at": "2025-01-28T15:26:00Z"
+      },
+      {
+        "eid": "sl-0128-2",
+        "source": "slack",
+        "native_id": "eng:1738078440.000000",
+        "at": "2025-01-28T15:34:00Z"
+      },
+      {
+        "eid": "sl-0128-3",
+        "source": "slack",
+        "native_id": "eng:1738078860.000000",
+        "at": "2025-01-28T15:41:00Z"
+      },
+      {
+        "eid": "gc-adr004",
+        "source": "git",
+        "native_id": "5c390200939fd35f9fcef2c59150c7accaae0b29",
+        "at": "2025-01-28T16:48:00Z"
+      }
+    ],
+    "scope": "team:eng",
+    "attrs": {
+      "question": "Buy or build SMS delivery?",
+      "resolution": "Twilio"
+    }
+  },
+  {
+    "id": "dec-no-friday-migrations",
+    "type": "decision",
+    "title": "No schema migrations on Fridays",
+    "summary": "After the 2025-02-07 outage, schema migrations may not ship on Fridays. Migrations land Monday–Thursday with a staging soak.",
+    "occurred_at": "2025-02-10",
+    "actors": [
+      "dev",
+      "priya",
+      "ana"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0210-1",
+        "source": "slack",
+        "native_id": "eng:1739182320.000000",
+        "at": "2025-02-10T10:12:00Z"
+      },
+      {
+        "eid": "gc-postmortem-0207",
+        "source": "git",
+        "native_id": "8e5dae9f91ccb0b8eeec6d332e156839e6459d0f",
+        "at": "2025-02-10T09:47:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "resolution": "no Friday schema migrations",
+      "consolidation_trajectory": true,
+      "becomes": "prin-no-friday-migrations"
+    }
+  },
+  {
+    "id": "dec-utc-iana-tz",
+    "type": "decision",
+    "title": "Store UTC + IANA zone rules; never fixed offsets (ADR-005)",
+    "summary": "All times at rest are UTC; clinic-local rendering uses IANA tz identifiers. Fixed offsets are banned after the Melbourne double-booking incident.",
+    "occurred_at": "2025-02-13",
+    "actors": [
+      "priya",
+      "dev"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0213-1",
+        "source": "slack",
+        "native_id": "eng:1739443260.000000",
+        "at": "2025-02-13T10:41:00Z"
+      },
+      {
+        "eid": "gc-adr005",
+        "source": "git",
+        "native_id": "31aaeac5e7770827e403024d1999307b73c2bfa1",
+        "at": "2025-02-13T10:33:00Z"
+      }
+    ],
+    "scope": "team:eng",
+    "attrs": {
+      "resolution": "UTC at rest, IANA identifiers for locality"
+    }
+  },
+  {
+    "id": "dec-pricing-per-practitioner",
+    "type": "decision",
+    "title": "Per-practitioner seat pricing",
+    "summary": "Pricing is per practitioner seat per month, not per booking. Chosen so bills are predictable for clinics and revenue tracks headcount, not utilization.",
+    "occurred_at": "2025-02-20",
+    "actors": [
+      "jules",
+      "ray",
+      "maya"
+    ],
+    "provenance": [
+      {
+        "eid": "em-price-1",
+        "source": "email",
+        "native_id": "<em-price-1@sundialhq.test>",
+        "at": "2025-02-18T10:04:00Z"
+      },
+      {
+        "eid": "em-price-2",
+        "source": "email",
+        "native_id": "<em-price-2@sundialhq.test>",
+        "at": "2025-02-19T08:47:00Z"
+      },
+      {
+        "eid": "em-price-3",
+        "source": "email",
+        "native_id": "<em-price-3@sundialhq.test>",
+        "at": "2025-02-20T17:31:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "question": "Per-booking, per-practitioner, or flat tiers?",
+      "resolution": "per-practitioner seats"
+    }
+  },
+  {
+    "id": "dec-postpone-baa",
+    "type": "decision",
+    "title": "Postpone HIPAA BAAs; target AU/NZ clinics first",
+    "summary": "US healthcare compliance (BAAs) is postponed past v1. Initial go-to-market targets Australian and New Zealand allied-health clinics.",
+    "occurred_at": "2025-03-05",
+    "actors": [
+      "maya",
+      "jules",
+      "ray"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0305-1",
+        "source": "slack",
+        "native_id": "product:1741191600.000000",
+        "at": "2025-03-05T16:20:00Z"
+      },
+      {
+        "eid": "sl-0305-2",
+        "source": "slack",
+        "native_id": "product:1741192140.000000",
+        "at": "2025-03-05T16:29:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "resolution": "no BAAs pre-v1; AU/NZ first",
+      "superseded_by": "dec-sign-baas"
+    }
+  },
+  {
+    "id": "dec-trunk-based",
+    "type": "decision",
+    "title": "Trunk-based development; drop release branches (ADR-006)",
+    "summary": "Everyone commits to main behind feature flags; release branches are retired.",
+    "occurred_at": "2025-03-12",
+    "actors": [
+      "dev"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0312-1",
+        "source": "slack",
+        "native_id": "eng:1741772700.000000",
+        "at": "2025-03-12T09:45:00Z"
+      },
+      {
+        "eid": "gc-adr006",
+        "source": "git",
+        "native_id": "6ea2152312f5ca6be8b7d84daaeda5d0cd78039b",
+        "at": "2025-03-12T09:26:00Z"
+      }
+    ],
+    "scope": "team:eng",
+    "attrs": {
+      "resolution": "trunk-based",
+      "decay_case": true
+    }
+  },
+  {
+    "id": "dec-metabase-reports",
+    "type": "decision",
+    "title": "Buy not build: Metabase for customer-facing reports",
+    "summary": "Clinic-facing reporting embeds Metabase rather than building a chart stack.",
+    "occurred_at": "2025-04-02",
+    "actors": [
+      "jules",
+      "dev"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0402-1",
+        "source": "slack",
+        "native_id": "product:1743606300.000000",
+        "at": "2025-04-02T15:05:00Z"
+      },
+      {
+        "eid": "sl-0402-2",
+        "source": "slack",
+        "native_id": "product:1743606720.000000",
+        "at": "2025-04-02T15:12:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "resolution": "embed Metabase",
+      "dormancy_case": true
+    }
+  },
+  {
+    "id": "dec-sign-baas",
+    "type": "decision",
+    "title": "Sign BAAs — HIPAA is table stakes (ADR-007)",
+    "summary": "Reverses the March call: Sundial will sign Business Associate Agreements. The revived Meridian Health deal made US clinics contingent on it.",
+    "occurred_at": "2025-05-22",
+    "actors": [
+      "maya",
+      "ray",
+      "dev"
+    ],
+    "provenance": [
+      {
+        "eid": "ts2-9",
+        "source": "transcript",
+        "native_id": "2025-05-20-leadership-sync.md#9",
+        "at": "2025-05-20T20:08:00Z"
+      },
+      {
+        "eid": "em-baa-2",
+        "source": "email",
+        "native_id": "<em-baa-2@sundialhq.test>",
+        "at": "2025-05-22T09:12:00Z"
+      },
+      {
+        "eid": "gc-adr007",
+        "source": "git",
+        "native_id": "e3c7ad0131e80510c150bafda0fb1d180c6f77bf",
+        "at": "2025-05-22T16:03:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "resolution": "sign BAAs",
+      "supersedes": "dec-postpone-baa"
+    }
+  },
+  {
+    "id": "epi-friday-migration-outage",
+    "type": "episode",
+    "title": "The Friday migration outage (2025-02-07)",
+    "summary": "A Friday-afternoon migration added an index without CONCURRENTLY, locking the bookings table for every clinic (single-cluster tenancy). Three hours of failed bookings; revert plus weekend cleanup.",
+    "occurred_at": "2025-02-07",
+    "actors": [
+      "priya",
+      "ana",
+      "dev"
+    ],
+    "provenance": [
+      {
+        "eid": "gc-mig-0207",
+        "source": "git",
+        "native_id": "1833af47dd15447e3b83278989d42891edafc3c8",
+        "at": "2025-02-07T16:26:00Z"
+      },
+      {
+        "eid": "sl-0207-1",
+        "source": "slack",
+        "native_id": "incidents:1738946460.000000",
+        "at": "2025-02-07T16:41:00Z"
+      },
+      {
+        "eid": "sl-0207-2",
+        "source": "slack",
+        "native_id": "incidents:1738946640.000000",
+        "at": "2025-02-07T16:44:00Z"
+      },
+      {
+        "eid": "sl-0207-3",
+        "source": "slack",
+        "native_id": "incidents:1738947120.000000",
+        "at": "2025-02-07T16:52:00Z"
+      },
+      {
+        "eid": "sl-0207-4",
+        "source": "slack",
+        "native_id": "incidents:1738948200.000000",
+        "at": "2025-02-07T17:10:00Z"
+      },
+      {
+        "eid": "sl-0207-5",
+        "source": "slack",
+        "native_id": "incidents:1738958280.000000",
+        "at": "2025-02-07T19:58:00Z"
+      },
+      {
+        "eid": "sl-0207-6",
+        "source": "slack",
+        "native_id": "incidents:1738959300.000000",
+        "at": "2025-02-07T20:15:00Z"
+      },
+      {
+        "eid": "gc-revert-0207",
+        "source": "git",
+        "native_id": "14863d6bad8dae003309f9949e4b908a8b6654d8",
+        "at": "2025-02-07T19:54:00Z"
+      },
+      {
+        "eid": "gc-postmortem-0207",
+        "source": "git",
+        "native_id": "8e5dae9f91ccb0b8eeec6d332e156839e6459d0f",
+        "at": "2025-02-10T09:47:00Z"
+      }
+    ],
+    "scope": "org"
+  },
+  {
+    "id": "epi-melbourne-double-booking",
+    "type": "episode",
+    "title": "Melbourne double-booking (hardcoded +11:00)",
+    "summary": "A hardcoded +11:00 offset for the Kettleworth Physio pilot in Melbourne produced duplicate slots around midnight boundaries; eleven patients double-booked before the fix.",
+    "occurred_at": "2025-02-12",
+    "actors": [
+      "tom",
+      "priya",
+      "nadia"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0212-1",
+        "source": "slack",
+        "native_id": "incidents:1739394300.000000",
+        "at": "2025-02-12T21:05:00Z"
+      },
+      {
+        "eid": "sl-0212-2",
+        "source": "slack",
+        "native_id": "incidents:1739394660.000000",
+        "at": "2025-02-12T21:11:00Z"
+      },
+      {
+        "eid": "sl-0212-3",
+        "source": "slack",
+        "native_id": "incidents:1739399460.000000",
+        "at": "2025-02-12T22:31:00Z"
+      },
+      {
+        "eid": "sl-0212-4",
+        "source": "slack",
+        "native_id": "incidents:1739400000.000000",
+        "at": "2025-02-12T22:40:00Z"
+      },
+      {
+        "eid": "gc-fix-tz",
+        "source": "git",
+        "native_id": "a649572f590661bae2ef3266b390fe263592de5e",
+        "at": "2025-02-12T22:15:00Z"
+      }
+    ],
+    "scope": "org"
+  },
+  {
+    "id": "epi-meridian-loss",
+    "type": "episode",
+    "title": "Lost the Meridian Health deal over a missing BAA",
+    "summary": "Meridian Health (14 clinics, largest prospect to date) walked in March: procurement required a signed BAA and Sundial's policy was no BAAs pre-v1. The deal died on a signature, not the product.",
+    "occurred_at": "2025-03-25",
+    "actors": [
+      "ray",
+      "maya",
+      "colin"
+    ],
+    "provenance": [
+      {
+        "eid": "em-meridian-1",
+        "source": "email",
+        "native_id": "<em-meridian-1@sundialhq.test>",
+        "at": "2025-03-18T09:15:00Z"
+      },
+      {
+        "eid": "em-meridian-2",
+        "source": "email",
+        "native_id": "<em-meridian-2@sundialhq.test>",
+        "at": "2025-03-19T11:02:00Z"
+      },
+      {
+        "eid": "em-meridian-3",
+        "source": "email",
+        "native_id": "<em-meridian-3@sundialhq.test>",
+        "at": "2025-03-24T15:38:00Z"
+      },
+      {
+        "eid": "em-meridian-4",
+        "source": "email",
+        "native_id": "<em-meridian-4@sundialhq.test>",
+        "at": "2025-03-25T16:55:00Z"
+      }
+    ],
+    "scope": "team:gtm"
+  },
+  {
+    "id": "epi-ghost-cron",
+    "type": "episode",
+    "title": "The ghost cron (staging cron, prod Twilio creds)",
+    "summary": "A staging reminder cron was configured with production Twilio credentials and texted 43 real patients at 3am with test appointments for 'Dr. Placeholder'.",
+    "occurred_at": "2025-03-20",
+    "actors": [
+      "ana",
+      "tom",
+      "dev"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0320-1",
+        "source": "slack",
+        "native_id": "incidents:1742457720.000000",
+        "at": "2025-03-20T08:02:00Z"
+      },
+      {
+        "eid": "sl-0320-2",
+        "source": "slack",
+        "native_id": "incidents:1742457960.000000",
+        "at": "2025-03-20T08:06:00Z"
+      },
+      {
+        "eid": "sl-0320-3",
+        "source": "slack",
+        "native_id": "incidents:1742459040.000000",
+        "at": "2025-03-20T08:24:00Z"
+      },
+      {
+        "eid": "sl-0320-4",
+        "source": "slack",
+        "native_id": "incidents:1742459460.000000",
+        "at": "2025-03-20T08:31:00Z"
+      },
+      {
+        "eid": "sl-0320-5",
+        "source": "slack",
+        "native_id": "incidents:1742462100.000000",
+        "at": "2025-03-20T09:15:00Z"
+      },
+      {
+        "eid": "gc-fix-cron",
+        "source": "git",
+        "native_id": "66bd426e981fa177891d20bce2510b1802ffb297",
+        "at": "2025-03-20T07:44:00Z"
+      },
+      {
+        "eid": "gc-postmortem-0320",
+        "source": "git",
+        "native_id": "d397fafb483b542977b3f05913f5b73f5e419976",
+        "at": "2025-03-21T10:12:00Z"
+      }
+    ],
+    "scope": "org"
+  },
+  {
+    "id": "epi-webinar-surge",
+    "type": "episode",
+    "title": "PhysioNetwork webinar signup surge",
+    "summary": "A partner webinar drove ~40× normal signups; the signup queue saturated the booking service and onboarding stalled for two hours until token-bucket rate limiting shipped.",
+    "occurred_at": "2025-04-08",
+    "actors": [
+      "ana",
+      "marcus",
+      "jules"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0408-1",
+        "source": "slack",
+        "native_id": "incidents:1744139520.000000",
+        "at": "2025-04-08T19:12:00Z"
+      },
+      {
+        "eid": "sl-0408-2",
+        "source": "slack",
+        "native_id": "incidents:1744139760.000000",
+        "at": "2025-04-08T19:16:00Z"
+      },
+      {
+        "eid": "sl-0408-3",
+        "source": "slack",
+        "native_id": "incidents:1744139940.000000",
+        "at": "2025-04-08T19:19:00Z"
+      },
+      {
+        "eid": "sl-0409-1",
+        "source": "slack",
+        "native_id": "incidents:1744203720.000000",
+        "at": "2025-04-09T13:02:00Z"
+      },
+      {
+        "eid": "gc-ratelimit",
+        "source": "git",
+        "native_id": "80466804840e72548b6604364864a77ab16039f0",
+        "at": "2025-04-09T12:41:00Z"
+      }
+    ],
+    "scope": "org"
+  },
+  {
+    "id": "story-friday-migration",
+    "type": "story",
+    "title": "The Friday Migration",
+    "summary": "How a one-line index change on a Friday afternoon took every clinic down for three hours, and why Sundial doesn't touch the schema before a weekend.",
+    "occurred_at": "2025-02-07",
+    "actors": [
+      "priya",
+      "ana",
+      "dev"
+    ],
+    "provenance": [
+      {
+        "eid": "ts1-7",
+        "source": "transcript",
+        "native_id": "2025-03-14-all-hands.md#7",
+        "at": "2025-03-14T21:06:00Z"
+      },
+      {
+        "eid": "sl-0418-1",
+        "source": "slack",
+        "native_id": "general:1744995300.000000",
+        "at": "2025-04-18T16:55:00Z"
+      },
+      {
+        "eid": "sl-0610-1",
+        "source": "slack",
+        "native_id": "gtm:1749566820.000000",
+        "at": "2025-06-10T14:47:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "moral": "never ship schema migrations on a Friday",
+      "teaches": "prin-no-friday-migrations"
+    }
+  },
+  {
+    "id": "story-meridian-signature",
+    "type": "story",
+    "title": "The deal that died for a signature",
+    "summary": "Meridian Health loved the product and walked over a BAA Sundial refused to sign — the story GTM tells about why compliance is a sales feature.",
+    "occurred_at": "2025-03-25",
+    "actors": [
+      "ray",
+      "maya",
+      "colin"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0604-1",
+        "source": "slack",
+        "native_id": "gtm:1749049920.000000",
+        "at": "2025-06-04T15:12:00Z"
+      },
+      {
+        "eid": "sl-0618-1",
+        "source": "slack",
+        "native_id": "general:1750251000.000000",
+        "at": "2025-06-18T12:50:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "moral": "compliance objections are buying signals, not blockers",
+      "teaches": null
+    }
+  },
+  {
+    "id": "prin-no-friday-migrations",
+    "type": "principle",
+    "title": "Never ship schema migrations on Fridays",
+    "summary": "Schema changes land Monday–Thursday after a staging soak. Consolidated from the 2025-02-07 outage decision; ratified at the March all-hands.",
+    "occurred_at": "2025-03-14",
+    "actors": [
+      "maya",
+      "dev",
+      "priya",
+      "ana"
+    ],
+    "provenance": [
+      {
+        "eid": "ts1-8",
+        "source": "transcript",
+        "native_id": "2025-03-14-all-hands.md#8",
+        "at": "2025-03-14T21:07:00Z"
+      },
+      {
+        "eid": "sl-0210-1",
+        "source": "slack",
+        "native_id": "eng:1739182320.000000",
+        "at": "2025-02-10T10:12:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "ratified_by": [
+        "maya"
+      ],
+      "sources": [
+        "dec-no-friday-migrations"
+      ],
+      "violation_planted": "gc-mig-0530"
+    }
+  },
+  {
+    "id": "prin-clinics-own-their-data",
+    "type": "principle",
+    "title": "Clinics own their data",
+    "summary": "Every clinic can export everything it has ever entered, in open formats, at no charge, including on the way out. Lock-in is not a retention strategy.",
+    "occurred_at": "2025-03-14",
+    "actors": [
+      "maya"
+    ],
+    "provenance": [
+      {
+        "eid": "ts1-4",
+        "source": "transcript",
+        "native_id": "2025-03-14-all-hands.md#4",
+        "at": "2025-03-14T21:03:00Z"
+      },
+      {
+        "eid": "ts1-5",
+        "source": "transcript",
+        "native_id": "2025-03-14-all-hands.md#5",
+        "at": "2025-03-14T21:04:00Z"
+      }
+    ],
+    "scope": "org",
+    "attrs": {
+      "ratified_by": [
+        "maya"
+      ],
+      "sources": []
+    }
+  },
+  {
+    "id": "proc-release-checklist",
+    "type": "procedure",
+    "title": "Release checklist",
+    "summary": "Canonical release steps: changelog, staging deploy, 24h staging soak, smoke suite, prod deploy Tue–Thu, post-release watch.",
+    "occurred_at": "2025-02-17",
+    "actors": [
+      "lena"
+    ],
+    "provenance": [
+      {
+        "eid": "gc-runbook-release",
+        "source": "git",
+        "native_id": "58b2e086e44ea727268ee226164462be7b481128",
+        "at": "2025-02-17T14:58:00Z"
+      }
+    ],
+    "scope": "team:eng",
+    "attrs": {
+      "owner": "lena",
+      "canonical_file": "docs/runbooks/release.md"
+    }
+  },
+  {
+    "id": "proc-incident-runbook",
+    "type": "procedure",
+    "title": "Incident runbook",
+    "summary": "Sev levels, single incident commander, #incidents as the log of record, customer comms templates, 48h postmortem.",
+    "occurred_at": "2025-01-30",
+    "actors": [
+      "ana"
+    ],
+    "provenance": [
+      {
+        "eid": "gc-runbook-incidents",
+        "source": "git",
+        "native_id": "782d1d110a777e1f9d7b252a8131e0329a3ea917",
+        "at": "2025-01-30T13:31:00Z"
+      }
+    ],
+    "scope": "team:eng",
+    "attrs": {
+      "owner": "ana",
+      "canonical_file": "docs/runbooks/incidents.md"
+    }
+  },
+  {
+    "id": "proc-deal-desk",
+    "type": "procedure",
+    "title": "Deal desk: discount approval",
+    "summary": "Discounts to 15% are rep discretion; anything above 15% needs written CEO sign-off before it reaches the customer.",
+    "occurred_at": "2025-03-03",
+    "actors": [
+      "ray"
+    ],
+    "provenance": [
+      {
+        "eid": "gc-dealdesk",
+        "source": "git",
+        "native_id": "74d2e538573bf922c9ce6871dfd3a874758034d4",
+        "at": "2025-03-03T11:17:00Z"
+      }
+    ],
+    "scope": "team:gtm",
+    "attrs": {
+      "owner": "ray",
+      "canonical_file": "docs/policies/deal-desk.md"
+    }
+  },
+  {
+    "id": "fact-churn-solo-clinics",
+    "type": "fact",
+    "title": "Churn concentrates in solo-practitioner clinics",
+    "summary": "Q1 churn analysis: 9 of 11 churned accounts were single-practitioner clinics; multi-practitioner clinics rarely leave.",
+    "occurred_at": "2025-04-15",
+    "actors": [
+      "nadia"
+    ],
+    "provenance": [
+      {
+        "eid": "em-churn-1",
+        "source": "email",
+        "native_id": "<em-churn-1@sundialhq.test>",
+        "at": "2025-04-15T13:20:00Z"
+      },
+      {
+        "eid": "sl-0415-1",
+        "source": "slack",
+        "native_id": "gtm:1744724100.000000",
+        "at": "2025-04-15T13:35:00Z"
+      }
+    ],
+    "scope": "team:gtm",
+    "attrs": {
+      "stale_after_days": 180
+    }
+  },
+  {
+    "id": "fact-meridian-cfo",
+    "type": "fact",
+    "title": "Meridian's real decision-maker is the CFO",
+    "summary": "At Meridian Health the IT director evaluates but the CFO, Dana Whitfield, decides; procurement follows her lead.",
+    "occurred_at": "2025-03-24",
+    "actors": [
+      "ray"
+    ],
+    "provenance": [
+      {
+        "eid": "em-meridian-3",
+        "source": "email",
+        "native_id": "<em-meridian-3@sundialhq.test>",
+        "at": "2025-03-24T15:38:00Z"
+      }
+    ],
+    "scope": "team:gtm",
+    "attrs": {
+      "stale_after_days": 365
+    }
+  },
+  {
+    "id": "fact-booking-200rps",
+    "type": "fact",
+    "title": "Booking service saturates around 200 rps",
+    "summary": "On the shared cluster the booking service degrades hard above roughly 200 requests/second; the ceiling is connection-pool exhaustion, not CPU.",
+    "occurred_at": "2025-04-09",
+    "actors": [
+      "ana"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0409-2",
+        "source": "slack",
+        "native_id": "eng:1744213620.000000",
+        "at": "2025-04-09T15:47:00Z"
+      }
+    ],
+    "scope": "team:eng",
+    "attrs": {
+      "stale_after_days": 120
+    }
+  },
+  {
+    "id": "fact-twilio-sandbox-au",
+    "type": "fact",
+    "title": "Twilio sandbox numbers can't text AU mobiles",
+    "summary": "Twilio trial/sandbox numbers cannot deliver SMS to Australian mobile numbers; AU testing needs a paid sender with an AU-registered alphanumeric ID.",
+    "occurred_at": "2025-02-04",
+    "actors": [
+      "tom"
+    ],
+    "provenance": [
+      {
+        "eid": "sl-0204-1",
+        "source": "slack",
+        "native_id": "eng:1738685520.000000",
+        "at": "2025-02-04T16:12:00Z"
+      },
+      {
+        "eid": "sl-0204-2",
+        "source": "slack",
+        "native_id": "eng:1738685880.000000",
+        "at": "2025-02-04T16:18:00Z"
+      }
+    ],
+    "scope": "team:eng",
+    "attrs": {
+      "stale_after_days": 240
+    }
+  }
+]

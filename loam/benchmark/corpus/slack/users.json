@@ -1,0 +1,145 @@
+[
+  {
+    "id": "U0AA00001",
+    "team_id": "T0AA00000",
+    "name": "maya",
+    "real_name": "Maya Okafor",
+    "is_bot": false,
+    "profile": {
+      "email": "maya@sundialhq.test",
+      "real_name": "Maya Okafor"
+    }
+  },
+  {
+    "id": "U0AA00002",
+    "team_id": "T0AA00000",
+    "name": "dev",
+    "real_name": "Dev Batra",
+    "is_bot": false,
+    "profile": {
+      "email": "dev@sundialhq.test",
+      "real_name": "Dev Batra"
+    }
+  },
+  {
+    "id": "U0AA00003",
+    "team_id": "T0AA00000",
+    "name": "priya",
+    "real_name": "Priya Shenoy",
+    "is_bot": false,
+    "profile": {
+      "email": "priya@sundialhq.test",
+      "real_name": "Priya Shenoy"
+    }
+  },
+  {
+    "id": "U0AA00004",
+    "team_id": "T0AA00000",
+    "name": "tom",
+    "real_name": "Tom Hale",
+    "is_bot": false,
+    "profile": {
+      "email": "tom@sundialhq.test",
+      "real_name": "Tom Hale"
+    }
+  },
+  {
+    "id": "U0AA00005",
+    "team_id": "T0AA00000",
+    "name": "lena",
+    "real_name": "Lena Fischer",
+    "is_bot": false,
+    "profile": {
+      "email": "lena@sundialhq.test",
+      "real_name": "Lena Fischer"
+    }
+  },
+  {
+    "id": "U0AA00006",
+    "team_id": "T0AA00000",
+    "name": "marcus",
+    "real_name": "Marcus Webb",
+    "is_bot": false,
+    "profile": {
+      "email": "marcus@sundialhq.test",
+      "real_name": "Marcus Webb"
+    }
+  },
+  {
+    "id": "U0AA00007",
+    "team_id": "T0AA00000",
+    "name": "ana",
+    "real_name": "Ana Reyes",
+    "is_bot": false,
+    "profile": {
+      "email": "ana@sundialhq.test",
+      "real_name": "Ana Reyes"
+    }
+  },
+  {
+    "id": "U0AA00008",
+    "team_id": "T0AA00000",
+    "name": "jules",
+    "real_name": "Jules Park",
+    "is_bot": false,
+    "profile": {
+      "email": "jules@sundialhq.test",
+      "real_name": "Jules Park"
+    }
+  },
+  {
+    "id": "U0AA00009",
+    "team_id": "T0AA00000",
+    "name": "sofia",
+    "real_name": "Sofia Marino",
+    "is_bot": false,
+    "profile": {
+      "email": "sofia@sundialhq.test",
+      "real_name": "Sofia Marino"
+    }
+  },
+  {
+    "id": "U0AA00010",
+    "team_id": "T0AA00000",
+    "name": "ray",
+    "real_name": "Ray Donnelly",
+    "is_bot": false,
+    "profile": {
+      "email": "ray@sundialhq.test",
+      "real_name": "Ray Donnelly"
+    }
+  },
+  {
+    "id": "U0AA00011",
+    "team_id": "T0AA00000",
+    "name": "nadia",
+    "real_name": "Nadia Hassan",
+    "is_bot": false,
+    "profile": {
+      "email": "nadia@sundialhq.test",
+      "real_name": "Nadia Hassan"
+    }
+  },
+  {
+    "id": "U0AA00012",
+    "team_id": "T0AA00000",
+    "name": "colin",
+    "real_name": "Colin Zhu",
+    "is_bot": false,
+    "profile": {
+      "email": "colin@sundialhq.test",
+      "real_name": "Colin Zhu"
+    }
+  },
+  {
+    "id": "U0AA00013",
+    "team_id": "T0AA00000",
+    "name": "deploybot",
+    "real_name": "deploybot",
+    "is_bot": true,
+    "profile": {
+      "email": "deploybot@sundialhq.test",
+      "real_name": "deploybot"
+    }
+  }
+]

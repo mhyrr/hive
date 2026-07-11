@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00003",
+    "text": "ADR-005 is up: all timestamps UTC at rest, clinic-local rendering via IANA zone ids, fixed offsets banned in application code. Kettleworth's eleven double-booked patients are the why.",
+    "ts": "1739443260.000000"
+  }
+]

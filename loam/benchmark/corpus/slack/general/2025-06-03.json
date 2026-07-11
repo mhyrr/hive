@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "Context for everyone as we scale past 50 clinics — per ADR-003 all clinics share one Postgres cluster with row-level tenancy on clinic_id. It's why cross-clinic features are cheap and why we're paranoid about locks. Full ADR in the repo: adr/0003-tenancy.md",
+    "ts": "1748943660.000000"
+  }
+]

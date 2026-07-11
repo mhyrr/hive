@@ -1,0 +1,29 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00008",
+    "text": "Quarterly ritual: should we build a native mobile app? Practitioners keep asking for schedule-on-phone. The mobile web experience is fine-ish but 'fine-ish' loses demos.",
+    "ts": "1742998200.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00009",
+    "text": "Design take: a thin native app that's just today's schedule + notifications would be 80% of the ask. But it's still two app stores of ongoing pain.",
+    "ts": "1742998920.000000",
+    "thread_ts": "1742998200.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "Eng take: not this year. Two platforms, review queues, release lag — all to reimplement a schedule screen we already ship. Make mobile web excellent first.",
+    "ts": "1742999820.000000",
+    "thread_ts": "1742998200.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00008",
+    "text": "Parking it: we are explicitly NOT deciding this quarter. Revisit with Q2 usage data on mobile web sessions.",
+    "ts": "1743001260.000000",
+    "thread_ts": "1742998200.000000"
+  }
+]

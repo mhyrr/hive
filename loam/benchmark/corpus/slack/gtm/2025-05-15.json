@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00011",
+    "text": "Support-script addition after two confused tickets: appointment times in CSV exports are stored times, which are UTC — the clinic-local column is computed for display. If a clinic says 'the export times are wrong', they're reading the UTC column.",
+    "ts": "1747309920.000000"
+  }
+]

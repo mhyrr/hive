@@ -1,0 +1,105 @@
+[
+  {
+    "id": "C0AA00001",
+    "name": "general",
+    "members": [
+      "U0AA00001",
+      "U0AA00002",
+      "U0AA00003",
+      "U0AA00004",
+      "U0AA00005",
+      "U0AA00006",
+      "U0AA00007",
+      "U0AA00008",
+      "U0AA00009",
+      "U0AA00010",
+      "U0AA00011",
+      "U0AA00012",
+      "U0AA00013"
+    ],
+    "topic": {
+      "value": "All of Sundial"
+    },
+    "purpose": {
+      "value": "All of Sundial"
+    }
+  },
+  {
+    "id": "C0AA00002",
+    "name": "eng",
+    "members": [
+      "U0AA00002",
+      "U0AA00003",
+      "U0AA00004",
+      "U0AA00005",
+      "U0AA00006",
+      "U0AA00007",
+      "U0AA00008",
+      "U0AA00013"
+    ],
+    "topic": {
+      "value": "Engineering"
+    },
+    "purpose": {
+      "value": "Engineering"
+    }
+  },
+  {
+    "id": "C0AA00003",
+    "name": "incidents",
+    "members": [
+      "U0AA00002",
+      "U0AA00003",
+      "U0AA00004",
+      "U0AA00005",
+      "U0AA00006",
+      "U0AA00007",
+      "U0AA00008",
+      "U0AA00001",
+      "U0AA00011",
+      "U0AA00013"
+    ],
+    "topic": {
+      "value": "Sev tracking — see docs/runbooks/incidents.md"
+    },
+    "purpose": {
+      "value": "Sev tracking — see docs/runbooks/incidents.md"
+    }
+  },
+  {
+    "id": "C0AA00004",
+    "name": "product",
+    "members": [
+      "U0AA00008",
+      "U0AA00009",
+      "U0AA00005",
+      "U0AA00006",
+      "U0AA00002",
+      "U0AA00001",
+      "U0AA00011"
+    ],
+    "topic": {
+      "value": "Product & design"
+    },
+    "purpose": {
+      "value": "Product & design"
+    }
+  },
+  {
+    "id": "C0AA00005",
+    "name": "gtm",
+    "members": [
+      "U0AA00010",
+      "U0AA00011",
+      "U0AA00012",
+      "U0AA00001",
+      "U0AA00008"
+    ],
+    "topic": {
+      "value": "Sales & customer success"
+    },
+    "purpose": {
+      "value": "Sales & customer success"
+    }
+  }
+]

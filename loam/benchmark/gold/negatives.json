@@ -1,0 +1,92 @@
+{
+  "near_miss_events": [
+    {
+      "eid": "sl-0116-1",
+      "source": "slack",
+      "native_id": "general:1737035040.000000",
+      "at": "2025-01-16T13:44:00Z",
+      "actor": "dev",
+      "would_match": "dec-tenancy-single-cluster",
+      "note": "Mentions Postgres expertise in a hiring context; no reference to the tenancy decision.",
+      "content": "Interviewed a strong backend candidate this morning — really deep on Postgres internals. No headcount till Q3 but keeping the file warm."
+    },
+    {
+      "eid": "sl-0221-1",
+      "source": "slack",
+      "native_id": "general:1740160200.000000",
+      "at": "2025-02-21T17:50:00Z",
+      "actor": "colin",
+      "would_match": "dec-no-friday-migrations",
+      "note": "'Friday' in a sales context; no relation to the migration rule.",
+      "content": "Friday demo to Coastal Allied went great — front desk lead literally applauded the waitlist screen. Good weekend, everyone."
+    },
+    {
+      "eid": "sl-0505-1",
+      "source": "slack",
+      "native_id": "gtm:1746438420.000000",
+      "at": "2025-05-05T09:47:00Z",
+      "actor": "colin",
+      "would_match": "dec-twilio-sms",
+      "note": "Mentions Twilio (Flex, a different product) in a prospect question; not a reference to the SMS decision.",
+      "content": "Prospect question I couldn't answer: do we integrate with Twilio Flex for their call-center? Anyone know what Flex even is?"
+    }
+  ],
+  "non_artifacts": [
+    {
+      "id": "non-mobile-app",
+      "would_be_type": "decision",
+      "title": "Native mobile app",
+      "why_not": "Debated twice in #product with strong opinions on both sides; explicitly left open ('not deciding this quarter'). No commitment marker exists.",
+      "evidence": [
+        {
+          "eid": "sl-0326-1",
+          "source": "slack",
+          "native_id": "product:1742998200.000000"
+        },
+        {
+          "eid": "sl-0326-2",
+          "source": "slack",
+          "native_id": "product:1742998920.000000"
+        },
+        {
+          "eid": "sl-0326-3",
+          "source": "slack",
+          "native_id": "product:1742999820.000000"
+        },
+        {
+          "eid": "sl-0326-4",
+          "source": "slack",
+          "native_id": "product:1743001260.000000"
+        },
+        {
+          "eid": "sl-0421-1",
+          "source": "slack",
+          "native_id": "product:1745244720.000000"
+        },
+        {
+          "eid": "sl-0421-2",
+          "source": "slack",
+          "native_id": "product:1745245800.000000"
+        }
+      ]
+    },
+    {
+      "id": "non-vitest",
+      "would_be_type": "decision",
+      "title": "Migrate test runner to Vitest",
+      "why_not": "Raised once in #eng and explicitly parked. Parking is not a resolution.",
+      "evidence": [
+        {
+          "eid": "sl-0422-1",
+          "source": "slack",
+          "native_id": "eng:1745323380.000000"
+        },
+        {
+          "eid": "sl-0422-2",
+          "source": "slack",
+          "native_id": "eng:1745324100.000000"
+        }
+      ]
+    }
+  ]
+}

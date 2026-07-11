@@ -1,0 +1,42 @@
+{
+  "exhaust_events": {
+    "total": 165,
+    "slack": 102,
+    "email": 16,
+    "transcript": 22,
+    "git": 25
+  },
+  "gold_artifacts": {
+    "decision": 10,
+    "episode": 5,
+    "story": 2,
+    "principle": 2,
+    "procedure": 3,
+    "fact": 4
+  },
+  "reference_events": {
+    "total": 70,
+    "by_kind": {
+      "citation": 26,
+      "instantiation": 10,
+      "assertion": 27,
+      "retelling": 7
+    },
+    "by_kind_excluding_self_reference": {
+      "citation": 15,
+      "instantiation": 8,
+      "assertion": 25,
+      "retelling": 5
+    },
+    "assertions_by_difficulty": {
+      "hard": 8,
+      "easy": 7,
+      "medium": 12
+    },
+    "self_references": 17,
+    "violations": 2,
+    "multi_ref_events": 4
+  },
+  "near_miss_negatives": 3,
+  "non_artifacts": 2
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00008",
+    "text": "Reports decision from today's call: we embed Metabase for clinic-facing reporting instead of building a chart stack. Dev sized the embed at about a week; building charts ourselves was a quarter, minimum.",
+    "ts": "1743606300.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "+1. Buy not build — our in-house charting ambitions go to the graveyard with the SMPP gateway, where they'll be very happy together.",
+    "ts": "1743606720.000000",
+    "thread_ts": "1743606300.000000"
+  }
+]

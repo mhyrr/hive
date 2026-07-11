@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00005",
+    "text": "Release checklist is now a real doc (docs/runbooks/release.md): changelog, staging deploy, 24h soak, smoke suite, prod Tue–Thu only, then an hour on dashboards. The soak is the point — plan for it.",
+    "ts": "1739805000.000000"
+  }
+]

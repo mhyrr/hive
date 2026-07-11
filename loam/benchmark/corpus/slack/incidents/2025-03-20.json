@@ -1,0 +1,36 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00011",
+    "text": "Kettleworth's front desk called — multiple patients got SMS at 3am about an appointment with 'Dr. Placeholder'?? Patients are confused, one is annoyed, front desk is (mercifully) laughing.",
+    "ts": "1742457720.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "sev2, IC me, runbook's open. If 'Dr. Placeholder' is texting real patients, staging has escaped containment.",
+    "ts": "1742457960.000000",
+    "thread_ts": "1742457720.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "Found it: the staging reminder sweep cron is configured with PROD Twilio creds — copied from the prod config during the Twilio cutover and never re-pointed at sandbox. 43 real patients got test reminders.",
+    "ts": "1742459040.000000",
+    "thread_ts": "1742457720.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "Cron disabled, creds fix going out now, staging secrets getting namespaced today so this class of mistake stops compiling. Postmortem tomorrow.",
+    "ts": "1742459460.000000",
+    "thread_ts": "1742457720.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "I'm personally calling all 43 patients this morning to apologize — deviating from the comms template on purpose; a 3am ghost text deserves a human voice, not another message.",
+    "ts": "1742462100.000000",
+    "thread_ts": "1742457720.000000"
+  }
+]

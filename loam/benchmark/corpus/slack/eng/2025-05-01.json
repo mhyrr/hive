@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "Reminder for the export work: everything is UTC at rest, clinic-local is derived at render time via the clinic's IANA zone. Do not store local times, do not store offsets.",
+    "ts": "1746095460.000000"
+  }
+]

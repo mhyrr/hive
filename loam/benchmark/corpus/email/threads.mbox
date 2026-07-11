@@ -1,0 +1,309 @@
+From jules@sundialhq.test Tue Feb 18 10:04:00 2025
+From: Jules Park <jules@sundialhq.test>
+To: Ray Donnelly <ray@sundialhq.test>, Maya Okafor <maya@sundialhq.test>, Colin Zhu <colin@sundialhq.test>
+Subject: Pricing: we need to pick a model this week
+Date: Tue, 18 Feb 2025 10:04:00 +0000
+Message-ID: <em-price-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Team,
+
+Three candidates on the table, we've circled long enough:
+
+1. Per booking ($0.40/booking) — scales with usage, but clinics hate
+   variable bills and it punishes our busiest, happiest customers.
+2. Per practitioner seat ($29/practitioner/mo) — predictable, tracks
+   clinic size, easy to quote on a call.
+3. Flat tiers — simplest, but a 2-practitioner and a 9-practitioner
+   clinic in the same tier is money on the floor.
+
+My recommendation is per practitioner. Ray, does that survive contact
+with actual sales calls?
+
+Jules
+
+From ray@sundialhq.test Wed Feb 19 08:47:00 2025
+From: Ray Donnelly <ray@sundialhq.test>
+To: Jules Park <jules@sundialhq.test>, Maya Okafor <maya@sundialhq.test>, Colin Zhu <colin@sundialhq.test>
+Subject: Re: Pricing: we need to pick a model this week
+Date: Wed, 19 Feb 2025 08:47:00 +0000
+Message-ID: <em-price-2@sundialhq.test>
+In-Reply-To: <em-price-1@sundialhq.test>
+References: <em-price-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Per practitioner survives, and it's the only one that does.
+
+Clinic managers budget headcount, not utilization. When I quote per
+booking they immediately ask "so a good month costs me more?" and the
+call goes sideways. Seats they understand in one sentence.
+
+One ask: keep the seat price flat as they grow. Growth penalties are
+churn fuel.
+
+Ray
+
+From maya@sundialhq.test Thu Feb 20 17:31:00 2025
+From: Maya Okafor <maya@sundialhq.test>
+To: Jules Park <jules@sundialhq.test>, Ray Donnelly <ray@sundialhq.test>, Colin Zhu <colin@sundialhq.test>
+Subject: Re: Pricing: we need to pick a model this week
+Date: Thu, 20 Feb 2025 17:31:00 +0000
+Message-ID: <em-price-3@sundialhq.test>
+In-Reply-To: <em-price-2@sundialhq.test>
+References: <em-price-1@sundialhq.test> <em-price-2@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Decided: per-practitioner seat pricing, $29/practitioner/month,
+flat as they grow. Jules writes it into the site copy this week; Ray,
+requote the open pipeline on the new model.
+
+This is settled unless the market tells us otherwise — no relitigating
+it per deal.
+
+Maya
+
+From ray@sundialhq.test Tue Mar 18 09:15:00 2025
+From: Ray Donnelly <ray@sundialhq.test>
+To: Maya Okafor <maya@sundialhq.test>, Colin Zhu <colin@sundialhq.test>
+Subject: Meridian Health — security review stage
+Date: Tue, 18 Mar 2025 09:15:00 +0000
+Message-ID: <em-meridian-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Meridian Health is real: 14 clinics across two states, would be
+our biggest logo by 3x. Demo went great, IT director (Sam Okada) is
+pushing us into their security review.
+
+Heads up: their procurement checklist has a BAA line item. Flagging
+early because I know where we landed on that.
+
+Ray
+
+From maya@sundialhq.test Wed Mar 19 11:02:00 2025
+From: Maya Okafor <maya@sundialhq.test>
+To: Ray Donnelly <ray@sundialhq.test>, Colin Zhu <colin@sundialhq.test>
+Subject: Re: Meridian Health — security review stage
+Date: Wed, 19 Mar 2025 11:02:00 +0000
+Message-ID: <em-meridian-2@sundialhq.test>
+In-Reply-To: <em-meridian-1@sundialhq.test>
+References: <em-meridian-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Great pipeline news, awkward timing. We decided on March 5 to hold
+BAAs until after v1 — the compliance lift is real engineering time and
+the AU/NZ pipeline doesn't need it.
+
+See if Meridian will accept a contractual commitment to a BAA within
+12 months instead. If it's a hard gate, it's a hard gate.
+
+Maya
+
+From ray@sundialhq.test Mon Mar 24 15:38:00 2025
+From: Ray Donnelly <ray@sundialhq.test>
+To: Maya Okafor <maya@sundialhq.test>, Colin Zhu <colin@sundialhq.test>
+Subject: Re: Meridian Health — security review stage
+Date: Mon, 24 Mar 2025 15:38:00 +0000
+Message-ID: <em-meridian-3@sundialhq.test>
+In-Reply-To: <em-meridian-2@sundialhq.test>
+References: <em-meridian-1@sundialhq.test> <em-meridian-2@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Update, and intel worth keeping: Okada evaluates, but he doesn't
+decide. The real decision-maker at Meridian is the CFO, Dana Whitfield
+— procurement moves when she moves, and she reads the compliance page
+before the product page. I got 20 minutes with her Friday.
+
+Pitched the 12-month BAA commitment. She was polite about it, which is
+CFO for no.
+
+Ray
+
+From ray@sundialhq.test Tue Mar 25 16:55:00 2025
+From: Ray Donnelly <ray@sundialhq.test>
+To: Maya Okafor <maya@sundialhq.test>, Colin Zhu <colin@sundialhq.test>
+Subject: Meridian: lost
+Date: Tue, 25 Mar 2025 16:55:00 +0000
+Message-ID: <em-meridian-4@sundialhq.test>
+In-Reply-To: <em-meridian-3@sundialhq.test>
+References: <em-meridian-1@sundialhq.test> <em-meridian-2@sundialhq.test> <em-meridian-3@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Whitfield passed this morning. Verbatim: "Come back when you can
+sign the BAA." Fourteen clinics, best demo feedback we've ever had,
+and it died on a signature.
+
+Logging it and moving on, but I want this one remembered when we
+re-prioritize compliance.
+
+Ray
+
+From colin@sundialhq.test Tue Mar 25 17:40:00 2025
+From: Colin Zhu <colin@sundialhq.test>
+To: Ray Donnelly <ray@sundialhq.test>, Maya Okafor <maya@sundialhq.test>
+Subject: Re: Meridian: lost
+Date: Tue, 25 Mar 2025 17:40:00 +0000
+Message-ID: <em-meridian-5@sundialhq.test>
+In-Reply-To: <em-meridian-4@sundialhq.test>
+References: <em-meridian-1@sundialhq.test> <em-meridian-2@sundialhq.test> <em-meridian-3@sundialhq.test> <em-meridian-4@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Brutal. For the record: the product won and our own no-BAA policy
+lost the deal. That's a choice we made, not a competitor beating us.
+
+Colin
+
+From nadia@sundialhq.test Tue Apr 15 13:20:00 2025
+From: Nadia Hassan <nadia@sundialhq.test>
+To: Ray Donnelly <ray@sundialhq.test>, Colin Zhu <colin@sundialhq.test>, Maya Okafor <maya@sundialhq.test>, Jules Park <jules@sundialhq.test>
+Subject: Q1 churn review — where it actually concentrates
+Date: Tue, 15 Apr 2025 13:20:00 +0000
+Message-ID: <em-churn-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Q1 churn readout attached-in-body:
+
+11 churned accounts. 9 of the 11 were solo-practitioner clinics.
+Multi-practitioner clinics essentially do not leave — one churn, and
+that was an acquisition. Since we bill per practitioner seat, solo
+clinics are simultaneously our cheapest accounts and our fastest
+churn: least revenue, most support tickets, first out the door.
+
+Implication for targeting: qualify for 2+ practitioners. Solo clinics
+should be self-serve or nothing.
+
+Nadia
+
+From colin@sundialhq.test Mon Apr 28 14:26:00 2025
+From: Colin Zhu <colin@sundialhq.test>
+To: Maya Okafor <maya@sundialhq.test>
+Cc: Ray Donnelly <ray@sundialhq.test>
+Subject: Sign-off request: Coastal Allied at 18%
+Date: Mon, 28 Apr 2025 14:26:00 +0000
+Message-ID: <em-dealdesk-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Per the deal desk policy, requesting written sign-off before I
+send numbers: Coastal Allied Health, 6 practitioners, asking 18% off
+list to sign a 2-year term. Above my 15% discretion line, so it's
+yours to approve.
+
+Colin
+
+From maya@sundialhq.test Mon Apr 28 15:03:00 2025
+From: Maya Okafor <maya@sundialhq.test>
+To: Colin Zhu <colin@sundialhq.test>
+Cc: Ray Donnelly <ray@sundialhq.test>
+Subject: Re: Sign-off request: Coastal Allied at 18%
+Date: Mon, 28 Apr 2025 15:03:00 +0000
+Message-ID: <em-dealdesk-2@sundialhq.test>
+In-Reply-To: <em-dealdesk-1@sundialhq.test>
+References: <em-dealdesk-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Approved — 18% against a 2-year term is a good trade. Forward this
+into the deal record.
+
+Maya
+
+From ray@sundialhq.test Tue May 20 18:05:00 2025
+From: Ray Donnelly <ray@sundialhq.test>
+To: Maya Okafor <maya@sundialhq.test>, Dev Batra <dev@sundialhq.test>
+Subject: Meridian is back — same gate
+Date: Tue, 20 May 2025 18:05:00 +0000
+Message-ID: <em-baa-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Following up from the leadership sync: Whitfield's office reached
+out to *us*. Their current vendor is sunsetting and we're the shortlist.
+Same gate as March — no signed BAA, no deal. You'll remember how that
+ended last time: fourteen clinics gone over a signature.
+
+If we're ever reversing the BAA call, this is the moment.
+
+Ray
+
+From maya@sundialhq.test Thu May 22 09:12:00 2025
+From: Maya Okafor <maya@sundialhq.test>
+To: Ray Donnelly <ray@sundialhq.test>, Dev Batra <dev@sundialhq.test>, Jules Park <jules@sundialhq.test>
+Subject: Re: Meridian is back — same gate
+Date: Thu, 22 May 2025 09:12:00 +0000
+Message-ID: <em-baa-2@sundialhq.test>
+In-Reply-To: <em-baa-1@sundialhq.test>
+References: <em-baa-1@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Decision: we sign BAAs. This supersedes the March 5 call to hold
+off until after v1 — the US market keeps telling us compliance IS the
+product for clinic groups, and I'd rather hear it twice than three
+times.
+
+Dev: legal template is approved, please write this up as an ADR and
+scope the audit-logging gaps. Ray: tell Whitfield's office we'll have
+paper ready within 30 days.
+
+Maya
+
+From dev@sundialhq.test Thu May 22 10:44:00 2025
+From: Dev Batra <dev@sundialhq.test>
+To: Maya Okafor <maya@sundialhq.test>, Ray Donnelly <ray@sundialhq.test>, Jules Park <jules@sundialhq.test>
+Subject: Re: Meridian is back — same gate
+Date: Thu, 22 May 2025 10:44:00 +0000
+Message-ID: <em-baa-3@sundialhq.test>
+In-Reply-To: <em-baa-2@sundialhq.test>
+References: <em-baa-1@sundialhq.test> <em-baa-2@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+On it — ADR-007 going up today. Audit-logging gaps are about two
+weeks of work; they'll ride the 1.5 release.
+
+Dev
+
+From colin@sundialhq.test Tue May 27 17:49:00 2025
+From: Colin Zhu <colin@sundialhq.test>
+To: Ray Donnelly <ray@sundialhq.test>
+Subject: Brightleaf closed — 20% to get it done by EOM
+Date: Tue, 27 May 2025 17:49:00 +0000
+Message-ID: <em-dealdesk-3@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Good news first: Brightleaf Chiro signed, 4 practitioners, 2-year
+term. To get it over the line by end of month I went to 20% on the
+call. Papering it now — flagging the discount so the CRM matches.
+
+Colin
+
+From ray@sundialhq.test Wed May 28 08:31:00 2025
+From: Ray Donnelly <ray@sundialhq.test>
+To: Colin Zhu <colin@sundialhq.test>
+Cc: Maya Okafor <maya@sundialhq.test>
+Subject: Re: Brightleaf closed — 20% to get it done by EOM
+Date: Wed, 28 May 2025 08:31:00 +0000
+Message-ID: <em-dealdesk-4@sundialhq.test>
+In-Reply-To: <em-dealdesk-3@sundialhq.test>
+References: <em-dealdesk-3@sundialhq.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Congrats on the close — and we need to keep the order of
+operations straight: above 15% means written CEO sign-off BEFORE the
+number reaches the customer, not after the handshake. That's the whole
+policy. Maya, retro sign-off attached for the record; Colin, next one
+comes to us first.
+
+Ray
+
