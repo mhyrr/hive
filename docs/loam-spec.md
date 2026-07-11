@@ -1,6 +1,6 @@
 # LOAM Specification
 
-**Version:** 0.1.0-draft
+**Version:** 0.2.0-draft
 **Status:** Pre-implementation specification
 **Repository:** This document is the founding specification for a standalone
 system and is written to be lifted verbatim into its own repository as
@@ -115,8 +115,8 @@ these meanings in code, schemas, and documentation.
 | **Exhaust Event** | An immutable normalized record ingested from a Source: one message, commit, document revision, transcript segment, or ticket transition. |
 | **Exhaust Log** | The append-only store of all Exhaust Events. Ground truth; everything above it is derived and recomputable. |
 | **Actor** | A resolved identity (human or agent) unified across Sources. |
-| **Artifact** | A curated, versioned unit of institutional memory. One of five types: Episode, Decision, Story, Principle, Procedure. |
-| **Tier** | The memory class an Artifact type belongs to: episodic (Episode, Decision), narrative (Story), semantic (Principle), procedural (Procedure). Each tier has distinct dynamics (§6). |
+| **Artifact** | A curated, versioned unit of institutional memory. One of six types: Episode, Decision, Story, Principle, Procedure, Fact. |
+| **Tier** | The memory class an Artifact type belongs to: episodic (Episode, Decision), narrative (Story), semantic (Principle, Fact), procedural (Procedure). Each tier has distinct dynamics (§6). |
 | **Provenance** | Links from an Artifact revision to the Exhaust Events that justify it. |
 | **Reference Event** | A detected use of an Artifact within later exhaust. Kinds: Citation, Assertion, Retelling, Instantiation (§5.3). The system's fundamental observable. |
 | **Activation** | Computed strength of an Artifact (§6.1). Determines ranking, context-pack inclusion, and archival. |
@@ -189,10 +189,12 @@ specified here, so that any component can be reimplemented independently.
 Three pipelines, all LLM-backed, all producing **candidates only**:
 
 1. **Artifact extraction** — batch passes over exhaust windows proposing
-   Episodes, Decisions, Stories, and Procedures. Decision extraction keys
-   on commitment markers (resolution language, merged ADRs, closed RFCs).
-   Story extraction keys on narrative-recurrence clusters. Procedure
-   extraction keys on high-frequency near-duplicate reuse.
+   Episodes, Decisions, Stories, Procedures, and Facts. Decision
+   extraction keys on commitment markers (resolution language, merged
+   ADRs, closed RFCs). Story extraction keys on narrative-recurrence
+   clusters. Procedure extraction keys on high-frequency near-duplicate
+   reuse. Fact extraction keys on recurring descriptive claims asserted
+   across actors without a decision event behind them.
 2. **Entity resolution** — candidate artifacts MUST be clustered against
    existing artifacts (embedding + lexical). Merges above a confidence
    threshold are automatic; below it they queue for the verifier. All
@@ -202,8 +204,16 @@ Three pipelines, all LLM-backed, all producing **candidates only**:
    matching against the artifact index (aliases + embedding similarity,
    with LLM adjudication for borderline matches) and classifying each hit
    per §5.3. The detector MUST record its confidence and the matched text
-   span on every Reference Event. Precision takes priority over recall;
-   the target precision floor is a tunable parameter with default ≥ 0.85.
+   span on every Reference Event. Detection quality targets are **per
+   kind, for both precision AND recall**, measured against the Phase 0
+   labeled benchmark (§13): the four kinds have very different lexical
+   signatures (citations are explicit; assertions are bare restatements),
+   so a single precision floor hides asymmetric recall. Targets are
+   tunable parameters with defaults: precision ≥ 0.85 per kind; recall
+   MUST be measured and published per kind even where no floor is set,
+   because measured recall is a correction input to §6.5. Recall
+   correction factors MUST be recalibrated whenever the detector or its
+   model binding changes, and on the §10.6 calibration cadence.
 
 Extraction pipelines MUST NOT write to canon. Their sole output channel is
 the candidate queue (§8).
@@ -280,7 +290,7 @@ ExhaustEvent {
 ```
 Artifact {
   id: uuid
-  type: episode | decision | story | principle | procedure
+  type: episode | decision | story | principle | procedure | fact
   status: candidate | active | pinned | deprecated | archived
   title: string
   body: markdown                    // current revision
@@ -340,6 +350,9 @@ Kind semantics (normative):
   executed). MUST carry `divergence`: a normalized distance between the
   instantiation and the Procedure's canonical version.
 
+One Exhaust Event MAY yield multiple Reference Events — a message citing
+two Decisions produces two, each with its own matched span.
+
 ### 5.4 Type extensions
 
 ```
@@ -375,7 +388,26 @@ Procedure += {
   instantiations: { count: int, divergence_mean: float, divergence_trend: float }
   review_due?: timestamp
 }
+
+Fact += {
+  confidence: float                 // verifier-assessed, [0,1]
+  staleness: {
+    last_verified_at: timestamp     // last time provenance or reality re-checked
+    stale_after: duration           // per-fact clock, set at admission
+    stale: bool                     // maintained by Dynamics
+  }
+  contradicted_by?: [ExhaustEventRef]  // exhaust that appears to contradict
+}
 ```
+
+**Fact** is the semantic tier's descriptive counterpart to the normative
+Principle: "churn concentrates in SMB," "service X falls over above 10k
+QPS," "Acme's real decision-maker is the CFO." It is
+**verifier-admitted without ratification** — descriptive claims need
+evidence, not sign-off. Facts do not decay by disuse (§6.1 does not
+apply): a true fact rarely restated is still true. They go stale
+instead: the world changes under them. Staleness dynamics are specified
+in §6.3.
 
 ---
 
@@ -391,7 +423,9 @@ activation = 0.5^(age / half_life)
            × (1 + β · log2(dispersion.actors + 1))
 ```
 
-where `age = now − last_referenced_at`.
+where `age = now − last_referenced_at`. For an artifact with zero
+Reference Events, `last_referenced_at` is initialized to `created_at`,
+so age runs from creation.
 
 - Each Reference Event extends `half_life` by `retrieval_boost`, capped at
   `max_half_life`.
@@ -426,6 +460,18 @@ Reference Events flagged (initially by humans; automated contradiction
 detection is a later phase, §14) as exhaust contradicting the principle. A
 `gap_trend` exceeding `zombie_threshold` MUST open a Challenge (§8.4).
 
+Facts are likewise exempt from §6.1 disuse decay. Fact health is
+**staleness**, not activation: Dynamics MUST set `staleness.stale` when
+`now − last_verified_at > stale_after`, and MUST fire a
+`flag_stale` (§8.4) re-verification flag into the governance queue. A
+Reference Event contradicting a Fact (human-flagged initially, per the
+same path as Principle violations) MUST populate `contradicted_by` and
+fire `flag_stale` immediately regardless of the clock. Re-verification
+(verifier re-reads provenance and fresh exhaust) either resets
+`last_verified_at`, revises the Fact, or deprecates it. Stale Facts
+remain in canon but MUST carry their stale flag wherever surfaced,
+including context packs.
+
 ### 6.4 Reinforcement weighting
 
 `recall_weight` increments per Reference Event by source class, scaled by
@@ -450,6 +496,14 @@ Reach is a property of the *venue*, never of the Actor. A statement made
 to five hundred people is a stronger rehearsal event than the same
 statement made to four — regardless of who makes it.
 
+**Self-reference exclusion.** Organic weight and the reach multiplier
+apply only to Reference Events whose Actor is not among the artifact's
+`actors` (authors/participants). Rehearsal is evidence that the memory
+lives in *other* minds; pasting your own decision into a 500-person
+channel manufactures a reach-scaled rehearsal event out of nothing.
+Self-references MUST still be logged (they are audit signal and input
+to gaming detection) but contribute `recall_weight` 0.
+
 **Measurement neutrality (normative).** Reference-event weights MUST be a
 function of recall-source class and venue reach only. They MUST NOT vary
 with the referencing Actor's rank, role, or governance authority.
@@ -471,11 +525,17 @@ carries full weight.
 ### 6.5 Consolidation detector (episodic → semantic)
 
 For each Decision, over a sliding window (default 6 months), maintain
-`citation_rate` and `assertion_rate`. The detector MUST fire a
+`citation_rate` and `assertion_rate`. Because the two detectors have
+asymmetric recall (citations are lexically explicit, assertions are
+not), the ratio MUST be computed over **recall-corrected rates**: each
+observed rate divided by its kind's measured detector recall (§4.2),
+with correction factors recalibrated per §10.6. Uncorrected rates
+systematically deflate the ratio and suppress consolidation for
+anything not lexically distinctive. The detector MUST fire a
 **nomination** (§8.4) when all hold:
 
-- `assertion_rate / (citation_rate + assertion_rate) ≥ consolidation_ratio`
-  (default 0.7)
+- `corrected_assertion_rate / (corrected_citation_rate +
+  corrected_assertion_rate) ≥ consolidation_ratio` (default 0.7)
 - `dispersion.actors ≥ consolidation_actors` (default 5) and
   `dispersion.teams ≥ consolidation_teams` (default 2)
 - artifact age ≥ `consolidation_age` (default 6 months)
@@ -527,6 +587,23 @@ All constants above MUST be configuration, not code. Defaults:
 Defaults are seeded from human-memory research and MUST be recalibrated
 per-organization from replay data (§12); the calibration report (§10.6)
 exists for this purpose.
+
+**Parameter profiles.** The defaults above assume a mid-size org
+(roughly 30+ people). In an org of 2–10 people, `consolidation_actors
+= 5` and `consolidation_teams = 2` are unreachable and nothing above the
+episodic tier ever activates. Implementations MUST ship a named
+**`small_org` profile** selectable at deployment, with defaults:
+
+| Parameter | `small_org` default |
+|---|---|
+| `consolidation_actors` | 3 |
+| `consolidation_teams` | 1 |
+| `retelling_min` / `teller_min` | 2 / 1 |
+| `γ` (reach factor) | 0.15 |
+
+Reach scaling compresses in a small org (every venue is most of the
+org), hence the lower `γ`. Profile choice MUST be recorded so that
+instrument outputs are comparable only within a profile.
 
 ---
 
@@ -634,7 +711,11 @@ candidate, MUST:
 4. Admit (`active`), reject with rationale, or escalate to a human queue.
 
 Verifier throughput, admission rate, and human-overturn rate MUST be
-tracked as system health metrics.
+tracked as system health metrics. The verifier MUST have an explicit
+queue SLA (default: median candidate age in queue ≤ 48h) and a
+queue-depth alarm that pages the operator when breached — a silently
+backed-up candidate queue makes the whole system look dead, since
+nothing new reaches canon.
 
 ### 8.4 Verbs
 
@@ -653,6 +734,7 @@ The complete verb set. Every verb application creates a Revision (§5.2).
 | challenge | principle | Dynamics, any human |
 | canonize / link / flag_endangered | story | human / human / Dynamics |
 | register / revise / deprecate / flag_divergence | procedure | owner or authorized human; Dynamics for flag |
+| flag_stale / reverify | fact | Dynamics, human / verifier |
 
 `reopen` frequency per Decision MUST be tracked (input to §10.5).
 
@@ -709,11 +791,13 @@ the only write and lands in the candidate queue.
    2. **Decisions** touching the task's entities — with resolutions and
       supersede chains, so consumers neither relitigate settled questions
       nor resurrect superseded choices.
-   3. **Procedures** matching the work type — canonical revisions.
-   4. **Stories** linked to the included Principles — at most
+   3. **Facts** touching the task's entities — stale-flagged Facts carry
+      the flag in the pack.
+   4. **Procedures** matching the work type — canonical revisions.
+   5. **Stories** linked to the included Principles — at most
       `pack_stories_max` (default 2), compressed to their canonical
       telling.
-   5. **Episodes** — remaining budget by rank.
+   6. **Episodes** — remaining budget by rank.
 4. Every included item MUST carry its `artifact_id` and provenance refs,
    so downstream use is detectable and citable.
 5. Inclusion logs a 0.05-weight Reference Event per artifact.
@@ -723,6 +807,14 @@ the only write and lands in the candidate queue.
 A thin client for agent harnesses that support startup hooks MUST be
 provided, injecting `list_principles(scope)` plus
 `get_context_pack(inferred task)` at session start.
+
+The same client MUST also hook session-end / work-shipped events
+(commit, PR, message send — whatever the harness exposes) and call
+`record_outcome` with the `artifact_ids` from the session's context
+pack. `record_outcome` is the highest-value signal in the system — it
+closes the agent-recall loop with full-weight organic evidence — and
+MUST NOT be left to voluntary agent behavior. The §10.7 attribution
+rate thereby measures the harness integration, not agent goodwill.
 
 ---
 
@@ -758,6 +850,8 @@ log, emitted as a report (markdown + charts). Required set:
    provenance vs. bodies only — and record the with-trace advantage. The
    prediction under test: that advantage grows with model capability
    (provenance is forward-compatible leverage, not audit overhead).
+   The frozen corpus is the Phase 0 benchmark corpus (§13) — one corpus,
+   two standing uses.
    Cheaper standing proxies: extraction yield on replay (verified
    artifacts recovered from the same exhaust, per model generation) and
    `record_outcome` attribution rate over time. Predictions MUST be
@@ -780,7 +874,13 @@ enforce all of them.
 1. **Symmetric visibility.** Every Actor whose exhaust is ingested can
    query the system, view all connector scope manifests, and view their
    own contribution surface. There is no analytics tier over individuals
-   available to any role.
+   available to any role. Queryability applies to **artifacts and
+   aggregates**: raw Exhaust Events are reachable only (a) by following
+   provenance links from an artifact or Reference Event, or (b) by their
+   own author over their own events. There MUST be no free-text search
+   surface over the raw Exhaust Log — free exhaust search would
+   reconstitute, self-serve, exactly the per-individual analytics tool
+   invariant 3 prohibits.
 2. **Declared scope.** Connectors read only their declared scope. DMs and
    private channels are excluded by default and may be included only by
    opt-in of all channel members. Scope changes are logged and announced.
@@ -836,9 +936,29 @@ engine, not an indexing job.
 Phasing is normative as to *order* (each phase's outputs are the next
 phase's inputs), not as to schedule.
 
-- **Phase 0 — Sensor validation.** Exhaust log + reference-event detector
-  against a single consented corpus (one git repo + its chat history).
-  Exit criterion: detector precision ≥ 0.85 on a human-labeled sample.
+- **Phase 0 — Benchmark before implementation.** No implementation of
+  Extraction (§4.2) or Dynamics (§6) proceeds until a benchmark exists to
+  review it against. Deliverables:
+  1. **Benchmark corpus** — one corpus (a git repo + its chat history),
+     either consented-real or synthetic-with-ground-truth, frozen, with
+     gold labels: (a) Reference Events labeled by kind (citation /
+     assertion / retelling / instantiation), (b) a gold artifact set
+     (decisions, episodes, stories, procedures, facts) extracted by hand
+     or planted by construction.
+  2. **Eval harness** — scores any extractor/detector implementation
+     against the gold labels, reporting precision AND recall *per
+     reference kind*, plus extraction yield against the gold artifact
+     set. The harness is a conformance artifact and a permanent CI
+     fixture.
+  3. **Dynamics simulator** — synthetic-workload simulation of §6. Decay,
+     `retrieval_boost`, and the 90-day halving interact multiplicatively
+     and the healthy parameter regime is narrow; the deliverable is a map
+     of the parameter space showing where the system degenerates into
+     "everything archives" or "nothing archives."
+
+  The Phase 0 corpus IS the appreciation-test frozen benchmark (§10.7):
+  one corpus, two standing uses. Exit criteria are the per-kind
+  precision/recall targets of §4.2, met on the benchmark corpus.
 - **Phase 1 — Episodic core.** Ingestion (git + Slack), extraction of
   Decisions/Episodes, repository, activation dynamics, verifier, search.
   Exit: decision survival instrument produces stable curves on replayed
@@ -850,6 +970,40 @@ phase's inputs), not as to schedule.
   challenges), Procedures (instantiation + divergence).
 - **Phase 4 — Instruments.** Full report set; calibration loop;
   latent-variable workbench last.
+
+**Validation scale caveat.** Phase 3 detectors (consolidation,
+retelling, divergence) cannot be validated on a small deployment under
+default parameters — with the default profile, dispersion thresholds
+never trip in an org of 2–10 people. Phase 3+ validation therefore
+requires either the `small_org` profile (§6.9) on a small deployment,
+or a design partner of roughly 50+ people under defaults. State which
+in the validation report.
+
+### 13.1 Cost model
+
+Reference-event detection is a continuous LLM pass over all new exhaust
+against the full artifact index — the dominant operating cost, and it
+scales with org size × artifact count. Each phase plan MUST carry a
+back-of-envelope cost model, maintained as parameters move:
+
+```
+daily_cost ≈ events_per_day
+           × candidate_match_rate      // index hits per event, post-filter
+           × adjudication_rate         // fraction sent to LLM adjudication
+           × cost_per_adjudication
+           + extraction_batch_cost + verifier_cost
+```
+
+Illustrative Phase 1 numbers (50-person org): ~3,000 exhaust
+events/day; lexical+embedding prefilter yields ~0.3 candidate matches
+per event; ~50% of candidates need LLM adjudication → ~450
+adjudications/day. The intended mitigation is the
+**cheap-triage / strong-adjudication split** that §1.1's per-role model
+bindings exist for: a small model (or pure lexical/embedding score)
+triages candidate matches, and only borderline cases reach the strong
+adjudicator. The verifier (§8.3) is the high-effort pass but runs on
+candidate volume, not exhaust volume, so it is second-order in this
+model.
 
 ---
 
