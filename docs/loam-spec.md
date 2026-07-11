@@ -56,7 +56,23 @@ model. This is a conformance requirement:
 Corollary (informative): the organization's memory compounds in value as
 models improve — better extractors reprocess the same exhaust log and find
 more; longer contexts consume bigger packs. A model-coupled design would
-instead depreciate with each model generation.
+instead depreciate with each model generation. The empirical record backs
+this: domain-pretrained models (e.g. BloombergGPT) have repeatedly been
+eclipsed within months by next-generation general models plus retrieval —
+the half-life of a custom-trained model is shorter than the model
+generation cycle.
+
+Framing (informative): LOAM is training in **data-space** rather than
+weight-space. Consolidation compresses many episodes into stable priors
+(gradient descent's job); decay and counter-halving are regularization
+and forgetting; ratification is human feedback on what gets learned;
+supersede is a weight update with a changelog. The artifact store is the
+organization's model of itself — but every "parameter" is a readable,
+versioned artifact with provenance, and the base LLM is a rented,
+upgradeable reasoning engine it plugs into. This is why traceability is
+structural rather than aspirational: in weight-space, credit assignment
+("why does the model believe this?") is an open interpretability problem;
+in data-space, it is a provenance link.
 
 ### 1.2 Non-goals
 
