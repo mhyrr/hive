@@ -32,6 +32,20 @@ LOAM is simultaneously:
    supports longitudinal measurement of the organization itself (decision
    half-life, knowledge fragility, cultural drift).
 
+The economics rest on a separation: **intelligence is rented; memory is
+owned.** Intelligence is a commodity input with collapsing prices and
+short generations. Memory-with-provenance is the durable complementary
+asset — each improvement in rented intelligence raises the value of owned
+memory, because the trace is what makes memory forward-compatible with
+intelligence. A conclusion stored without provenance caps every future
+reader at trusting it; a conclusion stored with its evidence path can be
+re-derived, corrected, and connected by readers smarter than its writer.
+Hence a standing rule: compression MAY be lossy in content but MUST be
+lossless in pointers — an artifact's body may shrink, its path back to
+the exhaust may not. A black box is frozen at the intelligence of
+whatever wrote it; an explainable one is re-readable at the intelligence
+of whatever reads it next.
+
 ### 1.1 Model agnosticism
 
 LOAM is a harness for the organization, not an application of any particular
