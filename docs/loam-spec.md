@@ -32,7 +32,33 @@ LOAM is simultaneously:
    supports longitudinal measurement of the organization itself (decision
    half-life, knowledge fragility, cultural drift).
 
-### 1.1 Non-goals
+### 1.1 Model agnosticism
+
+LOAM is a harness for the organization, not an application of any particular
+model. This is a conformance requirement:
+
+- Every LLM-backed role (extractor, adjudicator, verifier, entity resolver)
+  MUST be a pluggable interface with a per-role model binding in
+  configuration. Roles are independently swappable — a cheap model for
+  triage, a strong model for verification — and replaceable as model
+  generations turn over.
+- Artifacts, Reference Events, and all dynamics state are plain data. No
+  schema, activation computation, or promotion detector may depend on any
+  model's internals, embeddings format, or provider. Embedding vectors are
+  treated as a rebuildable index, never as canonical state — the system
+  MUST be able to re-embed the corpus under a new model without loss.
+- The memory MUST outlive any model. Everything above the Exhaust Log is
+  recomputable (§4.3); a full model swap is a reprocessing job, not a
+  migration of meaning.
+- The MCP surface serves any consumer. Context packs are model-neutral
+  text + provenance; nothing in them assumes a particular agent harness.
+
+Corollary (informative): the organization's memory compounds in value as
+models improve — better extractors reprocess the same exhaust log and find
+more; longer contexts consume bigger packs. A model-coupled design would
+instead depreciate with each model generation.
+
+### 1.2 Non-goals
 
 - LOAM is **not a data lake**. Retention is usage-shaped; forgetting is a
   specified behavior, not a failure.
