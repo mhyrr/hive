@@ -751,7 +751,18 @@ log, emitted as a report (markdown + charts). Required set:
    growth without archival (data-lake regression).
 6. **Calibration.** Resurrection rates and survival-curve fit residuals
    per artifact category, with recommended parameter adjustments (§6.9).
-7. **Latent-variable workbench** (research-grade; clearly labeled).
+7. **Appreciation test** (research-grade; the standing measurement of
+   §1's value model). Hold a frozen benchmark corpus constant; on each new
+   model generation, run downstream tasks (org Q&A, contradiction
+   detection, resurrection prediction) in two conditions — artifacts with
+   provenance vs. bodies only — and record the with-trace advantage. The
+   prediction under test: that advantage grows with model capability
+   (provenance is forward-compatible leverage, not audit overhead).
+   Cheaper standing proxies: extraction yield on replay (verified
+   artifacts recovered from the same exhaust, per model generation) and
+   `record_outcome` attribution rate over time. Predictions MUST be
+   registered before each new-generation run.
+8. **Latent-variable workbench** (research-grade; clearly labeled).
    Regressions of compressed features (decision half-life, lore density,
    reopen rate, divergence pressure, drift velocity) against
    pre-registered outcome variables (retention, cycle time, incident
