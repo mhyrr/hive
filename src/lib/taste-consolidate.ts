@@ -692,7 +692,7 @@ export function mergeConsolidateResults(
 
 const defaultConsolidateCaller: ModelCaller = async (input) => {
   const ctrl = new AbortController();
-  const timeoutMs = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 180_000;
+  const timeoutMs = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 900_000;
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await completeClaudeText({

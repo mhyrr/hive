@@ -27,7 +27,7 @@ while IFS= read -r prompt; do
   f="$OUT/$(printf '%02d' "$n")"
   { printf '### PROMPT %d\n%s\n\n### RESPONSE\n' "$n" "$prompt"; } > "$f.txt"
   # < /dev/null skips claude's 3s stdin wait; stderr to a sibling .err for diagnosis.
-  timeout 180 hive $FLAG -p "$prompt" < /dev/null >> "$f.txt" 2>"$f.err"
+  timeout 600 hive $FLAG -p "$prompt" < /dev/null >> "$f.txt" 2>"$f.err"
   echo "prompt $n done ($(wc -c < "$f.txt") bytes)"
 done < "$DIR/battery.txt"
 echo "SWEEP COMPLETE ($MODE): $n transcripts in $OUT"

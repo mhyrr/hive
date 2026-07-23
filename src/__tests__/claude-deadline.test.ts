@@ -58,9 +58,9 @@ describe("nightlyCallTimeoutMs", () => {
     else process.env.HIVE_NIGHTLY_CALL_TIMEOUT_MS = prev;
   });
 
-  test("defaults to 6 minutes", () => {
+  test("defaults to 15 minutes", () => {
     delete process.env.HIVE_NIGHTLY_CALL_TIMEOUT_MS;
-    expect(nightlyCallTimeoutMs()).toBe(360_000);
+    expect(nightlyCallTimeoutMs()).toBe(900_000);
   });
 
   test("honors a positive env override", () => {
@@ -70,8 +70,8 @@ describe("nightlyCallTimeoutMs", () => {
 
   test("ignores a non-numeric or non-positive override", () => {
     process.env.HIVE_NIGHTLY_CALL_TIMEOUT_MS = "nope";
-    expect(nightlyCallTimeoutMs()).toBe(360_000);
+    expect(nightlyCallTimeoutMs()).toBe(900_000);
     process.env.HIVE_NIGHTLY_CALL_TIMEOUT_MS = "0";
-    expect(nightlyCallTimeoutMs()).toBe(360_000);
+    expect(nightlyCallTimeoutMs()).toBe(900_000);
   });
 });

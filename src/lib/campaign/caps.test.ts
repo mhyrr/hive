@@ -27,7 +27,7 @@ function snap(
 describe('DEFAULT_CAPS', () => {
   it('has sensible defaults', () => {
     expect(DEFAULT_CAPS.tokens_soft).toBe(100_000);
-    expect(DEFAULT_CAPS.walltime_soft_ms).toBe(30 * 60 * 1000);
+    expect(DEFAULT_CAPS.walltime_soft_ms).toBe(45 * 60 * 1000);
   });
 });
 
@@ -48,7 +48,7 @@ describe('evaluateCaps — under soft caps', () => {
   });
 
   it('returns continue just below both soft caps', () => {
-    const result = evaluateCaps(defaultConfig, snap(99_999, 30 * 60 * 1000 - 1));
+    const result = evaluateCaps(defaultConfig, snap(99_999, 45 * 60 * 1000 - 1));
     expect(result.action).toBe('continue');
   });
 });
@@ -77,13 +77,13 @@ describe('evaluateCaps — token soft cap', () => {
 
 describe('evaluateCaps — walltime soft cap', () => {
   it('signals soft when walltime hits exactly the soft cap', () => {
-    const result = evaluateCaps(defaultConfig, snap(50_000, 30 * 60 * 1000));
+    const result = evaluateCaps(defaultConfig, snap(50_000, 45 * 60 * 1000));
     expect(result.action).toBe('soft_signal');
     expect(result.axis).toBe('walltime');
   });
 
   it('signals soft when walltime exceeds soft cap', () => {
-    const result = evaluateCaps(defaultConfig, snap(50_000, 35 * 60 * 1000));
+    const result = evaluateCaps(defaultConfig, snap(50_000, 50 * 60 * 1000));
     expect(result.action).toBe('soft_signal');
     expect(result.axis).toBe('walltime');
   });
@@ -96,7 +96,7 @@ describe('evaluateCaps — walltime soft cap', () => {
 describe('evaluateCaps — both axes hit simultaneously', () => {
   it('picks the axis proportionally further past when both are exactly at soft', () => {
     // Both at exactly 1.0× — tokenRatio === walltimeRatio, tokens wins (>=)
-    const result = evaluateCaps(defaultConfig, snap(100_000, 30 * 60 * 1000));
+    const result = evaluateCaps(defaultConfig, snap(100_000, 45 * 60 * 1000));
     expect(result.action).toBe('soft_signal');
     // Either axis is acceptable; the implementation picks tokens when ratios tie
     expect(result.axis).toBe('tokens');
@@ -104,14 +104,14 @@ describe('evaluateCaps — both axes hit simultaneously', () => {
 
   it('picks walltime when walltime ratio is higher', () => {
     // Tokens at 1.05×, walltime at 1.10×
-    const result = evaluateCaps(defaultConfig, snap(105_000, 33 * 60 * 1000));
+    const result = evaluateCaps(defaultConfig, snap(105_000, 49.5 * 60 * 1000));
     expect(result.action).toBe('soft_signal');
     expect(result.axis).toBe('walltime');
   });
 
   it('picks tokens when token ratio is higher', () => {
     // Tokens at 1.20×, walltime at 1.05×
-    const result = evaluateCaps(defaultConfig, snap(120_000, 31.5 * 60 * 1000));
+    const result = evaluateCaps(defaultConfig, snap(120_000, 47.25 * 60 * 1000));
     expect(result.action).toBe('soft_signal');
     expect(result.axis).toBe('tokens');
   });
@@ -136,7 +136,7 @@ describe('evaluateCaps — hard kill on token axis', () => {
 
   it('does NOT kill on walltime even if walltime exceeds hard when soft tripped on tokens', () => {
     // Soft tripped on tokens. Walltime is past its hard cap, but that's irrelevant.
-    const result = evaluateCaps(defaultConfig, snap(120_000, 50 * 60 * 1000, 'tokens'));
+    const result = evaluateCaps(defaultConfig, snap(120_000, 70 * 60 * 1000, 'tokens'));
     expect(result.action).toBe('continue');
     expect(result.axis).toBeNull();
   });
@@ -148,20 +148,20 @@ describe('evaluateCaps — hard kill on token axis', () => {
 
 describe('evaluateCaps — hard kill on walltime axis', () => {
   it('kills when walltime reaches 1.5× after soft was signaled on walltime', () => {
-    const result = evaluateCaps(defaultConfig, snap(50_000, 45 * 60 * 1000, 'walltime'));
+    const result = evaluateCaps(defaultConfig, snap(50_000, 67.5 * 60 * 1000, 'walltime'));
     expect(result.action).toBe('hard_kill');
     expect(result.axis).toBe('walltime');
   });
 
   it('kills when walltime exceeds 1.5× after soft was signaled on walltime', () => {
-    const result = evaluateCaps(defaultConfig, snap(50_000, 60 * 60 * 1000, 'walltime'));
+    const result = evaluateCaps(defaultConfig, snap(50_000, 80 * 60 * 1000, 'walltime'));
     expect(result.action).toBe('hard_kill');
     expect(result.axis).toBe('walltime');
   });
 
   it('does NOT kill on tokens even if tokens exceed hard when soft tripped on walltime', () => {
     // Soft tripped on walltime. Tokens are past their hard cap, but that's irrelevant.
-    const result = evaluateCaps(defaultConfig, snap(200_000, 35 * 60 * 1000, 'walltime'));
+    const result = evaluateCaps(defaultConfig, snap(200_000, 50 * 60 * 1000, 'walltime'));
     expect(result.action).toBe('continue');
     expect(result.axis).toBeNull();
   });

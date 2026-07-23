@@ -51,7 +51,9 @@ export interface CapAction {
 
 export const DEFAULT_CAPS: CapsConfig = {
   tokens_soft: 100_000,
-  walltime_soft_ms: 30 * 60 * 1000, // 30 minutes
+  // 45 minutes (TK-135): Fable-class iterations run longer at higher effort;
+  // hard kill stays 1.5× soft (67.5m).
+  walltime_soft_ms: 45 * 60 * 1000,
 };
 
 // ---------------------------------------------------------------------------

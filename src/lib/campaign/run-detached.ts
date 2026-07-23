@@ -60,7 +60,7 @@ const model = rawOpts.model ?? "claude-opus-4-6";
 
 // Soft caps per iteration
 const softTokens = rawOpts.soft_tokens ?? 50_000;
-const softWalltime = rawOpts.soft_walltime ?? 25 * 60 * 1000; // 25 min default
+const softWalltime = rawOpts.soft_walltime ?? 45 * 60 * 1000; // 45 min default, aligned with DEFAULT_CAPS (TK-135)
 
 // ---------------------------------------------------------------------------
 // Wire executor + judge

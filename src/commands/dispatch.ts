@@ -26,6 +26,7 @@ export interface ExecutorMessageOpts {
   projectId: string;
   goalText: string;
   maxTurns: number;
+  timeoutMin: number;
   useGoalCommand: boolean;
 }
 
@@ -37,11 +38,15 @@ export interface ExecutorMessageOpts {
 // Claude Code >= 2.1.139; older versions will treat the `/goal` text as a
 // literal prompt and the run still attempts the task once.
 export function buildExecutorMessage(opts: ExecutorMessageOpts): string {
-  const { runDir, projectId, goalText, maxTurns, useGoalCommand } = opts;
+  const { runDir, projectId, goalText, maxTurns, timeoutMin, useGoalCommand } = opts;
 
+  // TK-135: the watchdog kills the session at the cap with no warning, so an
+  // investigation-heavy run must leave a partial answer, never 0 bytes.
   const body = `Run directory: ${runDir}
 Plan file: ${runDir}/plan.md
 Project: ${projectId}
+
+Wall-clock cap: ${timeoutMin} minutes, enforced by a watchdog that kills the session without warning. Record findings in the plan file as you go, not at the end. While an investigation is still open, keep your current best hypothesis and its evidence written down before digging further — a run that hits the cap must leave a partial answer, never nothing.
 
 Goal:
 ${goalText}`;
@@ -283,7 +288,7 @@ Options:
   --project <name>     Project to dispatch against (defaults to cwd resolution)
   --ticket <id>        Use ticket as the goal
   --plan <path>        Append plan file to the goal
-  --timeout <min>      Hard wall-clock cap (default 30)
+  --timeout <min>      Hard wall-clock cap (default 60)
   --model <id>         Executor model (default claude-opus-4-6)
   --max-turns <n>      Inner /goal turn cap (default 20)
   --no-update-ticket   Skip auto-flip of ticket status on start/finish
@@ -302,7 +307,9 @@ Env:
   let projectId = "";
   let ticketId = "";
   let planPath = "";
-  let timeoutMin = 30;
+  // TK-135: 60m default — Fable-class executors on investigation-heavy goals
+  // legitimately outrun the old 30m cap.
+  let timeoutMin = 60;
   // Pin dispatch to Opus 4.6. Same reasoning as heartbeat — 4.7's literal
   // instruction-following and fewer-subagents bias hurt judgment-heavy
   // autonomous work. Override via --model or HIVE_DISPATCH_MODEL env.
@@ -323,7 +330,7 @@ Env:
       planPath = resolve(args[++i]!);
     } else if (args[i] === "--timeout" && args[i + 1]) {
       timeoutMin = parseInt(args[++i]!, 10);
-      if (isNaN(timeoutMin) || timeoutMin < 1) timeoutMin = 30;
+      if (isNaN(timeoutMin) || timeoutMin < 1) timeoutMin = 60;
     } else if (args[i] === "--model" && args[i + 1]) {
       model = args[++i]!;
     } else if (args[i] === "--max-turns" && args[i + 1]) {
@@ -419,6 +426,7 @@ Env:
     projectId,
     goalText,
     maxTurns,
+    timeoutMin,
     useGoalCommand,
   });
   const messagePath = join(runDir, "message.txt");
