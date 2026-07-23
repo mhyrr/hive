@@ -11,7 +11,7 @@ import {
 } from "../lib/codex-wire";
 import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
 import { assembleIdentity } from "../lib/identity";
-import { validateMemoryStructure } from "../lib/memory";
+import { INDEX_SIZE_BUDGET_BYTES, validateMemoryStructure } from "../lib/memory";
 import { getHivePaths, listProjects } from "../lib/paths";
 import {
   getPiMcpConfigPath,
@@ -740,6 +740,26 @@ async function checkMemorySchema(): Promise<Check[]> {
         detail: `${result.error} — next reflect_session/Pass F to this project will drop entries silently until repaired.`,
       });
     }
+  }
+
+  // Index size budget (TK-133) — the index is session-start context; caps in
+  // rebuildIndex target the budget but can't hard-guarantee it.
+  let oversized = 0;
+  for (const projectId of projects) {
+    const iPath = join(paths.memoryProjectsDir, projectId, "_index.md");
+    if (!existsSync(iPath)) continue;
+    const size = statSync(iPath).size;
+    if (size > INDEX_SIZE_BUDGET_BYTES) {
+      oversized++;
+      checks.push({
+        status: "warn",
+        label: `${projectId}: _index.md ${(size / 1024).toFixed(1)}KB exceeds ${INDEX_SIZE_BUDGET_BYTES / 1024}KB budget`,
+        detail: "Rebuilt nightly — persistent overage means caps need tightening or memory needs pruning.",
+      });
+    }
+  }
+  if (oversized === 0) {
+    checks.push({ status: "pass", label: `all _index.md within ${INDEX_SIZE_BUDGET_BYTES / 1024}KB budget` });
   }
   return checks;
 }
