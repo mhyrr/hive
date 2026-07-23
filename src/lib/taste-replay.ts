@@ -305,7 +305,7 @@ function balancedSample(corpus: ReplayCorpus, sample: number): ReplayWindow[] {
   return [...pos.slice(0, takePos), ...neg.slice(0, takeNeg)];
 }
 
-const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 180_000;
+const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 900_000;
 
 const defaultReplayCaller: ModelCaller = async (input) => {
   const ctrl = new AbortController();

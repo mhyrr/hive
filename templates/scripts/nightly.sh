@@ -39,7 +39,7 @@ elif command -v timeout >/dev/null 2>&1; then
   TIMEOUT_BIN="timeout"
 fi
 
-TIMEOUT_DURATION="${HIVE_NIGHTLY_TIMEOUT:-25m}"
+TIMEOUT_DURATION="${HIVE_NIGHTLY_TIMEOUT:-60m}"
 
 # Hold the machine at full power for the run. This is a laptop: asleep on
 # battery, launchd wakes it only into throttled DarkWake (~180s maintenance

@@ -50,7 +50,7 @@ export const tasteAnalyzerModel = () => resolveModel("HIVE_TASTE_ANALYZE_MODEL",
 
 // Bound each model call so a stuck `claude --print` surfaces as a per-session
 // error (caught by runTasteExtract's isolation) instead of hanging the run.
-const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 180_000;
+const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 900_000;
 
 const defaultCaller: ModelCaller = async (input) => {
   const ctrl = new AbortController();

@@ -1043,7 +1043,7 @@ server.registerTool("start_campaign", {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     worktree: z.string().optional().describe("Existing worktree path to use instead of creating a new one."),
     soft_tokens: z.number().optional().describe("Per-iteration soft token cap. Default 50000."),
-    soft_walltime: z.number().optional().describe("Per-iteration soft walltime in ms. Default 25 minutes."),
+    soft_walltime: z.number().optional().describe("Per-iteration soft walltime in ms. Default 45 minutes."),
     max_iterations: z.number().optional().describe("Max iterations before campaign terminates. Default 12."),
     max_cost_usd: z.number().optional().describe("Max total campaign cost in USD. Default 40."),
   },

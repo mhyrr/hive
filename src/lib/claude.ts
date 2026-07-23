@@ -109,10 +109,14 @@ function spawnClaude(
  * calls have been observed hanging for 1-2+ hours while exchanging *zero*
  * tokens, then either squeaking through or being killed by claude's own ~6-min
  * request cap. That cap does not reliably fire, so HIVE bounds every nightly
- * call itself. Override with HIVE_NIGHTLY_CALL_TIMEOUT_MS. */
+ * call itself. Override with HIVE_NIGHTLY_CALL_TIMEOUT_MS.
+ *
+ * 15 minutes (TK-135): Fable-class models at higher effort legitimately run
+ * many minutes on a synthesis pass — a 6-minute bound false-kills real work.
+ * Stall damage stays bounded by the whole-pipeline cap in nightly.sh. */
 export function nightlyCallTimeoutMs(): number {
   const raw = Number(process.env.HIVE_NIGHTLY_CALL_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 360_000;
+  return Number.isFinite(raw) && raw > 0 ? raw : 900_000;
 }
 
 /** Race `run` against a deadline. On timeout: abort the signal (so a spawned

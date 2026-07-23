@@ -120,6 +120,7 @@ const baseMessageOpts = {
   projectId: "hive",
   goalText: "Refactor the dispatch wrapper to use /goal",
   maxTurns: 20,
+  timeoutMin: 30,
   useGoalCommand: true,
 };
 
@@ -134,6 +135,15 @@ describe("buildExecutorMessage", () => {
     expect(msg).toContain("/Users/x/.hive/runs/RUN-099/plan.md");
     expect(msg).toContain("marked [x]");
     expect(msg).toContain("committed");
+  });
+
+  test("warns the executor about the wall-clock cap and demands a partial answer", () => {
+    const msg = buildExecutorMessage(baseMessageOpts);
+    expect(msg).toContain("30 minutes");
+    expect(msg).toContain("best hypothesis");
+    expect(buildExecutorMessage({ ...baseMessageOpts, timeoutMin: 60 })).toContain("60 minutes");
+    // The cap note lives in the body, so one-shot mode carries it too
+    expect(buildExecutorMessage({ ...baseMessageOpts, useGoalCommand: false })).toContain("best hypothesis");
   });
 
   test("includes the turn cap in the /goal stop clause", () => {
