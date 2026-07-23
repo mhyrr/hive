@@ -89,10 +89,30 @@ const expectedSectionOrder = [
 
 const MAX_ENTRY_LENGTH = 1000;
 
-// Index budget: approximate token cap per section (facts, conventions).
-// ~4 chars per token is a rough heuristic. This replaces a fixed entry count
-// so short entries pack more densely and verbose ones naturally limit themselves.
-const INDEX_SECTION_TOKEN_BUDGET = 3000;
+// Session-start context is the scarcest resource the index spends (TK-133).
+// Entries are truncated to a teaser with a search_memory pointer; each
+// section carries a count cap AND a token budget (~4 chars/token) measured
+// on the rendered line — whichever binds first. The budgets sum to ~1870
+// tokens ≈ 7.5KB so a worst-case corpus of max-length entries still lands
+// under the whole-index budget below.
+const INDEX_ENTRY_MAX_CHARS = 400;
+const INDEX_CAPS = {
+  decisions: 5,
+  questions: 10,
+  activity: 10,
+  facts: 15,
+  conventions: 10,
+} as const;
+const INDEX_SECTION_TOKEN_BUDGETS = {
+  decisions: 330,
+  questions: 330,
+  activity: 330,
+  facts: 550,
+  conventions: 330,
+} as const;
+
+// Target for a whole _index.md; `hive doctor` warns above this.
+export const INDEX_SIZE_BUDGET_BYTES = 8 * 1024;
 
 // BM25 parameters
 const BM25_K1 = 1.2;
@@ -347,10 +367,23 @@ export function validateMemoryStructure(content: string): { valid: boolean; erro
 
 const TAG_PATTERN = /\s*\[([^\]]+)\]\s*$/;
 
+// A tag is a short label, not prose. Anything over-length or carrying
+// sentence punctuation means the trailing bracket is entry text that the
+// pattern over-matched — keep it as prose rather than ingesting garbage.
+const TAG_MAX_CHARS = 40;
+const TAG_PROSE_CHARS = /[.!?;:]/;
+
+function isValidTag(tag: string): boolean {
+  return tag.length <= TAG_MAX_CHARS && !TAG_PROSE_CHARS.test(tag);
+}
+
 export function parseTags(text: string): { text: string; tags: string[] } {
   const match = text.match(TAG_PATTERN);
   if (!match) return { text: text.trim(), tags: [] };
   const tags = match[1]!.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (tags.length === 0 || tags.some((t) => !isValidTag(t))) {
+    return { text: text.trim(), tags: [] };
+  }
   return { text: text.slice(0, match.index).trim(), tags };
 }
 
@@ -903,8 +936,17 @@ export async function rebuildIndex(
   const activeDecisions = snapshot.decisions.filter((d) => !d.superseded);
   const openQuestions = snapshot.questions.filter((q) => !q.superseded);
 
-  // Sort entries by strength descending, cap by token budget
+  // Sort entries by strength descending, cap by count then token budget.
+  // Budgets are measured on the rendered line (text + tags + prefixes) so
+  // the whole-index size target holds regardless of tag or timestamp bulk.
   const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
+  const truncateForIndex = (text: string): string => {
+    if (text.length <= INDEX_ENTRY_MAX_CHARS) return text;
+    const cut = text.slice(0, INDEX_ENTRY_MAX_CHARS);
+    const lastSpace = cut.lastIndexOf(" ");
+    const head = (lastSpace > INDEX_ENTRY_MAX_CHARS * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd();
+    return `${head} … _(truncated — search_memory for the rest)_`;
+  };
   const sortByStrength = <T extends MemoryEntry>(entries: T[]): T[] => {
     return [...entries].sort((a, b) => {
       const sa = entryStrength(meta.entries[entryHash(a.text)]);
@@ -912,42 +954,59 @@ export async function rebuildIndex(
       return sb - sa;
     });
   };
-  const budgetSlice = <T extends MemoryEntry>(entries: T[]): T[] => {
+  const budgetSlice = <T>(
+    entries: T[],
+    cap: number,
+    budget: number,
+    render: (e: T) => string,
+  ): T[] => {
     let tokens = 0;
     const result: T[] = [];
-    for (const e of entries) {
-      const cost = estimateTokens(e.text);
-      if (tokens + cost > INDEX_SECTION_TOKEN_BUDGET && result.length > 0) break;
+    for (const e of entries.slice(0, cap)) {
+      const cost = estimateTokens(render(e));
+      if (tokens + cost > budget && result.length > 0) break;
       result.push(e);
       tokens += cost;
     }
     return result;
   };
+  const renderEntry = (e: MemoryEntry): string =>
+    `- ${truncateForIndex(e.text)}${formatTags(e.tags)}`;
+  const renderDecision = (d: ProjectDecision): string =>
+    `- [${d.ts}] ${truncateForIndex(d.text)}${formatTags(d.tags)}`;
+  const renderLog = (e: LogEntry): string =>
+    `- ${e.time} | ${e.type} | ${truncateForIndex(e.text)}`;
 
   const rankedFacts = sortByStrength(activeFacts);
   const rankedConventions = sortByStrength(activeConventions);
-  const rankedQuestions = sortByStrength(openQuestions);
+  // `[gap]` questions are the pipeline reporting on itself — they live in
+  // runs/{DATE}/gaps.md and knowledge.md, not in session-start context.
+  const rankedQuestions = sortByStrength(
+    openQuestions.filter((q) => !q.tags.includes("gap")),
+  );
 
   // Compute the slices that will land in the index up front so we can both
   // render them and bump their recall metadata (auto-load strengthening).
-  const displayFacts = budgetSlice(rankedFacts);
-  const displayConventions = budgetSlice(rankedConventions);
+  const displayFacts = budgetSlice(
+    rankedFacts, INDEX_CAPS.facts, INDEX_SECTION_TOKEN_BUDGETS.facts, renderEntry,
+  );
+  const displayConventions = budgetSlice(
+    rankedConventions, INDEX_CAPS.conventions, INDEX_SECTION_TOKEN_BUDGETS.conventions, renderEntry,
+  );
+  const displayQuestions = budgetSlice(
+    rankedQuestions, INDEX_CAPS.questions, INDEX_SECTION_TOKEN_BUDGETS.questions, renderEntry,
+  );
 
-  // Collect all tags for the tag index
-  const tagMap = new Map<string, number>();
-  for (const entries of [activeFacts, activeConventions, openQuestions]) {
-    for (const e of entries) {
-      for (const t of e.tags) tagMap.set(t, (tagMap.get(t) ?? 0) + 1);
-    }
-  }
-  for (const d of activeDecisions) {
-    for (const t of d.tags) tagMap.set(t, (tagMap.get(t) ?? 0) + 1);
-  }
-
-  const sortedTags = [...tagMap.entries()].sort((a, b) => b[1] - a[1]);
-
-  const recentDecisions = activeDecisions.slice(-5);
-  const recentLogEntries = recentLog.slice(0, 10);
+  // Decisions keep the most recent under budget; log entries arrive newest-first.
+  const recentDecisions = budgetSlice(
+    [...activeDecisions].reverse(),
+    INDEX_CAPS.decisions,
+    INDEX_SECTION_TOKEN_BUDGETS.decisions,
+    renderDecision,
+  ).reverse();
+  const recentLogEntries = budgetSlice(
+    recentLog, INDEX_CAPS.activity, INDEX_SECTION_TOKEN_BUDGETS.activity, renderLog,
+  );
 
   const lines: string[] = [
     `# Index: ${projectId}`,
@@ -960,27 +1019,26 @@ export async function rebuildIndex(
     ``,
   ];
 
-  // Tag index
-  if (sortedTags.length > 0) {
-    lines.push(`## Tags`);
-    lines.push(sortedTags.map(([tag, count]) => `\`${tag}\`(${count})`).join("  "));
-    lines.push(``);
-  }
-
   // Recent decisions
   if (recentDecisions.length > 0) {
     lines.push(`## Recent Decisions`);
     for (const d of recentDecisions) {
-      lines.push(`- [${d.ts}] ${d.text}${formatTags(d.tags)}`);
+      lines.push(renderDecision(d));
+    }
+    if (activeDecisions.length > recentDecisions.length) {
+      lines.push(`- _(${activeDecisions.length - recentDecisions.length} more — use search_memory for full results)_`);
     }
     lines.push(``);
   }
 
-  // Open questions
-  if (openQuestions.length > 0) {
+  // Open questions — gap-filtered, strength-ranked, count-capped
+  if (displayQuestions.length > 0) {
     lines.push(`## Open Questions`);
-    for (const q of rankedQuestions) {
-      lines.push(`- ${q.text}${formatTags(q.tags)}`);
+    for (const q of displayQuestions) {
+      lines.push(renderEntry(q));
+    }
+    if (rankedQuestions.length > displayQuestions.length) {
+      lines.push(`- _(${rankedQuestions.length - displayQuestions.length} more — use search_memory for full results)_`);
     }
     lines.push(``);
   }
@@ -989,16 +1047,16 @@ export async function rebuildIndex(
   if (recentLogEntries.length > 0) {
     lines.push(`## Recent Activity`);
     for (const e of recentLogEntries) {
-      lines.push(`- ${e.time} | ${e.type} | ${e.text}`);
+      lines.push(renderLog(e));
     }
     lines.push(``);
   }
 
-  // Key facts — strength-ranked, token-budgeted
+  // Key facts — strength-ranked, count-capped, token-budgeted
   if (rankedFacts.length > 0) {
     lines.push(`## Key Facts`);
     for (const f of displayFacts) {
-      lines.push(`- ${f.text}${formatTags(f.tags)}`);
+      lines.push(renderEntry(f));
     }
     if (rankedFacts.length > displayFacts.length) {
       lines.push(`- _(${rankedFacts.length - displayFacts.length} more — use search_memory for full results)_`);
@@ -1006,11 +1064,11 @@ export async function rebuildIndex(
     lines.push(``);
   }
 
-  // Conventions — strength-ranked, token-budgeted
+  // Conventions — strength-ranked, count-capped, token-budgeted
   if (rankedConventions.length > 0) {
     lines.push(`## Conventions`);
     for (const c of displayConventions) {
-      lines.push(`- ${c.text}${formatTags(c.tags)}`);
+      lines.push(renderEntry(c));
     }
     if (rankedConventions.length > displayConventions.length) {
       lines.push(`- _(${rankedConventions.length - displayConventions.length} more — use search_memory for full results)_`);
@@ -1028,7 +1086,7 @@ export async function rebuildIndex(
   const indexedEntries: Array<{ text: string }> = [
     ...displayFacts,
     ...displayConventions,
-    ...rankedQuestions,
+    ...displayQuestions,
     ...recentDecisions,
   ];
   if (indexedEntries.length > 0) {

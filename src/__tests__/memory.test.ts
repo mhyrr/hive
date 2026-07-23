@@ -21,6 +21,7 @@ import {
   indexPath,
   metaPath,
   entryHash,
+  INDEX_SIZE_BUDGET_BYTES,
   type MetaSidecar,
 } from "../lib/memory";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
@@ -145,6 +146,26 @@ describe("parseTags", () => {
     expect(parseTags("thing [Auth, API]")).toEqual({
       text: "thing",
       tags: ["auth", "api"],
+    });
+  });
+
+  test("rejects a bracket containing an over-length tag — kept as prose", () => {
+    const blob = "a".repeat(41);
+    const input = `some fact [${blob}]`;
+    expect(parseTags(input)).toEqual({ text: input, tags: [] });
+  });
+
+  test("rejects a bracket containing sentence punctuation — kept as prose", () => {
+    const input = "some fact [this looks like prose. it has sentences]";
+    expect(parseTags(input)).toEqual({ text: input, tags: [] });
+    const mixed = "other fact [auth, but why? unclear]";
+    expect(parseTags(mixed)).toEqual({ text: mixed, tags: [] });
+  });
+
+  test("accepts hyphenated tags up to 40 chars", () => {
+    expect(parseTags("thing [claude-code-integration, design-question]")).toEqual({
+      text: "thing",
+      tags: ["claude-code-integration", "design-question"],
     });
   });
 });
@@ -462,5 +483,107 @@ describe("rebuildIndex", () => {
     // 4 damped bumps: recallCount 0 + 0.25*4 = 1.0, halfLife 30 + 1*4 = 34
     expect(meta.entries[hash]?.recallCount).toBeCloseTo(1.0, 5);
     expect(meta.entries[hash]?.halfLife).toBe(34);
+  });
+
+  test("omits the Tags section", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "tagged fact one", ["auth", "api"]);
+    await appendProjectMemory(paths, "test-project", "fact", "tagged fact two", ["auth"]);
+    const output = await rebuildIndex(paths, "test-project");
+    expect(output).not.toContain("## Tags");
+  });
+
+  test("excludes gap-tagged questions from Open Questions", async () => {
+    await appendProjectMemory(paths, "test-project", "question", "a real open question", ["design"]);
+    await appendProjectMemory(paths, "test-project", "question", "pipeline gap self-report", ["gap"]);
+    const output = await rebuildIndex(paths, "test-project");
+    expect(output).toContain("a real open question");
+    expect(output).not.toContain("pipeline gap self-report");
+
+    // Excluded entries earn no auto-load strengthening
+    const meta: MetaSidecar = await Bun.file(metaPath(paths, "test-project")).json();
+    expect(meta.entries[entryHash("pipeline gap self-report")]?.recallCount).toBe(0);
+  });
+
+  test("truncates long entries with a search_memory pointer", async () => {
+    const longFact = ("alpha bravo charlie delta ".repeat(30)).trim(); // ~780 chars
+    const longDecision = ("echo foxtrot golf hotel ".repeat(30)).trim();
+    await appendProjectMemory(paths, "test-project", "fact", longFact, ["long"]);
+    await appendProjectMemory(paths, "test-project", "decision", longDecision, ["long"]);
+    const output = await rebuildIndex(paths, "test-project");
+    expect(output).not.toContain(longFact);
+    expect(output).not.toContain(longDecision);
+    expect(output).toContain("truncated — search_memory for the rest");
+    // Every rendered line stays within the entry cap plus marker/tags slack
+    for (const line of output.split("\n")) {
+      expect(line.length).toBeLessThanOrEqual(520);
+    }
+  });
+
+  test("caps Key Facts at 15 with an overflow pointer", async () => {
+    for (let i = 1; i <= 17; i++) {
+      const label = String(i).padStart(2, "0");
+      await appendProjectMemory(paths, "test-project", "fact", `numbered fact ${label}`);
+    }
+    const output = await rebuildIndex(paths, "test-project");
+    expect(output).toContain("numbered fact 15");
+    expect(output).not.toContain("numbered fact 16");
+    expect(output).not.toContain("numbered fact 17");
+    expect(output).toContain("2 more — use search_memory");
+  });
+
+  test("caps Conventions at 10", async () => {
+    for (let i = 1; i <= 12; i++) {
+      const label = String(i).padStart(2, "0");
+      await appendProjectMemory(paths, "test-project", "convention", `numbered convention ${label}`);
+    }
+    const output = await rebuildIndex(paths, "test-project");
+    expect(output).toContain("numbered convention 10");
+    expect(output).not.toContain("numbered convention 11");
+  });
+
+  test("caps Open Questions at 10", async () => {
+    for (let i = 1; i <= 12; i++) {
+      const label = String(i).padStart(2, "0");
+      await appendProjectMemory(paths, "test-project", "question", `numbered question ${label}`);
+    }
+    const output = await rebuildIndex(paths, "test-project");
+    expect(output).toContain("numbered question 10");
+    expect(output).not.toContain("numbered question 11");
+  });
+
+  test("caps Recent Decisions at 5 most recent with an overflow pointer", async () => {
+    for (let i = 1; i <= 8; i++) {
+      const label = String(i).padStart(2, "0");
+      await appendProjectMemory(paths, "test-project", "decision", `numbered decision ${label}`);
+    }
+    const output = await rebuildIndex(paths, "test-project");
+    expect(output).toContain("numbered decision 08");
+    expect(output).toContain("numbered decision 04");
+    expect(output).not.toContain("numbered decision 03");
+    expect(output).toContain("3 more — use search_memory");
+  });
+
+  test("worst-case corpus stays within the whole-index size budget", async () => {
+    // Max-length entries in every section — the shape of real verbose canon.
+    const longText = (label: string) => `${label} ${"word ".repeat(185)}`.trim(); // ~930 chars
+    for (let i = 1; i <= 20; i++) {
+      await appendProjectMemory(paths, "test-project", "fact", longText(`fact-${i}`), ["a-tag", "another-tag"]);
+    }
+    for (let i = 1; i <= 12; i++) {
+      await appendProjectMemory(paths, "test-project", "convention", longText(`conv-${i}`), ["a-tag"]);
+    }
+    for (let i = 1; i <= 12; i++) {
+      await appendProjectMemory(paths, "test-project", "question", longText(`ques-${i}`), ["a-tag"]);
+    }
+    for (let i = 1; i <= 8; i++) {
+      await appendProjectMemory(paths, "test-project", "decision", longText(`deci-${i}`), ["a-tag"]);
+    }
+    await appendToLog(
+      paths,
+      "test-project",
+      Array.from({ length: 12 }, (_, i) => ({ type: "fact" as const, content: longText(`log-${i}`) })),
+    );
+    const output = await rebuildIndex(paths, "test-project");
+    expect(Buffer.byteLength(output, "utf-8")).toBeLessThanOrEqual(INDEX_SIZE_BUDGET_BYTES);
   });
 });
