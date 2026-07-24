@@ -280,14 +280,17 @@ export function resolveProjectStack(projectId: string): string | null {
 }
 
 /**
- * Named trigger surfaces per stack — the domains where a skill exists
- * and Claude should load it BEFORE responding, not reason from memory.
+ * Named trigger surfaces per stack — the domains where a skill exists and
+ * carries more than the model would reason out from memory.
  *
  * These ride in the cache-stable session-start prefix (see TK-024), so every
  * token persists forever. Keep each phrase short. Add stacks here as they
  * gain skill coverage; unknown stacks fall back to a generic phrasing.
+ *
+ * Exported so the tests can pin the surfaces themselves (TK-134) rather than
+ * only the sentence they sit in.
  */
-const STACK_TRIGGERS: Record<string, string> = {
+export const STACK_TRIGGERS: Record<string, string> = {
   elixir: "Phoenix contexts, Ecto, LiveView, OTP, or security patterns",
   typescript: "React components, Next.js routing, or TypeScript types",
 };
@@ -299,27 +302,44 @@ export type Harness = "claude" | "codex" | "pi";
  * Build the session-start hint line for a detected stack.
  * Returns empty string if no stack.
  *
- * Worded as a direct instruction, not a soft preference: the prior phrasing
- * ("Prefer X-* skills when they apply") was observed failing as a trigger —
- * Claude self-flagged domain concerns without loading the matching skill.
- * This wording names the trigger surfaces and labels skipping the skill as
- * an anti-pattern so it registers as an action to take, not a hint to weigh.
+ * Two things could go in this sentence, and only one earns its place.
+ *
+ * TRIGGER CONDITION — kept. Naming the surfaces ("React components, Next.js
+ * routing, TypeScript types") tells the model WHEN a skill is relevant, which
+ * is information it can't recover from the skill's own name. TK-042 added
+ * these after observing the soft prior phrasing ("Prefer X-* skills when they
+ * apply") fail as a trigger, and Anthropic's Opus 4.8 guidance points the same
+ * way: prescriptive "reach for this when X" beats a description that only says
+ * what a thing is.
+ *
+ * MANDATED PROCEDURE — dropped (TK-134). The old tail ("Self-flagging a domain
+ * concern without loading the skill is the anti-pattern") carried nothing the
+ * named surfaces don't already carry. It's the always-do-X-before-Y shape,
+ * which newer models follow as ritual even where it's wrong for the task.
+ *
+ * One wording serves both concerns, so the hint stays a pure function of
+ * (stack, harness) — no model-conditional branch, and byte-stable for the
+ * TK-024 cache-stable prefix.
  *
  * Codex harness: the Skill tool doesn't exist in Codex, so the conditional
- * "if the Skill tool is unavailable" wording is dead weight. TK-114 emits a
- * direct "read the skill file" instruction instead — same skill files, same
- * anti-pattern framing, just without the Claude Code tooling reference.
+ * "if the Skill tool is unavailable" wording is dead weight. TK-114 names the
+ * skill file directly instead — same skills, same trigger, no Claude Code
+ * tooling reference.
  */
 export function buildStackHint(stack: string | null, harness: Harness = "claude"): string {
   if (!stack) return "";
+  // Stacks without named surfaces (rust, python, ...) simply omit the clause —
+  // there is nothing specific to say, and "canon for this stack's domain" is
+  // a redundancy, not a trigger.
   const triggers = STACK_TRIGGERS[stack];
-  const triggerClause = triggers ? `on ${triggers}` : `in this stack's domain`;
+  const scope = triggers ? ` for ${triggers}` : "";
+  const canon = `Project stack: ${stack}. The ${stack}-* skills carry this project's domain canon${scope}`;
 
   if (harness === "codex") {
-    return `Project stack: ${stack}. Before recommending ${triggerClause}, read ~/.claude/skills/${stack}-*/SKILL.md and follow it. Self-flagging a domain concern without reading the skill is the anti-pattern.`;
+    return `${canon} — read the matching ~/.claude/skills/${stack}-*/SKILL.md when the work calls for it.`;
   }
 
-  return `Project stack: ${stack}. Before recommending ${triggerClause}, load the matching ${stack}-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read the skill directly: ~/.claude/skills/${stack}-*/SKILL.md`;
+  return `${canon} — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read it directly: ~/.claude/skills/${stack}-*/SKILL.md`;
 }
 
 /**

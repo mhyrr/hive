@@ -317,8 +317,9 @@ sections carry more weight in system-prompt interpretation):
    `knowledge.md` fallback), resolved by matching `$PWD` against registered
    project paths
 3. **Stack hint** — per-project skill-trigger line (e.g., "Project stack:
-   elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP,
-   or security patterns, load the matching elixir-* skill.")
+   elixir. The elixir-* skills carry this project's domain canon for Phoenix
+   contexts, Ecto, LiveView, OTP, or security patterns — load the matching
+   skill when the work calls for it.")
 4. **Taste layer** — `~/.hive/taste/principles.md` when present; this is
    the last and loudest layer
 

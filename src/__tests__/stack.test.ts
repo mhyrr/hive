@@ -17,6 +17,7 @@ import {
   resolveProjectStack,
   rewriteSkillName,
   STACK_NAME_RE,
+  STACK_TRIGGERS,
   syncStack,
   writeStackBinding,
 } from "../lib/stack";
@@ -402,24 +403,37 @@ describe("buildStackHint", () => {
   test("elixir hint names Phoenix/Ecto/LiveView/OTP/security as triggers", () => {
     const hint = buildStackHint("elixir");
     expect(hint).toBe(
-      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read the skill directly: ~/.claude/skills/elixir-*/SKILL.md",
+      "Project stack: elixir. The elixir-* skills carry this project's domain canon for Phoenix contexts, Ecto, LiveView, OTP, or security patterns — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read it directly: ~/.claude/skills/elixir-*/SKILL.md",
     );
   });
 
   test("typescript hint names React/Next.js/types as triggers", () => {
     const hint = buildStackHint("typescript");
     expect(hint).toBe(
-      "Project stack: typescript. Before recommending on React components, Next.js routing, or TypeScript types, load the matching typescript-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read the skill directly: ~/.claude/skills/typescript-*/SKILL.md",
+      "Project stack: typescript. The typescript-* skills carry this project's domain canon for React components, Next.js routing, or TypeScript types — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read it directly: ~/.claude/skills/typescript-*/SKILL.md",
     );
   });
 
   test("unknown stack falls back to generic-domain phrasing", () => {
-    // Rust/python/etc. don't have named triggers yet — still emit the
-    // direct instruction so the discipline applies, just without specifics.
+    // Rust/python/etc. don't have named triggers yet — still point at the
+    // skills, just without the specific surfaces.
     const hint = buildStackHint("rust");
     expect(hint).toBe(
-      "Project stack: rust. Before recommending in this stack's domain, load the matching rust-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read the skill directly: ~/.claude/skills/rust-*/SKILL.md",
+      "Project stack: rust. The rust-* skills carry this project's domain canon — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read it directly: ~/.claude/skills/rust-*/SKILL.md",
     );
+    // No named surfaces means no dangling "for ..." clause.
+    expect(hint).not.toContain("canon for");
+  });
+
+  test("TK-134: every STACK_TRIGGERS phrase appears verbatim in its hint", () => {
+    // The named surfaces are the information the hint carries — they tell the
+    // model WHEN a skill is relevant. A future softening to "when the work has
+    // domain weight" would quietly delete exactly this, so pin it directly
+    // rather than relying on the full-string assertions above.
+    for (const [stack, triggers] of Object.entries(STACK_TRIGGERS)) {
+      expect(buildStackHint(stack, "claude")).toContain(triggers);
+      expect(buildStackHint(stack, "codex")).toContain(triggers);
+    }
   });
 
   test("hint drops the soft 'Prefer ... when they apply' wording", () => {
@@ -427,6 +441,20 @@ describe("buildStackHint", () => {
     // instruction. If this string reappears, the hint has drifted back.
     expect(buildStackHint("elixir")).not.toContain("Prefer");
     expect(buildStackHint("elixir")).not.toContain("when they apply");
+  });
+
+  test("TK-134: hint states a trigger condition, not a mandated procedure", () => {
+    // The anti-pattern sentence was a rite, not information: it carried
+    // nothing the named surfaces don't already carry, and it's the
+    // always-do-X-before-Y shape that reads as ritual on newer models.
+    for (const harness of ["claude", "codex", "pi"] as const) {
+      for (const stack of ["elixir", "typescript", "rust"]) {
+        const hint = buildStackHint(stack, harness);
+        expect(hint).not.toContain("anti-pattern");
+        expect(hint).not.toContain("Self-flagging");
+        expect(hint).not.toContain("Before recommending");
+      }
+    }
   });
 
   test("hint is byte-stable across calls (TK-024 cache discipline)", () => {
@@ -444,10 +472,10 @@ describe("buildStackHint", () => {
   test("TK-114: codex harness emits a direct read-the-file instruction, no Skill tool mention", () => {
     // Codex has no Skill tool, so the Claude variant's "load the matching skill"
     // / "if the Skill tool is unavailable" framing is dead weight. Codex variant
-    // names the file directly and reframes the anti-pattern around reading.
+    // names the file directly instead.
     const hint = buildStackHint("typescript", "codex");
     expect(hint).toBe(
-      "Project stack: typescript. Before recommending on React components, Next.js routing, or TypeScript types, read ~/.claude/skills/typescript-*/SKILL.md and follow it. Self-flagging a domain concern without reading the skill is the anti-pattern.",
+      "Project stack: typescript. The typescript-* skills carry this project's domain canon for React components, Next.js routing, or TypeScript types — read the matching ~/.claude/skills/typescript-*/SKILL.md when the work calls for it.",
     );
     // No Skill tool conditional.
     expect(hint).not.toContain("Skill tool");
@@ -554,9 +582,9 @@ describe("identity stack hint injection", () => {
     process.chdir(projRoot);
 
     const output = await assembleIdentity();
-    expect(output).toContain(
-      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
-    );
+    // Bound to the builder, not a copy of its wording — this test's property is
+    // "the hint lands in the identity," which shouldn't break on a reword.
+    expect(output).toContain(buildStackHint("elixir"));
   });
 
   test("assembleIdentity omits hint when no stack detected", async () => {
@@ -578,9 +606,7 @@ describe("identity stack hint injection", () => {
     await seedProject("hb-elx", projRoot);
 
     const output = await assembleHeartbeatIdentity("hb-elx");
-    expect(output).toContain(
-      "Project stack: elixir. Before recommending on Phoenix contexts, Ecto, LiveView, OTP, or security patterns, load the matching elixir-* skill. Self-flagging a domain concern without loading the skill is the anti-pattern.",
-    );
+    expect(output).toContain(buildStackHint("elixir"));
   });
 
   test("assembleHeartbeatIdentity omits hint when no projectId", async () => {
