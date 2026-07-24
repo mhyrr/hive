@@ -242,7 +242,20 @@ export async function completeClaudeText(input: {
     );
   }
 
+  // TK-136: a success envelope carrying no text is not a valid completion.
+  // HIVE rides the CLI, so it never sees a `stop_reason` — Claude Code owns
+  // refusal detection and its own fallback/continuation retries internally. What
+  // reaches us when that chain comes up empty is exactly this: subtype=success,
+  // result="". Returning "" lets it read downstream as "the model found nothing"
+  // — Pass B then reports `0 candidate(s), 0 rejected`, indistinguishable from a
+  // genuinely quiet day. Fail loudly instead; a declined call is not an empty one.
   const text = envelope.result ?? "";
+  if (text.trim() === "") {
+    throw new Error(
+      `claude --print returned an empty result (model=${input.modelId}, subtype=${envelope.subtype}). ` +
+        `Treat as a declined or dropped completion, not an empty extraction.`,
+    );
+  }
   const inputTokens = envelope.usage?.input_tokens ?? null;
   const outputTokens = envelope.usage?.output_tokens ?? null;
 
