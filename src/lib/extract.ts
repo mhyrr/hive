@@ -13,7 +13,7 @@ import type { ConditionReport, ProjectSignal } from "./condition";
 import { estimateCost, appendUsageRecord } from "./pricing";
 
 const DEFAULT_PROVIDER = "anthropic";
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+const DEFAULT_MODEL = "claude-sonnet-5";
 
 function extractorModel(): { provider: string; modelId: string } {
   const override = process.env.HIVE_EXTRACT_MODEL;

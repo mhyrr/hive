@@ -30,7 +30,7 @@ import {
 import type { ProjectCandidate, ReflectionCandidate, ModelCaller } from "./extract";
 
 const DEFAULT_PROVIDER = "anthropic";
-const DEFAULT_MODEL = "claude-opus-4-6";
+const DEFAULT_MODEL = "claude-opus-4-8";
 
 function verifierModel(): { provider: string; modelId: string } {
   const override = process.env.HIVE_VERIFY_MODEL;

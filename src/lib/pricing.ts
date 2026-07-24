@@ -10,10 +10,13 @@ export interface ModelRate {
 
 const RATES: Record<string, ModelRate> = {
   // Sonnet family
+  "claude-sonnet-5": { inputPerMTok: 3, outputPerMTok: 15 },
   "claude-sonnet-4-6": { inputPerMTok: 3, outputPerMTok: 15 },
   "claude-sonnet-4-5": { inputPerMTok: 3, outputPerMTok: 15 },
 
-  // Opus family
+  // Opus family. Current list price is $5/$25 per MTok (Opus 4.6+); the
+  // 4-6/4-7 rows below predate that drop and are left as-is for historical runs.
+  "claude-opus-4-8": { inputPerMTok: 5, outputPerMTok: 25 },
   "claude-opus-4-7": { inputPerMTok: 15, outputPerMTok: 75 },
   "claude-opus-4-6": { inputPerMTok: 15, outputPerMTok: 75 },
 

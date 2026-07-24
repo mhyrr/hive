@@ -31,7 +31,7 @@ import {
 
 const DEFAULT_PROVIDER = "anthropic";
 const CLASSIFY_MODEL = "claude-haiku-4-5";
-const ANALYZE_MODEL = "claude-opus-4-6";
+const ANALYZE_MODEL = "claude-opus-4-8";
 
 function resolveModel(envVar: string, fallback: string): { provider: string; modelId: string } {
   const override = process.env[envVar];

@@ -64,7 +64,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PROVIDER = "anthropic";
-const CONSOLIDATE_MODEL = "claude-opus-4-6";
+const CONSOLIDATE_MODEL = "claude-opus-4-8";
 
 export function tasteConsolidatorModel(): { provider: string; modelId: string } {
   const override = process.env.HIVE_TASTE_CONSOLIDATE_MODEL;
