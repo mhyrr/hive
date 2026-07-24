@@ -147,11 +147,24 @@ describe("runNightly — trivial day", () => {
 // Full pipeline (stubs the LLM calls; everything else is real)
 // ---------------------------------------------------------------------------
 
-async function seedActivity(paths: HivePaths, projectId: string): Promise<string> {
+async function seedActivity(
+  paths: HivePaths,
+  projectId: string,
+  date: string,
+): Promise<string> {
   // Drop a ticket update to tip Pass A out of trivial.
+  //
+  // Stamp it at noon UTC on the date under test — NOT wall-clock-relative.
+  // buildConditionReport anchors its window to `{date}T23:59:59.999Z` and looks
+  // back hoursWindow (24), so the window for date D is
+  // [D-1 23:59:59.999Z, D 23:59:59.999Z]. The old `Date.now() - 1h` stamp only
+  // landed inside that window once the wall clock passed 00:59:59.999Z, so every
+  // test using this fixture failed between 00:00 and 01:00 UTC and passed the
+  // other 23 hours — a trivial-day short-circuit that skipped B/C/V and the
+  // taste track. Noon on D is inside the window for any D.
   const ticketsDir = join(paths.projectsDir, projectId, "tickets");
   await mkdir(ticketsDir, { recursive: true });
-  const recentTs = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const recentTs = `${date}T12:00:00.000Z`;
   await writeFile(
     join(ticketsDir, "TK-001.md"),
     `---\nid: TK-001\ntitle: Activity ticket\nstatus: in_progress\ntype: task\npriority: 2\ntags: \ncreated: 2026-04-01T00:00:00Z\nupdated: ${recentTs}\nclosed: \nref: \ndepends: \n---\n\nBody\n`,
@@ -170,7 +183,7 @@ describe("runNightly — explicit --date threads through every pass", () => {
     const paths = await freshHomeWith(["alpha"]);
     // Pick a deterministic date in the past so today's clock isn't the answer.
     const date = "2026-04-25";
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     const stub = makeStub({
       bResponses: { alpha: "[]" },
@@ -207,7 +220,7 @@ describe("runNightly — stale artifact safety", () => {
   test("a failed Pass B clears the prior project's candidates.B file", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     // Plant a stale Pass B artifact pretending an earlier run succeeded.
     await mkdir(paths.memoryRunsDir, { recursive: true });
@@ -239,7 +252,7 @@ describe("runNightly — stale artifact safety", () => {
   test("a failed Pass V clears the prior decisions/briefing artifacts", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     await mkdir(join(paths.memoryRunsDir, date), { recursive: true });
     const staleBriefing = join(paths.memoryRunsDir, date, "briefing.md");
@@ -263,7 +276,7 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
   test("walks every pass, lands canon mutations + briefing", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    const seedHash = await seedActivity(paths, "alpha");
+    const seedHash = await seedActivity(paths, "alpha", date);
 
     const stub = makeStub({
       bResponses: {
@@ -336,7 +349,7 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
   test("dry-run runs A/B/C/V but skips F + dashboard", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     const stub = makeStub({
       bResponses: { alpha: "[]" },
@@ -364,8 +377,8 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
   test("Pass B failure on one project doesn't block the others or downstream", async () => {
     const paths = await freshHomeWith(["alpha", "bravo"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
-    await seedActivity(paths, "bravo");
+    await seedActivity(paths, "alpha", date);
+    await seedActivity(paths, "bravo", date);
 
     const stub = makeStub({
       bResponses: { bravo: "[]" }, // alpha will fail
@@ -392,7 +405,7 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
   test("Pass V failure skips F + dashboard but reports cleanly", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     const stub = makeStub({
       bResponses: { alpha: "[]" },
@@ -510,9 +523,9 @@ describe("runNightly — Pass B serialization", () => {
   test("project extractors run one at a time (max concurrency 1)", async () => {
     const paths = await freshHomeWith(["alpha", "bravo", "charlie"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
-    await seedActivity(paths, "bravo");
-    await seedActivity(paths, "charlie");
+    await seedActivity(paths, "alpha", date);
+    await seedActivity(paths, "bravo", date);
+    await seedActivity(paths, "charlie", date);
 
     let active = 0;
     let maxActive = 0;
@@ -549,7 +562,7 @@ describe("runNightly — taste track", () => {
   test("runs TA→TB→TC for a project, writes artifacts + store unit + usage", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     const result = await runNightly({
       paths,
@@ -592,7 +605,7 @@ describe("runNightly — taste track", () => {
   test("replay (TR) runs hermetically: a recurring FUZZY candidate that passes replay → pending + a TR usage record", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     const result = await runNightly({
       paths,
@@ -624,7 +637,7 @@ describe("runNightly — taste track", () => {
   test("--no-taste skips the taste track entirely", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     let tasteLoaderCalled = false;
     const result = await runNightly({
@@ -644,7 +657,7 @@ describe("runNightly — taste track", () => {
   test("dry-run runs TA/TB but skips TC and the store write", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
+    await seedActivity(paths, "alpha", date);
 
     const result = await runNightly({
       paths,
@@ -668,8 +681,8 @@ describe("runNightly — taste track", () => {
   test("one project's TA failure doesn't block another", async () => {
     const paths = await freshHomeWith(["alpha", "bravo"]);
     const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha");
-    await seedActivity(paths, "bravo");
+    await seedActivity(paths, "alpha", date);
+    await seedActivity(paths, "bravo", date);
 
     const result = await runNightly({
       paths,

@@ -75,6 +75,12 @@ async function readIfExists(file: string): Promise<string> {
 // Prompt design notes (2026-05-09 revision after landscape survey):
 // 1. Plan-then-emit: model produces <analysis> before the JSON. Anthropic's
 //    orchestrator-workers cookbook + Plan-and-Solve (Wang 2023). Strip post-parse.
+//    TK-136: the block asks for the decomposition PLAN, not a transcript of the
+//    model's reasoning. Fable-class safety classifiers run a `reasoning_extraction`
+//    refusal category, so "think out loud" / "show your reasoning" phrasing here
+//    risks a decline (HTTP 200, stop_reason: "refusal"). Asking for a plan — a
+//    conclusion with its constraints — carries the same plan-then-emit benefit
+//    without sitting in that category.
 // 2. One worked <example> anchoring the schema, depends syntax, imperative
 //    titles. Anthropic prompt docs + Least-to-Most (Zhou).
 // 3. Pre-emit self-check section. Cheaper than an orient retry.
@@ -102,7 +108,7 @@ PROCESS
 3. Wire dependencies as a DAG. No cycles. A child can depend on another child via its ref placeholder. Independent branches are dispatchable in parallel.
 4. On dedup: your job at this stage is COVERAGE, not filtering. If a child might overlap an open ticket, INCLUDE the child anyway and add the tag "possibly-covered"; cite the overlapping ticket(s) in that child's Notes section. A downstream step handles final dedup. The exception: if the entire goal is unambiguously covered by existing tickets, return a single child whose body explains the overlap.
 
-OUTPUT — first an <analysis> block where you think out loud about the goal, then a single <json> block. Nothing outside those two blocks.
+OUTPUT — first an <analysis> block holding your decomposition plan in prose (the shape you chose, and the constraints that drove it), then a single <json> block. Nothing outside those two blocks.
 
 Schema for the JSON:
 {
