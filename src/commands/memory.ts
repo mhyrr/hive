@@ -283,6 +283,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
 
     console.error(`Pass V (Opus) — verifying + drafting briefing (${date})…`);
     const result = await runVerifier({ paths, date });
+    const shards = result.shardedProjects;
     const u = result.usage;
     const accepts = result.output.decisions.filter((d) => d.action === "accept").length;
     const supersedes = result.output.decisions.filter((d) => d.action === "supersede").length;
@@ -295,6 +296,10 @@ export async function memoryCommand(args: string[]): Promise<void> {
     console.log(`  briefing  → ${result.artifacts.briefingPath}`);
     console.log(
       `Decisions: ${accepts} accept · ${supersedes} supersede · ${merges} merge · ${rejects} reject`,
+    );
+    console.log(
+      `  Calls: ${shards.length + 1} · ` +
+        (shards.length > 0 ? `${shards.join(", ")} + brief` : "brief only"),
     );
     console.log(
       `  Model: ${u.provider}/${u.model} · ` +

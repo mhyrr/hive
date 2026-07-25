@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,13 +8,22 @@ import {
   parseVerifierJson,
   validateVerifierOutput,
   serializeProjectCanon,
-  buildVerifierSystemPrompt,
-  buildVerifierUserContent,
+  buildBrieferSystemPrompt,
+  buildProjectVerifierSystemPrompt,
+  buildProjectVerifierUserContent,
+  buildBriefingUserContent,
+  blockHasCandidates,
+  digestShardDecisions,
+  estimatePromptTokens,
+  assertPromptFits,
+  loadVerifierBundle,
   callVerifier,
   runVerifier,
   refineBriefing,
   tallyBriefingCounts,
+  VERIFY_WINDOW_TOKENS,
   type VerifierDecision,
+  type ProjectVerifierBlock,
 } from "../lib/verify";
 import {
   estimateCost,
@@ -23,7 +33,7 @@ import {
   appendUsageRecord,
 } from "../lib/pricing";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
-import { appendProjectMemory, entryHash } from "../lib/memory";
+import { appendCandidate, appendProjectMemory, entryHash } from "../lib/memory";
 import { buildConditionReport, writeConditionReport } from "../lib/condition";
 import type { ModelCaller } from "../lib/extract";
 
@@ -255,54 +265,201 @@ describe("validateVerifierOutput", () => {
 // User content assembly
 // ---------------------------------------------------------------------------
 
-describe("buildVerifierUserContent", () => {
-  test("includes condition, principles, per-project blocks, and C candidates", () => {
-    const content = buildVerifierUserContent({
-      date: "2026-04-26",
-      condition: {
-        date: "2026-04-26",
-        generatedAt: "x",
-        hoursWindow: 24,
-        trivial: false,
-        trivialReason: null,
-        projects: [],
-        totals: {
-          projectCount: 0,
-          sessionCount: 0,
-          exchangeCount: 0,
-          commitCount: 0,
-          ticketsMoved: 0,
-        },
-      },
-      principlesText: "## Principles\n- ship in layers",
-      perProject: [
-        {
-          projectId: "alpha",
-          canon: {
-            projectId: "alpha",
-            facts: [{ hash: "abcd1234", type: "fact", text: "Existing fact", tags: [] }],
-            conventions: [],
-            decisions: [],
-            questions: [],
+const emptyCondition = {
+  date: "2026-04-26",
+  generatedAt: "x",
+  hoursWindow: 24,
+  trivial: false,
+  trivialReason: null,
+  projects: [],
+  totals: {
+    projectCount: 0,
+    sessionCount: 0,
+    exchangeCount: 0,
+    commitCount: 0,
+    ticketsMoved: 0,
+  },
+};
+
+function alphaBlock(overrides: Partial<ProjectVerifierBlock> = {}): ProjectVerifierBlock {
+  return {
+    projectId: "alpha",
+    canon: {
+      projectId: "alpha",
+      facts: [{ hash: "abcd1234", type: "fact", text: "Existing fact", tags: [] }],
+      conventions: [],
+      decisions: [],
+      questions: [],
+    },
+    midSessionCandidates: [],
+    inboxText: "",
+    bCandidates: [{ type: "fact", content: "new fact", tags: [], provenance: "session-x" }],
+    ...overrides,
+  };
+}
+
+describe("buildProjectVerifierUserContent", () => {
+  test("carries one project's canon, principles, and candidate ids", () => {
+    const content = buildProjectVerifierUserContent(
+      "2026-04-26",
+      "## Principles\n- ship in layers",
+      alphaBlock({
+        midSessionCandidates: [
+          {
+            type: "convention",
+            content: "mid fact",
+            tags: [],
+            provenance: "session-y",
+            writtenAt: "2026-04-26T00:00:00Z",
           },
-          midSessionCandidates: [],
-          inboxText: "",
-          bCandidates: [
-            { type: "fact", content: "new fact", tags: [], provenance: "session-x" },
-          ],
-        },
+        ],
+      }),
+    );
+
+    expect(content).toContain("Pass V — Verify");
+    expect(content).toContain("project: alpha");
+    expect(content).toContain("ship in layers");
+    expect(content).toContain('"hash": "abcd1234"');
+    expect(content).toContain("B.alpha[0]");
+    expect(content).toContain("candidates.alpha[0]");
+  });
+
+  test("carries no other project and no briefing ask", () => {
+    const content = buildProjectVerifierUserContent("2026-04-26", "", alphaBlock());
+    expect(content).not.toContain("bravo");
+    expect(content).not.toContain("Conditioning report");
+    expect(content).toContain("No briefing.");
+  });
+});
+
+describe("buildBriefingUserContent", () => {
+  test("carries condition, inboxes, digest, and C candidates — but no canon", () => {
+    const content = buildBriefingUserContent({
+      date: "2026-04-26",
+      condition: emptyCondition,
+      inboxes: [
+        { projectId: "alpha", inboxText: "- heartbeat found a stale lock" },
+        { projectId: "bravo", inboxText: "   " },
       ],
       cCandidates: [
         { subject: "greg", content: "Greg likes terse", tags: [], provenance: "global" },
       ],
+      digest: [
+        {
+          candidate_id: "B.alpha[0]",
+          action: "accept",
+          project: "alpha",
+          type: "fact",
+          content: "new fact",
+        },
+      ],
+      shardGaps: [{ subject: "alpha", observation: "missed X", source: "topRanked[5]" }],
+      principlesText: "## Principles\n- ship in layers",
     });
 
-    expect(content).toContain("Pass V — Verify");
-    expect(content).toContain("ship in layers");
-    expect(content).toContain("Project: alpha");
-    expect(content).toContain('"hash": "abcd1234"');
-    expect(content).toContain("B.alpha[0]");
+    expect(content).toContain("Conditioning report");
+    expect(content).toContain("stale lock");
     expect(content).toContain("C[0]");
+    expect(content).toContain("new fact");
+    expect(content).toContain("missed X");
+    // Canon never reaches the briefer — it cites no hashes.
+    expect(content).not.toContain("abcd1234");
+    // An empty inbox isn't rendered as its own section.
+    expect(content).toContain("1 with content");
+  });
+});
+
+describe("blockHasCandidates", () => {
+  test("canon alone does not earn a verifier call", () => {
+    expect(blockHasCandidates(alphaBlock({ bCandidates: [] }))).toBe(false);
+    expect(blockHasCandidates(alphaBlock())).toBe(true);
+    expect(
+      blockHasCandidates(
+        alphaBlock({
+          bCandidates: [],
+          midSessionCandidates: [
+            {
+              type: "fact",
+              content: "x",
+              tags: [],
+              provenance: "p",
+              writtenAt: "2026-04-26T00:00:00Z",
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("digestShardDecisions", () => {
+  test("resolves each decision back to the candidate text it acted on", () => {
+    const block = alphaBlock({
+      midSessionCandidates: [
+        {
+          type: "convention",
+          content: "mid convention",
+          tags: [],
+          provenance: "p",
+          writtenAt: "2026-04-26T00:00:00Z",
+        },
+      ],
+    });
+    const digest = digestShardDecisions(block, [
+      { candidate_id: "B.alpha[0]", action: "accept" },
+      { candidate_id: "candidates.alpha[0]", action: "reject", reason: "trivial" },
+    ]);
+
+    expect(digest).toEqual([
+      {
+        candidate_id: "B.alpha[0]",
+        action: "accept",
+        project: "alpha",
+        type: "fact",
+        content: "new fact",
+      },
+      {
+        candidate_id: "candidates.alpha[0]",
+        action: "reject",
+        project: "alpha",
+        type: "convention",
+        content: "mid convention",
+      },
+    ]);
+  });
+
+  test("an unresolvable id still digests, without inventing content", () => {
+    const digest = digestShardDecisions(alphaBlock(), [
+      { candidate_id: "B.alpha[9]", action: "accept" },
+    ]);
+    expect(digest).toEqual([
+      { candidate_id: "B.alpha[9]", action: "accept", project: "alpha" },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompt budget — the guard that turns an over-window prompt from a 0-token
+// mystery envelope into a legible failure (TK-137)
+// ---------------------------------------------------------------------------
+
+describe("prompt budget", () => {
+  test("estimate is conservative against the measured 2026-07-25 bundle", () => {
+    // 734,495 chars measured 222,086 real tokens. The estimator must not
+    // under-report, or the guard passes a prompt the API will reject.
+    const chars = 734_495;
+    const estimated = estimatePromptTokens("", "x".repeat(chars));
+    expect(estimated).toBeGreaterThanOrEqual(222_086);
+  });
+
+  test("assertPromptFits passes a small prompt", () => {
+    expect(() => assertPromptFits("V.alpha", "sys", "user")).not.toThrow();
+  });
+
+  test("assertPromptFits names the call and the overage", () => {
+    const huge = "x".repeat(VERIFY_WINDOW_TOKENS * 4);
+    expect(() => assertPromptFits("V.revrec", "sys", huge)).toThrow(/V\.revrec prompt is ~\d+k tokens/);
+    expect(() => assertPromptFits("V.revrec", "sys", huge)).toThrow(/outgrown a single call/);
   });
 });
 
@@ -462,45 +619,197 @@ Quiet day.
   });
 });
 
-describe("runVerifier (end-to-end with synthetic home)", () => {
-  test("writes decisions/gaps/briefing + appends usage record", async () => {
-    const home = await mkdtemp(join(tmpdir(), "hive-verify-e2e-"));
-    const paths = await ensureHiveScaffold(home);
+/** A caller that answers each call in sequence and records what it was asked. */
+function scriptedCaller(texts: string[]): {
+  caller: ModelCaller;
+  calls: Array<{ systemPrompt: string; userContent: string }>;
+} {
+  const calls: Array<{ systemPrompt: string; userContent: string }> = [];
+  const caller: ModelCaller = async (input) => {
+    const text = texts[calls.length] ?? texts[texts.length - 1]!;
+    calls.push({ systemPrompt: input.systemPrompt, userContent: input.userContent });
+    return {
+      provider: "anthropic",
+      model: "claude-opus-4-8",
+      text,
+      inputTokens: 5000,
+      outputTokens: 800,
+      totalTokens: 5800,
+      durationMs: 1234,
+      raw: { content: [{ type: "text", text }] } as never,
+    };
+  };
+  return { caller, calls };
+}
 
-    // Register a project with a tiny canon
-    await mkdir(join(home, "projects", "alpha"), { recursive: true });
+const shardOutput = {
+  decisions: [
+    { candidate_id: "candidates.alpha[0]", action: "accept" },
+  ],
+  gaps: [{ subject: "alpha", observation: "missed X", source: "topRanked[5]" }],
+};
+
+const briefOutput = {
+  decisions: [{ candidate_id: "C[0]", action: "reject", reason: "cite_unverifiable" }],
+  gaps: [{ subject: "greg", observation: "cross-project pattern", source: "C[1]" }],
+  briefing_markdown: "# HIVE — 2026-04-26\n\n## Headline\nA tight day.\n",
+};
+
+async function syntheticHome(prefix: string) {
+  const home = await mkdtemp(join(tmpdir(), prefix));
+  const paths = await ensureHiveScaffold(home);
+  await mkdir(join(home, "projects", "alpha"), { recursive: true });
+  await writeFile(
+    join(home, "projects", "alpha", "config.md"),
+    "---\nname: alpha\npath: /tmp/nope\n---\n",
+  );
+  await appendProjectMemory(paths, "alpha", "fact", "existing fact", ["a"]);
+  const report = await buildConditionReport(paths);
+  await writeConditionReport(paths, report);
+  return { home, paths };
+}
+
+describe("loadVerifierBundle", () => {
+  test("an inbox-only project joins the bundle without its canon", async () => {
+    // The briefer needs the inbox text; it never cites a target_hash. Reading
+    // and serializing the canon for it is pure cost — revrec's alone is 183KB.
+    const { home, paths } = await syntheticHome("hive-verify-bundle-");
     await writeFile(
-      join(home, "projects", "alpha", "config.md"),
-      "---\nname: alpha\npath: /tmp/nope\n---\n",
+      join(home, "projects", "alpha", "inbox.md"),
+      "# Inbox: alpha\n\n- heartbeat found a stale lock\n",
     );
-    await appendProjectMemory(paths, "alpha", "fact", "existing fact", ["a"]);
 
-    // Pass A condition
     const report = await buildConditionReport(paths);
     await writeConditionReport(paths, report);
-
-    // Pass B + C artifacts can be empty/absent — verify still runs.
     const today = new Date().toISOString().slice(0, 10);
-    const result = await runVerifier({
-      paths,
-      date: today,
-      caller: stubCaller(JSON.stringify(validOutput)),
-    });
+    const bundle = await loadVerifierBundle(paths, today);
 
-    expect(result.artifacts.briefingPath).toContain("briefing.md");
-    expect(result.artifacts.decisionsPath).toContain("decisions.json");
-    expect(result.artifacts.usagePath).toContain("usage.json");
+    const alpha = bundle.perProject.find((p) => p.projectId === "alpha");
+    expect(alpha).toBeDefined();
+    expect(alpha!.inboxText).toContain("stale lock");
+    expect(alpha!.canon.facts).toEqual([]);
+    expect(blockHasCandidates(alpha!)).toBe(false);
+  });
 
+  test("a project with candidates gets its canon serialized", async () => {
+    const { paths } = await syntheticHome("hive-verify-bundle-canon-");
+    await appendCandidate(paths, "alpha", { type: "fact", content: "a pending fact" });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const bundle = await loadVerifierBundle(paths, today);
+
+    const alpha = bundle.perProject.find((p) => p.projectId === "alpha");
+    expect(alpha!.canon.facts.map((f) => f.text)).toEqual(["existing fact"]);
+    expect(blockHasCandidates(alpha!)).toBe(true);
+  });
+
+  test("a project with neither candidates nor inbox is left out entirely", async () => {
+    const { paths } = await syntheticHome("hive-verify-bundle-skip-");
+    const today = new Date().toISOString().slice(0, 10);
+    const bundle = await loadVerifierBundle(paths, today);
+    expect(bundle.perProject).toEqual([]);
+  });
+});
+
+describe("runVerifier (end-to-end with synthetic home)", () => {
+  test("shards per project with candidates, then briefs", async () => {
+    const { paths } = await syntheticHome("hive-verify-e2e-");
+    await appendCandidate(paths, "alpha", { type: "fact", content: "a pending fact" });
+
+    const { caller, calls } = scriptedCaller([
+      JSON.stringify(shardOutput),
+      JSON.stringify(briefOutput),
+    ]);
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await runVerifier({ paths, date: today, caller });
+
+    // One call for alpha, one for the brief.
+    expect(calls.length).toBe(2);
+    expect(result.shardedProjects).toEqual(["alpha"]);
+    expect(calls[0]?.userContent).toContain("project: alpha");
+    expect(calls[0]?.userContent).toContain("candidates.alpha[0]");
+    expect(calls[1]?.userContent).toContain("Conditioning report");
+    // The brief sees what the shard decided, not the canon it decided against.
+    expect(calls[1]?.userContent).toContain("a pending fact");
+    expect(calls[1]?.userContent).toContain("Canon decisions already made (1)");
+
+    // Merged output across both calls.
+    expect(result.output.decisions.map((d) => d.candidate_id)).toEqual([
+      "candidates.alpha[0]",
+      "C[0]",
+    ]);
+    expect(result.output.gaps.length).toBe(2);
+
+    const decisions = JSON.parse(await Bun.file(result.artifacts.decisionsPath).text());
+    expect(decisions.decisions.length).toBe(2);
     const briefing = await Bun.file(result.artifacts.briefingPath).text();
     expect(briefing).toContain("HIVE");
 
-    const decisions = JSON.parse(await Bun.file(result.artifacts.decisionsPath).text());
-    expect(decisions.decisions.length).toBe(4);
-
+    // One usage row for the pass, summed across both calls.
     const usage = await loadUsageSummary(paths, today);
     expect(usage.records.length).toBe(1);
     expect(usage.records[0]?.pass).toBe("V");
+    expect(usage.records[0]?.inputTokens).toBe(10_000);
+    expect(usage.records[0]?.outputTokens).toBe(1_600);
     expect(usage.totals.totalUsd).toBeGreaterThan(0);
+  });
+
+  test("a project with canon but no candidates gets no verifier call", async () => {
+    // The TK-137 regression: canon presence alone used to buy a project a place
+    // in the prompt, so nine projects shipped 546KB of canon to decide nothing.
+    const { paths } = await syntheticHome("hive-verify-nocand-");
+
+    const { caller, calls } = scriptedCaller([JSON.stringify(briefOutput)]);
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await runVerifier({ paths, date: today, caller });
+
+    expect(calls.length).toBe(1);
+    expect(result.shardedProjects).toEqual([]);
+    expect(calls[0]?.userContent).toContain("Conditioning report");
+    expect(calls[0]?.userContent).not.toContain("existing fact");
+  });
+
+  test("drops briefer decisions that aren't reflections", async () => {
+    // The briefer is told C[n] only. If it echoes a project candidate from the
+    // digest, Pass F would apply that candidate twice.
+    const { paths } = await syntheticHome("hive-verify-echo-");
+    await appendCandidate(paths, "alpha", { type: "fact", content: "a pending fact" });
+
+    const echoing = {
+      ...briefOutput,
+      decisions: [
+        { candidate_id: "candidates.alpha[0]", action: "accept" },
+        { candidate_id: "C[0]", action: "accept" },
+      ],
+    };
+    const { caller } = scriptedCaller([
+      JSON.stringify(shardOutput),
+      JSON.stringify(echoing),
+    ]);
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await runVerifier({ paths, date: today, caller });
+
+    const ids = result.output.decisions.map((d) => d.candidate_id);
+    expect(ids).toEqual(["candidates.alpha[0]", "C[0]"]);
+    expect(ids.filter((id) => id === "candidates.alpha[0]").length).toBe(1);
+  });
+
+  test("a failed shard aborts the pass — nothing is written for Pass F to apply", async () => {
+    // Pass F drains candidates.md for any project that has candidates, decisions
+    // or not. A partial V would drain a queue nothing decided on.
+    const { paths } = await syntheticHome("hive-verify-partial-");
+    await appendCandidate(paths, "alpha", { type: "fact", content: "a pending fact" });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const failing: ModelCaller = async () => {
+      throw new Error("claude --print exited 1.");
+    };
+    await expect(runVerifier({ paths, date: today, caller: failing })).rejects.toThrow(
+      /exited 1/,
+    );
+
+    const decisionsPath = join(paths.memoryRunsDir, today, "decisions.json");
+    expect(existsSync(decisionsPath)).toBe(false);
   });
 });
 
@@ -508,16 +817,16 @@ describe("runVerifier (end-to-end with synthetic home)", () => {
 // SOUL injection — voice flows from ~/.hive/SOUL.md, not hardcoded adjectives
 // ---------------------------------------------------------------------------
 
-describe("buildVerifierSystemPrompt", () => {
+describe("buildBrieferSystemPrompt", () => {
   test("returns the bare verifier prompt when SOUL is empty", () => {
-    const prompt = buildVerifierSystemPrompt("");
+    const prompt = buildBrieferSystemPrompt("");
     expect(prompt).toContain("You are the verifier for HIVE's nightly memory pipeline");
     expect(prompt).not.toContain("---\n\n");
   });
 
   test("trims and prepends SOUL with a separator before the verifier instructions", () => {
     const soul = "  # HIVE Soul\n\nWe are craftsmen.\n  ";
-    const prompt = buildVerifierSystemPrompt(soul);
+    const prompt = buildBrieferSystemPrompt(soul);
     expect(prompt.startsWith("# HIVE Soul\n\nWe are craftsmen.")).toBe(true);
     expect(prompt).toContain("\n\n---\n\n");
     expect(prompt).toContain("You are the verifier for HIVE's nightly memory pipeline");
@@ -528,51 +837,45 @@ describe("buildVerifierSystemPrompt", () => {
     // Regression: earlier the verifier prompt carried inline voice copy
     // ("Tone: sharp, warm, dry"). Voice now lives in SOUL.md so the prompt
     // doesn't drift from the canonical doc.
-    const prompt = buildVerifierSystemPrompt("");
+    const prompt = buildBrieferSystemPrompt("");
     expect(prompt).not.toContain("Tone: sharp, warm, dry");
     expect(prompt).not.toContain("Write in HIVE voice — terse");
+  });
+
+  test("the briefer asks for prose; the project verifier explicitly does not", () => {
+    expect(buildBrieferSystemPrompt("")).toContain("briefing_markdown");
+    const shard = buildProjectVerifierSystemPrompt();
+    expect(shard).not.toContain("briefing_markdown");
+    expect(shard).toContain("Do not write a briefing");
+  });
+
+  test("both prompts share one accept bar", () => {
+    const bar = 'Bar for accept: "would this still help a session a month from now?"';
+    expect(buildProjectVerifierSystemPrompt()).toContain(bar);
+    expect(buildBrieferSystemPrompt("")).toContain(bar);
   });
 });
 
 describe("runVerifier — SOUL injection", () => {
-  test("reads paths.soul and passes the assembled prompt to the caller", async () => {
-    const home = await mkdtemp(join(tmpdir(), "hive-verify-soul-"));
-    const paths = await ensureHiveScaffold(home);
-
+  test("the briefing call carries SOUL; the project call doesn't pay for it", async () => {
+    const { paths } = await syntheticHome("hive-verify-soul-");
     const soulMarker = "## Voice\n\n- **Dry humor when it's natural.**";
     await writeFile(paths.soul, `# HIVE Soul\n\n${soulMarker}\n`);
+    await appendCandidate(paths, "alpha", { type: "fact", content: "a pending fact" });
 
-    await mkdir(join(home, "projects", "alpha"), { recursive: true });
-    await writeFile(
-      join(home, "projects", "alpha", "config.md"),
-      "---\nname: alpha\npath: /tmp/nope\n---\n",
-    );
-    await appendProjectMemory(paths, "alpha", "fact", "existing fact", ["a"]);
-
-    const report = await buildConditionReport(paths);
-    await writeConditionReport(paths, report);
-
-    let capturedSystemPrompt = "";
-    const capturingCaller: ModelCaller = async (input) => {
-      capturedSystemPrompt = input.systemPrompt;
-      return {
-        provider: "anthropic",
-        model: "claude-opus-4-6",
-        text: JSON.stringify(validOutput),
-        inputTokens: 5000,
-        outputTokens: 800,
-        totalTokens: 5800,
-        durationMs: 1234,
-        raw: { content: [{ type: "text", text: JSON.stringify(validOutput) }] } as never,
-      };
-    };
-
+    const { caller, calls } = scriptedCaller([
+      JSON.stringify(shardOutput),
+      JSON.stringify(briefOutput),
+    ]);
     const today = new Date().toISOString().slice(0, 10);
-    await runVerifier({ paths, date: today, caller: capturingCaller });
+    await runVerifier({ paths, date: today, caller });
 
-    expect(capturedSystemPrompt).toContain(soulMarker);
-    expect(capturedSystemPrompt.indexOf(soulMarker)).toBeLessThan(
-      capturedSystemPrompt.indexOf("You are the verifier"),
-    );
+    const brief = calls[1]!.systemPrompt;
+    expect(brief).toContain(soulMarker);
+    expect(brief.indexOf(soulMarker)).toBeLessThan(brief.indexOf("You are the verifier"));
+
+    // A shard emits decisions, never prose — voice context there is spend
+    // against the one budget this pass is short on.
+    expect(calls[0]!.systemPrompt).not.toContain(soulMarker);
   });
 });
