@@ -300,9 +300,12 @@ Pass B — Sonnet, per project with signal (parallel)
 Pass C — Sonnet, cross-project (single call)
   ↓ extract reflections about Greg, Maya, the system
 
-Pass V — Opus (single call) — reads B + C + candidates.md + canon
-  ↓ produces decisions (accept | supersede(hash) | merge(hash) | reject)
-  ↓ produces gaps (things Sonnet missed) + taste readout + briefing.md
+Pass V — Opus, one call per project with candidates, then one to brief (serial)
+  ↓ per project: that project's canon + its B and candidates.md entries
+  ↓   → decisions (accept | supersede(hash) | merge(hash) | reject) + gaps
+  ↓ brief: condition report + inboxes + C candidates + a digest of the above
+  ↓   → C decisions + cross-project gaps + briefing.md
+  ↓ any per-project failure aborts the pass (see "Why V shards")
 
 Pass F — Apply (mechanical)
   ↓ walk decisions: appendProjectMemory / supersedeEntryByHash /
@@ -327,8 +330,21 @@ authority, so `cite_unverifiable` and the other reject reasons don't apply.
 localize: a Pass B failure on one project doesn't block others; a Pass V
 failure cleanly skips F with the upstream artifacts intact for inspection.
 
-**Cost.** Three LLM calls per night (two Sonnet, one Opus). Per-pass
-token + USD recorded in `runs/{DATE}/usage.json`. Typical cost: $1–3.
+**Why V shards.** V used to be one Opus call carrying every project's full
+canon. That prompt grew with the canon rather than with the day's work, and on
+2026-07-23 it crossed the 200k window — `Prompt is too long · ~222086 tokens`,
+a client-side reject that arrives as a zero-token error envelope and looks
+exactly like an auth failure. Three nights of canon writes were lost before
+anyone replayed the prompt by hand (TK-137). Sharded, each call is bounded by
+one project's canon, projects with nothing to decide cost nothing, and
+`assertPromptFits` names the overage before the spawn. A shard failure aborts
+the whole pass on purpose: Pass F drains a project's `candidates.md` whenever
+that project has candidates, decisions or not, so a partial V would drain a
+queue nothing decided on.
+
+**Cost.** Two Sonnet calls, then one Opus call per project with candidates plus
+one to brief. Per-pass token + USD recorded in `runs/{DATE}/usage.json` — V's
+row is the sum across its calls. Typical cost: $1–3.
 
 **Restartability.** Each `run*` function deletes its target artifact at
 the start of an attempt. Failure leaves absence (correct); success writes

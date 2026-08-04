@@ -20,7 +20,8 @@ import { projectTasteDir, readTasteUnits } from "../lib/taste-store";
 interface StubBehavior {
   bResponses?: Record<string, string>; // by projectId
   cResponse?: string;
-  vResponse?: string;
+  vShardResponses?: Record<string, string>; // Pass V per-project call, by projectId
+  vResponse?: string;                       // Pass V briefing call (the one with prose)
   failProjectsB?: Set<string>;
   failC?: boolean;
   failV?: boolean;
@@ -59,9 +60,16 @@ function makeStub(behavior: StubBehavior): ModelCaller {
       model = "claude-sonnet-4-6";
       const flags = behavior.replayFlags ?? {};
       text = JSON.stringify(Object.entries(flags).map(([dedupe_key, flagged]) => ({ dedupe_key, flagged })));
+    } else if (input.systemPrompt.includes("You see exactly one project")) {
+      // Pass V — per-project call. Decisions + gaps, no prose.
+      model = "claude-opus-4-8";
+      if (behavior.failV) throw new Error("stubbed V failure");
+      const projectMatch = input.userContent.match(/project:\s*(\S+)/);
+      const projectId = projectMatch?.[1] ?? "unknown";
+      text = behavior.vShardResponses?.[projectId] ?? `{ "decisions": [], "gaps": [] }`;
     } else if (input.systemPrompt.includes("verifier for HIVE")) {
-      // Pass V
-      model = "claude-opus-4-6";
+      // Pass V — briefing call.
+      model = "claude-opus-4-8";
       if (behavior.failV) throw new Error("stubbed V failure");
       text = behavior.vResponse ?? `{
         "decisions": [],
@@ -297,11 +305,16 @@ describe("runNightly — full pipeline (A → B → C → V → F)", () => {
           provenance: "global",
         },
       ]),
+      // Project candidates are decided by the per-project V call; reflections by
+      // the briefing call.
+      vShardResponses: {
+        alpha: JSON.stringify({
+          decisions: [{ candidate_id: "B.alpha[0]", action: "accept" }],
+          gaps: [],
+        }),
+      },
       vResponse: JSON.stringify({
-        decisions: [
-          { candidate_id: "B.alpha[0]", action: "accept" },
-          { candidate_id: "C[0]", action: "accept" },
-        ],
+        decisions: [{ candidate_id: "C[0]", action: "accept" }],
         gaps: [],
         briefing_markdown: `# HIVE — ${date}\n\n## Headline\nFull pipeline test landed.`,
       }),

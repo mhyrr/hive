@@ -1,5 +1,21 @@
-// Pass V — Verify, gap-find, taste-read, brief. ONE Opus call that synthesizes
-// the day's signal into canon decisions + a morning briefing.
+// Pass V — Verify, gap-find, brief. Opus turns the day's signal into canon
+// decisions + a morning briefing.
+//
+// Two prompt shapes, N+1 serial calls:
+//   1. Project verifier — one call per project that has candidates. Sees that
+//      project's canon and its candidates; returns decisions + gaps.
+//   2. Briefer — one call. Sees the conditioning report, inboxes, Pass C
+//      reflections, and a digest of every decision the shards made; returns the
+//      C decisions, cross-project gaps, and the briefing prose.
+//
+// It used to be ONE call carrying every project's full canon. That prompt grew
+// with the canon rather than with the day's work, and on 2026-07-23 it crossed
+// the 200k window: `Prompt is too long · ~222086 tokens` — a client-side reject
+// that surfaces as a 0-token error envelope and blocked every canon write for
+// three nights (TK-137). Sharded, the prompt is bounded by the largest single
+// project instead of the sum of all of them, and canon-less projects cost
+// nothing. `assertPromptFits` guards each call so the next time this ceiling is
+// reached it says so in one legible line.
 //
 // docs/specs/2026-04-26-memory-design.md §Pass V
 
@@ -42,6 +58,45 @@ function verifierModel(): { provider: string; modelId: string } {
     provider: process.env.HIVE_VERIFY_PROVIDER || DEFAULT_PROVIDER,
     modelId: override || DEFAULT_MODEL,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Prompt budget — a spawned `claude --print` rejects an over-window prompt
+// client-side: exit 1, `is_error: true`, zero tokens, zero api_ms, and the real
+// message ("Prompt is too long · the request is ~N tokens") buried in a `result`
+// field that claude.ts truncates away. Indistinguishable from an auth failure
+// unless you replay the prompt by hand. So measure before spawning.
+// ---------------------------------------------------------------------------
+
+/** Context window of the verifier model. Override when pointing V at a
+ * larger-window model (e.g. a `[1m]` variant). */
+export const VERIFY_WINDOW_TOKENS = Number(process.env.HIVE_VERIFY_WINDOW_TOKENS) || 200_000;
+
+/** Room left for the model's own output plus the CLI's envelope overhead. */
+const OUTPUT_HEADROOM_TOKENS = 16_000;
+
+/** Chars per token. Calibrated against the 2026-07-25 bundle that broke Pass V:
+ * 734,495 chars measured 222,086 tokens = 3.31 chars/token. JSON-heavy canon
+ * tokenizes denser than prose, so round down — a conservative estimate fails
+ * loudly on our side instead of silently on Anthropic's. */
+const CHARS_PER_TOKEN = 3.2;
+
+export function estimatePromptTokens(systemPrompt: string, userContent: string): number {
+  return Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN);
+}
+
+/** Throw a legible error when a prompt cannot fit, naming the call and the
+ * overage. `label` is the pass id the orchestrator logs (e.g. "V.revrec"). */
+export function assertPromptFits(label: string, systemPrompt: string, userContent: string): void {
+  const estimated = estimatePromptTokens(systemPrompt, userContent);
+  const budget = VERIFY_WINDOW_TOKENS - OUTPUT_HEADROOM_TOKENS;
+  if (estimated <= budget) return;
+  const k = (n: number) => `${Math.round(n / 1000)}k`;
+  throw new Error(
+    `${label} prompt is ~${k(estimated)} tokens, over the ${k(budget)} budget ` +
+      `(${k(VERIFY_WINDOW_TOKENS)} window less ${k(OUTPUT_HEADROOM_TOKENS)} for output). ` +
+      `Shrink the inputs — this canon has outgrown a single call.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +183,13 @@ export interface VerifierOutput {
 
 const VALID_ACTIONS = new Set<DecisionAction>(["accept", "supersede", "merge", "reject"]);
 
-export function validateVerifierOutput(obj: unknown): VerifierOutput | { error: string } {
+/** Validate a verifier response. Project-shard calls write no prose, so they
+ * pass `requireBriefing: false`; only the briefer must return a briefing. */
+export function validateVerifierOutput(
+  obj: unknown,
+  opts: { requireBriefing?: boolean } = {},
+): VerifierOutput | { error: string } {
+  const requireBriefing = opts.requireBriefing ?? true;
   if (!obj || typeof obj !== "object") return { error: "root is not an object" };
   const o = obj as Record<string, unknown>;
 
@@ -172,11 +233,12 @@ export function validateVerifierOutput(obj: unknown): VerifierOutput | { error: 
     gaps.push({ subject: g.subject, observation: g.observation, source: g.source });
   }
 
-  if (typeof o.briefing_markdown !== "string" || !o.briefing_markdown.trim()) {
+  const briefing = typeof o.briefing_markdown === "string" ? o.briefing_markdown : "";
+  if (requireBriefing && !briefing.trim()) {
     return { error: "briefing_markdown missing or empty" };
   }
 
-  return { decisions, gaps, briefing_markdown: o.briefing_markdown };
+  return { decisions, gaps, briefing_markdown: briefing };
 }
 
 // ---------------------------------------------------------------------------
@@ -209,28 +271,72 @@ export function parseVerifierJson(raw: string): unknown {
 // System prompt — long, deliberate, structured-output + briefing template
 // ---------------------------------------------------------------------------
 
-const VERIFIER_SYSTEM_PROMPT = `You are the verifier for HIVE's nightly memory pipeline. Sonnet (in Pass B and C) extracted candidates from the day's signal; you decide what becomes canon and write the morning briefing.
-
-# Your three jobs (one call, one JSON object out)
-
-## 1) Per-candidate decisions
-For every candidate from B (per-project), C (cross-project reflections), and every entry in mid-session candidates.md files, choose:
-- **accept** — admits as a fresh entry to canon
+/** The action menu + accept bar. Shared so the project verifier and the briefer
+ * judge by the same standard rather than drifting apart in two prompts. */
+const DECISION_RULES = `- **accept** — admits as a fresh entry to canon
 - **supersede** with target_hash — the candidate is a better version of an existing canon entry; the old one is marked superseded
 - **merge** with target_hash + added_tags — the candidate's tags are merged onto an existing entry; the candidate itself is dropped
 - **reject** with reason ∈ {cite_unverifiable, duplicate, trivial, low_signal, other}
 
 Bar for accept: "would this still help a session a month from now?" Be selective. Three excellent admissions beat ten mediocre ones.
 
-If the candidate's quoted source isn't visible anywhere in the inputs, **reject as cite_unverifiable** — citation discipline matters more than charity.
+If the candidate's quoted source isn't visible anywhere in the inputs, **reject as cite_unverifiable** — citation discipline matters more than charity.`;
+
+const PROJECT_VERIFIER_SYSTEM_PROMPT = `You are the verifier for HIVE's nightly memory pipeline. Sonnet (in Pass B) extracted candidates from one project's day; you decide what becomes that project's canon.
+
+You see exactly one project. Every candidate below belongs to it, and every target_hash you cite must come from the canon block below — you cannot reach into another project's memory, and you shouldn't try.
+
+# Your two jobs (one JSON object out)
+
+## 1) Per-candidate decisions
+For every Pass B candidate and every mid-session candidates.md entry, choose:
+
+${DECISION_RULES}
 
 **Directives.** A mid-session candidate marked \`"directive": true\` was saved on Greg's explicit instruction — it is his decision, not an extractor's guess. You MAY **accept**, **supersede**, or **merge** a directive: refine its wording, place it well, or fold it into an existing entry. You may NOT **reject** it — the human already decided it's worth keeping, so the accept-bar, cite_unverifiable, trivial, and low_signal do not apply. Your job on a directive is placement, never veto. (A directive you try to reject is force-admitted downstream anyway, so a reject decision just produces a worse-placed entry.)
 
 ## 2) Gap report
-Things Sonnet missed but should have caught — patterns from the exchanges that didn't land in either candidate batch. Cite the specific source (e.g. "alpha:topRanked[5] — Greg established X but extractor missed it"). Empty array if Sonnet did fine.
+Things Sonnet missed but should have caught — patterns from this project's day that didn't land in the candidate batch. Cite the specific source (e.g. "alpha:topRanked[5] — Greg established X but extractor missed it"). Empty array if Sonnet did fine.
+
+# OUTPUT — strict schema
+
+Return ONE JSON object, no fences, no prose around it:
+
+{
+  "decisions": [
+    {
+      "candidate_id": "B.<projectId>[<index>]" | "candidates.<projectId>[<index>]",
+      "action": "accept" | "supersede" | "merge" | "reject",
+      "target_hash": "<8-char hex from the canon block, required for supersede/merge>",
+      "reason": "<required for reject>",
+      "added_tags": ["..."]            // optional, mainly for merge
+    }
+  ],
+  "gaps": [
+    { "subject": "<this project, or greg/maya/system>", "observation": "...", "source": "..." }
+  ]
+}
+
+Schema discipline: every candidate listed in the inputs MUST appear in decisions[] exactly once. No silent drops, no duplicate decisions. Do not write a briefing — a later call does that.`;
+
+const BRIEFER_SYSTEM_PROMPT = `You are the verifier for HIVE's nightly memory pipeline. The per-project verifier calls have already decided what enters each project's canon; their decisions are digested below. You do the two jobs that span projects.
+
+# Your jobs (one JSON object out)
+
+## 1) Reflection decisions
+Pass C extracted cross-project reflections — patterns about Greg, Maya, or the system rather than any one codebase. For each, choose:
+
+${DECISION_RULES}
+
+Reflections land in the reflections store, not a project canon, so **supersede and merge have no target to cite** — use accept or reject only.
+
+## 2) Gap report
+Things the extractors missed that span projects, or that concern Greg/Maya/the system itself. The per-project calls already reported their own gaps (digested below — don't repeat them). Cite the specific source. Empty array if there's nothing.
 
 ## 3) Morning briefing
 A single user-facing markdown document Greg reads at 7am. Write in HIVE voice per the SOUL preamble above. Match the template below verbatim for sections, but vary the prose — voice belongs in the headline and per-project bullets, not in section names.
+
+Write it from the conditioning report (what actually happened: sessions, commits, tickets), the inboxes, and the decision digest. The digest tells you what became canon overnight — cite the substance, not the counts (a deterministic pass rewrites the count line after you).
 
 Template:
 
@@ -263,11 +369,9 @@ Return ONE JSON object, no fences, no prose around it:
 {
   "decisions": [
     {
-      "candidate_id": "B.<projectId>[<index>]" | "C[<index>]" | "candidates.<projectId>[<index>]",
-      "action": "accept" | "supersede" | "merge" | "reject",
-      "target_hash": "<8-char hex from canon, required for supersede/merge>",
-      "reason": "<required for reject>",
-      "added_tags": ["..."]            // optional, mainly for merge
+      "candidate_id": "C[<index>]",
+      "action": "accept" | "reject",
+      "reason": "<required for reject>"
     }
   ],
   "gaps": [
@@ -276,159 +380,242 @@ Return ONE JSON object, no fences, no prose around it:
   "briefing_markdown": "<full briefing per template>"
 }
 
-Schema discipline: every candidate listed in the inputs MUST appear in decisions[] exactly once. No silent drops, no duplicate decisions.`;
+Schema discipline: every C candidate listed in the inputs MUST appear in decisions[] exactly once, and decisions[] must contain nothing else — the project candidates in the digest are already decided, and repeating one would double-admit it.`;
 
 /**
- * Assemble the verifier's system prompt with the HIVE soul prepended as
- * voice context. SOUL.md is the single source of truth for HIVE voice
- * across every surface (CLI sessions, dispatch, briefing) — Pass V reads
- * the same file rather than carrying its own duplicated voice instructions.
+ * The briefer's system prompt, with the HIVE soul prepended as voice context.
+ * SOUL.md is the single source of truth for HIVE voice across every surface
+ * (CLI sessions, dispatch, briefing) — Pass V reads the same file rather than
+ * carrying its own duplicated voice instructions.
  *
  * If SOUL is empty or missing, the verifier instructions stand alone and
  * the briefing comes back neutral. That's the desired failure mode —
  * silent voice loss is better than fabricated personality.
  */
-export function buildVerifierSystemPrompt(soulText: string): string {
+export function buildBrieferSystemPrompt(soulText: string): string {
   const soul = soulText.trim();
-  if (!soul) return VERIFIER_SYSTEM_PROMPT;
-  return `${soul}\n\n---\n\n${VERIFIER_SYSTEM_PROMPT}`;
+  if (!soul) return BRIEFER_SYSTEM_PROMPT;
+  return `${soul}\n\n---\n\n${BRIEFER_SYSTEM_PROMPT}`;
+}
+
+/**
+ * The project verifier's system prompt. No SOUL: a shard emits decisions and
+ * gaps, never prose, so voice context would be several thousand tokens spent on
+ * nothing — and those tokens are exactly what's scarce here.
+ */
+export function buildProjectVerifierSystemPrompt(): string {
+  return PROJECT_VERIFIER_SYSTEM_PROMPT;
 }
 
 // ---------------------------------------------------------------------------
 // User content assembly
 // ---------------------------------------------------------------------------
 
+export interface ProjectVerifierBlock {
+  projectId: string;
+  canon: SerializedCanon;
+  midSessionCandidates: Candidate[];
+  inboxText: string;
+  bCandidates: ProjectCandidate[];
+}
+
 export interface VerifierInputBundle {
   date: string;
   condition: ConditionReport;
-  perProject: Array<{
-    projectId: string;
-    canon: SerializedCanon;
-    midSessionCandidates: Candidate[];
-    inboxText: string;
-    bCandidates: ProjectCandidate[];
-  }>;
+  perProject: ProjectVerifierBlock[];
   cCandidates: ReflectionCandidate[];
   principlesText: string;
 }
 
-export function buildVerifierUserContent(bundle: VerifierInputBundle): string {
+/** A block earns its own Opus call only if it has something to decide. Canon
+ * alone is not signal — that was the bug that blew the context window: nine
+ * projects shipped 546KB of canon so the verifier could decide nothing about
+ * five of them. */
+export function blockHasCandidates(block: ProjectVerifierBlock): boolean {
+  return block.bCandidates.length > 0 || block.midSessionCandidates.length > 0;
+}
+
+function fence(value: unknown): string {
+  return "```json\n" + JSON.stringify(value, null, 2) + "\n```";
+}
+
+/** The per-project verifier prompt: one project's canon and its candidates.
+ * Bounded by that project's canon size, not by how many projects HIVE tracks. */
+export function buildProjectVerifierUserContent(
+  date: string,
+  principlesText: string,
+  block: ProjectVerifierBlock,
+): string {
   const sections: string[] = [];
 
-  sections.push(`# Pass V — Verify · ${bundle.date}
+  sections.push(`# Pass V — Verify · ${date} · project: ${block.projectId}
 
-You receive the day's full signal below. Output the JSON object per the system prompt.
-
-`);
-
-  sections.push(`## Conditioning report (Pass A)
-
-\`\`\`json
-${JSON.stringify(
-    {
-      date: bundle.condition.date,
-      hoursWindow: bundle.condition.hoursWindow,
-      trivial: bundle.condition.trivial,
-      totals: bundle.condition.totals,
-      projects: bundle.condition.projects.map((p) => ({
-        projectName: p.projectName,
-        sessions: p.sessions,
-        git: p.git,
-        tickets: p.tickets,
-        heartbeat: p.heartbeat,
-      })),
-    },
-    null,
-    2,
-  )}
-\`\`\`
+Decide every candidate below against this project's canon. Output the JSON object per the system prompt.
 `);
 
   sections.push(`## Taste principles (the lens)
 
-${bundle.principlesText.trim() || "(no principles file present)"}
+${principlesText.trim() || "(no principles file present)"}
 `);
 
-  // Per-project blocks
-  for (const block of bundle.perProject) {
-    const headerLines: string[] = [`### Project: ${block.projectId}`];
+  sections.push(`## Canon (existing entries — reference target_hash by hash)
 
-    headerLines.push(`\n#### Canon (existing entries — reference target_hash by hash)\n`);
-    headerLines.push(
-      "```json\n" +
-        JSON.stringify(
-          {
-            facts: block.canon.facts,
-            conventions: block.canon.conventions,
-            decisions: block.canon.decisions,
-            questions: block.canon.questions,
-          },
-          null,
-          2,
-        ) +
-        "\n```",
-    );
+${fence({
+    facts: block.canon.facts,
+    conventions: block.canon.conventions,
+    decisions: block.canon.decisions,
+    questions: block.canon.questions,
+  })}
+`);
 
-    headerLines.push(`\n#### Mid-session candidates (candidates.md, ${block.midSessionCandidates.length})\n`);
-    if (block.midSessionCandidates.length > 0) {
-      headerLines.push(
-        "```json\n" +
-          JSON.stringify(
-            block.midSessionCandidates.map((c, i) => ({
-              candidate_id: `candidates.${block.projectId}[${i}]`,
-              ...c,
-            })),
-            null,
-            2,
-          ) +
-          "\n```",
-      );
-    } else {
-      headerLines.push("(none)");
-    }
-
-    headerLines.push(`\n#### Pass B candidates (Sonnet, ${block.bCandidates.length})\n`);
-    if (block.bCandidates.length > 0) {
-      headerLines.push(
-        "```json\n" +
-          JSON.stringify(
-            block.bCandidates.map((c, i) => ({
-              candidate_id: `B.${block.projectId}[${i}]`,
-              ...c,
-            })),
-            null,
-            2,
-          ) +
-          "\n```",
-      );
-    } else {
-      headerLines.push("(none — Pass B emitted nothing for this project)");
-    }
-
-    headerLines.push(`\n#### Heartbeat inbox (${block.inboxText.length} chars)\n`);
-    headerLines.push(block.inboxText.trim() || "(empty)");
-
-    sections.push(headerLines.join("\n"));
-  }
-
-  sections.push(`## Pass C reflection candidates (${bundle.cCandidates.length})
+  sections.push(`## Mid-session candidates (candidates.md, ${block.midSessionCandidates.length})
 
 ${
-    bundle.cCandidates.length > 0
-      ? "```json\n" +
-        JSON.stringify(
-          bundle.cCandidates.map((c, i) => ({ candidate_id: `C[${i}]`, ...c })),
-          null,
-          2,
-        ) +
-        "\n```"
+    block.midSessionCandidates.length > 0
+      ? fence(
+        block.midSessionCandidates.map((c, i) => ({
+          candidate_id: `candidates.${block.projectId}[${i}]`,
+          ...c,
+        })),
+      )
+      : "(none)"
+  }
+`);
+
+  sections.push(`## Pass B candidates (Sonnet, ${block.bCandidates.length})
+
+${
+    block.bCandidates.length > 0
+      ? fence(
+        block.bCandidates.map((c, i) => ({
+          candidate_id: `B.${block.projectId}[${i}]`,
+          ...c,
+        })),
+      )
+      : "(none — Pass B emitted nothing for this project)"
+  }
+`);
+
+  sections.push(`## Output
+
+Return the JSON object per the system prompt schema. Every candidate id above must appear exactly once in decisions[]. No briefing.`);
+
+  return sections.join("\n");
+}
+
+/** One digested decision, for the briefer's benefit — what became canon
+ * overnight, in substance rather than counts. */
+export interface DecisionDigestEntry {
+  candidate_id: string;
+  action: DecisionAction;
+  project: string;
+  type?: string;
+  content?: string;
+}
+
+/** Map a shard's decisions back onto the candidate text they acted on. The ids
+ * are the ones this module minted when rendering the block, so the lookup is
+ * exact — no id re-parsing, no guessing. */
+export function digestShardDecisions(
+  block: ProjectVerifierBlock,
+  decisions: VerifierDecision[],
+): DecisionDigestEntry[] {
+  const byId = new Map<string, { type: string; content: string }>();
+  block.midSessionCandidates.forEach((c, i) => {
+    byId.set(`candidates.${block.projectId}[${i}]`, { type: c.type, content: c.content });
+  });
+  block.bCandidates.forEach((c, i) => {
+    byId.set(`B.${block.projectId}[${i}]`, { type: c.type, content: c.content });
+  });
+
+  return decisions.map((d) => {
+    const src = byId.get(d.candidate_id);
+    return {
+      candidate_id: d.candidate_id,
+      action: d.action,
+      project: block.projectId,
+      ...(src ? { type: src.type, content: src.content } : {}),
+    };
+  });
+}
+
+/** The briefer prompt: what happened (conditioning report), what the heartbeats
+ * found (inboxes), what became canon (digest), and the reflections still to
+ * decide. No canon — the briefer never cites a target_hash. */
+export function buildBriefingUserContent(input: {
+  date: string;
+  condition: ConditionReport;
+  inboxes: Array<{ projectId: string; inboxText: string }>;
+  cCandidates: ReflectionCandidate[];
+  digest: DecisionDigestEntry[];
+  shardGaps: VerifierGap[];
+  principlesText: string;
+}): string {
+  const sections: string[] = [];
+
+  sections.push(`# Pass V — Brief · ${input.date}
+
+Decide the reflection candidates and write the morning briefing. Output the JSON object per the system prompt.
+`);
+
+  sections.push(`## Conditioning report (Pass A)
+
+${fence({
+    date: input.condition.date,
+    hoursWindow: input.condition.hoursWindow,
+    trivial: input.condition.trivial,
+    totals: input.condition.totals,
+    projects: input.condition.projects.map((p) => ({
+      projectName: p.projectName,
+      sessions: p.sessions,
+      git: p.git,
+      tickets: p.tickets,
+      heartbeat: p.heartbeat,
+    })),
+  })}
+`);
+
+  sections.push(`## Taste principles (the lens)
+
+${input.principlesText.trim() || "(no principles file present)"}
+`);
+
+  const withInbox = input.inboxes.filter((i) => i.inboxText.trim().length > 0);
+  sections.push(`## Heartbeat inboxes (${withInbox.length} with content)
+
+${
+    withInbox.length > 0
+      ? withInbox
+        .map((i) => `### ${i.projectId}\n\n${i.inboxText.trim()}`)
+        .join("\n\n")
+      : "(all empty)"
+  }
+`);
+
+  sections.push(`## Canon decisions already made (${input.digest.length})
+
+The per-project verifier calls decided these. They are settled — do not re-decide them, and do not put their ids in your decisions[]. They're here so the briefing can say what actually landed.
+
+${input.digest.length > 0 ? fence(input.digest) : "(no candidates were in play tonight)"}
+`);
+
+  sections.push(`## Gaps already reported by the per-project calls (${input.shardGaps.length})
+
+${input.shardGaps.length > 0 ? fence(input.shardGaps) : "(none)"}
+`);
+
+  sections.push(`## Pass C reflection candidates (${input.cCandidates.length}) — yours to decide
+
+${
+    input.cCandidates.length > 0
+      ? fence(input.cCandidates.map((c, i) => ({ candidate_id: `C[${i}]`, ...c })))
       : "(none)"
   }
 `);
 
   sections.push(`## Output
 
-Return the JSON object per the system prompt schema. Every candidate id above must appear exactly once in decisions[].`);
+Return the JSON object per the system prompt schema: decisions[] for the C candidates only, gaps[], and briefing_markdown.`);
 
   return sections.join("\n");
 }
@@ -474,21 +661,23 @@ export async function loadVerifierBundle(
       }
     }
 
-    const canon = await serializeProjectCanon(paths, projectId);
     const midSession = await readCandidates(paths, projectId);
     const inboxPath = join(paths.projectsDir, projectId, "inbox.md");
     const inboxText = existsSync(inboxPath) ? readFileSync(inboxPath, "utf-8") : "";
 
-    // Skip projects with zero signal AND zero inputs — saves Opus tokens.
-    const hasInput =
-      bCandidates.length > 0 ||
-      midSession.length > 0 ||
-      canon.facts.length > 0 ||
-      canon.conventions.length > 0 ||
-      canon.decisions.length > 0 ||
-      canon.questions.length > 0 ||
-      inboxText.trim().length > 0;
-    if (!hasInput) continue;
+    // A project earns a place in the bundle if it has candidates to decide or an
+    // inbox for the briefing to fold in. Canon presence used to qualify a
+    // project on its own, which shipped the entire canon of projects the
+    // verifier could decide nothing about (TK-137).
+    const hasCandidates = bCandidates.length > 0 || midSession.length > 0;
+    if (!hasCandidates && inboxText.trim().length === 0) continue;
+
+    // Canon is only read for projects that will get a verifier call. Serializing
+    // revrec's 183KB to hand it to the briefer, which never cites a hash, is
+    // pure cost.
+    const canon = hasCandidates
+      ? await serializeProjectCanon(paths, projectId)
+      : { projectId, facts: [], conventions: [], decisions: [], questions: [] };
 
     perProject.push({ projectId, canon, midSessionCandidates: midSession, inboxText, bCandidates });
   }
@@ -522,12 +711,14 @@ export async function callVerifier(
   systemPrompt: string,
   userContent: string,
   caller: ModelCaller = defaultCaller,
+  opts: { label?: string; requireBriefing?: boolean } = {},
 ): Promise<VerifierCallResult> {
   const { provider, modelId } = verifierModel();
+  assertPromptFits(opts.label ?? "V", systemPrompt, userContent);
   const response = await caller({ provider, modelId, systemPrompt, userContent });
   const raw = response.text;
   const parsed = parseVerifierJson(raw);
-  const validated = validateVerifierOutput(parsed);
+  const validated = validateVerifierOutput(parsed, { requireBriefing: opts.requireBriefing });
   if ("error" in validated) {
     throw new Error(`Verifier output failed schema: ${validated.error}\nFirst 400 chars: ${raw.slice(0, 400)}`);
   }
@@ -563,6 +754,8 @@ export interface RunVerifierResult {
   };
   usage: PassUsageRecord;
   cost: CostBreakdown;
+  /** Projects that got their own verifier call, in order. */
+  shardedProjects: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -672,40 +865,109 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   }
 
   const bundle = await loadVerifierBundle(opts.paths, opts.date);
-  const userContent = buildVerifierUserContent(bundle);
   const soulText = existsSync(opts.paths.soul)
     ? readFileSync(opts.paths.soul, "utf-8")
     : "";
-  const systemPrompt = buildVerifierSystemPrompt(soulText);
-  const result = await callVerifier(systemPrompt, userContent, opts.caller);
 
-  await Bun.write(decisionsPath, JSON.stringify({ decisions: result.output.decisions }, null, 2));
-  await Bun.write(gapsPath, formatGapsMarkdown(result.output.gaps));
+  const decisions: VerifierDecision[] = [];
+  const gaps: VerifierGap[] = [];
+  const digest: DecisionDigestEntry[] = [];
+  const usages: Array<UsageDelta & { durationMs: number | null }> = [];
+  const shardedProjects: string[] = [];
+
+  // ---- Per-project calls, serialized -------------------------------------
+  // Serial, not parallel: concurrent `claude --print` children contend on the
+  // OAuth credential store in a no-GUI launchd context and stall each other out
+  // — the same reason Pass B runs in series.
+  //
+  // Any shard failure aborts the whole pass. Pass F drains a project's
+  // candidates.md whenever that project has candidates, decisions or not, so a
+  // partial run would drain candidates nothing decided on. All-or-nothing keeps
+  // the queue intact for tomorrow.
+  const shardSystem = buildProjectVerifierSystemPrompt();
+  for (const block of bundle.perProject) {
+    if (!blockHasCandidates(block)) continue;
+    const userContent = buildProjectVerifierUserContent(
+      bundle.date,
+      bundle.principlesText,
+      block,
+    );
+    const shard = await callVerifier(shardSystem, userContent, opts.caller, {
+      label: `V.${block.projectId}`,
+      requireBriefing: false,
+    });
+    decisions.push(...shard.output.decisions);
+    gaps.push(...shard.output.gaps);
+    digest.push(...digestShardDecisions(block, shard.output.decisions));
+    usages.push(shard.usage);
+    shardedProjects.push(block.projectId);
+  }
+
+  // ---- Briefing call ------------------------------------------------------
+  const briefSystem = buildBrieferSystemPrompt(soulText);
+  const briefUser = buildBriefingUserContent({
+    date: bundle.date,
+    condition: bundle.condition,
+    inboxes: bundle.perProject.map((b) => ({ projectId: b.projectId, inboxText: b.inboxText })),
+    cCandidates: bundle.cCandidates,
+    digest,
+    shardGaps: gaps,
+    principlesText: bundle.principlesText,
+  });
+  const brief = await callVerifier(briefSystem, briefUser, opts.caller, {
+    label: "V.brief",
+    requireBriefing: true,
+  });
+  usages.push(brief.usage);
+  gaps.push(...brief.output.gaps);
+
+  // The briefer is told to decide C candidates only, but a decision it repeats
+  // from the digest would double-admit an entry Pass F already has a decision
+  // for. Drop anything that isn't a reflection rather than trusting the prompt.
+  for (const d of brief.output.decisions) {
+    if (d.candidate_id.startsWith("C[")) decisions.push(d);
+  }
+
+  const output: VerifierOutput = {
+    decisions,
+    gaps,
+    briefing_markdown: brief.output.briefing_markdown,
+  };
+
+  await Bun.write(decisionsPath, JSON.stringify({ decisions: output.decisions }, null, 2));
+  await Bun.write(gapsPath, formatGapsMarkdown(output.gaps));
   // Refine Opus's prose before landing — fixes flaky footer counts and surfaces
   // gaps as a section instead of just a count.
-  const refined = refineBriefing(
-    result.output.briefing_markdown,
-    result.output.decisions,
-    result.output.gaps,
-  );
+  const refined = refineBriefing(output.briefing_markdown, output.decisions, output.gaps);
   await Bun.write(briefingPath, refined);
   // Full structured output — Pass F (Apply) consumes this for gap-landing
   // and taste-readout. Markdown files above are for humans.
-  await Bun.write(fullOutputPath, JSON.stringify(result.output, null, 2));
+  await Bun.write(fullOutputPath, JSON.stringify(output, null, 2));
 
+  // One usage record for the pass, summed across its calls. Same model
+  // throughout, so the cost math holds — and usage.json keeps exactly one V row
+  // regardless of how many projects were in play.
+  const totalUsage: UsageDelta & { durationMs: number | null } = {
+    provider: usages[0]?.provider ?? DEFAULT_PROVIDER,
+    model: usages[0]?.model ?? verifierModel().modelId,
+    inputTokens: usages.reduce((n, u) => n + u.inputTokens, 0),
+    outputTokens: usages.reduce((n, u) => n + u.outputTokens, 0),
+    durationMs: usages.reduce((n, u) => n + (u.durationMs ?? 0), 0),
+  };
+  const cost = estimateCost(totalUsage);
   const usageRecord: Omit<PassUsageRecord, "recordedAt"> = {
     pass: "V",
-    provider: result.usage.provider,
-    model: result.usage.model,
-    inputTokens: result.usage.inputTokens,
-    outputTokens: result.usage.outputTokens,
-    durationMs: result.usage.durationMs,
-    cost: result.cost,
+    provider: totalUsage.provider,
+    model: totalUsage.model,
+    inputTokens: totalUsage.inputTokens,
+    outputTokens: totalUsage.outputTokens,
+    durationMs: totalUsage.durationMs,
+    cost,
   };
   const summary = await appendUsageRecord(opts.paths, opts.date, usageRecord);
 
   return {
-    output: result.output,
+    output,
     artifacts: {
       decisionsPath,
       gapsPath,
@@ -714,8 +976,10 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
       usagePath: usagePath(opts.paths, opts.date),
     },
     usage: summary.records[summary.records.length - 1]!,
-    cost: result.cost,
+    cost,
+    shardedProjects,
   };
 }
 
-export const __VERIFIER_PROMPT = VERIFIER_SYSTEM_PROMPT;
+export const __PROJECT_VERIFIER_PROMPT = PROJECT_VERIFIER_SYSTEM_PROMPT;
+export const __BRIEFER_PROMPT = BRIEFER_SYSTEM_PROMPT;

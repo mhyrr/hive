@@ -341,7 +341,11 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   // ---- Pass V (Opus verify) -------------------------------------------------
   // V is the only pass whose failure is fatal — without decisions there's
   // nothing for F to apply and no briefing to land.
-  emit({ type: "pass-start", pass: "V", detail: "Opus — verify + brief (this can take 30-60s)" });
+  emit({
+    type: "pass-start",
+    pass: "V",
+    detail: "Opus — one call per project with candidates, then the brief",
+  });
   let verifyOK = false;
   try {
     const { value, durationMs } = await timed(() =>
@@ -351,10 +355,13 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       const k = d.action;
       result.decisionCounts[k] = (result.decisionCounts[k] ?? 0) + 1;
     }
+    const shards = value.shardedProjects;
     result.passes.V = {
       pass: "V",
       status: "complete",
-      detail: `${value.output.decisions.length} decision(s), ${value.output.gaps.length} gap(s)`,
+      detail:
+        `${value.output.decisions.length} decision(s), ${value.output.gaps.length} gap(s) · ` +
+        `${shards.length + 1} call(s)${shards.length > 0 ? ` (${shards.join(", ")} + brief)` : " (brief only)"}`,
       durationMs,
     };
     emit({ type: "pass-complete", report: result.passes.V });
