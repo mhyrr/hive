@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Buffer } from "node:buffer";
 
 import { campaignCommand } from "./commands/campaign";
+import { contextCommand } from "./commands/context";
 import { councilCommand } from "./commands/council";
 import { dashboardCommand } from "./commands/dashboard";
 import { dispatchCommand } from "./commands/dispatch";
@@ -31,6 +32,8 @@ import { findPiBin } from "./lib/pi-wire";
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: initCommand,
   doctor: doctorCommand,
+  context: contextCommand,
+  prompts: contextCommand,
   project: projectCommand,
   stack: stackCommand,
   campaign: campaignCommand,
@@ -58,6 +61,7 @@ When called with anything else (or no args), launches an interactive harness as 
 HIVE Commands:
   init                       Set up ~/.hive and register MCP server
   doctor                     Validate installation health
+  context                    Audit session-start context size vs budgets (alias: prompts)
   project add <name> <path>  Register a project (--bootstrap to scan)
   project bootstrap [name]   Scan repo and seed candidate facts
   stack list|install|sync    Manage language/framework skill stacks
