@@ -219,6 +219,12 @@ export async function initCommand(args: string[]): Promise<void> {
   // Ensure logs directory
   await ensureDirectory(join(paths.home, "logs"));
 
+  // Install template watches (idempotent — existing files never overwritten)
+  const watchesInstalled = await installTemplateDir("watches", paths.watchesDir);
+  if (watchesInstalled > 0) {
+    console.log(`Installed ${watchesInstalled} template watch(es) to ~/.hive/watches/`);
+  }
+
   // Install launchd agents for scheduled jobs
   if (installLaunchAgent("com.hive.nightly.plist")) {
     console.log("Installed nightly extraction (2am daily via launchd)");
@@ -231,6 +237,9 @@ export async function initCommand(args: string[]): Promise<void> {
   }
   if (installLaunchAgent("com.hive.dashboard.plist")) {
     console.log("Installed dashboard server (127.0.0.1:7777, KeepAlive, via launchd)");
+  }
+  if (installLaunchAgent("com.hive.watches.plist")) {
+    console.log("Installed watches tick (hourly via launchd)");
   }
 
   // Symlink binaries to ~/.local/bin/
