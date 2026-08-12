@@ -42,6 +42,10 @@ export interface WatchStateEntry {
 
 export interface WatchState {
   watches: Record<string, WatchStateEntry>;
+  /** ISO stamp of the last hourly tick (any outcome) — the liveness signal:
+   * a settled fleet updates no per-watch state for hours, but the tick
+   * itself should never go quiet. */
+  lastTick?: string | null;
 }
 
 const USAGE_LOG_CAP = 100;
@@ -72,7 +76,10 @@ export async function loadWatchState(paths: HivePaths): Promise<WatchState> {
       typeof (parsed as WatchState).watches === "object" &&
       (parsed as WatchState).watches !== null
     ) {
-      return { watches: (parsed as WatchState).watches };
+      return {
+        watches: (parsed as WatchState).watches,
+        lastTick: typeof (parsed as WatchState).lastTick === "string" ? (parsed as WatchState).lastTick : null,
+      };
     }
   } catch {
     // intentional: missing or corrupt state → fresh (fail open)

@@ -43,6 +43,7 @@ import {
 import { resolveHiveBin, HiveBinNotFoundError } from "./hive-bin";
 import { renderDashboard, renderTicketsPageDocument, renderTastePageDocument } from "./render";
 import { collectDashboardData, collectTicketsPage, collectTastePage } from "./collect";
+import { collectWatchesPage, renderWatchesPageDocument } from "./watches-page";
 import { collectRuns, collectArcs } from "./runs/collect";
 import { renderRunsPageDocument, renderArcRunsPageDocument } from "./runs/render";
 import { collectDispatchDetail } from "./runs/collect-detail";
@@ -128,6 +129,9 @@ export async function handleRequest(req: Request, rctx: RequestCtx): Promise<Res
     if (req.method === "GET" && url.pathname === "/taste") {
       return serveTastePage(rctx);
     }
+    if (req.method === "GET" && url.pathname === "/watches") {
+      return serveWatchesPage(rctx);
+    }
     if (req.method === "GET" && url.pathname.startsWith("/runs/")) {
       return serveRunDetail(rctx, url.pathname.slice("/runs/".length));
     }
@@ -176,6 +180,17 @@ async function serveTicketsPage(rctx: RequestCtx): Promise<Response> {
 async function serveTastePage(rctx: RequestCtx): Promise<Response> {
   const data = await collectTastePage(rctx.paths);
   const html = renderTastePageDocument(data, { interactive: true });
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function serveWatchesPage(rctx: RequestCtx): Promise<Response> {
+  const data = await collectWatchesPage(rctx.paths);
+  const html = renderWatchesPageDocument(data);
   return new Response(html, {
     headers: {
       "content-type": "text/html; charset=utf-8",
@@ -408,6 +423,7 @@ function render404(id: string): string {
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
     ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
   ];
   const nav = navItems
     .map(([label, href]) => `<a href="${href}">${label}</a>`)
@@ -449,6 +465,7 @@ function renderRunDetailDocument(id: string, fragmentHtml: string): string {
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
     ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
   ];
   const nav = navItems
     .map(([label, href]) => {

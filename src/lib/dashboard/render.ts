@@ -240,6 +240,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     ["/tickets", "Tickets"],
     ["/runs", "Runs"],
     ["/taste", "Taste"],
+    ["/watches", "Watches"],
   ]
     .map(([href, label]) => `<a href="${href}">${label}</a>`)
     .join("");
@@ -706,6 +707,7 @@ export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOpt
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
     ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
   ];
   const nav = navItems
     .map(([label, href]) => {
@@ -1005,6 +1007,7 @@ const TASTE_NAV: Array<[string, string]> = [
   ["TICKETS", "/tickets"],
   ["RUNS", "/runs"],
   ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
 ];
 
 /** A single taste unit — rule scannable, the WHY behind a disclosure. */

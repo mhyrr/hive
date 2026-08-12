@@ -159,6 +159,13 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
   const reports: WatchRunReport[] = [];
   let callsThisTick = 0;
 
+  // Liveness stamp: every hourly tick records itself, even when nothing is
+  // due — the dashboard's "is the ambient agent breathing" signal.
+  if (options.mode === "due") {
+    state.lastTick = toIsoTimestamp(now);
+    await saveWatchState(paths, state);
+  }
+
   const selected = watches.filter((w) => {
     if (options.mode === "named") return options.names?.includes(w.qualifiedName) || options.names?.includes(w.name);
     if (options.mode === "nightly") return w.cadence.type === "nightly";

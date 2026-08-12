@@ -824,6 +824,7 @@ function renderFullDocument(bodyContent: string, opts: RunsPageRenderOptions = {
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
     ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
   ];
   const nav = navItems
     .map(([label, href]) => {
