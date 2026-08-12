@@ -22,7 +22,7 @@ import { listProjects, type HivePaths } from "./paths";
 
 export type WatchAutonomy = "observe" | "propose" | "act";
 export type WatchVenue = "inbox" | "briefing" | "tickets" | "dispatch";
-export type WatchScopeKind = "tickets" | "commits" | "transcripts" | "memory" | "inbox";
+export type WatchScopeKind = "tickets" | "commits" | "transcripts" | "memory" | "inbox" | "runs";
 
 /** Model tier alias — resolution to a real model ID lives in watch-model.ts.
  * There is no "deterministic" tier here: a watch that fires makes exactly one
@@ -171,7 +171,11 @@ export function isDue(cadence: WatchCadence, lastRun: string | null, now: Date):
 // Parsing
 // ---------------------------------------------------------------------------
 
-export const SCOPE_KINDS: WatchScopeKind[] = ["tickets", "commits", "transcripts", "memory", "inbox"];
+export const SCOPE_KINDS: WatchScopeKind[] = ["tickets", "commits", "transcripts", "memory", "inbox", "runs"];
+
+/** Default when frontmatter omits scope. Excludes `runs` — nightly-artifact
+ * deltas are an explicit opt-in (@nightly watches), not ambient noise. */
+export const DEFAULT_SCOPE: WatchScopeKind[] = ["tickets", "commits", "transcripts", "memory", "inbox"];
 export const AUTONOMY_LEVELS: WatchAutonomy[] = ["observe", "propose", "act"];
 export const VENUES: WatchVenue[] = ["inbox", "briefing", "tickets", "dispatch"];
 export const TIERS: WatchTier[] = ["fast", "standard", "judgment"];
@@ -215,10 +219,10 @@ export function parseWatchFile(
     if (dropped.length > 0) warnings.push(`${label}: unknown scope kind(s) ${dropped.join(", ")} — dropped`);
     if (scope.length === 0) {
       warnings.push(`${label}: no valid scope kinds — defaulting to all`);
-      scope = [...SCOPE_KINDS];
+      scope = [...DEFAULT_SCOPE];
     }
   } else {
-    scope = [...SCOPE_KINDS];
+    scope = [...DEFAULT_SCOPE];
   }
 
   let windowMs = DEFAULT_WINDOW_MS;

@@ -19,7 +19,7 @@
 
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { getProjectPaths, listProjects, type HivePaths } from "./paths";
@@ -191,7 +191,37 @@ async function observeKind(
       }
       return { values, watermark: false };
     }
+    case "runs": {
+      // Global, not per-project: the nightly run artifacts live in one tree.
+      // Watermark = newest run-dir mtime, so a completed nightly (fresh
+      // briefing/taste files) is the trigger.
+      const newest = newestRunDirMtime(paths);
+      values["nightly runs"] = newest > 0 ? String(newest) : "";
+      return { values, watermark: true };
+    }
   }
+}
+
+function listRunDirs(paths: HivePaths): Array<{ date: string; mtimeMs: number }> {
+  try {
+    const entries = readdirSync(paths.memoryRunsDir, { withFileTypes: true });
+    const out: Array<{ date: string; mtimeMs: number }> = [];
+    for (const e of entries) {
+      if (!e.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(e.name)) continue;
+      try {
+        out.push({ date: e.name, mtimeMs: statSync(join(paths.memoryRunsDir, e.name)).mtimeMs });
+      } catch {
+        // intentional: dir vanished mid-scan
+      }
+    }
+    return out.sort((a, b) => b.date.localeCompare(a.date));
+  } catch {
+    return [];
+  }
+}
+
+function newestRunDirMtime(paths: HivePaths): number {
+  return Math.floor(Math.max(0, ...listRunDirs(paths).map((d) => d.mtimeMs)));
 }
 
 export interface WatchDeltaEvaluation {
@@ -239,7 +269,9 @@ export async function evaluateWatchDelta(args: {
     const changedProjects: string[] = [];
     const next: Record<string, string> = {};
 
-    for (const p of projects) {
+    // Iterate the observation's own keys: per-project kinds key by project,
+    // the global `runs` kind keys by its single label.
+    for (const p of Object.keys(values)) {
       const current = values[p] ?? "";
       const prior = last[p] ?? "";
       if (watermark) {
@@ -403,6 +435,24 @@ export async function assembleWatchDigest(args: {
     sections.push(`Not expanded (cold or beyond top ${MAX_DIGEST_PROJECTS}): ${skipped.map((a) => a.project).join(", ")}.`);
   }
 
+  if (watch.scope.includes("runs")) {
+    const runDirs = listRunDirs(paths).filter((d) => d.mtimeMs >= sinceMs).slice(0, 7);
+    const lines: string[] = [];
+    for (const d of runDirs) {
+      const briefing = await readIfExists(join(paths.memoryRunsDir, d.date, "briefing.md"));
+      if (briefing && briefing.trim()) {
+        lines.push(`### runs/${d.date}/briefing.md`, briefing.trim().slice(0, 1_800));
+        provenance.push(`runs/${d.date}/briefing.md`);
+      }
+      const taste = await readIfExists(join(paths.memoryRunsDir, d.date, "taste-decisions.md"));
+      if (taste && taste.trim()) {
+        lines.push(`### runs/${d.date}/taste-decisions.md (tail)`, taste.trim().slice(-600));
+        provenance.push(`runs/${d.date}/taste-decisions.md`);
+      }
+    }
+    if (lines.length > 0) sections.push(`\n## Nightly runs in window`, capSection(lines, 12_000));
+  }
+
   for (const { project } of focus) {
     const projLines: string[] = [`\n## Project: ${project}`];
 
@@ -491,6 +541,6 @@ export async function assembleWatchDigest(args: {
   if (text.length > DIGEST_CHAR_CAP) {
     text = text.slice(0, DIGEST_CHAR_CAP) + "\n… (digest truncated at cap)";
   }
-  const empty = !sections.some((s) => s.startsWith("\n## Project:"));
+  const empty = !sections.some((s) => s.startsWith("\n## "));
   return { text, provenance, empty };
 }

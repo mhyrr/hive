@@ -46,6 +46,7 @@ import {
   type TasteConsolidateResult,
 } from "./taste-consolidate";
 import { appendUsageRecord, estimateCost } from "./pricing";
+import { runWatches, type WatchCaller } from "./watch-run";
 
 // ---------------------------------------------------------------------------
 // Result shape
@@ -81,6 +82,8 @@ export interface NightlyResult {
     TA: PassReport[];
     TB: PassReport[];
     TC: PassReport[];
+    // @nightly watches (TK-138), one report per watch evaluated.
+    W: PassReport[];
   };
   artifactsDir: string;
   briefingPath: string | null;
@@ -205,6 +208,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       TA: [],
       TB: [],
       TC: [],
+      W: [],
     },
     artifactsDir: join(paths.memoryRunsDir, date),
     briefingPath: null,
@@ -255,6 +259,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     result.passes.TA = [{ pass: "TA", status: "skipped", detail: "trivial day" }];
     result.passes.TB = [{ pass: "TB", status: "skipped", detail: "trivial day" }];
     result.passes.TC = [{ pass: "TC", status: "skipped", detail: "trivial day" }];
+    result.passes.W = [{ pass: "W", status: "skipped", detail: "trivial day" }];
     if (!dryRun) {
       result.briefingPath = await copyStubToBriefings(paths, date, stub);
       result.passes.F = { pass: "F", status: "skipped", detail: "stub-only briefing copied" };
@@ -496,6 +501,49 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     result.passes.TA = [skip("TA")];
     result.passes.TB = [skip("TB")];
     result.passes.TC = [skip("TC")];
+  }
+
+  // ---- @nightly watches (TK-138) — after both tracks, before the dashboard --
+  // Invoked here (not by the hourly tick) so they read tonight's runs/{DATE}/
+  // artifacts; the dashboard rebuild below then captures whatever they surface
+  // (bets.md et al). Delta-gated: a night that changed nothing spawns nothing.
+  // Skipped on --dry-run — watches write venue artifacts and spend real calls.
+  if (dryRun) {
+    result.passes.W = [{ pass: "W", status: "skipped", detail: "dry-run" }];
+  } else {
+    emit({ type: "pass-start", pass: "W", detail: "@nightly watches" });
+    try {
+      const watchCaller: WatchCaller | undefined = caller
+        ? async (input) => {
+            const c = await caller({ provider: "anthropic", ...input });
+            return { ...c, provider: "anthropic" as const };
+          }
+        : undefined;
+      const { value, durationMs } = await timed(() =>
+        runWatches({ paths, mode: "nightly", date, caller: watchCaller }),
+      );
+      if (value.reports.length === 0) {
+        result.passes.W = [{ pass: "W", status: "skipped", detail: "no @nightly watches", durationMs }];
+        emit({ type: "pass-skipped", report: result.passes.W[0] });
+      } else {
+        for (const r of value.reports) {
+          const report: PassReport = {
+            pass: `W.${r.watch}`,
+            status: r.outcome === "error" ? "failed" : "complete",
+            detail: r.outcome + (r.detail ? ` — ${r.detail}` : ""),
+            error: r.error,
+          };
+          result.passes.W.push(report);
+          emit({ type: r.outcome === "error" ? "pass-failed" : "pass-complete", report });
+          if (r.error) result.errors.push(`Watch ${r.watch}: ${r.error}`);
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      result.passes.W = [{ pass: "W", status: "failed", error: msg }];
+      emit({ type: "pass-failed", report: result.passes.W[0] });
+      result.errors.push(`Watches: ${msg}`);
+    }
   }
 
   // ---- Dashboard rebuild — runs LAST -----------------------------------------

@@ -221,3 +221,52 @@ describe("assembleWatchDigest", () => {
     expect(digest.empty).toBe(true);
   });
 });
+
+describe("runs scope kind", () => {
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-runs-"));
+    paths = await ensureHiveScaffold(home);
+  });
+
+  test("nightly artifacts trigger once, then settle until the next run", async () => {
+    const watch = makeWatch({ scope: ["runs"], project: null, windowMs: 7 * 24 * HOUR });
+
+    // No runs yet → no trigger.
+    const before = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    expect(before.changed).toBe(false);
+
+    const runDir = join(paths.memoryRunsDir, "2026-08-12");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "briefing.md"), "# HIVE — 2026-08-12\n\nShipped the watcher.");
+
+    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    expect(first.changed).toBe(true);
+    expect(first.reasons[0]).toContain("runs");
+
+    const second = await evaluateWatchDelta({
+      paths,
+      watch,
+      lastDigests: first.fingerprints,
+      now: new Date(ANCHOR.getTime() + HOUR),
+      seams: seams({}),
+    });
+    expect(second.changed).toBe(false);
+  });
+
+  test("digest includes run artifacts with provenance", async () => {
+    const runDir = join(paths.memoryRunsDir, "2026-08-12");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "briefing.md"), "# HIVE — 2026-08-12\n\nShipped the watcher.");
+    await writeFile(join(runDir, "taste-decisions.md"), "Approved: prefer boring solutions.");
+
+    const watch = makeWatch({ scope: ["runs"], project: null, windowMs: 7 * 24 * HOUR });
+    const digest = await assembleWatchDigest({ paths, watch, now: ANCHOR, seams: seams({}) });
+    expect(digest.empty).toBe(false);
+    expect(digest.text).toContain("Shipped the watcher");
+    expect(digest.text).toContain("prefer boring solutions");
+    expect(digest.provenance).toContain("runs/2026-08-12/briefing.md");
+    expect(digest.provenance).toContain("runs/2026-08-12/taste-decisions.md");
+  });
+});

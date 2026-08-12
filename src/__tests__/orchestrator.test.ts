@@ -31,6 +31,8 @@ interface StubBehavior {
   tcDecisions?: string; // TC coherence JSON returned for every TC call
   replayFlags?: Record<string, string[]>; // replay judge: dedupe_key → flagged window ids
   failTASessionFiles?: Set<string>; // throw TA when its content mentions one
+  // @nightly watches (W pass)
+  watchResponse?: string;
 }
 
 function makeStub(behavior: StubBehavior): ModelCaller {
@@ -80,6 +82,10 @@ function makeStub(behavior: StubBehavior): ModelCaller {
       // Pass C
       if (behavior.failC) throw new Error("stubbed C failure");
       text = behavior.cResponse ?? "[]";
+    } else if (input.systemPrompt.includes("You are a HIVE watch")) {
+      // W pass (@nightly watches) — judgment tier.
+      model = "claude-opus-4-8";
+      text = behavior.watchResponse ?? "NO_SIGNAL";
     } else {
       // Pass B — figure out which project from the user content.
       const projectMatch = input.userContent.match(/Project:\s*(\S+)/);
@@ -130,6 +136,7 @@ describe("runNightly — trivial day", () => {
     expect(result.passes.B[0]?.status).toBe("skipped");
     expect(result.passes.C.status).toBe("skipped");
     expect(result.passes.V.status).toBe("skipped");
+    expect(result.passes.W[0]?.status).toBe("skipped");
 
     const stubBriefing = join(paths.memoryRunsDir, date, "briefing.md");
     expect(existsSync(stubBriefing)).toBe(true);
@@ -181,6 +188,57 @@ async function seedActivity(
   await appendProjectMemory(paths, projectId, "fact", "Existing baseline fact", ["seed"]);
   return entryHash("Existing baseline fact");
 }
+
+// ---------------------------------------------------------------------------
+// W pass — @nightly watches ride the end of the pipeline (TK-138)
+// ---------------------------------------------------------------------------
+
+describe("runNightly — @nightly watches (W pass)", () => {
+  test("a bets-style watch fires after the tracks and lands its briefing artifact", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha", date);
+    await writeFile(
+      join(paths.watchesDir, "bets.md"),
+      "---\nname: bets\ncadence: @nightly\nscope: runs, tickets\nwindow: 7d\nmodel: judgment\nvenue: briefing\nautonomy: propose\n---\n\nWhat bets should we be thinking about?",
+    );
+
+    const stub = makeStub({
+      vResponse: JSON.stringify({
+        decisions: [],
+        gaps: [],
+        briefing_markdown: `# HIVE — ${date}\n\n## Headline\nWatch test landed.`,
+      }),
+      watchResponse: "Bet: TK-001 suggests the activity lane is real — first step: keep it.",
+    });
+
+    const result = await runNightly({ paths, date, caller: stub });
+
+    expect(result.passes.W.length).toBe(1);
+    expect(result.passes.W[0]?.pass).toBe("W.bets");
+    expect(result.passes.W[0]?.status).toBe("complete");
+    expect(result.passes.W[0]?.detail).toContain("surfaced");
+
+    const artifact = join(paths.memoryRunsDir, date, "bets.md");
+    expect(existsSync(artifact)).toBe(true);
+    expect(await Bun.file(artifact).text()).toContain("TK-001");
+  });
+
+  test("dry-run skips the W pass entirely", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = new Date().toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha", date);
+    await writeFile(
+      join(paths.watchesDir, "bets.md"),
+      "---\nname: bets\ncadence: @nightly\nscope: runs, tickets\nvenue: briefing\n---\n\nWhat bets?",
+    );
+
+    const result = await runNightly({ paths, date, dryRun: true, caller: makeStub({}) });
+    expect(result.passes.W[0]?.status).toBe("skipped");
+    expect(result.passes.W[0]?.detail).toBe("dry-run");
+    expect(existsSync(join(paths.memoryRunsDir, date, "bets.md"))).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // P1 — --date flag threading through Pass A (no calendar mismatch)
