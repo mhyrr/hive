@@ -18,6 +18,7 @@ export type HivePaths = {
   runsDir: string;
   campaignsDir: string;
   reflectionsDir: string;
+  watchesDir: string;
 };
 
 export type ProjectPaths = {
@@ -26,6 +27,7 @@ export type ProjectPaths = {
   heartbeatConfig: string;
   heartbeatOrders: string;
   inbox: string;
+  watchesDir: string;
 };
 
 export function resolveHiveHome(): string {
@@ -49,6 +51,7 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     runsDir: join(home, "runs"),
     campaignsDir: join(home, "campaigns"),
     reflectionsDir: join(home, "reflections"),
+    watchesDir: join(home, "watches"),
   };
 }
 
@@ -61,6 +64,7 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     heartbeatConfig: join(root, "heartbeat.json"),
     heartbeatOrders: join(root, "HEARTBEAT.md"),
     inbox: join(root, "inbox.md"),
+    watchesDir: join(root, "watches"),
   };
 }
 
@@ -82,6 +86,7 @@ export async function ensureHiveScaffold(
   await mkdir(paths.runsDir, { recursive: true });
   await mkdir(paths.campaignsDir, { recursive: true });
   await mkdir(paths.reflectionsDir, { recursive: true });
+  await mkdir(paths.watchesDir, { recursive: true });
 
   return paths;
 }
