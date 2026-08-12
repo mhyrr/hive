@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { completeClaudeTextBounded, type ClaudeTextCompletion } from "./claude";
 import { extractConfigValue } from "./config";
 import { getProjectPaths, type HivePaths } from "./paths";
-import { now as hiveNow, toIsoTimestamp } from "./time";
+import { now as hiveNow, toCompactTimestamp, toIsoTimestamp } from "./time";
 import {
   evaluateWatchDelta,
   assembleWatchDigest,
@@ -147,6 +147,53 @@ async function appendInbox(inboxPath: string, header: string, body: string): Pro
   await Bun.write(inboxPath, `${existing}${body}`);
 }
 
+/** Full observability for every model call: the EXACT prompts sent and what
+ * came back, one file per invocation under ~/.hive/watches/log/<date>/.
+ * No-delta ticks write nothing here (there was no call to record). */
+async function writeInvocationLog(args: {
+  paths: HivePaths;
+  watch: WatchDef;
+  now: Date;
+  modelId: string;
+  autonomy: WatchAutonomy;
+  reasons: string[];
+  systemPrompt: string;
+  userContent: string;
+  output: string | null;
+  outcome: string;
+  error?: string | null;
+  durationMs?: number | null;
+}): Promise<void> {
+  const dir = join(args.paths.watchesDir, "log", args.now.toISOString().slice(0, 10));
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, `${args.watch.qualifiedName.replace(/\//g, "--")}-${toCompactTimestamp(args.now)}.md`);
+  const body = [
+    "---",
+    `watch: ${args.watch.qualifiedName}`,
+    `at: ${toIsoTimestamp(args.now)}`,
+    `model: ${args.modelId}`,
+    `autonomy: ${args.autonomy}`,
+    `outcome: ${args.outcome}`,
+    ...(args.durationMs != null ? [`durationMs: ${args.durationMs}`] : []),
+    ...(args.reasons.length > 0 ? [`reasons: ${args.reasons.join(" | ")}`] : []),
+    "---",
+    "",
+    "## System prompt",
+    "",
+    args.systemPrompt,
+    "",
+    "## User content (digest + standing question)",
+    "",
+    args.userContent,
+    "",
+    args.error != null ? "## Error" : "## Output",
+    "",
+    args.error ?? args.output ?? "(none)",
+    "",
+  ].join("\n");
+  await Bun.write(file, body);
+}
+
 export async function runWatches(options: RunWatchesOptions): Promise<RunWatchesResult> {
   const { paths } = options;
   const now = options.now ?? hiveNow();
@@ -245,6 +292,14 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
         entry.lastOutcome = outcome;
         entry.lastError = err instanceof Error ? err.message : String(err);
         await saveWatchState(paths, state);
+        try {
+          await writeInvocationLog({
+            paths, watch, now, modelId, autonomy: effective, reasons: delta.reasons,
+            systemPrompt, userContent, output: null, outcome, error: entry.lastError,
+          });
+        } catch (logErr) {
+          warnings.push(`${watch.qualifiedName}: invocation log write failed (${logErr instanceof Error ? logErr.message : String(logErr)})`);
+        }
         report({ outcome, error: entry.lastError, reasons: delta.reasons, durationMs: Date.now() - startMs });
         continue;
       }
@@ -300,6 +355,16 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
       entry.lastOutcome = outcome;
       entry.lastError = outcome === "error" ? detail ?? null : null;
       await saveWatchState(paths, state);
+      try {
+        await writeInvocationLog({
+          paths, watch, now, modelId, autonomy: effective, reasons: delta.reasons,
+          systemPrompt, userContent, output,
+          outcome: outcome + (detail ? ` (${detail})` : ""),
+          durationMs: completion.durationMs,
+        });
+      } catch (logErr) {
+        warnings.push(`${watch.qualifiedName}: invocation log write failed (${logErr instanceof Error ? logErr.message : String(logErr)})`);
+      }
       report({ outcome, detail, reasons: delta.reasons, artifactPath, durationMs: Date.now() - startMs });
     } catch (err) {
       // Per-watch isolation: one watch's throw never kills the tick.

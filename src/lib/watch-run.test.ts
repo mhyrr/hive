@@ -273,6 +273,48 @@ describe("runWatches", () => {
     expect(reports.find((r) => r.watch === "alpha/off")).toBeUndefined();
   });
 
+  test("every model invocation logs its exact prompts to watches/log/", async () => {
+    const ticket = await createTicket(paths, "alpha", { title: "Ship it" });
+    const projWatches = getProjectPaths(paths, "alpha").watchesDir;
+    await mkdir(projWatches, { recursive: true });
+    await writeFile(join(projWatches, "ready.md"), "---\ncadence: 2h\nscope: tickets\n---\n\nWhich are ready?");
+
+    const { caller } = stubCaller(`${ticket.id} noted.`);
+    await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
+
+    const logDir = join(paths.watchesDir, "log", ANCHOR.toISOString().slice(0, 10));
+    const files = (await import("node:fs/promises")).readdir(logDir);
+    const names = await files;
+    expect(names.length).toBe(1);
+    expect(names[0]).toContain("alpha--ready");
+    const content = await Bun.file(join(logDir, names[0]!)).text();
+    // The complete audit trail: prompts in, output out, outcome on top.
+    expect(content).toContain("## System prompt");
+    expect(content).toContain("You are a HIVE watch");
+    expect(content).toContain("## User content (digest + standing question)");
+    expect(content).toContain("Which are ready?");
+    expect(content).toContain(ticket.id);
+    expect(content).toContain("## Output");
+    expect(content).toContain("outcome: surfaced");
+
+    // A no-delta tick makes no call and logs nothing new.
+    await runWatches({
+      paths,
+      mode: "due",
+      now: new Date(ANCHOR.getTime() + 3 * HOUR),
+      caller: throwingCaller,
+      seams: NO_SESSIONS,
+    });
+    expect((await (await import("node:fs/promises")).readdir(logDir)).length).toBe(1);
+  });
+
+  test("README.md in a watches dir is never parsed as a watch", async () => {
+    await writeFile(join(paths.watchesDir, "README.md"), "# Docs, not a watch\n\nNo cadence here.");
+    const { reports, warnings } = await runWatches({ paths, mode: "due", now: ANCHOR, caller: throwingCaller, seams: NO_SESSIONS });
+    expect(reports).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
   test("named mode bypasses due-ness and the delta gate", async () => {
     await createTicket(paths, "alpha", { title: "Ship it" });
     const projWatches = getProjectPaths(paths, "alpha").watchesDir;

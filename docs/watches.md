@@ -37,7 +37,21 @@ Writing your own watch is the front door, not an internal detail: drop a
 file in `~/.hive/watches/`, and it is live at the next tick. No code.
 
 A malformed file degrades to a parse warning (visible in `hive watch list`
-and on the dashboard page); it never kills the tick.
+and on the dashboard page); it never kills the tick. A `README.md` in a
+watches dir is documentation, never parsed as a watch.
+
+## Where everything lives
+
+`~/.hive/watches/` is the whole subsystem, self-described by its README:
+
+- `*.md` — the cross-project watches themselves (project-scoped ones under
+  `projects/<p>/watches/`)
+- `state.json` — per-watch tick state + the hourly `lastTick` liveness stamp
+- `log/<date>/<watch>-<time>.md` — **one file per model invocation**: the
+  exact system prompt, the full assembled digest + standing question sent,
+  and the raw output or error, with outcome and delta reasons in the
+  frontmatter. No-delta ticks make no call and log nothing. If a watch
+  surfaced something, the complete prompt that produced it is on disk.
 
 ## Scheduling
 

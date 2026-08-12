@@ -293,7 +293,7 @@ export function parseWatchFile(
 async function listWatchFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
   return entries
-    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .filter((e) => e.isFile() && e.name.endsWith(".md") && e.name.toLowerCase() !== "readme.md")
     .map((e) => join(dir, e.name))
     .sort();
 }
