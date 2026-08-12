@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { join, sep } from "node:path";
 
 import { UsageError } from "./errors";
 import { getHivePaths } from "./paths";
@@ -27,30 +27,61 @@ export function normalizeProjectName(input: string): string {
 }
 
 /**
+ * Resolve symlinks so a repo reached through one path still matches a config
+ * registered under the other — /tmp vs /private/tmp on macOS, or a symlinked
+ * worktree. A registered path that no longer exists resolves to itself rather
+ * than throwing; it simply won't match anything.
+ */
+function canonical(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/** True when `dir` is `base` or sits underneath it, respecting path boundaries. */
+function isWithin(dir: string, base: string): boolean {
+  if (dir === base) return true;
+  return dir.startsWith(base.endsWith(sep) ? base : base + sep);
+}
+
+/**
  * Resolve which registered project owns the current working directory.
  * Matches cwd against the `path` field in each project's config.md frontmatter.
- * Falls back to the first registered project if no path matches.
+ *
+ * Returns null when nothing matches. It used to fall back to the first project
+ * directory alphabetically, which meant running from an unregistered directory
+ * silently adopted an unrelated project's identity — memory writes and tickets
+ * landed in whichever project sorted first. A wrong project is worse than none:
+ * callers already handle null, and none of them can detect the wrong answer.
+ *
+ * The deepest matching path wins, so a subproject registered inside a monorepo
+ * beats the repo root instead of resolving by readdir order.
  */
 export function resolveProjectFromCwd(): string | null {
   const paths = getHivePaths();
-  const cwd = process.cwd();
   if (!existsSync(paths.projectsDir)) return null;
+  const cwd = canonical(process.cwd());
 
-  const projects = readdirSync(paths.projectsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name);
+  let best: { projectId: string; depth: number } | null = null;
 
-  for (const projectId of projects) {
+  for (const entry of readdirSync(paths.projectsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
     try {
-      const configPath = join(paths.projectsDir, projectId, "config.md");
-      const raw = readFileSync(configPath, "utf-8");
-      const parsed = parseFrontmatter(raw);
-      const projectPath = parsed.attributes?.path as string | undefined;
-      if (projectPath && cwd.startsWith(projectPath)) return projectId;
+      const raw = readFileSync(join(paths.projectsDir, entry.name, "config.md"), "utf-8");
+      const configured = parseFrontmatter(raw).attributes?.path as string | undefined;
+      if (!configured) continue;
+
+      const projectPath = canonical(configured);
+      if (!isWithin(cwd, projectPath)) continue;
+      if (!best || projectPath.length > best.depth) {
+        best = { projectId: entry.name, depth: projectPath.length };
+      }
     } catch { /* intentional: skip unreadable project config */ }
   }
 
-  return projects[0] ?? null;
+  return best?.projectId ?? null;
 }
 
 export function extractRepoPath(projectConfig: string): string | null {

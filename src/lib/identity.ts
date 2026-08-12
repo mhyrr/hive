@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { getHivePaths } from "./paths";
 import { resolveProjectFromCwd } from "./project";
 import { buildStackHint, resolveProjectStack, type Harness } from "./stack";
-import { buildTasteLayer } from "./taste";
+import { buildTasteLayer, getTastePaths } from "./taste";
 
 const IDENTITY_FILES = ["SOUL.md", "IDENTITY.md", "SELF.md", "AGENTS.md", "TRUST.md"];
 
@@ -29,7 +29,7 @@ async function loadPersona(home: string, explicit?: string | null): Promise<stri
   return null;
 }
 
-interface CanonicalIdentityOpts {
+export interface CanonicalIdentityOpts {
   /** Project ID for memory + stack hint. Omit for a project-neutral prefix. */
   projectId?: string | null;
   /** Include the project's memory index/knowledge. Heartbeat sets false for cache stability. */
@@ -44,6 +44,89 @@ interface CanonicalIdentityOpts {
   includePersona?: boolean;
   /** Explicit persona name (from --persona). Falls back to HIVE_PERSONA env, then default. */
   persona?: string | null;
+}
+
+/**
+ * One resolved section of the identity prefix. `hive context` sizes these
+ * individually; buildCanonicalIdentity renders them into the emitted string.
+ */
+export interface IdentityComponent {
+  kind: "soul" | "persona" | "memory" | "stack-hint" | "taste";
+  /** Human-readable name: "SOUL.md", "persona: greg-dry", "_index.md", ... */
+  label: string;
+  /** Source file, when the component is file-backed (stack hint is not). */
+  path: string | null;
+  content: string;
+}
+
+/**
+ * Resolve the components of the identity prefix, in emit order.
+ * Shared by buildCanonicalIdentity (render) and `hive context` (audit),
+ * so what gets measured is exactly what gets emitted.
+ */
+export async function collectIdentityComponents(
+  opts: CanonicalIdentityOpts,
+): Promise<IdentityComponent[]> {
+  const paths = getHivePaths();
+  const components: IdentityComponent[] = [];
+
+  // 1. Soul stack — the swappable persona register slots in after IDENTITY,
+  //    interactive sessions only (dispatch/heartbeat pass includePersona: false).
+  for (const file of IDENTITY_FILES) {
+    const filePath = join(paths.home, file);
+    if (existsSync(filePath)) {
+      const content = await Bun.file(filePath).text();
+      components.push({ kind: "soul", label: file, path: filePath, content: content.trim() });
+    }
+    if (file === "IDENTITY.md" && opts.includePersona) {
+      const persona = await loadPersona(paths.home, opts.persona);
+      if (persona) {
+        components.push({
+          kind: "persona",
+          label: `persona: ${resolvePersonaName(opts.persona)}`,
+          path: null,
+          content: persona.trim(),
+        });
+      }
+    }
+  }
+
+  // 2. Project memory — heartbeat skips for cache stability
+  if (opts.includeProjectMemory && opts.projectId) {
+    const indexFile = join(paths.memoryProjectsDir, opts.projectId, "_index.md");
+    const knowledgeFile = join(paths.memoryProjectsDir, opts.projectId, "knowledge.md");
+    const memPath = existsSync(indexFile) ? indexFile : knowledgeFile;
+    if (existsSync(memPath)) {
+      const content = await Bun.file(memPath).text();
+      components.push({
+        kind: "memory",
+        label: memPath === indexFile ? "_index.md" : "knowledge.md",
+        path: memPath,
+        content: content.trim(),
+      });
+    }
+  }
+
+  // 3. Stack hint (stable per project + harness; safe for cache)
+  if (opts.projectId) {
+    const stackHint = buildStackHint(resolveProjectStack(opts.projectId), opts.harness ?? "claude");
+    if (stackHint) {
+      components.push({ kind: "stack-hint", label: "stack hint", path: null, content: stackHint });
+    }
+  }
+
+  // 4. Taste layer — LAST so it carries the most weight in interpretation ties
+  const taste = await buildTasteLayer();
+  if (taste) {
+    components.push({
+      kind: "taste",
+      label: "taste layer",
+      path: getTastePaths().principles,
+      content: taste,
+    });
+  }
+
+  return components;
 }
 
 /**
@@ -62,54 +145,25 @@ interface CanonicalIdentityOpts {
  * discipline.
  */
 async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<string> {
-  const paths = getHivePaths();
+  const components = await collectIdentityComponents(opts);
   const parts: string[] = [];
 
-  // 1. Soul stack — the swappable persona register slots in after IDENTITY,
-  //    interactive sessions only (dispatch/heartbeat pass includePersona: false).
-  for (const file of IDENTITY_FILES) {
-    const filePath = join(paths.home, file);
-    if (existsSync(filePath)) {
-      const content = await Bun.file(filePath).text();
-      parts.push(content.trim());
-      parts.push("\n---\n");
-    }
-    if (file === "IDENTITY.md" && opts.includePersona) {
-      const persona = await loadPersona(paths.home, opts.persona);
-      if (persona) {
-        parts.push(persona.trim());
+  for (const c of components) {
+    switch (c.kind) {
+      case "soul":
+      case "persona":
+        parts.push(c.content);
         parts.push("\n---\n");
-      }
+        break;
+      case "taste":
+        parts.push("\n---\n");
+        parts.push(c.content);
+        parts.push("\n");
+        break;
+      default: // memory, stack-hint
+        parts.push(c.content);
+        parts.push("\n");
     }
-  }
-
-  // 2. Project memory — heartbeat skips for cache stability
-  if (opts.includeProjectMemory && opts.projectId) {
-    const indexFile = join(paths.memoryProjectsDir, opts.projectId, "_index.md");
-    const knowledgeFile = join(paths.memoryProjectsDir, opts.projectId, "knowledge.md");
-    const memPath = existsSync(indexFile) ? indexFile : knowledgeFile;
-    if (existsSync(memPath)) {
-      const content = await Bun.file(memPath).text();
-      parts.push(content.trim());
-      parts.push("\n");
-    }
-  }
-
-  // 3. Stack hint (stable per project + harness; safe for cache)
-  if (opts.projectId) {
-    const stackHint = buildStackHint(resolveProjectStack(opts.projectId), opts.harness ?? "claude");
-    if (stackHint) {
-      parts.push(stackHint);
-      parts.push("\n");
-    }
-  }
-
-  // 4. Taste layer — LAST so it carries the most weight in interpretation ties
-  const taste = await buildTasteLayer();
-  if (taste) {
-    parts.push("\n---\n");
-    parts.push(taste);
-    parts.push("\n");
   }
 
   return parts.join("\n");

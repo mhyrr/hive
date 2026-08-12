@@ -60,7 +60,7 @@ is a future TK if it becomes a recurring ask.
 ## Architecture
 
 ~80 source files, ~22,900 lines. Two entry points:
-- `src/cli.ts` — CLI (init, doctor, identity, project, stack, council, memory, ticket, dispatch, heartbeat, inbox, kill, ps, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
+- `src/cli.ts` — CLI (init, doctor, context, identity, project, stack, council, memory, ticket, dispatch, heartbeat, inbox, kill, ps, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
 - `src/mcp-server.ts` — MCP server (same tools as the bullet list above).
 
 Crown-jewel modules:
