@@ -258,6 +258,8 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive heartbeat tick` | Run one heartbeat tick manually |
 | `hive heartbeat reset` | Reset heartbeat counters |
 | `hive identity emit` | Print the canonical identity prefix used by hooks and harness launchers |
+| `hive context` | Audit session-start context size against budgets (alias: `hive prompts`) |
+| `hive context --json` | Same audit as JSON, for tracking size over time |
 | `hive inbox` | Show the current project's heartbeat inbox (`hive inbox clear` clears it) |
 | `hive dashboard` | Open the dashboard (server if running, else static build) |
 | `hive dashboard build` | Regenerate the static dashboard at `~/.hive/dashboard/index.html` |
@@ -326,6 +328,17 @@ sections carry more weight in system-prompt interpretation):
 Reflection discipline and first-turn MCP pre-fetch live in `AGENTS.md`, not
 in a separate generated block. `OVERRIDES.md` was retired from the canonical
 stack; `hive doctor` warns if a live copy is still sitting around.
+
+That stack costs the same tokens in every session, so `hive context` measures
+it against the budgets set at the 2026-07 slim-down — soul stack, persona,
+project memory index, stack hint, taste layer, plus each registered project's
+`CLAUDE.md`:
+
+<img src="img/hive-context.png" alt="hive context output: a block grid showing the identity injection at 30.1KB of a 40KB window, with per-layer and per-project budget bars" width="820">
+
+It exits 1 when anything is over budget, so it can gate CI or a pre-push hook.
+`--json` emits the same report for tracking size over time. See
+`docs/identity-injection.md` for what each budget is calibrated against.
 
 ### Tuned for Current Harnesses
 
