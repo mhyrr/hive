@@ -246,6 +246,23 @@ describe("runWatches", () => {
     expect(calls[0]?.modelId).toBeTruthy();
   });
 
+  test("cross-project inbox venue writes the global ~/.hive/inbox.md", async () => {
+    const ticket = await createTicket(paths, "alpha", { title: "Ship it" });
+    await writeWatch("muse", "cadence: 2h\nscope: tickets\nvenue: inbox\nautonomy: observe", "What threads?");
+
+    const { caller } = stubCaller(`Thread detected around ${ticket.id}.`);
+    const { reports } = await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
+
+    expect(reports.find((r) => r.watch === "muse")?.outcome).toBe("surfaced");
+    const globalInbox = join(paths.home, "inbox.md");
+    expect(existsSync(globalInbox)).toBe(true);
+    const content = await Bun.file(globalInbox).text();
+    expect(content).toContain("watch:muse");
+    expect(content).toContain(ticket.id);
+    // The project inbox stays untouched — this is a cross-project surface.
+    expect(existsSync(getProjectPaths(paths, "alpha").inbox)).toBe(false);
+  });
+
   test("disabled watches are skipped by the tick", async () => {
     await createTicket(paths, "alpha", { title: "Ship it" });
     const projWatches = getProjectPaths(paths, "alpha").watchesDir;

@@ -268,6 +268,47 @@ describe("discoverWatches", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Shipped templates stay parseable with their designed settings
+// ---------------------------------------------------------------------------
+
+describe("shipped watch templates", () => {
+  const templatesDir = join(import.meta.dir, "..", "..", "templates", "watches");
+
+  test("bets: @nightly, judgment, propose, briefing, runs+tickets over 7d", async () => {
+    const file = join(templatesDir, "bets.md");
+    const { watch, warnings } = parseWatchFile(await Bun.file(file).text(), file, null);
+    expect(warnings).toEqual([]);
+    expect(watch).toMatchObject({
+      name: "bets",
+      cadence: { type: "nightly" },
+      scope: ["runs", "tickets"],
+      windowMs: 7 * DAY,
+      model: "judgment",
+      venue: "briefing",
+      autonomy: "propose",
+      enabled: true,
+    });
+  });
+
+  test("muse: mon/thu, judgment, observe, inbox, transcripts+memory over 4d", async () => {
+    const file = join(templatesDir, "muse.md");
+    const { watch, warnings } = parseWatchFile(await Bun.file(file).text(), file, null);
+    expect(warnings).toEqual([]);
+    expect(watch).toMatchObject({
+      name: "muse",
+      cadence: { type: "weekdays", days: [1, 4] },
+      scope: ["transcripts", "memory"],
+      windowMs: 4 * DAY,
+      model: "judgment",
+      venue: "inbox",
+      autonomy: "observe",
+      enabled: true,
+    });
+    expect(watch?.question).toContain("NO_SIGNAL");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // watch-state
 // ---------------------------------------------------------------------------
 
