@@ -39,6 +39,7 @@ const LAYERS: { kind: LayerKind; label: string; rgb: Rgb }[] = [
 const FILLED = "⛁";
 const HOLLOW = "⛶";
 const GRID_COLS = 20;
+/** Floor for grid height; it grows to match the legend so the columns balance. */
 const GRID_ROWS = 10;
 const BAR_WIDTH = 8;
 
@@ -154,14 +155,14 @@ function slicesFor(report: ContextReport): Slice[] {
   return used;
 }
 
-function renderGrid(slices: Slice[]): string[] {
-  const cells = apportion(slices.map((s) => s.bytes), GRID_COLS * GRID_ROWS);
+function renderGrid(slices: Slice[], rows: number): string[] {
+  const cells = apportion(slices.map((s) => s.bytes), GRID_COLS * rows);
   const glyphs: string[] = [];
   slices.forEach((s, i) => {
     for (let n = 0; n < cells[i]!; n++) glyphs.push(c(s.rgb, s.glyph));
   });
   const lines: string[] = [];
-  for (let r = 0; r < GRID_ROWS; r++) {
+  for (let r = 0; r < rows; r++) {
     lines.push(glyphs.slice(r * GRID_COLS, (r + 1) * GRID_COLS).join(" "));
   }
   return lines;
@@ -234,7 +235,11 @@ export async function contextCommand(args: string[]): Promise<void> {
   // ── the window, at a glance ────────────────────────────────────────────
   const slices = slicesFor(report);
   if (useColor) {
-    sideBySide(renderGrid(slices), renderLegend(report, slices), 4);
+    // Grow the grid to at least the legend's height so neither column dangles
+    // past the other — a legend row with no grid beside it loses the visual
+    // anchor that ties its swatch to the block.
+    const legend = renderLegend(report, slices);
+    sideBySide(renderGrid(slices, Math.max(GRID_ROWS, legend.length)), legend, 4);
   } else {
     renderPlainLayers(report, slices);
   }

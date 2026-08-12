@@ -29,6 +29,49 @@ The previous per-domain `applications/<d>.md` + `--taste <domain>` flag were
 removed; Pass V now reads the same `principles.md` during the nightly run
 so taste lives at one altitude across session-time and verify-time.
 
+## Auditing the Injection
+
+The diagram above says what loads. `hive context` (alias `hive prompts`) says
+what it costs — measured from `collectIdentityComponents`, the same code path
+`hive identity emit` renders, so the audit cannot drift from the real emit:
+
+<img src="../img/hive-context.png" alt="hive context output: a block grid showing the identity injection at 30.1KB of a 40KB window, with per-layer and per-project budget bars" width="820">
+
+The grid divides the 40KB window into 200 cells, one hue per layer, so the
+proportions read without arithmetic. Below it, every layer with a budget of
+its own gets a bar; a full bar means over budget and nothing else, so a layer
+sitting at 94% still shows a gap.
+
+Budgets live in `CONTEXT_BUDGETS` (`src/lib/context-report.ts`) and are warn
+thresholds rather than hard caps — headroom above the measured baseline so
+ordinary growth doesn't nag, tight enough that drift back toward pre-slim
+sizes surfaces early:
+
+| Layer | Budget | Calibrated against |
+| --- | --- | --- |
+| Soul stack | 24KB | ~20KB measured live after the TK-133/TK-134 slim-down |
+| Persona | 4KB | a voice, not a knowledge dump |
+| Project memory index | 8KB | `INDEX_SIZE_BUDGET_BYTES`, canonical in `memory.ts` |
+| Taste layer | 4KB | `principles.md` targets ~500 tokens |
+| A project's `CLAUDE.md` | 16KB | Claude Code loads it on top of the injection |
+| Whole emit | 40KB | pre-slim ran ~63KB; post-slim baseline ~30KB |
+
+The command exits 1 when anything is over, so it can gate CI or a pre-push
+hook. `--json` emits the full report for tracking size over time; `--no-color`
+(also `NO_COLOR`, or any non-TTY) drops the grid and prints a plain list.
+
+Two of these move on their own and two don't: the nightly run rebuilds every
+project's `_index.md`, so a persistent index overage means the caps need
+tightening or the memory needs pruning. Soul and taste edits are manual — an
+overage there stays until someone trims it.
+
+To regenerate the image above after changing the render:
+
+```bash
+bun run scripts/render-context-screenshot.ts   # prints an HTML path
+# screenshot the <pre> to img/hive-context.png
+```
+
 ## Single Source of Truth
 
 `buildCanonicalIdentity()` in `src/lib/identity.ts` is the only program that
