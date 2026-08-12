@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -52,8 +52,11 @@ async function addProject(projectId: string, projectPath?: string): Promise<stri
 }
 
 beforeEach(async () => {
-  tempHive = await mkdtemp(join(tmpdir(), "hive-context-test-hive-"));
-  tempCwd = await mkdtemp(join(tmpdir(), "hive-context-test-proj-"));
+  // realpath both: on macOS tmpdir() hands back /var/folders/... while
+  // process.cwd() reports /private/var/folders/..., so an unresolved fixture
+  // path never matches cwd and project resolution silently falls through.
+  tempHive = await realpath(await mkdtemp(join(tmpdir(), "hive-context-test-hive-")));
+  tempCwd = await realpath(await mkdtemp(join(tmpdir(), "hive-context-test-proj-")));
   originalHiveHome = process.env.HIVE_HOME;
   originalCwd = process.cwd();
   process.env.HIVE_HOME = tempHive;
