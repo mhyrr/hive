@@ -171,10 +171,10 @@ export function isDue(cadence: WatchCadence, lastRun: string | null, now: Date):
 // Parsing
 // ---------------------------------------------------------------------------
 
-const SCOPE_KINDS: WatchScopeKind[] = ["tickets", "commits", "transcripts", "memory", "inbox"];
-const AUTONOMY_LEVELS: WatchAutonomy[] = ["observe", "propose", "act"];
-const VENUES: WatchVenue[] = ["inbox", "briefing", "tickets", "dispatch"];
-const TIERS: WatchTier[] = ["fast", "standard", "judgment"];
+export const SCOPE_KINDS: WatchScopeKind[] = ["tickets", "commits", "transcripts", "memory", "inbox"];
+export const AUTONOMY_LEVELS: WatchAutonomy[] = ["observe", "propose", "act"];
+export const VENUES: WatchVenue[] = ["inbox", "briefing", "tickets", "dispatch"];
+export const TIERS: WatchTier[] = ["fast", "standard", "judgment"];
 
 const DEFAULT_WINDOW_MS = 86_400_000; // 24h
 

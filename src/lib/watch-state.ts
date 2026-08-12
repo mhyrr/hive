@@ -25,6 +25,7 @@ export type WatchOutcome =
   | "quiet" // model called, model chose silence (valid answer)
   | "no-delta" // gate said nothing changed — zero model calls
   | "deferred:quota" // rate-limited — skipped without retry this tick
+  | "deferred:cap" // per-tick call cap hit — retried next tick
   | "error";
 
 export interface WatchStateEntry {

@@ -23,6 +23,7 @@ import { projectCommand } from "./commands/project";
 import { psCommand } from "./commands/ps";
 import { stackCommand } from "./commands/stack";
 import { ticketCommand } from "./commands/ticket";
+import { watchCommand } from "./commands/watch";
 import { UsageError } from "./lib/errors";
 import { resolveHarness, type ClaudeMode, type Harness } from "./lib/harness";
 import { writeCodexAgentsMd } from "./lib/codex-wire";
@@ -49,6 +50,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   kill: killCommand,
   ps: psCommand,
   dashboard: dashboardCommand,
+  watch: watchCommand,
 };
 
 function getUsage(): string {
@@ -73,6 +75,7 @@ HIVE Commands:
   campaign run|list|show     Long-horizon campaign orchestration
   dispatch "<goal>" [opts]   Dispatch autonomous goal execution
   heartbeat start|stop|...   Periodic project awareness
+  watch list|status|run|...  Standing-question watches (ambient passes)
   identity emit              Print canonical identity prefix (used by SessionStart hook)
   inbox                      Show project inbox (clear with: inbox clear)
   kill <run-id>              Kill a running dispatch
