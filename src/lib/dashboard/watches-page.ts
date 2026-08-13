@@ -1,6 +1,8 @@
 // /watches — the watch fleet review page (TK-138).
 //
-// Renders what `hive watch status` knows, plus recent surfaced artifacts.
+// Renders what `hive watch status` knows, the latest output of every watch
+// inline (the results, not a path to them), and recent surfaced artifacts.
+// Each watch name links to /watches/<name> for the exact prompts.
 // Scope boundary: this is the WATCH fleet, not a run monitor — dispatch-run
 // monitoring stays TK-030.
 
@@ -16,8 +18,10 @@ import {
   type WatchAutonomy,
   type WatchDef,
 } from "../watch";
+import { latestInvocations, type WatchInvocation } from "../watch-log";
 import { freshEntry, loadWatchState, usageSince } from "../watch-state";
-import { clampAutonomy, readAutonomyCeiling } from "../watch-run";
+import { clampAutonomy, readAutonomyCeiling, NO_SIGNAL } from "../watch-run";
+import { escapeHtml, md } from "./html";
 import { DASHBOARD_CSS } from "./styles";
 
 // ---------------------------------------------------------------------------
@@ -40,6 +44,23 @@ export type WatchRow = {
   tokens7d: number;
 };
 
+/** The last thing a watch actually said, straight from its invocation log. */
+export type WatchOutputCard = {
+  watch: string;
+  at: string;
+  outcome: string;
+  model: string;
+  durationMs: number | null;
+  /** Model output, or null when the call itself failed. */
+  output: string | null;
+  error: string | null;
+  /** The model chose silence — NO_SIGNAL is protocol, not content. */
+  quiet: boolean;
+  /** The runner threw the output away (provenance gate) — it went nowhere. */
+  dropped: boolean;
+  logPath: string;
+};
+
 export type SurfacedArtifact = {
   watch: string;
   date: string;
@@ -53,6 +74,7 @@ export type WatchesPageData = {
   lastTick: string | null;
   tickStale: boolean;
   rows: WatchRow[];
+  latest: WatchOutputCard[];
   artifacts: SurfacedArtifact[];
   warnings: string[];
 };
@@ -60,6 +82,38 @@ export type WatchesPageData = {
 /** The tick is hourly; past this gap it reads as dead, not slow. */
 const TICK_STALE_MS = 2 * 3_600_000;
 const ARTIFACT_LOOKBACK_DAYS = 7;
+const OUTPUT_LOOKBACK_DAYS = 14;
+
+export function isSilence(output: string | null): boolean {
+  if (output == null) return false;
+  const trimmed = output.trim();
+  return trimmed === NO_SIGNAL || trimmed.startsWith(`${NO_SIGNAL}\n`);
+}
+
+/** The runner records the provenance-gate drop in the outcome string. Output
+ * that was dropped reached no venue, so the page must not read as if it did. */
+export function isDropped(outcome: string): boolean {
+  return /dropped/i.test(outcome);
+}
+
+/** Shown wherever dropped output is displayed. */
+export const DROPPED_NOTE =
+  "Dropped by the provenance gate — no evidence anchor cited, so this reached no venue. Shown here only.";
+
+export function toOutputCard(inv: WatchInvocation): WatchOutputCard {
+  return {
+    watch: inv.watch,
+    at: inv.at,
+    outcome: inv.outcome,
+    model: inv.model,
+    durationMs: inv.durationMs,
+    output: inv.output,
+    error: inv.error,
+    quiet: isSilence(inv.output),
+    dropped: isDropped(inv.outcome),
+    logPath: inv.path,
+  };
+}
 
 export async function collectWatchesPage(paths: HivePaths): Promise<WatchesPageData> {
   const now = hiveNow();
@@ -86,6 +140,17 @@ export async function collectWatchesPage(paths: HivePaths): Promise<WatchesPageD
       tokens7d: spend.inputTokens + spend.outputTokens,
     };
   });
+
+  // The results themselves: each watch's most recent model call, newest first.
+  const { byWatch, warnings: logWarnings } = await latestInvocations(
+    paths,
+    watches.map((w) => w.qualifiedName),
+    { days: OUTPUT_LOOKBACK_DAYS },
+  );
+  warnings.push(...logWarnings);
+  const latest = [...byWatch.values()]
+    .map(toOutputCard)
+    .sort((a, b) => b.at.localeCompare(a.at));
 
   // Briefing-venue artifacts from the recent run dirs (bets.md et al).
   const artifacts: SurfacedArtifact[] = [];
@@ -116,6 +181,7 @@ export async function collectWatchesPage(paths: HivePaths): Promise<WatchesPageD
     lastTick,
     tickStale,
     rows,
+    latest,
     artifacts,
     warnings,
   };
@@ -125,15 +191,6 @@ export async function collectWatchesPage(paths: HivePaths): Promise<WatchesPageD
 // Render
 // ---------------------------------------------------------------------------
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 const WATCHES_NAV: Array<[string, string]> = [
   ["BRIEFING", "/"],
   ["TICKETS", "/tickets"],
@@ -141,6 +198,25 @@ const WATCHES_NAV: Array<[string, string]> = [
   ["TASTE", "/taste"],
   ["WATCHES", "/watches"],
 ];
+
+/** Nav strip for the watch pages; `active` marks the current href. */
+export function renderWatchesNav(active: string): string {
+  return WATCHES_NAV.map(([label, href]) => {
+    const on = href === active ? ' class="nav-active"' : "";
+    return `<a href="${href}"${on}>${label}</a>`;
+  }).join(' <span class="nav-sep">·</span> ');
+}
+
+/** URL for a watch's detail page. Qualified names carry `/`, which is a real
+ * path segment here — the route takes the whole remainder as the ref. */
+export function watchHref(qualifiedName: string): string {
+  return `/watches/${qualifiedName.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+export function formatDuration(ms: number | null): string {
+  if (ms == null) return "";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
 
 function outcomeLabel(row: WatchRow): string {
   if (!row.lastOutcome) return "—";
@@ -154,12 +230,40 @@ function autonomyLabel(row: WatchRow): string {
     : `${escapeHtml(row.autonomy)} → ${escapeHtml(row.effectiveAutonomy)}`;
 }
 
+/** One watch's latest output, rendered as what it is: prose the model wrote. */
+export function renderOutputCard(card: WatchOutputCard): string {
+  const meta = [
+    escapeHtml(card.at),
+    escapeHtml(card.outcome),
+    card.model ? escapeHtml(card.model) : null,
+    formatDuration(card.durationMs) || null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  let body: string;
+  if (card.error != null) {
+    body = `<pre class="watch-error">${escapeHtml(card.error)}</pre>`;
+  } else if (card.quiet) {
+    body = `<p class="watch-silence">Chose silence — nothing cleared the bar. (${escapeHtml(NO_SIGNAL)})</p>`;
+  } else {
+    const dropped = card.dropped ? `<p class="watch-dropped">${escapeHtml(DROPPED_NOTE)}</p>` : "";
+    body = `${dropped}<div class="watch-out">${md(card.output ?? "")}</div>`;
+  }
+
+  return `<article class="watch-card">
+    <div class="head">
+      <span class="watch-name"><a href="${watchHref(card.watch)}">${escapeHtml(card.watch)}</a></span>
+      <span class="meta mono">${meta}</span>
+    </div>
+    ${body}
+    <div class="watch-source mono">log: ${escapeHtml(card.logPath)} <span class="sep">·</span> <a href="${watchHref(card.watch)}">prompts →</a></div>
+  </article>`;
+}
+
 export function renderWatchesPageDocument(data: WatchesPageData): string {
   const today = data.generatedAt.slice(0, 10);
-  const nav = WATCHES_NAV.map(([label, href]) => {
-    const active = href === "/watches" ? ' class="nav-active"' : "";
-    return `<a href="${href}"${active}>${label}</a>`;
-  }).join(' <span class="nav-sep">·</span> ');
+  const nav = renderWatchesNav("/watches");
 
   const liveness = data.lastTick
     ? data.tickStale
@@ -170,7 +274,7 @@ export function renderWatchesPageDocument(data: WatchesPageData): string {
   const tableRows = data.rows
     .map(
       (r) => `<tr>
-      <td class="mono">${escapeHtml(r.qualifiedName)}</td>
+      <td class="mono"><a href="${watchHref(r.qualifiedName)}">${escapeHtml(r.qualifiedName)}</a></td>
       <td>${r.enabled ? "on" : "off"}</td>
       <td class="mono">${escapeHtml(r.cadence)}</td>
       <td>${autonomyLabel(r)}</td>
@@ -190,6 +294,15 @@ export function renderWatchesPageDocument(data: WatchesPageData): string {
     <thead><tr><th>Watch</th><th>On</th><th>Cadence</th><th>Autonomy</th><th>Tier</th><th>Venue</th><th>Last tick</th><th>Outcome</th><th>7d logged</th></tr></thead>
     <tbody>${tableRows}</tbody>
   </table>`;
+
+  const latestBlock =
+    data.latest.length === 0
+      ? ""
+      : `<section class="section">
+    <h2>Latest output</h2>
+    <hr class="amber"/>
+    ${data.latest.map(renderOutputCard).join("\n")}
+  </section>`;
 
   const artifactList =
     data.artifacts.length === 0
@@ -235,6 +348,7 @@ export function renderWatchesPageDocument(data: WatchesPageData): string {
     <p>Autonomy ceiling: <strong>${escapeHtml(data.ceiling)}</strong> (watches.max_autonomy in ~/.hive/config.md) <span class="sep">·</span> ${liveness}</p>
     ${table}
   </section>
+  ${latestBlock}
   ${artifactList}
   ${warningsBlock}
 </div>

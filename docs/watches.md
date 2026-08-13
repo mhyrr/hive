@@ -174,10 +174,20 @@ hive watch set <name> k=v ...    # rewrite frontmatter, validated
 ```
 
 The dashboard serves `/watches`: the fleet table (own vs effective autonomy,
-last outcome, 7d logged spend), recent briefing-venue artifacts, parse
-warnings, and a tick-liveness line backed by the `lastTick` stamp the hourly
-tick writes even when nothing is due. Dispatch-run monitoring is explicitly
-out of scope there (TK-030).
+last outcome, 7d logged spend), **the latest output of every watch rendered
+inline** (the results, not a path to them), recent briefing-venue artifacts,
+parse warnings, and a tick-liveness line backed by the `lastTick` stamp the
+hourly tick writes even when nothing is due. Dispatch-run monitoring is
+explicitly out of scope there (TK-030).
+
+Every watch name links to `/watches/<name>` — the spec, **the exact prompt
+as it would fire right now** (system prompt built by the runner's own
+builder, so it can't drift from what actually gets sent, plus the standing
+question verbatim), and the last 10 invocations replayed from
+`watches/log/`: each with its output, the delta reasons that woke it, and
+the exact system prompt and digest that were sent, on disclosure. Output the
+provenance gate dropped is labelled as such — it reached no venue, and the
+page says so rather than reading like it shipped.
 
 ## Shipped watches
 

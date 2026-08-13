@@ -17,7 +17,8 @@ import { join } from "node:path";
 import { completeClaudeTextBounded, type ClaudeTextCompletion } from "./claude";
 import { extractConfigValue } from "./config";
 import { getProjectPaths, type HivePaths } from "./paths";
-import { now as hiveNow, toCompactTimestamp, toIsoTimestamp } from "./time";
+import { now as hiveNow, toIsoTimestamp } from "./time";
+import { writeInvocationLog } from "./watch-log";
 import {
   evaluateWatchDelta,
   assembleWatchDigest,
@@ -145,53 +146,6 @@ function isQuotaError(err: unknown): boolean {
 async function appendInbox(inboxPath: string, header: string, body: string): Promise<void> {
   const existing = existsSync(inboxPath) ? readFileSync(inboxPath, "utf-8") : `${header}\n\n`;
   await Bun.write(inboxPath, `${existing}${body}`);
-}
-
-/** Full observability for every model call: the EXACT prompts sent and what
- * came back, one file per invocation under ~/.hive/watches/log/<date>/.
- * No-delta ticks write nothing here (there was no call to record). */
-async function writeInvocationLog(args: {
-  paths: HivePaths;
-  watch: WatchDef;
-  now: Date;
-  modelId: string;
-  autonomy: WatchAutonomy;
-  reasons: string[];
-  systemPrompt: string;
-  userContent: string;
-  output: string | null;
-  outcome: string;
-  error?: string | null;
-  durationMs?: number | null;
-}): Promise<void> {
-  const dir = join(args.paths.watchesDir, "log", args.now.toISOString().slice(0, 10));
-  await mkdir(dir, { recursive: true });
-  const file = join(dir, `${args.watch.qualifiedName.replace(/\//g, "--")}-${toCompactTimestamp(args.now)}.md`);
-  const body = [
-    "---",
-    `watch: ${args.watch.qualifiedName}`,
-    `at: ${toIsoTimestamp(args.now)}`,
-    `model: ${args.modelId}`,
-    `autonomy: ${args.autonomy}`,
-    `outcome: ${args.outcome}`,
-    ...(args.durationMs != null ? [`durationMs: ${args.durationMs}`] : []),
-    ...(args.reasons.length > 0 ? [`reasons: ${args.reasons.join(" | ")}`] : []),
-    "---",
-    "",
-    "## System prompt",
-    "",
-    args.systemPrompt,
-    "",
-    "## User content (digest + standing question)",
-    "",
-    args.userContent,
-    "",
-    args.error != null ? "## Error" : "## Output",
-    "",
-    args.error ?? args.output ?? "(none)",
-    "",
-  ].join("\n");
-  await Bun.write(file, body);
 }
 
 export async function runWatches(options: RunWatchesOptions): Promise<RunWatchesResult> {
