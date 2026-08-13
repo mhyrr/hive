@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 
 import {
+  renderBets,
   renderOpenQuestions,
   renderRecentMemory,
   renderRunUsage,
@@ -32,6 +33,26 @@ function tasteSnap(over: Partial<TasteTrackSnapshot> = {}): TasteTrackSnapshot {
     ...over,
   };
 }
+
+// ---------------------------------------------------------------------------
+// renderBets
+// ---------------------------------------------------------------------------
+
+describe("renderBets", () => {
+  test("null / undefined renders nothing — quiet nights get no wallpaper", () => {
+    expect(renderBets(null)).toBe("");
+    expect(renderBets(undefined)).toBe("");
+  });
+
+  test("renders the bets markdown with date kicker and fleet link", () => {
+    const html = renderBets({ date: "2026-08-12", body: "**Bet:** TK-001 — ship it." });
+    expect(html).toContain('id="section-bets"');
+    expect(html).toContain("2026-08-12");
+    expect(html).toContain('href="/watches"');
+    expect(html).toContain("<strong>Bet:</strong>"); // markdown rendered, not raw
+    expect(html).toContain("TK-001");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // renderOpenQuestions

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  collectBets,
   collectOpenQuestions,
   collectRecentMemory,
   collectRunUsage,
@@ -26,6 +27,28 @@ async function freshHome(): Promise<HivePaths> {
   const home = await mkdtemp(join(tmpdir(), "hive-dash-v1-"));
   return ensureHiveScaffold(home);
 }
+
+describe("collectBets", () => {
+  test("returns the latest bets.md with its H1 stripped; null when none", async () => {
+    const paths = await freshHome();
+    expect(await collectBets(paths)).toBeNull();
+
+    for (const [date, body] of [
+      ["2026-08-10", "# Watch: bets — 2026-08-10\n\nOld bet."],
+      ["2026-08-12", "# Watch: bets — 2026-08-12\n\nBet: TK-001 — ship it."],
+    ] as const) {
+      await mkdir(join(paths.memoryRunsDir, date), { recursive: true });
+      await writeFile(join(paths.memoryRunsDir, date, "bets.md"), body);
+    }
+    // A newer run dir with no bets.md must not shadow the latest actual bets.
+    await mkdir(join(paths.memoryRunsDir, "2026-08-13"), { recursive: true });
+
+    const bets = await collectBets(paths);
+    expect(bets?.date).toBe("2026-08-12");
+    expect(bets?.body).toBe("Bet: TK-001 — ship it.");
+    expect(bets?.body).not.toContain("# Watch");
+  });
+});
 
 async function registerProject(paths: HivePaths, projectId: string): Promise<void> {
   await mkdir(join(paths.projectsDir, projectId), { recursive: true });

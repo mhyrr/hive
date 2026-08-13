@@ -201,6 +201,12 @@ export type RunUsageSnapshot = {
   passes: RunUsagePassEntry[];
 };
 
+export type BetsEntry = {
+  date: string;
+  /** bets.md body with the artifact's own H1 stripped (the section supplies the heading). */
+  body: string;
+};
+
 export type DashboardData = {
   generatedAt: string;
   volumeNumber: number;     // count of briefings (proxy for "days since install")
@@ -219,6 +225,8 @@ export type DashboardData = {
   runUsage: RunUsageSnapshot;
   tasteTrack: TasteTrackSnapshot;
   latestReflection: ReflectionDay | null;
+  /** Latest nightly-bets watch output within the last 7 run dirs (TK-138). */
+  bets: BetsEntry | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -629,6 +637,25 @@ export async function collectRuns(paths: HivePaths, limit = 20): Promise<RunEntr
   }
 
   return out;
+}
+
+/** Latest bets.md from the last 7 nightly run dirs (TK-138 bets watch). */
+export async function collectBets(paths: HivePaths): Promise<BetsEntry | null> {
+  const entries = await readdir(paths.memoryRunsDir, { withFileTypes: true }).catch(() => []);
+  const dates = entries
+    .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
+    .map((e) => e.name)
+    .sort()
+    .reverse()
+    .slice(0, 7);
+  for (const date of dates) {
+    const raw = await safeReadFile(join(paths.memoryRunsDir, date, "bets.md"));
+    if (raw && raw.trim()) {
+      // Strip the artifact's own H1 — the dashboard section supplies the heading.
+      return { date, body: raw.trim().replace(/^# .*\n+/, "") };
+    }
+  }
+  return null;
 }
 
 export async function collectBriefings(paths: HivePaths): Promise<BriefingEntry[]> {
@@ -1114,7 +1141,7 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, tasteTrack, latestReflection] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, tasteTrack, latestReflection, bets] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -1127,6 +1154,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectRunUsage(paths),
     collectTasteTrack(paths),
     collectLatestReflection(paths),
+    collectBets(paths),
   ]);
 
   const today = briefings[0]?.date ?? new Date().toISOString().slice(0, 10);
@@ -1149,5 +1177,6 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     runUsage,
     tasteTrack,
     latestReflection,
+    bets,
   };
 }

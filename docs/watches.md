@@ -192,8 +192,9 @@ or accretive bets should we be thinking about?* Scope `runs, tickets` over
 taste-decisions) plus ticket movement — no new extraction calls. At most 3
 bets, each with cited signal, cost/displacement, and a first step; zero is a
 valid output, and the slop filter rejects any bet that could have been
-written without reading the week. Filing is manual: read, say "file #2",
-Maya files.
+written without reading the week. The latest bets also render as a **Bets
+section on the main dashboard page**, right after the briefing (no section
+on quiet nights). Filing is manual: read, say "file #2", Maya files.
 
 ### muse — cross-project muse (`mon,thu`, judgment, observe → `~/.hive/inbox.md`)
 

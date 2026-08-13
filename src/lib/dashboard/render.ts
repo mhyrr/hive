@@ -14,6 +14,7 @@ import type {
   HealthEntry,
   ProjectCard,
   InboxEntry,
+  BetsEntry,
   BriefingEntry,
   RunEntry,
   TicketBuckets,
@@ -232,6 +233,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
 
   const jumpLinks = [
     ["#section-briefing", "Briefing"],
+    ...(data.bets ? [["#section-bets", "Bets"] as [string, string]] : []),
     ["#section-projects", "Projects"],
     ["#section-inboxes", "Inbox"],
     ["#section-reflections", "Reflections"],
@@ -370,6 +372,18 @@ export function renderBriefings(data: DashboardData): string {
   <div class="briefing-wrap">
     ${articles}
   </div>
+</section>`;
+}
+
+/** Bets section (TK-138) — the nightly bets watch's latest output, rendered
+ * in the morning read next to the briefing. Absent output = no section;
+ * quiet nights don't get wallpaper. */
+export function renderBets(bets: BetsEntry | null | undefined): string {
+  if (!bets) return "";
+  return `<section class="section" id="section-bets">
+  <div class="section-head"><h2>Bets</h2><span class="kicker">${escapeHtml(bets.date)} · nightly bets watch · <a href="/watches">fleet →</a></span></div>
+  <hr class="amber"/>
+  <div class="briefing">${md(bets.body)}</div>
 </section>`;
 }
 
@@ -1287,6 +1301,7 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     `<main class="page">`,
     renderTopThree(data),
     renderBriefings(data),
+    renderBets(data.bets),
     renderProjects(data, c),
     renderInboxes(data.inboxes, c),
     renderReflections(data.latestReflection),
