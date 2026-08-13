@@ -254,13 +254,16 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
        </div>`
     : "";
 
+  // Two rows so both groups scale: sections wrap horizontally beside the
+  // title; the project filter gets its own full-width row. A single flex row
+  // starves whichever group is smaller once projects and sections multiply.
   return `
 <nav class="sticky-nav" aria-label="Dashboard navigation">
   <div class="sticky-row">
     <div class="sticky-title">HIVE <span class="sep">·</span> ${escapeHtml(weekdayDate(data.today))}</div>
     <div class="jump-links">${jumpLinks}</div>
-    ${filterGroup}
   </div>
+  ${filterGroup ? `<div class="sticky-row sticky-row--filter">${filterGroup}</div>` : ""}
   <div id="filter-banner" class="filter-banner" aria-live="polite"></div>
 </nav>`;
 }
