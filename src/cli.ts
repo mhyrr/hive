@@ -22,7 +22,7 @@ import { tasteCommand } from "./commands/taste";
 import { projectCommand } from "./commands/project";
 import { psCommand } from "./commands/ps";
 import { stackCommand } from "./commands/stack";
-import { ticketCommand } from "./commands/ticket";
+import { ticketCommand, ticketsCommand } from "./commands/ticket";
 import { watchCommand } from "./commands/watch";
 import { UsageError } from "./lib/errors";
 import { resolveHarness, type ClaudeMode, type Harness } from "./lib/harness";
@@ -42,6 +42,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   memory: memoryCommand,
   taste: tasteCommand,
   ticket: ticketCommand,
+  tickets: ticketsCommand,
   goal: goalCommand,
   dispatch: dispatchCommand,
   heartbeat: heartbeatCommand,
@@ -70,6 +71,7 @@ HIVE Commands:
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
   taste extract [opts]       Mine taste candidates from transcripts (phase 1)
+  tickets                    Open tickets for the project you're standing in
   ticket [create|list|...]   Project ticket tracker
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
   campaign run|list|show     Long-horizon campaign orchestration

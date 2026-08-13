@@ -381,11 +381,82 @@ const priorityLabels: Record<TicketPriority, string> = {
   3: "P3-low",
 };
 
-export function formatTicketSummary(t: Ticket): string {
+const statusRank: Record<TicketStatus, number> = {
+  in_progress: 0,
+  open: 1,
+  closed: 2,
+};
+
+function ticketNumber(id: string): number {
+  const n = parseInt(id.replace(/^\D+/, ""), 10);
+  return Number.isNaN(n) ? Number.MAX_SAFE_INTEGER : n;
+}
+
+/**
+ * Reading order for a ticket list: what's being worked on, then what's most
+ * urgent, then oldest first. Does not mutate the input.
+ */
+export function sortTicketsForDisplay(tickets: Ticket[]): Ticket[] {
+  return [...tickets].sort((a, b) => {
+    const s = (statusRank[a.status] ?? 3) - (statusRank[b.status] ?? 3);
+    if (s !== 0) return s;
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return ticketNumber(a.id) - ticketNumber(b.id);
+  });
+}
+
+function ticketColumns(t: Ticket): { prefix: string; description: string } {
   const tags = t.tags.length > 0 ? ` [${t.tags.join(", ")}]` : "";
   const deps = t.depends.length > 0 ? ` (blocked by: ${t.depends.join(", ")})` : "";
   const pLabel = priorityLabels[t.priority] ?? `P?-unknown`;
-  return `${t.id}  ${t.status.padEnd(11)}  ${pLabel.padEnd(12)}  ${t.type.padEnd(7)}  ${t.title}${tags}${deps}`;
+  return {
+    prefix: `${t.id}  ${t.status.padEnd(11)}  ${pLabel.padEnd(12)}  ${t.type.padEnd(7)}  `,
+    description: `${t.title}${tags}${deps}`,
+  };
+}
+
+/** Greedy word wrap. Words longer than the column are broken rather than allowed to bleed. */
+function wrapWords(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+
+  for (let word of text.split(/\s+/).filter(Boolean)) {
+    while (word.length > width) {
+      if (line) { lines.push(line); line = ""; }
+      lines.push(word.slice(0, width));
+      word = word.slice(width);
+    }
+    if (!line) line = word;
+    else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+    else { lines.push(line); line = word; }
+  }
+
+  if (line) lines.push(line);
+  return lines.length > 0 ? lines : [""];
+}
+
+export function formatTicketSummary(t: Ticket): string {
+  const { prefix, description } = ticketColumns(t);
+  return prefix + description;
+}
+
+/** Minimum description column worth wrapping into — below this, leave the line alone. */
+const MIN_DESCRIPTION_WIDTH = 24;
+
+/**
+ * One ticket, wrapped so the description stays inside its own column with a
+ * hanging indent. `width` of 0 (non-TTY, unknown terminal) returns the plain
+ * single-line form, which keeps piped output one ticket per line.
+ */
+export function formatTicketRow(t: Ticket, width: number): string {
+  const { prefix, description } = ticketColumns(t);
+  const available = width - prefix.length;
+  if (available < MIN_DESCRIPTION_WIDTH) return prefix + description;
+
+  const indent = " ".repeat(prefix.length);
+  return wrapWords(description, available)
+    .map((line, i) => (i === 0 ? prefix : indent) + line)
+    .join("\n");
 }
 
 export function formatTicketDetail(t: TicketWithBody): string {
