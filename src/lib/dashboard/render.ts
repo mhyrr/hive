@@ -195,9 +195,9 @@ function actionButton(
 const VERDICT_LABEL: Record<Colony["verdict"], string> = {
   "needs-you": "Needs you",
   queenless: "Queenless",
-  "swarm-risk": "Swarm risk",
-  "needs-feeding": "Needs feeding",
-  "leave-alone": "Leave alone",
+  active: "Active",
+  waiting: "Waiting",
+  quiet: "Quiet",
 };
 
 /**
@@ -211,7 +211,9 @@ export function renderYard(data: DashboardData): string {
   const peakBrood = Math.max(1, ...colonies.map((c) => c.brood));
   const cardById = new Map(data.projects.map((p) => [p.id, p]));
 
-  const worked = data.activity ?? [];
+  // The work band is about what actually landed, so a project that is only
+  // live on the month scale scores in the yard but earns no row here.
+  const worked = (data.activity ?? []).filter((a) => a.commits > 0);
   const call = worked.length === 0
     ? `<p class="quiet">Nothing moved in the last two days.</p>`
     : `<p>Work landed in <span class="count">${worked.length}</span> ${

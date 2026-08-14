@@ -11,13 +11,14 @@
  */
 
 import type { DashboardData, ProjectCard } from "./collect";
+import type { ProjectActivity } from "./activity";
 
 export type VerdictKind =
   | "needs-you"
   | "queenless"
-  | "swarm-risk"
-  | "needs-feeding"
-  | "leave-alone";
+  | "active"
+  | "waiting"
+  | "quiet";
 
 export type Colony = {
   id: string;
@@ -33,12 +34,44 @@ export type Colony = {
   brood: number;
   /** Palette slot, stable per project id. */
   colour: number;
+  /** Weighted attention score. Paint is `score >= PAINT_THRESHOLD`. */
+  score: number;
 };
 
-/** Days without an admitted memory entry before stores read as low. */
-const FEED_THRESHOLD_DAYS = 14;
-/** Blocked tickets tolerated before the colony reads as swarming. */
-const SWARM_BLOCKED = 2;
+/**
+ * The attention rubric.
+ *
+ * A single trigger was too eager — one open P1 painted a colony that was
+ * having an ordinary Tuesday. Attention is a weighted sum instead, so a
+ * colony earns paint by combining momentum and pending work rather than by
+ * tripping one wire. Every weight lives here; tuning the yard is editing
+ * this block and nothing else.
+ */
+const WEIGHTS = {
+  /** Commits in the last couple of days. The strongest single signal. */
+  recentCommits: 3,
+  /** A sustained month of work, not just yesterday's burst. */
+  busyMonth: 2, // >= BUSY_MONTH_COMMITS
+  steadyMonth: 1, // >= STEADY_MONTH_COMMITS
+  /** Tickets actually moving, capped so a big queue cannot dominate. */
+  perTicketTouched: 1,
+  ticketTouchedCap: 2,
+  /** Something open at the top of the queue. */
+  highPriorityOpen: 2,
+  /** Work in flight. */
+  inProgress: 1,
+  /** A queue that cannot move. */
+  blockedStalled: 2,
+} as const;
+
+/** Score at or above this and the colony gets painted. */
+export const PAINT_THRESHOLD = 3;
+
+const BUSY_MONTH_COMMITS = 20;
+const STEADY_MONTH_COMMITS = 5;
+
+/** Days without an admitted memory entry before the store reads as cold. */
+const STALE_MEMORY_DAYS = 30;
 
 /** Run statuses that mean the run is over and it did not go well. */
 const FAILED = new Set(["failed", "error", "timeout", "killed"]);
@@ -89,36 +122,101 @@ export function assignVerdicts(data: DashboardData): Colony[] {
     blockedByProject.set(t.projectId, (blockedByProject.get(t.projectId) ?? 0) + 1);
   }
 
+  const activityByProject = new Map((data.activity ?? []).map((a) => [a.projectId, a]));
+
   return data.projects.map((p) => {
     const entries = stats.get(p.id)?.total ?? 0;
     const stores = entries / peak;
     const brood = p.ticketCounts.open + p.ticketCounts.inProgress;
     const base = { id: p.id, stores, entries, brood, colour: colourFor(p.id) };
-    const { verdict, reason } = decide(p, data, {
+    const { verdict, reason, score } = decide(p, data, {
       blocked: blockedByProject.get(p.id) ?? 0,
       lastMemory: newestMemory.get(p.id) ?? null,
+      activity: activityByProject.get(p.id) ?? null,
       today: data.today,
     });
-    return { ...base, verdict, reason };
+    return { ...base, verdict, reason, score };
   });
+}
+
+/** Named contributions, so the plate can say which signal carried the score. */
+function scoreOf(
+  p: ProjectCard,
+  ctx: { blocked: number; activity: ProjectActivity | null },
+): { score: number; parts: string[]; moving: boolean } {
+  const parts: string[] = [];
+  let score = 0;
+  let moving = false;
+
+  const recent = ctx.activity?.commits ?? 0;
+  if (recent > 0) {
+    score += WEIGHTS.recentCommits;
+    moving = true;
+    parts.push(`${recent} ${recent === 1 ? "commit" : "commits"}`);
+  }
+
+  const month = ctx.activity?.monthCommits ?? 0;
+  if (month >= BUSY_MONTH_COMMITS) {
+    score += WEIGHTS.busyMonth;
+    if (recent === 0) parts.push(`${month} commits this month`);
+  } else if (month >= STEADY_MONTH_COMMITS) {
+    score += WEIGHTS.steadyMonth;
+    if (recent === 0) parts.push(`${month} commits this month`);
+  }
+
+  if (p.ticketsTouched > 0) {
+    score += Math.min(p.ticketsTouched * WEIGHTS.perTicketTouched, WEIGHTS.ticketTouchedCap);
+    moving = true;
+    parts.push(`${p.ticketsTouched} ${p.ticketsTouched === 1 ? "ticket" : "tickets"} moving`);
+  }
+
+  const high = (p.ticketCounts.byPriority?.[0] ?? 0) + (p.ticketCounts.byPriority?.[1] ?? 0);
+  if (high > 0) {
+    score += WEIGHTS.highPriorityOpen;
+    parts.push(`${high} high ${high === 1 ? "ticket" : "tickets"} open`);
+  }
+
+  if (p.ticketCounts.inProgress > 0) {
+    score += WEIGHTS.inProgress;
+    moving = true;
+  }
+
+  if (ctx.blocked > 0 && p.ticketCounts.inProgress === 0) {
+    score += WEIGHTS.blockedStalled;
+    parts.push(`${ctx.blocked} blocked, none moving`);
+  }
+
+  return { score, parts, moving };
 }
 
 function decide(
   p: ProjectCard,
   data: DashboardData,
-  ctx: { blocked: number; lastMemory: string | null; today: string },
-): { verdict: VerdictKind; reason: string } {
+  ctx: {
+    blocked: number;
+    lastMemory: string | null;
+    activity: ProjectActivity | null;
+    today: string;
+  },
+): { verdict: VerdictKind; reason: string; score: number } {
   const runs = (data.runs ?? []).filter((r) => r.projectId === p.id);
   const failed = runs.filter((r) => FAILED.has(r.status));
   const parked = runs.filter((r) => PARKED.has(r.status));
   const inbox = (data.inboxes ?? []).find((i) => i.projectId === p.id);
+  const { score, parts, moving } = scoreOf(p, { blocked: ctx.blocked, activity: ctx.activity });
 
   // 1. Needs you — something finished badly, or finished and is waiting.
+  // These bypass the score outright: no amount of quiet makes a failed run
+  // wait until tomorrow.
   if (failed.length > 0) {
-    return { verdict: "needs-you", reason: `${plural(failed.length, "run", "runs")} failed` };
+    return { verdict: "needs-you", reason: `${plural(failed.length, "run", "runs")} failed`, score };
   }
   if (parked.length > 0) {
-    return { verdict: "needs-you", reason: `${plural(parked.length, "run", "runs")} waiting on review` };
+    return {
+      verdict: "needs-you",
+      reason: `${plural(parked.length, "run", "runs")} waiting on review`,
+      score,
+    };
   }
   // Inbox deliberately not consulted: Pass F leaves a tombstone in the file
   // that reads as content, so every project looks unread. See TK-144. Wire it
@@ -127,52 +225,55 @@ function decide(
 
   // 2. Queenless — the colony has no working head.
   if (!p.path) {
-    return { verdict: "queenless", reason: "no path configured" };
+    return { verdict: "queenless", reason: "no path configured", score };
   }
   // A missing heartbeat is not evidence: heartbeat is off by choice on this
   // machine, so its absence says nothing about the colony.
   if (p.lastResult && /error|fail/i.test(p.lastResult)) {
-    return { verdict: "queenless", reason: "last inspection errored" };
+    return { verdict: "queenless", reason: "last inspection errored", score };
   }
 
-  // 3. Swarm risk — building up faster than it is being worked.
-  if (ctx.blocked >= SWARM_BLOCKED && p.ticketCounts.inProgress === 0) {
+  // 3. Everything else is the rubric. Above the line it earns paint; the
+  // label separates a colony with momentum from one that is only accruing.
+  if (score >= PAINT_THRESHOLD) {
     return {
-      verdict: "swarm-risk",
-      reason: `${plural(ctx.blocked, "ticket", "tickets")} blocked, none moving`,
+      verdict: moving ? "active" : "waiting",
+      reason: parts.slice(0, 2).join(", ") || "in motion",
+      score,
     };
   }
-  const urgent = (p.ticketCounts.byPriority?.[0] ?? 0) + (p.ticketCounts.byPriority?.[1] ?? 0);
-  if (urgent > 0 && p.ticketCounts.inProgress === 0) {
-    return { verdict: "swarm-risk", reason: `${plural(urgent, "high ticket", "high tickets")} untouched` };
+
+  // 4. Below the line. Say something true rather than nothing: a cold store
+  // is worth knowing about even when it is not worth acting on.
+  const coldFor = ctx.lastMemory ? daysBetween(ctx.lastMemory, ctx.today) : Number.POSITIVE_INFINITY;
+  if (coldFor >= STALE_MEMORY_DAYS) {
+    const label = Number.isFinite(coldFor) ? `${Math.floor(coldFor)} days` : "ever";
+    return { verdict: "quiet", reason: `nothing learned in ${label}`, score };
   }
 
-  // 4. Needs feeding — stores are not being replenished.
-  const quietFor = ctx.lastMemory ? daysBetween(ctx.lastMemory, ctx.today) : Number.POSITIVE_INFINITY;
-  if (quietFor >= FEED_THRESHOLD_DAYS) {
-    const label = Number.isFinite(quietFor) ? `${Math.floor(quietFor)} days` : "ever";
-    return { verdict: "needs-feeding", reason: `nothing learned in ${label}` };
-  }
-
-  return { verdict: "leave-alone", reason: "working" };
+  return { verdict: "quiet", reason: parts[0] ?? "nothing pending", score };
 }
 
 /** Yard order: what needs attention stands at the front. */
 const RANK: Record<VerdictKind, number> = {
   "needs-you": 0,
   queenless: 1,
-  "swarm-risk": 2,
-  "needs-feeding": 3,
-  "leave-alone": 4,
+  active: 2,
+  waiting: 3,
+  quiet: 4,
 };
 
 export function sortYard(colonies: Colony[]): Colony[] {
   return [...colonies].sort(
-    (a, b) => RANK[a.verdict] - RANK[b.verdict] || b.stores - a.stores || a.id.localeCompare(b.id),
+    (a, b) =>
+      RANK[a.verdict] - RANK[b.verdict] ||
+      b.score - a.score ||
+      b.stores - a.stores ||
+      a.id.localeCompare(b.id),
   );
 }
 
-/** Colonies the reader has to do something about today. */
+/** Colonies worth a look today — the painted ones. */
 export function needsAttention(colonies: Colony[]): Colony[] {
-  return colonies.filter((c) => c.verdict !== "leave-alone");
+  return colonies.filter((c) => c.verdict !== "quiet");
 }

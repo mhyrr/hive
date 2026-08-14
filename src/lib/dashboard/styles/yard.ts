@@ -213,7 +213,7 @@ export const YARD_CSS = `
 
 /* A quiet colony is left unpainted. Placed after the slot rules so it wins
    at equal specificity: paint is the attention signal, not decoration. */
-.colony.colony--leave-alone { --paint: var(--wood); }
+.colony.colony--quiet { --paint: var(--wood); }
 
 .colony-name {
   font-family: var(--stencil);
@@ -289,8 +289,9 @@ export const YARD_CSS = `
   text-transform: uppercase;
   color: var(--ink-soft);
 }
-.colony--needs-you .colony-verdict { color: var(--oxide); }
-.colony--leave-alone .colony-verdict { color: var(--muted); }
+.colony--needs-you .colony-verdict,
+.colony--queenless .colony-verdict { color: var(--oxide); }
+.colony--quiet .colony-verdict { color: var(--muted); }
 .colony-reason {
   font-size: 12.5px;
   line-height: 1.35;

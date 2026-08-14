@@ -59,6 +59,9 @@ export type ProjectCard = {
     closed: number;
     byPriority: Record<TicketPriority, number>;
   };
+  /** Open/in-progress tickets touched inside TICKET_MOVEMENT_DAYS. Momentum,
+   *  not backlog: a queue nobody has touched says the opposite of a live one. */
+  ticketsTouched: number;
   inboxMtime: string | null;
 };
 
@@ -361,6 +364,13 @@ export async function collectProjects(paths: HivePaths): Promise<ProjectCard[]> 
       counts.byPriority[t.priority] = (counts.byPriority[t.priority] ?? 0) + 1;
     }
 
+    const movementCutoff = Date.now() - TICKET_MOVEMENT_DAYS * 86_400_000;
+    const ticketsTouched = tickets.filter((t) => {
+      if (t.status === "closed") return false;
+      const at = Date.parse(t.updated);
+      return !Number.isNaN(at) && at >= movementCutoff;
+    }).length;
+
     // Inbox mtime
     const inboxStat = await safeStat(pp.inbox);
 
@@ -371,6 +381,7 @@ export async function collectProjects(paths: HivePaths): Promise<ProjectCard[]> 
       tickCount,
       lastResult,
       ticketCounts: counts,
+      ticketsTouched,
       inboxMtime: inboxStat ? inboxStat.mtime.toISOString() : null,
     });
   }
@@ -777,6 +788,9 @@ export async function collectPromotionCandidates(paths: HivePaths): Promise<Prom
 // ---------------------------------------------------------------------------
 // V1 cross-cutting widgets — open questions, recent memory, run usage.
 // ---------------------------------------------------------------------------
+
+/** How recently a ticket must have moved to count as momentum. */
+export const TICKET_MOVEMENT_DAYS = 7;
 
 const RECENT_MEMORY_WINDOW_DAYS = 7;
 const RECENT_MEMORY_LIMIT = 25;
