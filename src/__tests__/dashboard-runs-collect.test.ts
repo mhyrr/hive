@@ -25,6 +25,7 @@ async function createDispatchRun(
     pid?: string;
     outputLog?: string;
     runSh?: string;
+    runMetadata?: Record<string, unknown>;
   },
 ): Promise<void> {
   const dir = join(home, "runs", id);
@@ -42,6 +43,9 @@ async function createDispatchRun(
   }
   if (opts.runSh !== undefined) {
     await writeFile(join(dir, "run.sh"), opts.runSh);
+  }
+  if (opts.runMetadata !== undefined) {
+    await writeFile(join(dir, "run.json"), JSON.stringify(opts.runMetadata));
   }
 }
 
@@ -137,6 +141,28 @@ describe("dashboard runs collector", () => {
     expect(result.terminal).toHaveLength(1);
     expect(result.terminal[0]!.status).toBe("failed");
     expect(result.terminal[0]!.ticketId).toBe("TK-099");
+  });
+
+  test("review-ready Act run prefers structured ownership and branch metadata", async () => {
+    await createDispatchRun(home, "RUN-007", {
+      status: "review_ready",
+      goal: "# Goal\n\nLegacy prose without useful ownership.\n",
+      runMetadata: {
+        projectId: "alpha",
+        ticketId: "TK-007",
+        branch: "hive/act/alpha-tk-007-run-007",
+        createdAt: "2026-08-13T06:00:00Z",
+      },
+    });
+
+    const result = await collectRuns(await ensureHiveScaffold(home), { checkPid: false });
+    expect(result.terminal[0]).toMatchObject({
+      status: "review_ready",
+      projectId: "alpha",
+      ticketId: "TK-007",
+      worktreeBranch: "hive/act/alpha-tk-007-run-007",
+      startedAt: "2026-08-13T06:00:00Z",
+    });
   });
 
   // -------------------------------------------------------------------------

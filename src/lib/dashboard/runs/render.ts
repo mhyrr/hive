@@ -52,6 +52,8 @@ function formatCost(usd: number | undefined): string {
 
 function statusBadgeClass(status: RunRowStatus): string {
   switch (status) {
+    case "review_ready":
+      return "run-status-review";
     case "shipped":
       return "run-status-shipped";
     case "partial":
@@ -285,6 +287,7 @@ export function renderDirectDispatches(directs: DirectArc[]): string {
 
       const chipKind =
         run.status === "shipped" ? "shipped" :
+        run.status === "review_ready" ? "in-flight" :
         run.status === "running" ? "running" :
         "failed";
 

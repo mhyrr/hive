@@ -23,7 +23,7 @@ import { readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { getProjectPaths, listProjects, type HivePaths } from "./paths";
-import { listTickets } from "./ticket";
+import { listTickets, readTicket } from "./ticket";
 import { extractRepoPath } from "./project";
 import { extractExchanges, findRecentSessions, redact, resolveProjectName, shouldSkipUserText } from "./sessions";
 import type { WatchDef, WatchScopeKind } from "./watch";
@@ -38,9 +38,8 @@ export interface SessionFileInfo {
   mtimeMs: number;
 }
 
-/** Raw `git log` lines, newest first, format "%ct %h %s". Empty string when
- * the path isn't a repo or nothing landed since `sinceIso`. */
-export type GitLogFn = (repoPath: string, sinceIso: string) => string;
+/** Raw `git log` lines, newest first, format "%ct %h %s". */
+export type GitLogFn = (repoPath: string, sinceIso: string, untilIso: string) => string;
 
 export type SessionLister = (hoursAgo: number, now: Date) => Promise<SessionFileInfo[]>;
 
@@ -49,9 +48,9 @@ export interface DeltaSeams {
   listSessions?: SessionLister;
 }
 
-const defaultGitLog: GitLogFn = (repoPath, sinceIso) => {
+const defaultGitLog: GitLogFn = (repoPath, sinceIso, untilIso) => {
   try {
-    return execSync(`git log --since='${sinceIso}' --pretty=format:'%ct %h %s' 2>/dev/null`, {
+    return execSync(`git log --since='${sinceIso}' --until='${untilIso}' --pretty=format:'%ct %h %s' 2>/dev/null`, {
       cwd: repoPath,
       encoding: "utf-8",
     }).trim();
@@ -102,6 +101,15 @@ async function readIfExists(path: string): Promise<string | null> {
   }
 }
 
+function changedWithin(path: string, sinceMs: number, untilMs: number): boolean {
+  try {
+    const mtime = statSync(path).mtimeMs;
+    return mtime >= sinceMs && mtime <= untilMs;
+  } catch {
+    return false;
+  }
+}
+
 /** Encode per-project values into one storable fingerprint string, and back.
  * Kept human-readable so state.json stays debuggable. */
 function encodePerProject(values: Record<string, string>): string {
@@ -135,10 +143,11 @@ interface KindObservation {
 async function observeKind(
   kind: WatchScopeKind,
   projects: string[],
-  args: { paths: HivePaths; windowMs: number; now: Date; gitLog: GitLogFn; sessions: SessionFileInfo[] },
+  args: { paths: HivePaths; since: Date; now: Date; gitLog: GitLogFn; sessions: SessionFileInfo[] },
 ): Promise<KindObservation> {
-  const { paths, windowMs, now, gitLog, sessions } = args;
-  const sinceIso = new Date(now.getTime() - windowMs).toISOString();
+  const { paths, since, now, gitLog, sessions } = args;
+  const sinceIso = since.toISOString();
+  const untilIso = now.toISOString();
   const values: Record<string, string> = {};
 
   switch (kind) {
@@ -162,7 +171,7 @@ async function observeKind(
           values[p] = "";
           continue;
         }
-        const firstLine = gitLog(repo, sinceIso).split("\n")[0]?.trim() ?? "";
+        const firstLine = gitLog(repo, sinceIso, untilIso).split("\n")[0]?.trim() ?? "";
         const ct = firstLine.split(" ")[0];
         values[p] = /^\d+$/.test(ct) ? ct : "";
       }
@@ -170,7 +179,9 @@ async function observeKind(
     }
     case "transcripts": {
       for (const p of projects) {
-        const newest = Math.max(0, ...sessions.filter((s) => s.project === p).map((s) => Math.floor(s.mtimeMs)));
+        const newest = Math.max(0, ...sessions
+          .filter((s) => s.project === p && s.mtimeMs >= since.getTime() && s.mtimeMs <= now.getTime())
+          .map((s) => Math.floor(s.mtimeMs)));
         values[p] = newest > 0 ? String(newest) : "";
       }
       return { values, watermark: true };
@@ -242,16 +253,17 @@ export async function evaluateWatchDelta(args: {
   paths: HivePaths;
   watch: WatchDef;
   lastDigests: Record<string, string>;
+  since: Date;
   now: Date;
   seams?: DeltaSeams;
 }): Promise<WatchDeltaEvaluation> {
-  const { paths, watch, lastDigests, now } = args;
+  const { paths, watch, lastDigests, since, now } = args;
   const gitLog = args.seams?.gitLog ?? defaultGitLog;
   const listSessions = args.seams?.listSessions ?? defaultListSessions;
 
   const projects = watch.project ? [watch.project] : await listProjects(paths.projectsDir);
   const sessions = watch.scope.includes("transcripts")
-    ? await listSessions(Math.max(1, Math.ceil(watch.windowMs / 3_600_000)), now)
+    ? await listSessions(Math.max(1, Math.ceil((now.getTime() - since.getTime()) / 3_600_000)), now)
     : [];
 
   const reasons: string[] = [];
@@ -260,7 +272,7 @@ export async function evaluateWatchDelta(args: {
   for (const kind of watch.scope) {
     const { values, watermark } = await observeKind(kind, projects, {
       paths,
-      windowMs: watch.windowMs,
+      since,
       now,
       gitLog,
       sessions,
@@ -318,29 +330,31 @@ export interface ProjectActivity {
 export async function rankProjectActivity(args: {
   paths: HivePaths;
   projects?: string[];
-  windowMs: number;
+  since: Date;
   now: Date;
   seams?: DeltaSeams;
 }): Promise<ProjectActivity[]> {
-  const { paths, windowMs, now } = args;
+  const { paths, since, now } = args;
   const gitLog = args.seams?.gitLog ?? defaultGitLog;
   const listSessions = args.seams?.listSessions ?? defaultListSessions;
   const projects = args.projects ?? (await listProjects(paths.projectsDir));
-  const sinceIso = new Date(now.getTime() - windowMs).toISOString();
-  const sinceMs = now.getTime() - windowMs;
-  const sessions = await listSessions(Math.max(1, Math.ceil(windowMs / 3_600_000)), now);
+  const sinceIso = since.toISOString();
+  const sinceMs = since.getTime();
+  const untilMs = now.getTime();
+  const sessions = (await listSessions(Math.max(1, Math.ceil((now.getTime() - sinceMs) / 3_600_000)), now))
+    .filter((session) => session.mtimeMs >= sinceMs && session.mtimeMs <= untilMs);
 
   const out: ProjectActivity[] = [];
   for (const p of projects) {
     const repo = await repoPathFor(paths, p);
-    const commitLines = repo ? gitLog(repo, sinceIso).split("\n").filter((l) => l.trim()) : [];
+    const commitLines = repo ? gitLog(repo, sinceIso, now.toISOString()).split("\n").filter((l) => l.trim()) : [];
     const sessionCount = sessions.filter((s) => s.project === p).length;
     let ticketsMoved = 0;
     try {
       const tickets = await listTickets(paths, p);
       ticketsMoved = tickets.filter((t) => {
         const u = new Date(t.updated).getTime();
-        return !Number.isNaN(u) && u >= sinceMs;
+        return !Number.isNaN(u) && u >= sinceMs && u <= untilMs;
       }).length;
     } catch {
       // intentional: unreadable tickets dir — counts as no movement
@@ -367,6 +381,8 @@ export interface WatchDigest {
   /** Citable anchors present in the digest (ticket IDs, SHAs, session files). */
   provenance: string[];
   empty: boolean;
+  /** Present only for an Act watch; zero means code found nothing dispatchable. */
+  actCandidateCount?: number;
 }
 
 /** Warm-project cap for cross-project digests: attention goes to the top
@@ -379,6 +395,9 @@ const EXCERPT_CHAR_CAP = 280;
 const MAX_SESSIONS_PER_PROJECT = 6;
 const MAX_EXCERPTS_PER_SESSION = 4;
 const MAX_COMMIT_LINES = 40;
+const MAX_ACT_CANDIDATES = 12;
+const MAX_ACT_TICKET_BODY_CHARS = 6_000;
+const MAX_ACT_SECTION_CHARS = 16_000;
 
 function capSection(lines: string[], cap: number = SECTION_CHAR_CAP): string {
   let total = 0;
@@ -394,60 +413,178 @@ function capSection(lines: string[], cap: number = SECTION_CHAR_CAP): string {
   return kept.join("\n");
 }
 
+async function runningTicketKeys(paths: HivePaths): Promise<Set<string>> {
+  const out = new Set<string>();
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(paths.runsDir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const name of entries) {
+    if (!name.isDirectory() || !name.name.startsWith("RUN-")) continue;
+    const dir = join(paths.runsDir, name.name);
+    const status = await readIfExists(join(dir, "status"));
+    if (status?.trim() !== "running") continue;
+    const metadata = await readIfExists(join(dir, "run.json"));
+    if (metadata) {
+      try {
+        const parsed = JSON.parse(metadata) as { projectId?: string; ticketId?: string };
+        if (parsed.projectId && parsed.ticketId) {
+          out.add(`${parsed.projectId}/${parsed.ticketId}`);
+          continue;
+        }
+      } catch {
+        // Legacy prose fallback below.
+      }
+    }
+    const goal = await readIfExists(join(dir, "goal.md"));
+    if (!goal) continue;
+    const project = goal.match(/^Project:\s*(\S+)$/m)?.[1];
+    const ticket = goal.match(/\b(TK-\d+)\b/)?.[1];
+    if (project && ticket) out.add(`${project}/${ticket}`);
+  }
+  return out;
+}
+
+/** Deterministic half of Act: judgment sees only tickets code can safely dispatch. */
+async function assembleActCandidates(
+  paths: HivePaths,
+  projects: string[],
+  provenance: string[],
+): Promise<{ lines: string[]; omitted: number }> {
+  const running = await runningTicketKeys(paths);
+  const candidates: Array<{ project: string; projectRank: number; priority: number; updated: string; tag: string; line: string }> = [];
+  let omitted = 0;
+
+  for (const [projectRank, project] of projects.entries()) {
+    const repo = await repoPathFor(paths, project);
+    if (!repo) continue;
+    try {
+      execSync("git rev-parse --verify main^{commit}", { cwd: repo, encoding: "utf-8", stdio: "pipe" });
+    } catch {
+      continue;
+    }
+    const all = await listTickets(paths, project).catch(() => []);
+    const byId = new Map(all.map((ticket) => [ticket.id, ticket]));
+    for (const ticket of all) {
+      const key = `${project}/${ticket.id}`;
+      if (ticket.status !== "open" || ticket.type === "epic" || ticket.priority === 0) continue;
+      if (ticket.tags.includes("needs-greg") || running.has(key)) continue;
+      if (ticket.depends.some((id) => byId.get(id)?.status !== "closed")) continue;
+      const full = await readTicket(paths, project, ticket.id);
+      if (!full?.body.trim()) continue;
+      const body = full.body.trim();
+      if (body.length > MAX_ACT_TICKET_BODY_CHARS) {
+        omitted++;
+        continue;
+      }
+      const tag = `[A:${key}]`;
+      candidates.push({
+        project,
+        projectRank,
+        priority: ticket.priority,
+        updated: ticket.updated,
+        tag,
+        line: `- ${tag} P${ticket.priority} ${ticket.title}\n  ${body.replace(/\n/g, "\n  ")}`,
+      });
+    }
+  }
+
+  const ordered = candidates
+    .sort((a, b) => a.projectRank - b.projectRank || a.priority - b.priority || b.updated.localeCompare(a.updated) || a.project.localeCompare(b.project));
+  const selected: typeof ordered = [];
+  let chars = 0;
+  for (const candidate of ordered) {
+    if (selected.length >= MAX_ACT_CANDIDATES || chars + candidate.line.length + 1 > MAX_ACT_SECTION_CHARS) {
+      omitted++;
+      continue;
+    }
+    selected.push(candidate);
+    chars += candidate.line.length + 1;
+    provenance.push(candidate.tag);
+  }
+  return { lines: selected.map((candidate) => candidate.line), omitted };
+}
+
 export async function assembleWatchDigest(args: {
   paths: HivePaths;
   watch: WatchDef;
+  since: Date;
   now: Date;
   seams?: DeltaSeams;
 }): Promise<WatchDigest> {
-  const { paths, watch, now } = args;
+  const { paths, watch, since, now } = args;
   const gitLog = args.seams?.gitLog ?? defaultGitLog;
   const listSessions = args.seams?.listSessions ?? defaultListSessions;
-  const sinceIso = new Date(now.getTime() - watch.windowMs).toISOString();
-  const sinceMs = now.getTime() - watch.windowMs;
+  const sinceIso = since.toISOString();
+  const sinceMs = since.getTime();
+  const untilMs = now.getTime();
 
   const allProjects = watch.project ? [watch.project] : await listProjects(paths.projectsDir);
   const activity = await rankProjectActivity({
     paths,
     projects: allProjects,
-    windowMs: watch.windowMs,
+    since,
     now,
     seams: args.seams,
   });
   const warm = activity.filter((a) => a.score > 0);
-  const focus = (warm.length > 0 ? warm : activity).slice(0, MAX_DIGEST_PROJECTS);
+  const focus = (watch.autonomy === "act" ? warm : (warm.length > 0 ? warm : activity)).slice(0, MAX_DIGEST_PROJECTS);
   const skipped = activity.filter((a) => !focus.some((f) => f.project === a.project));
 
   const sessions = watch.scope.includes("transcripts")
-    ? await listSessions(Math.max(1, Math.ceil(watch.windowMs / 3_600_000)), now)
+    ? (await listSessions(Math.max(1, Math.ceil((now.getTime() - sinceMs) / 3_600_000)), now))
+      .filter((session) => session.mtimeMs >= sinceMs && session.mtimeMs <= untilMs)
     : [];
 
   const provenance: string[] = [];
   const sections: string[] = [];
-  const windowLabel = `${Math.round(watch.windowMs / 3_600_000)}h`;
+  let actCandidateCount: number | undefined;
+  const elapsedMinutes = Math.max(1, Math.round((now.getTime() - sinceMs) / 60_000));
+  const windowLabel = elapsedMinutes % 60 === 0
+    ? `${elapsedMinutes / 60} hour${elapsedMinutes === 60 ? "" : "s"}`
+    : `${Math.floor(elapsedMinutes / 60)}h ${elapsedMinutes % 60}m`;
 
   sections.push(
     `# Watch digest: ${watch.qualifiedName}`,
-    `Window: last ${windowLabel}, as of ${now.toISOString()}.`,
+    `Activity interval: ${since.toISOString()} → ${now.toISOString()} (${windowLabel}).`,
     `Activity ranking: ${activity.map((a) => `${a.project}(${a.score})`).join(", ") || "none"}.`,
   );
   if (skipped.length > 0) {
     sections.push(`Not expanded (cold or beyond top ${MAX_DIGEST_PROJECTS}): ${skipped.map((a) => a.project).join(", ")}.`);
   }
 
+  // Act's complete shortlist goes first so the global digest cap can never
+  // leave a selectable tag whose specification was cut off later.
+  if (watch.autonomy === "act") {
+    const candidates = await assembleActCandidates(paths, focus.map((item) => item.project), provenance);
+    actCandidateCount = candidates.lines.length;
+    if (candidates.lines.length > 0) {
+      sections.push(
+        `\n## Eligible tickets`,
+        `Code has already excluded P0s, epics, needs-greg, blocked, in-flight, and bodyless tickets. The model judges whether one is an unambiguous follow-on.`,
+        candidates.lines.join("\n"),
+        ...(candidates.omitted > 0 ? [`${candidates.omitted} additional ticket(s) omitted because the complete specification did not fit the Act shortlist.`] : []),
+      );
+    }
+  }
+
   if (watch.scope.includes("runs")) {
-    const runDirs = listRunDirs(paths).filter((d) => d.mtimeMs >= sinceMs).slice(0, 7);
+    const runDirs = listRunDirs(paths).filter((d) => d.mtimeMs >= sinceMs && d.mtimeMs <= untilMs).slice(0, 7);
     const lines: string[] = [];
     for (const d of runDirs) {
       const briefing = await readIfExists(join(paths.memoryRunsDir, d.date, "briefing.md"));
       if (briefing && briefing.trim()) {
-        lines.push(`### runs/${d.date}/briefing.md`, briefing.trim().slice(0, 1_800));
-        provenance.push(`runs/${d.date}/briefing.md`);
+        const tag = `[R:${d.date}/briefing]`;
+        lines.push(`### ${tag} runs/${d.date}/briefing.md`, briefing.trim().slice(0, 1_800));
+        provenance.push(tag);
       }
       const taste = await readIfExists(join(paths.memoryRunsDir, d.date, "taste-decisions.md"));
       if (taste && taste.trim()) {
-        lines.push(`### runs/${d.date}/taste-decisions.md (tail)`, taste.trim().slice(-600));
-        provenance.push(`runs/${d.date}/taste-decisions.md`);
+        const tag = `[R:${d.date}/taste]`;
+        lines.push(`### ${tag} runs/${d.date}/taste-decisions.md (tail)`, taste.trim().slice(-600));
+        provenance.push(tag);
       }
     }
     if (lines.length > 0) sections.push(`\n## Nightly runs in window`, capSection(lines, 12_000));
@@ -460,12 +597,15 @@ export async function assembleWatchDigest(args: {
       try {
         const moved = (await listTickets(paths, project)).filter((t) => {
           const u = new Date(t.updated).getTime();
-          return !Number.isNaN(u) && u >= sinceMs;
+          return !Number.isNaN(u) && u >= sinceMs && u <= untilMs;
         });
         if (moved.length > 0) {
-          projLines.push(`### Tickets updated in window`);
-          projLines.push(capSection(moved.map((t) => `- ${t.id} [${t.status}] ${t.title} (updated ${t.updated})`)));
-          provenance.push(...moved.map((t) => t.id));
+          projLines.push(`### Tickets updated in interval`);
+          projLines.push(capSection(moved.map((t) => {
+            const tag = `[T:${project}/${t.id}]`;
+            provenance.push(tag);
+            return `- ${tag} [${t.status}] ${t.title} (updated ${t.updated})`;
+          })));
         }
       } catch {
         // intentional: unreadable tickets dir — section omitted
@@ -474,12 +614,13 @@ export async function assembleWatchDigest(args: {
 
     if (watch.scope.includes("commits")) {
       const repo = await repoPathFor(paths, project);
-      const lines = repo ? gitLog(repo, sinceIso).split("\n").filter((l) => l.trim()) : [];
+      const lines = repo ? gitLog(repo, sinceIso, now.toISOString()).split("\n").filter((l) => l.trim()) : [];
       if (lines.length > 0) {
         const rendered = lines.slice(0, MAX_COMMIT_LINES).map((l) => {
           const [, sha, ...subject] = l.split(" ");
-          if (sha) provenance.push(sha);
-          return `- ${sha ?? "?"} ${subject.join(" ")}`;
+          const tag = sha ? `[C:${project}/${sha}]` : "[C:unknown]";
+          if (sha) provenance.push(tag);
+          return `- ${tag} ${subject.join(" ")}`;
         });
         if (lines.length > MAX_COMMIT_LINES) rendered.push(`… (${lines.length - MAX_COMMIT_LINES} more commit(s) truncated)`);
         projLines.push(`### Commits in window`, capSection(rendered));
@@ -494,12 +635,16 @@ export async function assembleWatchDigest(args: {
       const lines: string[] = [];
       for (const s of projSessions) {
         const label = `${basename(s.file)} (${new Date(s.mtimeMs).toISOString().slice(0, 10)})`;
-        provenance.push(label);
-        lines.push(`— session ${label}`);
+        const tag = `[S:${project}/${basename(s.file)}]`;
+        provenance.push(tag);
+        lines.push(`— ${tag} session ${label}`);
         const userTexts = extractExchanges(s.file)
           .filter((e) => e.role === "user" && !shouldSkipUserText(e.text))
           .map((e) => redact(e.text));
-        for (const text of userTexts.slice(0, MAX_EXCERPTS_PER_SESSION)) {
+        // A session file can span hours or days. The tail is the part that most
+        // plausibly caused its in-interval mtime and avoids leading setup text
+        // masquerading as the latest activity.
+        for (const text of userTexts.slice(-MAX_EXCERPTS_PER_SESSION)) {
           lines.push(`  > ${text.slice(0, EXCERPT_CHAR_CAP).replace(/\s+/g, " ")}${text.length > EXCERPT_CHAR_CAP ? "…" : ""}`);
         }
         if (userTexts.length > MAX_EXCERPTS_PER_SESSION) {
@@ -512,24 +657,29 @@ export async function assembleWatchDigest(args: {
     if (watch.scope.includes("memory")) {
       const knowledgePath = join(paths.memoryProjectsDir, project, "knowledge.md");
       const knowledge = await readIfExists(knowledgePath);
-      const candidates = await readIfExists(join(paths.memoryProjectsDir, project, "candidates.md"));
+      const candidatesPath = join(paths.memoryProjectsDir, project, "candidates.md");
+      const candidates = await readIfExists(candidatesPath);
       const lines: string[] = [];
-      if (knowledge && knowledge.trim()) {
-        lines.push(`— knowledge.md (tail)`, knowledge.trim().slice(-2_500));
-        provenance.push(`memory/projects/${project}/knowledge.md`);
+      if (knowledge && knowledge.trim() && changedWithin(knowledgePath, sinceMs, untilMs)) {
+        const tag = `[M:${project}/knowledge]`;
+        lines.push(`— ${tag} knowledge.md (current tail; file changed in interval)`, knowledge.trim().slice(-2_500));
+        provenance.push(tag);
       }
-      if (candidates && candidates.trim()) {
-        lines.push(`— candidates.md`, candidates.trim().slice(-1_500));
-        provenance.push(`memory/projects/${project}/candidates.md`);
+      if (candidates && candidates.trim() && changedWithin(candidatesPath, sinceMs, untilMs)) {
+        const tag = `[M:${project}/candidates]`;
+        lines.push(`— ${tag} candidates.md (current tail; file changed in interval)`, candidates.trim().slice(-1_500));
+        provenance.push(tag);
       }
       if (lines.length > 0) projLines.push(`### Memory`, capSection(lines));
     }
 
     if (watch.scope.includes("inbox")) {
-      const inbox = await readIfExists(getProjectPaths(paths, project).inbox);
-      if (inbox && inbox.trim()) {
-        projLines.push(`### Inbox (tail)`, inbox.trim().slice(-1_200));
-        provenance.push(`projects/${project}/inbox.md`);
+      const inboxPath = getProjectPaths(paths, project).inbox;
+      const inbox = await readIfExists(inboxPath);
+      if (inbox && inbox.trim() && changedWithin(inboxPath, sinceMs, untilMs)) {
+        const tag = `[I:${project}]`;
+        projLines.push(`### ${tag} Inbox (tail)`, inbox.trim().slice(-1_200));
+        provenance.push(tag);
       }
     }
 
@@ -542,5 +692,5 @@ export async function assembleWatchDigest(args: {
     text = text.slice(0, DIGEST_CHAR_CAP) + "\n… (digest truncated at cap)";
   }
   const empty = !sections.some((s) => s.startsWith("\n## "));
-  return { text, provenance, empty };
+  return { text, provenance: provenance.filter((tag) => text.includes(tag)), empty, actCandidateCount };
 }

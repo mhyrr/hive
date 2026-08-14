@@ -506,7 +506,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   // ---- @nightly watches (TK-138) — after both tracks, before the dashboard --
   // Invoked here (not by the hourly tick) so they read tonight's runs/{DATE}/
   // artifacts; the dashboard rebuild below then captures whatever they surface
-  // (bets.md et al). Delta-gated: a night that changed nothing spawns nothing.
+  // (propose.md et al). Delta-gated: a night that changed nothing spawns nothing.
   // Skipped on --dry-run — watches write venue artifacts and spend real calls.
   if (dryRun) {
     result.passes.W = [{ pass: "W", status: "skipped", detail: "dry-run" }];

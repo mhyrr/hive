@@ -12,6 +12,7 @@ import {
   formatTicketRow,
   formatTicketDetail,
   sortTicketsForDisplay,
+  releaseTicketDispatchClaim,
   type TicketType,
   type TicketPriority,
   type TicketStatus,
@@ -84,6 +85,7 @@ export async function ticketCommand(args: string[]): Promise<void> {
   hive ticket ready                        Show unblocked tickets
   hive ticket blocked                      Show dependency-blocked tickets
   hive ticket relink-epics                 Best-effort backfill of parent_epic on children
+  hive ticket release-claim <id> --run RUN-NNN  Release only an owning failed dispatch
   hive ticket --project <name> ...         Specify project
 
   hive tickets                             Open tickets for this project`;
@@ -180,6 +182,16 @@ export async function ticketCommand(args: string[]): Promise<void> {
       const ticket = await updateTicket(paths, projectId, id, { status: "open" });
       if (!ticket) throw new UsageError(`Ticket not found: ${id}`);
       console.log(`Reopened ${ticket.id}: ${ticket.title}`);
+      break;
+    }
+
+    case "release-claim": {
+      const id = positional[0];
+      if (!id) throw new UsageError("Ticket ID required.");
+      if (!flags.run) throw new UsageError("--run RUN-NNN required.");
+      const released = await releaseTicketDispatchClaim(paths, projectId, id, flags.run);
+      if (!released) throw new UsageError(`Dispatch claim does not belong to ${flags.run}: ${projectId}/${id}`);
+      console.log(`Released ${projectId}/${id} from ${flags.run}`);
       break;
     }
 

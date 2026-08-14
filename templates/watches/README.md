@@ -26,20 +26,29 @@ HIVE repo.
 name: my-question       # defaults to filename
 cadence: @morning       # 2h | 45m | 1d | @nightly | @morning | mon,thu
 scope: tickets, commits # tickets|commits|transcripts|memory|inbox|runs
-window: 24h             # delta/digest lookback
 model: standard         # fast | standard | judgment (aliases, never raw IDs)
-venue: inbox            # inbox | briefing
-autonomy: observe       # observe | propose (act reserved for the harvester)
+venue: inbox            # inbox | briefing | dispatch
+autonomy: observe       # observe | propose | act
 enabled: true
 ---
 
 The standing question, in plain language.
 ```
 
+Evidence spans the previous settled tick through the current tick. A 6h
+watch normally sees six hours; if launchd wakes late, it sees the full late
+interval instead of dropping activity. Errors and quota deferrals do not move
+the cursor.
+
+The installed cycles are `act` (6h), `propose` (`@nightly`), and `observe`
+(3d). Act creates a local review branch only; it never merges or pushes, and
+it requires `watches.max_autonomy: act` in config.
+
 ## Control
 
 ```
 hive watch list | status
+hive watch ceiling observe|propose|act
 hive watch run --due | run <name>
 hive watch on|off <name> | off --all
 hive watch set <name> k=v

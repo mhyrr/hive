@@ -143,15 +143,15 @@ describe("server routes", () => {
   test("GET /watches/:name serves the per-watch prompt page", async () => {
     const paths = getHivePaths(home);
     await writeFile(
-      join(paths.watchesDir, "bets.md"),
-      "---\nname: bets\ncadence: @nightly\nscope: runs\n---\n\nWhat bets?",
+      join(paths.watchesDir, "propose.md"),
+      "---\nname: propose\ncadence: @nightly\nscope: runs\n---\n\nWhat should we propose?",
     );
 
-    const res = await handleRequest(requestFor("GET", "/watches/bets"), buildCtx(paths, state));
+    const res = await handleRequest(requestFor("GET", "/watches/propose"), buildCtx(paths, state));
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain("Prompt as it fires now");
-    expect(body).toContain("What bets?");
+    expect(body).toContain("What should we propose?");
   });
 
   test("GET /watches/:name returns 404 for an unknown watch", async () => {

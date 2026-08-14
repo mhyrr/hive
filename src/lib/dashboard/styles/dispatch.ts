@@ -28,6 +28,7 @@ export const DISPATCH_CSS = `
   line-height: 1.45;
 }
 .dispatch-row .status.status-complete { color: var(--ink); font-weight: 800; }
+.dispatch-row .status.status-review_ready { color: #8a5a00; font-weight: 800; }
 .dispatch-row .status.status-partial  { color: var(--amber); }
 .dispatch-row .status.status-failed,
 .dispatch-row .status.status-crashed,

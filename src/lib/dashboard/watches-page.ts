@@ -129,7 +129,7 @@ export async function collectWatchesPage(paths: HivePaths): Promise<WatchesPageD
       enabled: w.enabled,
       cadence: formatCadence(w.cadence),
       autonomy: w.autonomy,
-      effectiveAutonomy: clampAutonomy(clampAutonomy(w.autonomy, ceiling), "propose"),
+      effectiveAutonomy: clampAutonomy(w.autonomy, ceiling),
       tier: w.model,
       venue: w.venue,
       project: w.project,
@@ -152,7 +152,7 @@ export async function collectWatchesPage(paths: HivePaths): Promise<WatchesPageD
     .map(toOutputCard)
     .sort((a, b) => b.at.localeCompare(a.at));
 
-  // Briefing-venue artifacts from the recent run dirs (bets.md et al).
+  // Briefing-venue artifacts from recent run dirs (propose.md et al).
   const artifacts: SurfacedArtifact[] = [];
   const briefingWatchNames = watches.filter((w) => w.venue === "briefing").map((w) => w.name);
   if (briefingWatchNames.length > 0) {

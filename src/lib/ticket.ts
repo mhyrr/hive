@@ -26,6 +26,9 @@ export type Ticket = {
   ref: string | null; // external reference (github issue, etc.)
   depends: string[]; // ticket IDs this depends on
   parentEpic: string | null; // ticket ID of the epic this is a child of
+  /** Owning autonomous dispatch, when one has claimed this ticket for review. */
+  dispatchRun?: string | null;
+  dispatchBranch?: string | null;
 };
 
 export type TicketWithBody = Ticket & { body: string };
@@ -96,6 +99,8 @@ function parseTicketFile(raw: string, id: string): TicketWithBody {
     ref: attributes.ref || null,
     depends: attributes.depends ? attributes.depends.split(",").map((d) => d.trim()).filter(Boolean) : [],
     parentEpic: attributes.parent_epic || null,
+    dispatchRun: attributes.dispatch_run || null,
+    dispatchBranch: attributes.dispatch_branch || null,
     body,
   };
 }
@@ -115,6 +120,8 @@ function serializeTicket(ticket: TicketWithBody): string {
   if (ticket.ref) attrs.ref = ticket.ref;
   if (ticket.depends.length > 0) attrs.depends = ticket.depends.join(", ");
   if (ticket.parentEpic) attrs.parent_epic = ticket.parentEpic;
+  if (ticket.dispatchRun) attrs.dispatch_run = ticket.dispatchRun;
+  if (ticket.dispatchBranch) attrs.dispatch_branch = ticket.dispatchBranch;
 
   return stringifyFrontmatter(attrs, ticket.body);
 }
@@ -168,6 +175,8 @@ export async function createTicket(
     ref: input.ref ?? null,
     depends: input.depends ?? [],
     parentEpic: input.parentEpic ?? null,
+    dispatchRun: null,
+    dispatchBranch: null,
     body: input.body?.trim() || "",
   };
 
@@ -193,7 +202,7 @@ export async function updateTicket(
   paths: HivePaths,
   projectId: string,
   id: string,
-  updates: Partial<Pick<Ticket, "status" | "title" | "type" | "priority" | "tags" | "ref" | "depends" | "parentEpic">>,
+  updates: Partial<Pick<Ticket, "status" | "title" | "type" | "priority" | "tags" | "ref" | "depends" | "parentEpic" | "dispatchRun" | "dispatchBranch">>,
 ): Promise<TicketWithBody | null> {
   const ticket = await readTicket(paths, projectId, id);
   if (!ticket) return null;
@@ -202,6 +211,10 @@ export async function updateTicket(
     ticket.status = updates.status;
     if (updates.status === "closed") ticket.closed = toIsoTimestamp();
     if (updates.status === "open") ticket.closed = null;
+    if (updates.status === "closed" || updates.status === "open") {
+      ticket.dispatchRun = null;
+      ticket.dispatchBranch = null;
+    }
   }
   if (updates.title !== undefined) ticket.title = updates.title;
   if (updates.type !== undefined) ticket.type = updates.type;
@@ -210,6 +223,8 @@ export async function updateTicket(
   if (updates.ref !== undefined) ticket.ref = updates.ref;
   if (updates.depends !== undefined) ticket.depends = updates.depends;
   if (updates.parentEpic !== undefined) ticket.parentEpic = updates.parentEpic;
+  if (updates.dispatchRun !== undefined) ticket.dispatchRun = updates.dispatchRun;
+  if (updates.dispatchBranch !== undefined) ticket.dispatchBranch = updates.dispatchBranch;
   ticket.updated = toIsoTimestamp();
 
   await Bun.write(ticketFilePath(ticketsDir(paths, projectId), ticket.id), serializeTicket(ticket));
@@ -221,6 +236,46 @@ export async function updateTicket(
   }
 
   return ticket;
+}
+
+/** Claim an open ticket for one review dispatch. The caller must hold the
+ * global dispatch lock; the expected-state check prevents stale selections. */
+export async function claimTicketForDispatch(
+  paths: HivePaths,
+  projectId: string,
+  id: string,
+  runId: string,
+  branch: string,
+): Promise<TicketWithBody> {
+  const ticket = await readTicket(paths, projectId, id);
+  if (!ticket) throw new Error(`Ticket not found: ${projectId}/${id}`);
+  if (ticket.status !== "open" || ticket.dispatchRun) {
+    throw new Error(`Ticket is no longer available: ${projectId}/${ticket.id}`);
+  }
+  const claimed = await updateTicket(paths, projectId, ticket.id, {
+    status: "in_progress",
+    dispatchRun: runId,
+    dispatchBranch: branch,
+  });
+  if (!claimed) throw new Error(`Failed to claim ticket: ${projectId}/${ticket.id}`);
+  return claimed;
+}
+
+/** Release only the claim owned by `runId`; never overwrite a human or newer run. */
+export async function releaseTicketDispatchClaim(
+  paths: HivePaths,
+  projectId: string,
+  id: string,
+  runId: string,
+): Promise<boolean> {
+  const ticket = await readTicket(paths, projectId, id);
+  if (!ticket || ticket.dispatchRun !== runId) return false;
+  await updateTicket(paths, projectId, ticket.id, {
+    status: "open",
+    dispatchRun: null,
+    dispatchBranch: null,
+  });
+  return true;
 }
 
 /**

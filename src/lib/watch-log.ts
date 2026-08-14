@@ -39,6 +39,18 @@ function filePrefix(qualifiedName: string): string {
   return qualifiedName.replace(/\//g, "--");
 }
 
+/** Read-only aliases keep pre-migration audit history attached to the renamed
+ * cycles. New logs are always written under the current name. */
+const LEGACY_WATCH_NAMES: Record<string, string[]> = {
+  propose: ["bets"],
+  observe: ["muse"],
+};
+
+function acceptedPrefixes(qualifiedName: string): string[] {
+  return [qualifiedName, ...(LEGACY_WATCH_NAMES[qualifiedName] ?? [])]
+    .map((name) => `${filePrefix(name)}-`);
+}
+
 /** Full observability for every model call: the EXACT prompts sent and what
  * came back. No-delta ticks write nothing here (there was no call to record). */
 export async function writeInvocationLog(args: {
@@ -186,17 +198,17 @@ async function logFiles(dir: string): Promise<string[]> {
   return names.filter((n) => n.endsWith(".md")).sort().reverse();
 }
 
-/** Recent invocations, newest first. Reads only as many files as `limit` needs. */
+/** Recent invocations, newest first. */
 export async function readInvocations(paths: HivePaths, query: InvocationQuery = {}): Promise<InvocationRead> {
   const limit = query.limit ?? 10;
   const invocations: WatchInvocation[] = [];
   const warnings: string[] = [];
-  const wanted = query.watch ? `${filePrefix(query.watch)}-` : null;
+  const wanted = query.watch ? acceptedPrefixes(query.watch) : null;
 
   for (const date of await logDates(paths, query.days ?? 30)) {
     const dir = invocationLogDir(paths, date);
     for (const name of await logFiles(dir)) {
-      if (wanted && !name.startsWith(wanted)) continue;
+      if (wanted && !wanted.some((prefix) => name.startsWith(prefix))) continue;
       const path = join(dir, name);
       const content = await Bun.file(path).text().catch(() => null);
       if (content == null) {
@@ -208,12 +220,12 @@ export async function readInvocations(paths: HivePaths, query: InvocationQuery =
         warnings.push(`${path}: unparseable invocation log — section headers missing`);
         continue;
       }
-      invocations.push(parsed);
-      if (invocations.length >= limit) return { invocations, warnings };
+      invocations.push(query.watch ? { ...parsed, watch: query.watch } : parsed);
     }
   }
 
-  return { invocations, warnings };
+  invocations.sort((a, b) => b.at.localeCompare(a.at));
+  return { invocations: invocations.slice(0, limit), warnings };
 }
 
 /**
@@ -228,29 +240,10 @@ export async function latestInvocations(
 ): Promise<{ byWatch: Map<string, WatchInvocation>; warnings: string[] }> {
   const byWatch = new Map<string, WatchInvocation>();
   const warnings: string[] = [];
-  const pending = new Map(names.map((n) => [`${filePrefix(n)}-`, n]));
-  if (pending.size === 0) return { byWatch, warnings };
-
-  for (const date of await logDates(paths, opts.days ?? 30)) {
-    const dir = invocationLogDir(paths, date);
-    for (const name of await logFiles(dir)) {
-      const hit = [...pending.entries()].find(([prefix]) => name.startsWith(prefix));
-      if (!hit) continue;
-      const path = join(dir, name);
-      const content = await Bun.file(path).text().catch(() => null);
-      if (content == null) {
-        warnings.push(`${path}: unreadable invocation log`);
-        continue;
-      }
-      const parsed = parseInvocationLog(content, { path, date });
-      if (!parsed) {
-        warnings.push(`${path}: unparseable invocation log — section headers missing`);
-        continue;
-      }
-      byWatch.set(hit[1], parsed);
-      pending.delete(hit[0]);
-      if (pending.size === 0) return { byWatch, warnings };
-    }
+  for (const name of names) {
+    const result = await readInvocations(paths, { watch: name, limit: 1, days: opts.days });
+    warnings.push(...result.warnings);
+    if (result.invocations[0]) byWatch.set(name, result.invocations[0]);
   }
 
   return { byWatch, warnings };

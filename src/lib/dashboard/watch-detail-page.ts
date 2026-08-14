@@ -61,7 +61,7 @@ export async function collectWatchDetailPage(
   if (!watch) return null;
 
   const ceiling = readAutonomyCeiling(paths);
-  const effectiveAutonomy = clampAutonomy(clampAutonomy(watch.autonomy, ceiling), "propose");
+  const effectiveAutonomy = clampAutonomy(watch.autonomy, ceiling);
   const state = await loadWatchState(paths);
   const entry = state.watches[watch.qualifiedName] ?? freshEntry();
   const spend = usageSince(entry, now.getTime() - 7 * 86_400_000);
@@ -94,12 +94,6 @@ export async function collectWatchDetailPage(
  * unreadable and the file on disk is the better artifact. */
 const PROMPT_DISPLAY_CAP = 40_000;
 
-function formatWindow(ms: number): string {
-  if (ms % 86_400_000 === 0) return `${ms / 86_400_000}d`;
-  if (ms % 3_600_000 === 0) return `${ms / 3_600_000}h`;
-  return `${Math.round(ms / 60_000)}m`;
-}
-
 function verbatim(text: string, sourcePath?: string): string {
   const capped = text.length > PROMPT_DISPLAY_CAP;
   const shown = capped ? text.slice(0, PROMPT_DISPLAY_CAP) : text;
@@ -120,7 +114,7 @@ function specRows(data: WatchDetailData): string {
   const pairs: Array<[string, string]> = [
     ["State", w.enabled ? "on" : "off"],
     ["Cadence", `<span class="mono">${escapeHtml(formatCadence(w.cadence))}</span>`],
-    ["Scope", `<span class="mono">${escapeHtml(w.scope.join(", "))}</span> over ${escapeHtml(formatWindow(w.windowMs))}`],
+    ["Scope", `<span class="mono">${escapeHtml(w.scope.join(", "))}</span> · previous settled tick → current tick`],
     ["Autonomy", autonomy],
     ["Tier", `${escapeHtml(w.model)} → <span class="mono">${escapeHtml(data.modelId)}</span>`],
     ["Venue", escapeHtml(w.venue)],

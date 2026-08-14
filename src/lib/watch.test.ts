@@ -7,11 +7,13 @@ import {
   discoverWatches,
   findWatch,
   formatCadence,
+  formatWatchDuration,
   isDue,
   parseCadence,
   parseWatchFile,
-  parseWindow,
+  renderWatchQuestion,
   rewriteWatchFrontmatter,
+  watchInterval,
 } from "./watch";
 import {
   loadWatchState,
@@ -33,7 +35,7 @@ const DAY = 24 * HOUR;
 const iso = (d: Date) => d.toISOString();
 
 // ---------------------------------------------------------------------------
-// parseCadence / parseWindow
+// parseCadence / tick intervals
 // ---------------------------------------------------------------------------
 
 describe("parseCadence", () => {
@@ -66,15 +68,19 @@ describe("parseCadence", () => {
   });
 });
 
-describe("parseWindow", () => {
-  test("parses durations", () => {
-    expect(parseWindow("7d")).toBe(7 * DAY);
-    expect(parseWindow("24h")).toBe(DAY);
+describe("watchInterval", () => {
+  test("first run uses one cadence period", () => {
+    const interval = watchInterval(parseCadence("6h")!, null, ANCHOR);
+    expect(interval.since.toISOString()).toBe(new Date(ANCHOR.getTime() - 6 * HOUR).toISOString());
+    expect(interval.until).toEqual(ANCHOR);
   });
 
-  test("rejects garbage", () => {
-    expect(parseWindow("week")).toBeNull();
-    expect(parseWindow("0d")).toBeNull();
+  test("late wake widens to the previous settled tick", () => {
+    const last = new Date(ANCHOR.getTime() - 8 * HOUR);
+    const interval = watchInterval(parseCadence("6h")!, last.toISOString(), ANCHOR);
+    expect(interval.durationMs).toBe(8 * HOUR);
+    expect(formatWatchDuration(interval.durationMs)).toBe("8 hours");
+    expect(renderWatchQuestion("Activity over {{interval}}.", interval)).toBe("Activity over 8 hours.");
   });
 });
 
@@ -130,39 +136,37 @@ describe("isDue", () => {
 // ---------------------------------------------------------------------------
 
 const FULL_WATCH = `---
-name: nightly-bets
+name: nightly-propose
 cadence: @nightly
 scope: memory, tickets
-window: 7d
 model: judgment
 venue: briefing
 autonomy: propose
 enabled: true
 ---
 
-Given the actual activity, what bets should we be thinking about?
+Given the actual activity, what should we propose?
 `;
 
 describe("parseWatchFile", () => {
   test("parses a full watch file", () => {
-    const { watch, warnings } = parseWatchFile(FULL_WATCH, "/w/nightly-bets.md", null);
+    const { watch, warnings } = parseWatchFile(FULL_WATCH, "/w/nightly-propose.md", null);
     expect(warnings).toEqual([]);
     expect(watch).toMatchObject({
-      name: "nightly-bets",
-      qualifiedName: "nightly-bets",
+      name: "nightly-propose",
+      qualifiedName: "nightly-propose",
       cadence: { type: "nightly" },
       scope: ["memory", "tickets"],
-      windowMs: 7 * DAY,
       model: "judgment",
       venue: "briefing",
       autonomy: "propose",
       enabled: true,
       project: null,
     });
-    expect(watch?.question).toContain("what bets");
+    expect(watch?.question).toContain("what should we propose");
   });
 
-  test("applies defaults: name from filename, observe, inbox, standard, 24h, all scopes", () => {
+  test("applies defaults: name from filename, observe, inbox, standard, all scopes", () => {
     const { watch } = parseWatchFile("---\ncadence: 2h\n---\n\nA question.", "/w/my-watch.md", "alpha");
     expect(watch).toMatchObject({
       name: "my-watch",
@@ -170,10 +174,15 @@ describe("parseWatchFile", () => {
       autonomy: "observe",
       venue: "inbox",
       model: "standard",
-      windowMs: DAY,
       project: "alpha",
     });
     expect(watch?.scope).toEqual(["tickets", "commits", "transcripts", "memory", "inbox"]);
+  });
+
+  test("legacy window is ignored with a migration warning", () => {
+    const { watch, warnings } = parseWatchFile("---\ncadence: 2h\nwindow: 7d\n---\n\nQ.", "/w/x.md", null);
+    expect(watch).not.toBeNull();
+    expect(warnings).toEqual([expect.stringContaining("window is obsolete")]);
   });
 
   test("empty body → skipped with warning", () => {
@@ -219,22 +228,22 @@ describe("discoverWatches", () => {
   });
 
   test("finds cross-project and project watches; bad files become warnings", async () => {
-    await writeFile(join(paths.watchesDir, "muse.md"), "---\ncadence: mon,thu\n---\n\nQ1.");
+    await writeFile(join(paths.watchesDir, "observe.md"), "---\ncadence: 3d\n---\n\nQ1.");
     const projWatches = join(paths.projectsDir, "alpha", "watches");
     await mkdir(projWatches, { recursive: true });
     await writeFile(join(projWatches, "harvest.md"), "---\ncadence: @morning\n---\n\nQ2.");
     await writeFile(join(projWatches, "broken.md"), "no frontmatter, no cadence");
 
     const { watches, warnings } = await discoverWatches(paths);
-    expect(watches.map((w) => w.qualifiedName).sort()).toEqual(["alpha/harvest", "muse"]);
+    expect(watches.map((w) => w.qualifiedName).sort()).toEqual(["alpha/harvest", "observe"]);
     expect(watches.find((w) => w.qualifiedName === "alpha/harvest")?.project).toBe("alpha");
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toContain("cadence");
   });
 
   test("duplicate qualified names keep the first, warn on the rest", async () => {
-    await writeFile(join(paths.watchesDir, "a.md"), "---\nname: muse\ncadence: 2h\n---\n\nQ1.");
-    await writeFile(join(paths.watchesDir, "b.md"), "---\nname: muse\ncadence: 4h\n---\n\nQ2.");
+    await writeFile(join(paths.watchesDir, "a.md"), "---\nname: observe\ncadence: 2h\n---\n\nQ1.");
+    await writeFile(join(paths.watchesDir, "b.md"), "---\nname: observe\ncadence: 4h\n---\n\nQ2.");
     const { watches, warnings } = await discoverWatches(paths);
     expect(watches.length).toBe(1);
     expect(watches[0].question).toBe("Q1.");
@@ -242,7 +251,7 @@ describe("discoverWatches", () => {
   });
 
   test("findWatch resolves bare names when unambiguous", async () => {
-    await writeFile(join(paths.watchesDir, "muse.md"), "---\ncadence: 2h\n---\n\nQ.");
+    await writeFile(join(paths.watchesDir, "observe.md"), "---\ncadence: 2h\n---\n\nQ.");
     const projWatches = join(paths.projectsDir, "alpha", "watches");
     await mkdir(projWatches, { recursive: true });
     await writeFile(join(projWatches, "harvest.md"), "---\ncadence: 2h\n---\n\nQ.");
@@ -254,7 +263,7 @@ describe("discoverWatches", () => {
   });
 
   test("rewriteWatchFrontmatter updates keys, preserves body and other keys", async () => {
-    const file = join(paths.watchesDir, "muse.md");
+    const file = join(paths.watchesDir, "observe.md");
     await writeFile(file, "---\ncadence: mon,thu\nautonomy: observe\n---\n\nThe question survives.");
     await rewriteWatchFrontmatter(file, { enabled: "false", autonomy: "propose" });
     const { watch } = parseWatchFile(await Bun.file(file).text(), file, null);
@@ -274,15 +283,14 @@ describe("discoverWatches", () => {
 describe("shipped watch templates", () => {
   const templatesDir = join(import.meta.dir, "..", "..", "templates", "watches");
 
-  test("bets: @nightly, judgment, propose, briefing, runs+tickets over 7d", async () => {
-    const file = join(templatesDir, "bets.md");
+  test("propose: nightly judgment into the briefing", async () => {
+    const file = join(templatesDir, "propose.md");
     const { watch, warnings } = parseWatchFile(await Bun.file(file).text(), file, null);
     expect(warnings).toEqual([]);
     expect(watch).toMatchObject({
-      name: "bets",
+      name: "propose",
       cadence: { type: "nightly" },
       scope: ["runs", "tickets"],
-      windowMs: 7 * DAY,
       model: "judgment",
       venue: "briefing",
       autonomy: "propose",
@@ -290,21 +298,36 @@ describe("shipped watch templates", () => {
     });
   });
 
-  test("muse: mon/thu, judgment, observe, inbox, transcripts+memory over 4d", async () => {
-    const file = join(templatesDir, "muse.md");
+  test("observe: every 3 days, judgment, inbox, transcripts+memory", async () => {
+    const file = join(templatesDir, "observe.md");
     const { watch, warnings } = parseWatchFile(await Bun.file(file).text(), file, null);
     expect(warnings).toEqual([]);
     expect(watch).toMatchObject({
-      name: "muse",
-      cadence: { type: "weekdays", days: [1, 4] },
+      name: "observe",
+      cadence: { type: "interval", ms: 3 * DAY },
       scope: ["transcripts", "memory"],
-      windowMs: 4 * DAY,
       model: "judgment",
       venue: "inbox",
       autonomy: "observe",
       enabled: true,
     });
     expect(watch?.question).toContain("NO_SIGNAL");
+  });
+
+  test("act: every 6 hours, judgment, review dispatch", async () => {
+    const file = join(templatesDir, "act.md");
+    const { watch, warnings } = parseWatchFile(await Bun.file(file).text(), file, null);
+    expect(warnings).toEqual([]);
+    expect(watch).toMatchObject({
+      name: "act",
+      cadence: { type: "interval", ms: 6 * HOUR },
+      scope: ["tickets", "commits", "transcripts"],
+      model: "judgment",
+      venue: "dispatch",
+      autonomy: "act",
+      enabled: true,
+    });
+    expect(watch?.question).toContain("unmerged and unpushed");
   });
 });
 
@@ -322,14 +345,14 @@ describe("watch-state", () => {
 
   test("round-trips state", async () => {
     const state: WatchState = { watches: {} };
-    const entry = stateEntry(state, "muse");
+    const entry = stateEntry(state, "observe");
     entry.lastRun = iso(ANCHOR);
     entry.lastOutcome = "no-delta";
     entry.lastDigests = { commits: "abc123" };
     await saveWatchState(paths, state);
 
     const loaded = await loadWatchState(paths);
-    expect(loaded.watches.muse).toMatchObject({
+    expect(loaded.watches.observe).toMatchObject({
       lastRun: iso(ANCHOR),
       lastOutcome: "no-delta",
       lastDigests: { commits: "abc123" },
@@ -345,7 +368,7 @@ describe("watch-state", () => {
 
   test("usage log caps at 100 and usageSince filters by time", () => {
     const state: WatchState = { watches: {} };
-    const entry = stateEntry(state, "muse");
+    const entry = stateEntry(state, "observe");
     // Chronological append, one per hour ending at ANCHOR — matches how ticks
     // record usage. The cap should drop the OLDEST 10.
     for (let i = 0; i < 110; i++) {

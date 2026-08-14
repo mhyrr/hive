@@ -207,7 +207,7 @@ async function serveWatchesPage(rctx: RequestCtx): Promise<Response> {
   });
 }
 
-/** `ref` is the qualified watch name — `bets` or `<project>/<name>`, so the
+/** `ref` is the qualified watch name — `propose` or `<project>/<name>`, so the
  * whole remainder of the path is the ref, slashes included. It is matched
  * against discovered watches, never used as a filesystem path. */
 async function serveWatchDetail(rctx: RequestCtx, ref: string): Promise<Response> {

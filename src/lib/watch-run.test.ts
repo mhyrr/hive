@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,6 +67,19 @@ describe("runWatches", () => {
     await writeFile(join(paths.watchesDir, `${name}.md`), `---\n${frontmatter}\n---\n\n${question}`);
   }
 
+  async function makeActProject(): Promise<void> {
+    const repo = join(paths.home, "alpha-repo");
+    await mkdir(repo, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "watch@test.invalid"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Watch Test"], { cwd: repo });
+    await writeFile(join(repo, "README.md"), "# Alpha\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "initial"], { cwd: repo });
+    await writeFile(join(paths.projectsDir, "alpha", "config.md"), `---\npath: ${repo}\n---\n`);
+    await writeFile(paths.config, "# Hive Config\n\nwatches.max_autonomy: act\n");
+  }
+
   test("surfaced output lands in the project inbox with citation intact", async () => {
     const ticket = await createTicket(paths, "alpha", { title: "Ship it" });
     const projWatches = getProjectPaths(paths, "alpha").watchesDir;
@@ -75,7 +89,7 @@ describe("runWatches", () => {
       "---\ncadence: 2h\nscope: tickets\nvenue: inbox\nautonomy: propose\n---\n\nWhich tickets are ready?",
     );
 
-    const { caller, calls } = stubCaller(`${ticket.id} looks ready — first step: dispatch it.`);
+    const { caller, calls } = stubCaller(`[T:alpha/${ticket.id}] looks ready — first step: dispatch it.`);
     const { reports } = await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
 
     const report = reports.find((r) => r.watch === "alpha/ready");
@@ -93,7 +107,7 @@ describe("runWatches", () => {
     await writeFile(join(projWatches, "ready.md"), "---\ncadence: 2h\nscope: tickets\n---\n\nQ?");
 
     // First run settles the fingerprints.
-    const first = stubCaller("TK-001 noted.");
+    const first = stubCaller("[T:alpha/TK-001] noted.");
     await runWatches({ paths, mode: "due", now: ANCHOR, caller: first.caller, seams: NO_SESSIONS });
 
     // Second run, due again, nothing changed: the caller MUST NOT run.
@@ -158,7 +172,7 @@ describe("runWatches", () => {
     await mkdir(projWatches, { recursive: true });
     await writeFile(join(projWatches, "eager.md"), "---\ncadence: 2h\nscope: tickets\nautonomy: act\n---\n\nQ?");
 
-    const { caller, calls } = stubCaller("TK-001 noted.");
+    const { caller, calls } = stubCaller("[T:alpha/TK-001] noted.");
     const { reports } = await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
 
     expect(reports[0]?.effectiveAutonomy).toBe("observe");
@@ -166,16 +180,86 @@ describe("runWatches", () => {
     expect(calls[0]?.systemPrompt).not.toContain("PROPOSE");
   });
 
-  test("without config, autonomy act clamps to the shipping default (propose)", async () => {
+  test("without config, autonomy act clamps to the default (propose)", async () => {
     await createTicket(paths, "alpha", { title: "Ship it" });
     const projWatches = getProjectPaths(paths, "alpha").watchesDir;
     await mkdir(projWatches, { recursive: true });
     await writeFile(join(projWatches, "eager.md"), "---\ncadence: 2h\nscope: tickets\nautonomy: act\n---\n\nQ?");
 
-    const { caller, calls } = stubCaller("TK-001 noted.");
+    const { caller, calls } = stubCaller("[T:alpha/TK-001] noted.");
     const { reports } = await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
     expect(reports[0]?.effectiveAutonomy).toBe("propose");
     expect(calls[0]?.systemPrompt).toContain("PROPOSE");
+  });
+
+  test("act dispatches exactly one eligible qualified ticket for review", async () => {
+    await makeActProject();
+    const ticket = await createTicket(paths, "alpha", {
+      title: "Add the follow-on",
+      body: "Implement the already-decided follow-on and cover it with tests.",
+    });
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: dispatch\nmodel: judgment\nautonomy: act");
+
+    const call = stubCaller(`[A:alpha/${ticket.id}] Clear follow-on.\nACT alpha/${ticket.id}`);
+    const dispatched: string[] = [];
+    const result = await runWatches({
+      paths,
+      mode: "due",
+      now: ANCHOR,
+      caller: call.caller,
+      seams: NO_SESSIONS,
+      dispatcher: async (input) => {
+        dispatched.push(`${input.project}/${input.ticketId}`);
+        return { runId: "RUN-042", detail: "review branch" };
+      },
+    });
+
+    expect(dispatched).toEqual([`alpha/${ticket.id}`]);
+    expect(result.reports[0]).toMatchObject({ outcome: "surfaced", detail: "RUN-042 dispatched for human review" });
+    expect(call.calls[0]?.userContent).toContain(`[A:alpha/${ticket.id}]`);
+    expect((await loadWatchState(paths)).watches.act?.lastRun).toBe("2026-08-12T10:00:00Z");
+  });
+
+  test("act rejects multiple selections and does not dispatch", async () => {
+    await makeActProject();
+    const one = await createTicket(paths, "alpha", { title: "One", body: "Complete specification one." });
+    const two = await createTicket(paths, "alpha", { title: "Two", body: "Complete specification two." });
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: dispatch\nautonomy: act");
+    let dispatches = 0;
+    const caller = stubCaller(`[A:alpha/${one.id}]\nACT alpha/${one.id}\n[A:alpha/${two.id}]\nACT alpha/${two.id}`);
+
+    const result = await runWatches({
+      paths, mode: "due", now: ANCHOR, caller: caller.caller, seams: NO_SESSIONS,
+      dispatcher: async () => { dispatches++; return { runId: "RUN-999", detail: "no" }; },
+    });
+
+    expect(dispatches).toBe(0);
+    expect(result.reports[0]).toMatchObject({ outcome: "quiet", detail: expect.stringContaining("exactly one") });
+  });
+
+  test("act makes no model call when deterministic eligibility finds no ticket", async () => {
+    await makeActProject();
+    await createTicket(paths, "alpha", { title: "Needs Greg", body: "Choose the product direction.", tags: ["needs-greg"] });
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: dispatch\nautonomy: act");
+
+    const result = await runWatches({ paths, mode: "due", now: ANCHOR, caller: throwingCaller, seams: NO_SESSIONS });
+
+    expect(result.reports[0]).toMatchObject({ outcome: "no-delta", detail: "no eligible Act ticket" });
+  });
+
+  test("act dispatch failure leaves the interval unsettled", async () => {
+    await makeActProject();
+    const ticket = await createTicket(paths, "alpha", { title: "One", body: "Complete specification." });
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: dispatch\nautonomy: act");
+    const caller = stubCaller(`[A:alpha/${ticket.id}]\nACT alpha/${ticket.id}`);
+
+    const result = await runWatches({
+      paths, mode: "due", now: ANCHOR, caller: caller.caller, seams: NO_SESSIONS,
+      dispatcher: async () => { throw new Error("claim raced"); },
+    });
+
+    expect(result.reports[0]).toMatchObject({ outcome: "error", error: "claim raced" });
+    expect((await loadWatchState(paths)).watches.act?.lastRun).toBeNull();
   });
 
   test("rate-limit → deferred:quota, and the same delta re-fires next tick", async () => {
@@ -194,7 +278,7 @@ describe("runWatches", () => {
     const state = await loadWatchState(paths);
     expect(state.watches["alpha/ready"]?.lastRun).toBeNull();
 
-    const { caller } = stubCaller("TK-001 noted.");
+    const { caller } = stubCaller("[T:alpha/TK-001] noted.");
     const run2 = await runWatches({
       paths,
       mode: "due",
@@ -214,7 +298,7 @@ describe("runWatches", () => {
 
     const { caller } = stubCaller((input) => {
       if (input.userContent.includes("Bad?")) throw new Error("kaboom");
-      return "TK-001 noted.";
+      return "[T:alpha/TK-001] noted.";
     });
     const { reports } = await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
 
@@ -224,13 +308,13 @@ describe("runWatches", () => {
 
   test("briefing venue writes runs/{DATE}/<name>.md; nightly mode selects @nightly watches", async () => {
     await createTicket(paths, "alpha", { title: "Ship it" });
-    await writeWatch("bets", "cadence: @nightly\nscope: tickets\nvenue: briefing\nmodel: judgment\nautonomy: propose", "What bets?");
+    await writeWatch("propose", "cadence: @nightly\nscope: tickets\nvenue: briefing\nmodel: judgment\nautonomy: propose", "What should we propose over {{interval}}?");
 
     // The hourly tick never runs @nightly watches.
     const tick = await runWatches({ paths, mode: "due", now: ANCHOR, caller: throwingCaller, seams: NO_SESSIONS });
-    expect(tick.reports.find((r) => r.watch === "bets")).toBeUndefined();
+    expect(tick.reports.find((r) => r.watch === "propose")).toBeUndefined();
 
-    const { caller, calls } = stubCaller("Bet: TK-001 — first step: ship it.");
+    const { caller, calls } = stubCaller("Proposal: [T:alpha/TK-001] — first step: ship it.");
     const { reports } = await runWatches({
       paths,
       mode: "nightly",
@@ -240,24 +324,25 @@ describe("runWatches", () => {
       seams: NO_SESSIONS,
     });
     expect(reports[0]?.outcome).toBe("surfaced");
-    const artifact = join(paths.memoryRunsDir, "2026-08-12", "bets.md");
+    const artifact = join(paths.memoryRunsDir, "2026-08-12", "propose.md");
     expect(existsSync(artifact)).toBe(true);
     expect(await Bun.file(artifact).text()).toContain("TK-001");
     expect(calls[0]?.modelId).toBeTruthy();
+    expect(calls[0]?.userContent).toContain("24 hours");
   });
 
   test("cross-project inbox venue writes the global ~/.hive/inbox.md", async () => {
     const ticket = await createTicket(paths, "alpha", { title: "Ship it" });
-    await writeWatch("muse", "cadence: 2h\nscope: tickets\nvenue: inbox\nautonomy: observe", "What threads?");
+    await writeWatch("observe", "cadence: 2h\nscope: tickets\nvenue: inbox\nautonomy: observe", "What threads?");
 
-    const { caller } = stubCaller(`Thread detected around ${ticket.id}.`);
+    const { caller } = stubCaller(`Thread detected around [T:alpha/${ticket.id}].`);
     const { reports } = await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
 
-    expect(reports.find((r) => r.watch === "muse")?.outcome).toBe("surfaced");
+    expect(reports.find((r) => r.watch === "observe")?.outcome).toBe("surfaced");
     const globalInbox = join(paths.home, "inbox.md");
     expect(existsSync(globalInbox)).toBe(true);
     const content = await Bun.file(globalInbox).text();
-    expect(content).toContain("watch:muse");
+    expect(content).toContain("watch:observe");
     expect(content).toContain(ticket.id);
     // The project inbox stays untouched — this is a cross-project surface.
     expect(existsSync(getProjectPaths(paths, "alpha").inbox)).toBe(false);
@@ -279,7 +364,7 @@ describe("runWatches", () => {
     await mkdir(projWatches, { recursive: true });
     await writeFile(join(projWatches, "ready.md"), "---\ncadence: 2h\nscope: tickets\n---\n\nWhich are ready?");
 
-    const { caller } = stubCaller(`${ticket.id} noted.`);
+    const { caller } = stubCaller(`[T:alpha/${ticket.id}] noted.`);
     await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
 
     const logDir = join(paths.watchesDir, "log", ANCHOR.toISOString().slice(0, 10));
@@ -321,11 +406,11 @@ describe("runWatches", () => {
     await mkdir(projWatches, { recursive: true });
     await writeFile(join(projWatches, "ready.md"), "---\ncadence: 2h\nscope: tickets\n---\n\nQ?");
 
-    const first = stubCaller("TK-001 noted.");
+    const first = stubCaller("[T:alpha/TK-001] noted.");
     await runWatches({ paths, mode: "due", now: ANCHOR, caller: first.caller, seams: NO_SESSIONS });
 
     // Settled and not due — but the operator asked by name, so it runs.
-    const forced = stubCaller("TK-001 again.");
+    const forced = stubCaller("NO_SIGNAL");
     const { reports } = await runWatches({
       paths,
       mode: "named",
@@ -335,6 +420,6 @@ describe("runWatches", () => {
       seams: NO_SESSIONS,
     });
     expect(forced.calls.length).toBe(1);
-    expect(reports[0]?.outcome).toBe("surfaced");
+    expect(reports[0]?.outcome).toBe("quiet");
   });
 });

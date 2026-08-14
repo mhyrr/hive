@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,7 @@ import { ensureHiveScaffold, type HivePaths } from "./paths";
 // stamps flow through HIVE_FIXED_NOW so the real ticket layer stays in play.
 const ANCHOR = new Date("2026-08-12T10:00:00");
 const HOUR = 3_600_000;
+const SINCE = new Date(ANCHOR.getTime() - 24 * HOUR);
 
 function makeWatch(overrides: Partial<WatchDef>): WatchDef {
   const { watch } = parseWatchFile("---\ncadence: 2h\n---\n\nStanding question?", "/w/test.md", null);
@@ -55,7 +56,7 @@ describe("evaluateWatchDelta", () => {
     await createTicket(paths, "alpha", { title: "Do the thing" });
     const watch = makeWatch({ scope: ["tickets"], project: "alpha" });
 
-    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(first.changed).toBe(true);
     expect(first.reasons[0]).toContain("tickets");
     expect(first.reasons[0]).toContain("alpha");
@@ -64,6 +65,7 @@ describe("evaluateWatchDelta", () => {
       paths,
       watch,
       lastDigests: first.fingerprints,
+      since: ANCHOR,
       now: new Date(ANCHOR.getTime() + HOUR),
       seams: seams({}),
     });
@@ -73,14 +75,14 @@ describe("evaluateWatchDelta", () => {
 
   test("entirely empty scope never triggers, even on first run", async () => {
     const watch = makeWatch({ scope: ["tickets", "commits", "inbox"], project: "alpha" });
-    const result = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    const result = await evaluateWatchDelta({ paths, watch, lastDigests: {}, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(result.changed).toBe(false);
   });
 
   test("a new ticket re-triggers a previously settled watch", async () => {
     await createTicket(paths, "alpha", { title: "First" });
     const watch = makeWatch({ scope: ["tickets"], project: "alpha" });
-    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, since: SINCE, now: ANCHOR, seams: seams({}) });
 
     process.env.HIVE_FIXED_NOW = new Date(ANCHOR.getTime() + HOUR).toISOString();
     await createTicket(paths, "alpha", { title: "Second" });
@@ -89,6 +91,7 @@ describe("evaluateWatchDelta", () => {
       paths,
       watch,
       lastDigests: first.fingerprints,
+      since: ANCHOR,
       now: new Date(ANCHOR.getTime() + 2 * HOUR),
       seams: seams({}),
     });
@@ -99,7 +102,7 @@ describe("evaluateWatchDelta", () => {
     const watch = makeWatch({ scope: ["commits"], project: "alpha" });
 
     const withCommit = seams({ gitByRepo: { "/fake/alpha": "1755000000 abc123 feat: x" } });
-    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: withCommit });
+    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, since: SINCE, now: ANCHOR, seams: withCommit });
     expect(first.changed).toBe(true);
 
     // Commit ages out of the window → empty log. Watermark holds; no trigger.
@@ -107,6 +110,7 @@ describe("evaluateWatchDelta", () => {
       paths,
       watch,
       lastDigests: first.fingerprints,
+      since: ANCHOR,
       now: new Date(ANCHOR.getTime() + 25 * HOUR),
       seams: seams({}),
     });
@@ -119,6 +123,7 @@ describe("evaluateWatchDelta", () => {
       paths,
       watch,
       lastDigests: agedOut.fingerprints,
+      since: new Date(ANCHOR.getTime() + 25 * HOUR),
       now: new Date(ANCHOR.getTime() + 26 * HOUR),
       seams: newer,
     });
@@ -128,14 +133,14 @@ describe("evaluateWatchDelta", () => {
   test("scope restriction: a commits-only watch ignores ticket churn", async () => {
     await createTicket(paths, "alpha", { title: "Noise" });
     const watch = makeWatch({ scope: ["commits"], project: "alpha" });
-    const result = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    const result = await evaluateWatchDelta({ paths, watch, lastDigests: {}, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(result.changed).toBe(false);
   });
 
   test("cross-project watch names the project that moved", async () => {
     await createTicket(paths, "beta", { title: "Beta work" });
     const watch = makeWatch({ scope: ["tickets"], project: null });
-    const result = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    const result = await evaluateWatchDelta({ paths, watch, lastDigests: {}, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(result.changed).toBe(true);
     expect(result.reasons[0]).toContain("beta");
     expect(result.reasons[0]).not.toContain("alpha");
@@ -163,7 +168,7 @@ describe("rankProjectActivity", () => {
     await createTicket(paths, "beta", { title: "Moved" });
     const ranked = await rankProjectActivity({
       paths,
-      windowMs: 24 * HOUR,
+      since: SINCE,
       now: ANCHOR,
       seams: seams({
         gitByRepo: { "/fake/alpha": "1755000000 abc123 feat: x\n1754990000 abc124 fix: y" },
@@ -196,10 +201,11 @@ describe("assembleWatchDigest", () => {
 
   test("digest carries evidence with provenance; cold projects stay unexpanded", async () => {
     const ticket = await createTicket(paths, "alpha", { title: "Ship the widget" });
-    const watch = makeWatch({ scope: ["tickets", "commits"], project: null, windowMs: 24 * HOUR });
+    const watch = makeWatch({ scope: ["tickets", "commits"], project: null });
     const digest = await assembleWatchDigest({
       paths,
       watch,
+      since: SINCE,
       now: ANCHOR,
       seams: seams({ gitByRepo: { "/fake/alpha": "1755000000 abc123 feat: widget" } }),
     });
@@ -211,13 +217,13 @@ describe("assembleWatchDigest", () => {
     expect(digest.text).toContain("## Project: alpha");
     // gamma is cold — named in the not-expanded line, no section of its own.
     expect(digest.text).not.toContain("## Project: gamma");
-    expect(digest.provenance).toContain(ticket.id);
-    expect(digest.provenance).toContain("abc123");
+    expect(digest.provenance).toContain(`[T:alpha/${ticket.id}]`);
+    expect(digest.provenance).toContain("[C:alpha/abc123]");
   });
 
   test("nothing in scope → empty digest", async () => {
     const watch = makeWatch({ scope: ["tickets", "commits"], project: "gamma" });
-    const digest = await assembleWatchDigest({ paths, watch, now: ANCHOR, seams: seams({}) });
+    const digest = await assembleWatchDigest({ paths, watch, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(digest.empty).toBe(true);
   });
 });
@@ -231,17 +237,18 @@ describe("runs scope kind", () => {
   });
 
   test("nightly artifacts trigger once, then settle until the next run", async () => {
-    const watch = makeWatch({ scope: ["runs"], project: null, windowMs: 7 * 24 * HOUR });
+    const watch = makeWatch({ scope: ["runs"], project: null });
 
     // No runs yet → no trigger.
-    const before = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    const before = await evaluateWatchDelta({ paths, watch, lastDigests: {}, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(before.changed).toBe(false);
 
     const runDir = join(paths.memoryRunsDir, "2026-08-12");
     await mkdir(runDir, { recursive: true });
     await writeFile(join(runDir, "briefing.md"), "# HIVE — 2026-08-12\n\nShipped the watcher.");
+    await utimes(runDir, new Date(ANCHOR.getTime() - HOUR), new Date(ANCHOR.getTime() - HOUR));
 
-    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, now: ANCHOR, seams: seams({}) });
+    const first = await evaluateWatchDelta({ paths, watch, lastDigests: {}, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(first.changed).toBe(true);
     expect(first.reasons[0]).toContain("runs");
 
@@ -249,6 +256,7 @@ describe("runs scope kind", () => {
       paths,
       watch,
       lastDigests: first.fingerprints,
+      since: ANCHOR,
       now: new Date(ANCHOR.getTime() + HOUR),
       seams: seams({}),
     });
@@ -260,13 +268,14 @@ describe("runs scope kind", () => {
     await mkdir(runDir, { recursive: true });
     await writeFile(join(runDir, "briefing.md"), "# HIVE — 2026-08-12\n\nShipped the watcher.");
     await writeFile(join(runDir, "taste-decisions.md"), "Approved: prefer boring solutions.");
+    await utimes(runDir, new Date(ANCHOR.getTime() - HOUR), new Date(ANCHOR.getTime() - HOUR));
 
-    const watch = makeWatch({ scope: ["runs"], project: null, windowMs: 7 * 24 * HOUR });
-    const digest = await assembleWatchDigest({ paths, watch, now: ANCHOR, seams: seams({}) });
+    const watch = makeWatch({ scope: ["runs"], project: null });
+    const digest = await assembleWatchDigest({ paths, watch, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(digest.empty).toBe(false);
     expect(digest.text).toContain("Shipped the watcher");
     expect(digest.text).toContain("prefer boring solutions");
-    expect(digest.provenance).toContain("runs/2026-08-12/briefing.md");
-    expect(digest.provenance).toContain("runs/2026-08-12/taste-decisions.md");
+    expect(digest.provenance).toContain("[R:2026-08-12/briefing]");
+    expect(digest.provenance).toContain("[R:2026-08-12/taste]");
   });
 });

@@ -83,6 +83,7 @@ function formatCost(usd: number): string {
 
 const STATUS_LABELS: Record<RunRowStatus, string> = {
   running: "Running",
+  review_ready: "Ready for review",
   shipped: "Shipped",
   partial: "Partial",
   failed: "Failed",
@@ -91,6 +92,7 @@ const STATUS_LABELS: Record<RunRowStatus, string> = {
 
 const STATUS_CLASSES: Record<RunRowStatus, string> = {
   running: "status-running",
+  review_ready: "status-running",
   shipped: "status-shipped",
   partial: "status-partial",
   failed: "status-failed",

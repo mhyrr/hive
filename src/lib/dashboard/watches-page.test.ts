@@ -27,12 +27,12 @@ describe("watches dashboard page", () => {
   test("collect: rows carry clamped autonomy, state, spend, and artifacts", async () => {
     await writeFile(paths.config, "# Hive Config\n\nwatches.max_autonomy: observe\n");
     await writeFile(
-      join(paths.watchesDir, "bets.md"),
-      "---\nname: bets\ncadence: @nightly\nscope: runs\nmodel: judgment\nvenue: briefing\nautonomy: propose\n---\n\nWhat bets?",
+      join(paths.watchesDir, "propose.md"),
+      "---\nname: propose\ncadence: @nightly\nscope: runs\nmodel: judgment\nvenue: briefing\nautonomy: propose\n---\n\nWhat should we propose?",
     );
 
     const state: WatchState = { watches: {}, lastTick: new Date(ANCHOR.getTime() - 30 * 60_000).toISOString() };
-    const entry = stateEntry(state, "bets");
+    const entry = stateEntry(state, "propose");
     entry.lastRun = new Date(ANCHOR.getTime() - 3_600_000).toISOString();
     entry.lastOutcome = "surfaced";
     entry.usage.push({
@@ -46,14 +46,14 @@ describe("watches dashboard page", () => {
 
     const runDir = join(paths.memoryRunsDir, "2026-08-12");
     await mkdir(runDir, { recursive: true });
-    await writeFile(join(runDir, "bets.md"), "# Watch: bets\n\nBet: something.");
+    await writeFile(join(runDir, "propose.md"), "# Watch: propose\n\nProposal: something.");
 
     const data = await collectWatchesPage(paths);
     expect(data.ceiling).toBe("observe");
     expect(data.tickStale).toBe(false);
     expect(data.rows.length).toBe(1);
     expect(data.rows[0]).toMatchObject({
-      qualifiedName: "bets",
+      qualifiedName: "propose",
       autonomy: "propose",
       effectiveAutonomy: "observe", // ceiling clamps on the page too
       lastOutcome: "surfaced",
@@ -61,7 +61,7 @@ describe("watches dashboard page", () => {
       tokens7d: 1200,
     });
     expect(data.artifacts).toEqual([
-      { watch: "bets", date: "2026-08-12", path: join(runDir, "bets.md") },
+      { watch: "propose", date: "2026-08-12", path: join(runDir, "propose.md") },
     ]);
   });
 
@@ -80,50 +80,50 @@ describe("watches dashboard page", () => {
     expect(emptyHtml).toContain('href="/watches"');
 
     await writeFile(
-      join(paths.watchesDir, "muse.md"),
-      "---\nname: muse\ncadence: mon,thu\nscope: transcripts\nautonomy: observe\n---\n\nThreads?",
+      join(paths.watchesDir, "observe.md"),
+      "---\nname: observe\ncadence: 3d\nscope: transcripts\nautonomy: observe\n---\n\nThreads?",
     );
     const data = await collectWatchesPage(paths);
     const html = renderWatchesPageDocument(data);
-    expect(html).toContain("muse");
-    expect(html).toContain("mon,thu");
+    expect(html).toContain("observe");
+    expect(html).toContain("3d");
     expect(html).toContain("Autonomy ceiling: <strong>propose</strong>");
   });
 
   test("the latest output of each watch renders inline, not as a path", async () => {
-    await writeWatchFile(paths, "bets.md", "---\nname: bets\ncadence: @nightly\nscope: runs\nvenue: briefing\nautonomy: propose\n---\n\nWhat bets?");
-    await writeWatchFile(paths, "muse.md", "---\nname: muse\ncadence: mon,thu\nscope: transcripts\nautonomy: observe\n---\n\nThreads?");
+    await writeWatchFile(paths, "propose.md", "---\nname: propose\ncadence: @nightly\nscope: runs\nvenue: briefing\nautonomy: propose\n---\n\nWhat should we propose?");
+    await writeWatchFile(paths, "observe.md", "---\nname: observe\ncadence: 3d\nscope: transcripts\nautonomy: observe\n---\n\nThreads?");
 
-    await logCall(paths, "bets", new Date(ANCHOR.getTime() - 4 * 3_600_000), {
-      output: "**Bet 1** — santo-api ships distribution before trust.",
+    await logCall(paths, "propose", new Date(ANCHOR.getTime() - 4 * 3_600_000), {
+      output: "**Proposal 1** — santo-api ships distribution before trust.",
       outcome: "surfaced",
     });
-    // Older bets call: the page shows the newest, never both.
-    await logCall(paths, "bets", new Date(ANCHOR.getTime() - 28 * 3_600_000), {
-      output: "Yesterday's bet.",
+    // Older Propose call: the page shows the newest, never both.
+    await logCall(paths, "propose", new Date(ANCHOR.getTime() - 28 * 3_600_000), {
+      output: "Yesterday's proposal.",
       outcome: "surfaced",
     });
-    await logCall(paths, "muse", new Date(ANCHOR.getTime() - 2 * 3_600_000), {
+    await logCall(paths, "observe", new Date(ANCHOR.getTime() - 2 * 3_600_000), {
       output: "NO_SIGNAL",
       outcome: "quiet",
     });
 
     const data = await collectWatchesPage(paths);
-    expect(data.latest.map((c) => c.watch)).toEqual(["muse", "bets"]); // newest first
-    expect(data.latest.find((c) => c.watch === "bets")!.output).toContain("santo-api");
-    expect(data.latest.find((c) => c.watch === "muse")!.quiet).toBe(true);
+    expect(data.latest.map((c) => c.watch)).toEqual(["observe", "propose"]); // newest first
+    expect(data.latest.find((c) => c.watch === "propose")!.output).toContain("santo-api");
+    expect(data.latest.find((c) => c.watch === "observe")!.quiet).toBe(true);
 
     const html = renderWatchesPageDocument(data);
     expect(html).toContain("Latest output");
-    expect(html).toContain("<strong>Bet 1</strong>"); // markdown, rendered
-    expect(html).not.toContain("Yesterday's bet");
+    expect(html).toContain("<strong>Proposal 1</strong>"); // markdown, rendered
+    expect(html).not.toContain("Yesterday's proposal");
     expect(html).toContain("Chose silence");
-    expect(html).toContain('href="/watches/bets"'); // fleet row links to the prompts
+    expect(html).toContain('href="/watches/propose"'); // fleet row links to the prompts
   });
 
   test("output the provenance gate dropped is labelled as having reached nowhere", async () => {
-    await writeWatchFile(paths, "muse.md", "---\nname: muse\ncadence: mon,thu\nscope: transcripts\n---\n\nThreads?");
-    await logCall(paths, "muse", new Date(ANCHOR.getTime() - 3_600_000), {
+    await writeWatchFile(paths, "observe.md", "---\nname: observe\ncadence: 3d\nscope: transcripts\n---\n\nThreads?");
+    await logCall(paths, "observe", new Date(ANCHOR.getTime() - 3_600_000), {
       output: "A memo with no citations.",
       outcome: "quiet (output dropped — no evidence anchor cited)",
     });
@@ -138,8 +138,8 @@ describe("watches dashboard page", () => {
   });
 
   test("an errored call surfaces the error in place of output", async () => {
-    await writeWatchFile(paths, "bets.md", "---\nname: bets\ncadence: @nightly\nscope: runs\n---\n\nWhat bets?");
-    await logCall(paths, "bets", new Date(ANCHOR.getTime() - 3_600_000), {
+    await writeWatchFile(paths, "propose.md", "---\nname: propose\ncadence: @nightly\nscope: runs\n---\n\nWhat should we propose?");
+    await logCall(paths, "propose", new Date(ANCHOR.getTime() - 3_600_000), {
       output: null,
       error: "ConnectionRefused",
       outcome: "error",

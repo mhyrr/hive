@@ -194,13 +194,13 @@ async function seedActivity(
 // ---------------------------------------------------------------------------
 
 describe("runNightly — @nightly watches (W pass)", () => {
-  test("a bets-style watch fires after the tracks and lands its briefing artifact", async () => {
+  test("the Propose cycle fires after the tracks and lands its briefing artifact", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
     await seedActivity(paths, "alpha", date);
     await writeFile(
-      join(paths.watchesDir, "bets.md"),
-      "---\nname: bets\ncadence: @nightly\nscope: runs, tickets\nwindow: 7d\nmodel: judgment\nvenue: briefing\nautonomy: propose\n---\n\nWhat bets should we be thinking about?",
+      join(paths.watchesDir, "propose.md"),
+      "---\nname: propose\ncadence: @nightly\nscope: runs, tickets\nmodel: judgment\nvenue: briefing\nautonomy: propose\n---\n\nWhat should we propose?",
     );
 
     const stub = makeStub({
@@ -209,17 +209,17 @@ describe("runNightly — @nightly watches (W pass)", () => {
         gaps: [],
         briefing_markdown: `# HIVE — ${date}\n\n## Headline\nWatch test landed.`,
       }),
-      watchResponse: "Bet: TK-001 suggests the activity lane is real — first step: keep it.",
+      watchResponse: "Proposal: [T:alpha/TK-001] suggests the activity lane is real — first step: keep it.",
     });
 
     const result = await runNightly({ paths, date, caller: stub });
 
     expect(result.passes.W.length).toBe(1);
-    expect(result.passes.W[0]?.pass).toBe("W.bets");
+    expect(result.passes.W[0]?.pass).toBe("W.propose");
     expect(result.passes.W[0]?.status).toBe("complete");
     expect(result.passes.W[0]?.detail).toContain("surfaced");
 
-    const artifact = join(paths.memoryRunsDir, date, "bets.md");
+    const artifact = join(paths.memoryRunsDir, date, "propose.md");
     expect(existsSync(artifact)).toBe(true);
     expect(await Bun.file(artifact).text()).toContain("TK-001");
   });
@@ -229,14 +229,14 @@ describe("runNightly — @nightly watches (W pass)", () => {
     const date = new Date().toISOString().slice(0, 10);
     await seedActivity(paths, "alpha", date);
     await writeFile(
-      join(paths.watchesDir, "bets.md"),
-      "---\nname: bets\ncadence: @nightly\nscope: runs, tickets\nvenue: briefing\n---\n\nWhat bets?",
+      join(paths.watchesDir, "propose.md"),
+      "---\nname: propose\ncadence: @nightly\nscope: runs, tickets\nvenue: briefing\n---\n\nWhat should we propose?",
     );
 
     const result = await runNightly({ paths, date, dryRun: true, caller: makeStub({}) });
     expect(result.passes.W[0]?.status).toBe("skipped");
     expect(result.passes.W[0]?.detail).toBe("dry-run");
-    expect(existsSync(join(paths.memoryRunsDir, date, "bets.md"))).toBe(false);
+    expect(existsSync(join(paths.memoryRunsDir, date, "propose.md"))).toBe(false);
   });
 });
 

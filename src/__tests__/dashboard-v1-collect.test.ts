@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  collectBets,
+  collectPropose,
   collectOpenQuestions,
   collectRecentMemory,
   collectRunUsage,
@@ -28,25 +28,36 @@ async function freshHome(): Promise<HivePaths> {
   return ensureHiveScaffold(home);
 }
 
-describe("collectBets", () => {
-  test("returns the latest bets.md with its H1 stripped; null when none", async () => {
+describe("collectPropose", () => {
+  test("returns the latest propose.md with its H1 stripped; null when none", async () => {
     const paths = await freshHome();
-    expect(await collectBets(paths)).toBeNull();
+    expect(await collectPropose(paths)).toBeNull();
 
     for (const [date, body] of [
-      ["2026-08-10", "# Watch: bets — 2026-08-10\n\nOld bet."],
-      ["2026-08-12", "# Watch: bets — 2026-08-12\n\nBet: TK-001 — ship it."],
+      ["2026-08-10", "# Watch: propose — 2026-08-10\n\nOld proposal."],
+      ["2026-08-12", "# Watch: propose — 2026-08-12\n\nProposal: TK-001 — ship it."],
     ] as const) {
       await mkdir(join(paths.memoryRunsDir, date), { recursive: true });
-      await writeFile(join(paths.memoryRunsDir, date, "bets.md"), body);
+      await writeFile(join(paths.memoryRunsDir, date, "propose.md"), body);
     }
-    // A newer run dir with no bets.md must not shadow the latest actual bets.
+    // A newer run dir with no artifact must not shadow the latest proposal.
     await mkdir(join(paths.memoryRunsDir, "2026-08-13"), { recursive: true });
 
-    const bets = await collectBets(paths);
-    expect(bets?.date).toBe("2026-08-12");
-    expect(bets?.body).toBe("Bet: TK-001 — ship it.");
-    expect(bets?.body).not.toContain("# Watch");
+    const propose = await collectPropose(paths);
+    expect(propose?.date).toBe("2026-08-12");
+    expect(propose?.body).toBe("Proposal: TK-001 — ship it.");
+    expect(propose?.body).not.toContain("# Watch");
+  });
+
+  test("prefers the renamed artifact but can read historical output", async () => {
+    const paths = await freshHome();
+    const runDir = join(paths.memoryRunsDir, "2026-08-12");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "bets.md"), "# Watch: bets\n\nHistorical proposal.");
+    expect((await collectPropose(paths))?.body).toBe("Historical proposal.");
+
+    await writeFile(join(runDir, "propose.md"), "# Watch: propose\n\nCurrent proposal.");
+    expect((await collectPropose(paths))?.body).toBe("Current proposal.");
   });
 });
 

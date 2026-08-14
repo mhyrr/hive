@@ -2,6 +2,8 @@
 // All mutations go through frontmatter rewrite; no hand-editing files.
 
 import { UsageError } from "../lib/errors";
+import { readFile, writeFile } from "node:fs/promises";
+import { setConfigValue } from "../lib/config";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 import { now as hiveNow } from "../lib/time";
 import {
@@ -13,7 +15,6 @@ import {
   findWatch,
   formatCadence,
   parseCadence,
-  parseWindow,
   rewriteWatchFrontmatter,
   type WatchDef,
 } from "../lib/watch";
@@ -23,12 +24,13 @@ import { clampAutonomy, readAutonomyCeiling, runWatches } from "../lib/watch-run
 const USAGE = `Usage:
   hive watch list                     Discovered watches and their settings
   hive watch status                   Watches + last tick, outcome, 7d logged spend
+  hive watch ceiling <level>          Set the global ceiling (observe, propose, or act)
   hive watch run --due                Run everything due (the launchd tick entrypoint)
   hive watch run <name> [...]         Force-run named watches (bypasses due-ness + delta gate)
   hive watch on <name>                Enable a watch
   hive watch off <name>               Disable a watch
   hive watch off --all                Hard stop: disable every watch
-  hive watch set <name> k=v [...]     Update frontmatter (cadence, model, autonomy, venue, scope, window, enabled)`;
+  hive watch set <name> k=v [...]     Update frontmatter (cadence, model, autonomy, venue, scope, enabled)`;
 
 async function requireWatch(paths: HivePaths, ref: string): Promise<WatchDef> {
   const { watches } = await discoverWatches(paths);
@@ -48,9 +50,6 @@ function validateSetPair(key: string, value: string): void {
   switch (key) {
     case "cadence":
       if (!parseCadence(value)) throw new UsageError(`Invalid cadence "${value}" (want 2h, 45m, 1d, @nightly, @morning, or mon,thu)`);
-      return;
-    case "window":
-      if (!parseWindow(value)) throw new UsageError(`Invalid window "${value}" (want e.g. 24h, 7d)`);
       return;
     case "model":
       if (!(TIERS as string[]).includes(value)) throw new UsageError(`Invalid model tier "${value}" (want ${TIERS.join("|")})`);
@@ -73,7 +72,7 @@ function validateSetPair(key: string, value: string): void {
       if (value !== "true" && value !== "false") throw new UsageError(`Invalid enabled "${value}" (want true|false)`);
       return;
     default:
-      throw new UsageError(`Unknown key "${key}" (want cadence|window|model|autonomy|venue|scope|enabled)`);
+      throw new UsageError(`Unknown key "${key}" (want cadence|model|autonomy|venue|scope|enabled)`);
   }
 }
 
@@ -82,6 +81,17 @@ export async function watchCommand(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
 
   switch (sub) {
+    case "ceiling": {
+      const level = rest[0];
+      if (!level || rest.length !== 1 || !(AUTONOMY_LEVELS as readonly string[]).includes(level)) {
+        throw new UsageError(`watch ceiling needs exactly one of: ${AUTONOMY_LEVELS.join("|")}.\n\n${USAGE}`);
+      }
+      const config = await readFile(paths.config, "utf-8").catch(() => "");
+      await writeFile(paths.config, setConfigValue(config, "watches.max_autonomy", level), "utf-8");
+      console.log(`Autonomy ceiling: ${level}`);
+      return;
+    }
+
     case "list": {
       const { watches, warnings } = await discoverWatches(paths);
       if (watches.length === 0) {
@@ -105,7 +115,7 @@ export async function watchCommand(args: string[]): Promise<void> {
       for (const w of watches) {
         const entry: WatchStateEntry = state.watches[w.qualifiedName] ?? freshEntry();
         const spend = usageSince(entry, now.getTime() - 7 * 86_400_000);
-        const effective = clampAutonomy(clampAutonomy(w.autonomy, ceiling), "propose");
+        const effective = clampAutonomy(w.autonomy, ceiling);
         const autonomyLabel = effective === w.autonomy ? w.autonomy : `${w.autonomy}→${effective}`;
         console.log(
           `${pad(w.qualifiedName, 24)} ${w.enabled ? "on " : "off"} ${pad(formatCadence(w.cadence), 10)} ${pad(autonomyLabel, 16)} ${pad(w.model, 9)} ` +

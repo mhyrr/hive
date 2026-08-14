@@ -10,7 +10,7 @@
 // state so the SAME delta re-fires it next tick — a swallowed fingerprint
 // update would silently eat the signal.
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -25,6 +25,7 @@ import {
   type DeltaSeams,
 } from "./watch-delta";
 import { resolveWatchModel } from "./watch-model";
+import { dispatchTicketForReview } from "./review-dispatch";
 import {
   loadWatchState,
   recordUsage,
@@ -32,7 +33,14 @@ import {
   stateEntry,
   type WatchOutcome,
 } from "./watch-state";
-import { discoverWatches, isDue, type WatchAutonomy, type WatchDef } from "./watch";
+import {
+  discoverWatches,
+  isDue,
+  renderWatchQuestion,
+  watchInterval,
+  type WatchAutonomy,
+  type WatchDef,
+} from "./watch";
 
 // ---------------------------------------------------------------------------
 // Autonomy ceiling
@@ -43,8 +51,8 @@ const AUTONOMY_ORDER: Record<WatchAutonomy, number> = { observe: 0, propose: 1, 
 export const DEFAULT_AUTONOMY_CEILING: WatchAutonomy = "propose";
 
 /** Global ceiling from ~/.hive/config.md (`watches.max_autonomy: ...`).
- * Missing or unparseable → the shipping default (propose): nothing anywhere
- * dispatches until Greg raises it deliberately. */
+ * Missing or unparseable → the shipping default (propose). Act is branch-only
+ * and review-required, but still requires an explicit global authorization. */
 export function readAutonomyCeiling(paths: HivePaths): WatchAutonomy {
   try {
     const raw = extractConfigValue(readFileSync(paths.config, "utf-8"), "watches.max_autonomy");
@@ -70,13 +78,11 @@ export const NO_SIGNAL = "NO_SIGNAL";
 function autonomyInstruction(autonomy: WatchAutonomy): string {
   switch (autonomy) {
     case "observe":
-      return "Autonomy: OBSERVE. Write a short memo — observations and connections only. Do not propose actions.";
+      return "Autonomy: OBSERVE. Interpret the evidence and make connections. Do not recommend actions or change state.";
     case "propose":
-      return "Autonomy: PROPOSE. Surface at most 3 candidate items. Each must state: the observed signal (cited), the item itself, and the first concrete step. You may not execute anything.";
+      return "Autonomy: PROPOSE. Recommend every item that clearly deserves review. Do not fill a quota. You may not execute or change state.";
     case "act":
-      // Slice 1 has no act-capable venue; the runner clamps before this is
-      // reachable, but keep the text honest if that ever regresses.
-      return "Autonomy: PROPOSE. Surface at most 3 candidate items. Each must state: the observed signal (cited), the item itself, and the first concrete step. You may not execute anything.";
+      return "Autonomy: ACT. You may execute only the ticket selected through the eligibility rules in this watch. Work on an isolated feature branch and never merge into main.";
   }
 }
 
@@ -86,7 +92,7 @@ export function buildWatchSystemPrompt(watch: WatchDef, autonomy: WatchAutonomy)
     autonomyInstruction(autonomy),
     "Hard rules:",
     "- The digest in the user message is your ENTIRE evidence base. Do not assume activity beyond it.",
-    "- Every claim must cite evidence anchors from the digest VERBATIM — ticket IDs (TK-xxx), commit SHAs, session labels, file paths. An uncited claim is discarded.",
+    "- Cite the digest's bracketed source tags verbatim for every major conclusion. Mark reasoning beyond the evidence as inference.",
     `- Silence is a valid answer — the operator's attention is the scarce currency. If nothing clears the bar of genuinely worth surfacing, reply with exactly ${NO_SIGNAL} and nothing else.`,
     "- No preamble, no restating the question, no filler. Output is read as-is.",
   ].join("\n");
@@ -101,6 +107,19 @@ export type WatchCaller = (input: {
   systemPrompt: string;
   userContent: string;
 }) => Promise<ClaudeTextCompletion>;
+
+export interface WatchDispatchRequest {
+  project: string;
+  ticketId: string;
+  watch: string;
+}
+
+export interface WatchDispatchResult {
+  runId: string;
+  detail: string;
+}
+
+export type WatchDispatcher = (input: WatchDispatchRequest) => Promise<WatchDispatchResult>;
 
 export interface WatchRunReport {
   watch: string;
@@ -125,6 +144,7 @@ export interface RunWatchesOptions {
   /** Artifact date for briefing-venue writes (runs/{DATE}/). Defaults to now's date. */
   date?: string;
   caller?: WatchCaller;
+  dispatcher?: WatchDispatcher;
   seams?: DeltaSeams;
 }
 
@@ -143,16 +163,55 @@ function isQuotaError(err: unknown): boolean {
   return /rate.?limit|429|overloaded|quota|too many requests/i.test(msg);
 }
 
+const ACT_SELECTION = /^ACT\s+([a-zA-Z0-9_-]+)\/(TK-\d+)\s*$/gm;
+
 async function appendInbox(inboxPath: string, header: string, body: string): Promise<void> {
   const existing = existsSync(inboxPath) ? readFileSync(inboxPath, "utf-8") : `${header}\n\n`;
   await Bun.write(inboxPath, `${existing}${body}`);
 }
 
-export async function runWatches(options: RunWatchesOptions): Promise<RunWatchesResult> {
+async function acquireWatchRunLock(paths: HivePaths): Promise<() => Promise<void>> {
+  const lockPath = join(paths.watchesDir, ".run.lock");
+  await mkdir(paths.watchesDir, { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const handle = await open(lockPath, "wx", 0o600);
+      await handle.writeFile(JSON.stringify({ pid: process.pid, at: toIsoTimestamp() }));
+      await handle.close();
+      return async () => { await unlink(lockPath).catch(() => undefined); };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const owner = await readFile(lockPath, "utf-8")
+        .then((raw) => JSON.parse(raw) as { pid?: number })
+        .catch(() => ({}));
+      if (typeof owner.pid === "number") {
+        try {
+          process.kill(owner.pid, 0);
+          throw new Error(`Another watch cycle is running (pid ${owner.pid})`);
+        } catch (probe) {
+          if (probe instanceof Error && probe.message.startsWith("Another watch cycle")) throw probe;
+        }
+      }
+      await unlink(lockPath).catch(() => undefined);
+    }
+  }
+  throw new Error("Could not acquire watch cycle lock");
+}
+
+async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatchesResult> {
   const { paths } = options;
   const now = options.now ?? hiveNow();
   const date = options.date ?? now.toISOString().slice(0, 10);
   const caller: WatchCaller = options.caller ?? ((input) => completeClaudeTextBounded(input));
+  const dispatcher = options.dispatcher ?? (async (input) => {
+    const result = await dispatchTicketForReview({
+      paths,
+      projectId: input.project,
+      ticketId: input.ticketId,
+      sourceWatch: input.watch,
+    });
+    return { runId: result.runId, detail: `${result.branch} at ${result.workspacePath}` };
+  });
   const ceiling = readAutonomyCeiling(paths);
 
   const { watches, warnings } = await discoverWatches(paths);
@@ -174,10 +233,9 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
   });
 
   for (const watch of selected) {
-    // Slice 1 ships no act-capable machinery: even with the ceiling raised,
-    // effective autonomy tops out at propose until the harvester slice lands.
-    const effective = clampAutonomy(clampAutonomy(watch.autonomy, ceiling), "propose");
+    const effective = clampAutonomy(watch.autonomy, ceiling);
     const entry = stateEntry(state, watch.qualifiedName);
+    const interval = watchInterval(watch.cadence, entry.lastRun, now);
     const startMs = Date.now();
 
     const report = (partial: Omit<WatchRunReport, "watch" | "effectiveAutonomy">): void => {
@@ -199,6 +257,7 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
         paths,
         watch,
         lastDigests: entry.lastDigests,
+        since: interval.since,
         now,
         seams: options.seams,
       });
@@ -221,8 +280,17 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
         continue;
       }
 
-      const digest = await assembleWatchDigest({ paths, watch, now, seams: options.seams });
-      if (digest.empty) {
+      const digest = await assembleWatchDigest({ paths, watch, since: interval.since, now, seams: options.seams });
+      if (effective === "act" && digest.actCandidateCount === 0) {
+        entry.lastRun = toIsoTimestamp(now);
+        entry.lastDigests = delta.fingerprints;
+        entry.lastOutcome = "no-delta";
+        entry.lastError = null;
+        await saveWatchState(paths, state);
+        report({ outcome: "no-delta", detail: "no eligible Act ticket", durationMs: Date.now() - startMs });
+        continue;
+      }
+      if (digest.empty && !forced) {
         entry.lastRun = toIsoTimestamp(now);
         entry.lastDigests = delta.fingerprints;
         entry.lastOutcome = "no-delta";
@@ -235,7 +303,8 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
       // ---- The one model call ----
       const modelId = resolveWatchModel(watch.model, watch.name);
       const systemPrompt = buildWatchSystemPrompt(watch, effective);
-      const userContent = `${digest.text}\n\n# Standing question\n${watch.question}`;
+      const question = renderWatchQuestion(watch.question, interval);
+      const userContent = `${digest.text}\n\n# Standing question\n${question}`;
 
       let completion: ClaudeTextCompletion;
       callsThisTick += 1;
@@ -281,6 +350,57 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
         // Provenance rule: no citation, no output. Dropped, not surfaced.
         outcome = "quiet";
         detail = "output dropped — no evidence anchor cited";
+      } else if (watch.venue === "dispatch") {
+        if (effective !== "act") {
+          const heading = `## ${toIsoTimestamp(now)} — watch:${watch.qualifiedName}\n\n`;
+          artifactPath = watch.project ? getProjectPaths(paths, watch.project).inbox : join(paths.home, "inbox.md");
+          await appendInbox(artifactPath, watch.project ? `# Inbox: ${watch.project}` : "# Inbox", `${heading}${output}\n\n`);
+          outcome = "surfaced";
+          detail = `act clamped to ${effective}; proposal surfaced without dispatch`;
+        } else {
+          const selections = [...output.matchAll(ACT_SELECTION)];
+          if (selections.length !== 1) {
+            outcome = "quiet";
+            detail = "act output dropped — expected exactly one `ACT project/TK-NNN`";
+          } else {
+            const selected = selections[0]!;
+            const project = selected[1]!;
+            const ticketId = selected[2]!;
+            const candidateTag = `[A:${project}/${ticketId}]`;
+            if (!digest.provenance.includes(candidateTag) || !output.includes(candidateTag)) {
+              outcome = "quiet";
+              detail = "act selection dropped — ticket was not in the eligible shortlist";
+            } else {
+              let dispatched: WatchDispatchResult;
+              try {
+                dispatched = await dispatcher({ project, ticketId, watch: watch.qualifiedName });
+              } catch (dispatchError) {
+                const message = dispatchError instanceof Error ? dispatchError.message : String(dispatchError);
+                entry.lastOutcome = "error";
+                entry.lastError = message;
+                await saveWatchState(paths, state);
+                try {
+                  await writeInvocationLog({
+                    paths, watch, now, modelId, autonomy: effective, reasons: delta.reasons,
+                    systemPrompt, userContent, output: null, outcome: "error",
+                    error: `Dispatch failed: ${message}\n\nModel output:\n${output}`,
+                    durationMs: completion.durationMs,
+                  });
+                } catch (logErr) {
+                  warnings.push(`${watch.qualifiedName}: invocation log write failed (${logErr instanceof Error ? logErr.message : String(logErr)})`);
+                }
+                report({ outcome: "error", error: message, reasons: delta.reasons, durationMs: Date.now() - startMs });
+                continue;
+              }
+              const heading = `## ${toIsoTimestamp(now)} — watch:${watch.qualifiedName}\n\n`;
+              const body = `${heading}${candidateTag} dispatched ${dispatched.runId} to an isolated review branch. It will not merge or push.\n\n`;
+              artifactPath = watch.project ? getProjectPaths(paths, watch.project).inbox : join(paths.home, "inbox.md");
+              await appendInbox(artifactPath, watch.project ? `# Inbox: ${watch.project}` : "# Inbox", body);
+              outcome = "surfaced";
+              detail = `${dispatched.runId} dispatched for human review`;
+            }
+          }
+        }
       } else if (watch.venue === "inbox") {
         const heading = `## ${toIsoTimestamp(now)} — watch:${watch.qualifiedName}\n\n`;
         const body = `${heading}${output}\n\n`;
@@ -299,9 +419,9 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
         await Bun.write(artifactPath, `# Watch: ${watch.qualifiedName} — ${date}\n\n${output}\n`);
         outcome = "surfaced";
       } else {
-        // tickets/dispatch venues wait on the harvester slice (TK-125/TK-130).
+        // Ticket creation remains a future venue; Act dispatches existing work.
         outcome = "error";
-        detail = `venue "${watch.venue}" not supported in slice 1`;
+        detail = `venue "${watch.venue}" is not implemented`;
       }
 
       entry.lastRun = toIsoTimestamp(now);
@@ -335,4 +455,13 @@ export async function runWatches(options: RunWatchesOptions): Promise<RunWatches
   }
 
   return { reports, warnings };
+}
+
+export async function runWatches(options: RunWatchesOptions): Promise<RunWatchesResult> {
+  const release = await acquireWatchRunLock(options.paths);
+  try {
+    return await runWatchesUnlocked(options);
+  } finally {
+    await release();
+  }
 }

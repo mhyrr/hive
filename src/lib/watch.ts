@@ -43,8 +43,6 @@ export interface WatchDef {
   qualifiedName: string;
   cadence: WatchCadence;
   scope: WatchScopeKind[];
-  /** Delta/digest lookback in ms. */
-  windowMs: number;
   model: WatchTier;
   venue: WatchVenue;
   autonomy: WatchAutonomy;
@@ -124,12 +122,44 @@ export function formatCadence(cadence: WatchCadence): string {
   }
 }
 
-export function parseWindow(raw: string): number | null {
-  const m = raw.trim().toLowerCase().match(/^(\d+)\s*(m|h|d)$/);
-  if (!m) return null;
-  const n = Number(m[1]);
-  if (n <= 0) return null;
-  return n * UNIT_MS[m[2]];
+export interface WatchInterval {
+  since: Date;
+  until: Date;
+  durationMs: number;
+}
+
+/**
+ * Evidence always spans the previous settled tick through this tick. A late
+ * launchd wake therefore widens the interval instead of dropping activity.
+ * First runs use one cadence period; calendar cadences use 24h because there
+ * is no prior cursor yet.
+ */
+export function watchInterval(
+  cadence: WatchCadence,
+  lastRun: string | null,
+  now: Date,
+): WatchInterval {
+  const parsed = lastRun ? new Date(lastRun) : null;
+  const validLast = parsed && !Number.isNaN(parsed.getTime()) && parsed.getTime() < now.getTime()
+    ? parsed
+    : null;
+  const firstDuration = cadence.type === "interval" ? cadence.ms : UNIT_MS.d;
+  const since = validLast ?? new Date(now.getTime() - firstDuration);
+  return { since, until: now, durationMs: now.getTime() - since.getTime() };
+}
+
+export function formatWatchDuration(durationMs: number): string {
+  const minutes = Math.max(1, Math.round(durationMs / 60_000));
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours === 0) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  if (remainder === 0) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  return `${hours} hour${hours === 1 ? "" : "s"} ${remainder} minute${remainder === 1 ? "" : "s"}`;
+}
+
+/** The shipped cycle prompts use this token; custom watches may use it too. */
+export function renderWatchQuestion(question: string, interval: WatchInterval): string {
+  return question.replaceAll("{{interval}}", formatWatchDuration(interval.durationMs));
 }
 
 function sameLocalDay(a: Date, b: Date): boolean {
@@ -180,8 +210,6 @@ export const AUTONOMY_LEVELS: WatchAutonomy[] = ["observe", "propose", "act"];
 export const VENUES: WatchVenue[] = ["inbox", "briefing", "tickets", "dispatch"];
 export const TIERS: WatchTier[] = ["fast", "standard", "judgment"];
 
-const DEFAULT_WINDOW_MS = 86_400_000; // 24h
-
 export interface ParseWatchResult {
   watch: WatchDef | null;
   warnings: string[];
@@ -225,14 +253,8 @@ export function parseWatchFile(
     scope = [...DEFAULT_SCOPE];
   }
 
-  let windowMs = DEFAULT_WINDOW_MS;
   if (attributes.window?.trim()) {
-    const parsed = parseWindow(attributes.window);
-    if (parsed === null) {
-      warnings.push(`${label}: unparseable window "${attributes.window}" — defaulting to 24h`);
-    } else {
-      windowMs = parsed;
-    }
+    warnings.push(`${label}: window is obsolete and ignored — evidence follows settled ticks`);
   }
 
   const rawTier = attributes.model?.trim().toLowerCase();
@@ -273,7 +295,6 @@ export function parseWatchFile(
       qualifiedName: project ? `${project}/${name}` : name,
       cadence,
       scope,
-      windowMs,
       model,
       venue,
       autonomy,
