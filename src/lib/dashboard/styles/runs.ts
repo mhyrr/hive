@@ -104,6 +104,7 @@ export const RUNS_CSS = `
   text-transform: uppercase;
 }
 .run-status-shipped { color: var(--ink); font-weight: 800; }
+.run-status-review { color: #8a5a00; font-weight: 800; }
 .run-status-failed  { color: var(--rust); }
 .run-status-running { color: var(--amber); font-weight: 800; }
 

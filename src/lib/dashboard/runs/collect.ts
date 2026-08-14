@@ -20,6 +20,7 @@ import { listTickets, type Ticket, type TicketWithBody } from "../../ticket";
 
 export type RunRowStatus =
   | "running"
+  | "review_ready"
   | "shipped"
   | "partial"
   | "failed"
@@ -34,6 +35,7 @@ export type RunRow = {
   elapsedSec: number;
   costUsd?: number;
   ticketId?: string; // TK-NNN if dispatched against a ticket
+  projectId?: string;
   goalSummary: string; // first ~140 chars
   worktreeBranch?: string;
   lastLogLine?: string; // for active runs only
@@ -82,6 +84,17 @@ function extractTicketId(text: string): string | null {
   return match ? match[0] : null;
 }
 
+function extractProjectId(text: string): string | null {
+  return text.match(/^Project:\s*(\S+)$/m)?.[1] ?? null;
+}
+
+type RunMetadata = {
+  projectId?: string;
+  ticketId?: string;
+  branch?: string;
+  createdAt?: string;
+};
+
 /** Truncate text to ~maxLen chars at a word boundary. */
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
@@ -120,6 +133,7 @@ function normalizeDispatchStatus(raw: string, alive: boolean): RunRowStatus {
   if (s === "running") return "running";
 
   // Map known terminal values
+  if (s === "review_ready") return "review_ready";
   if (s === "complete" || s === "shipped") return "shipped";
   if (s === "partial") return "partial";
   if (s === "failed" || s === "timed_out" || s === "killed") return "failed";
@@ -159,12 +173,16 @@ async function collectDispatchRun(
   const pidStr = (await safeReadFile(join(runDir, "pid")))?.trim() ?? "";
   const alive = checkPid ? isProcessAlive(pidStr) : false;
   const status = normalizeDispatchStatus(statusRaw, alive);
+  const metadataRaw = await safeReadFile(join(runDir, "run.json"));
+  const metadata = metadataRaw
+    ? (() => { try { return JSON.parse(metadataRaw) as RunMetadata; } catch { return null; } })()
+    : null;
 
   // Timing: use goal.md mtime as startedAt, status mtime as endedAt
   const goalStat = await safeStat(join(runDir, "goal.md"));
   const statusStat = await safeStat(join(runDir, "status"));
 
-  const startedAt = goalStat?.mtime.toISOString() ?? new Date(0).toISOString();
+  const startedAt = metadata?.createdAt ?? goalStat?.mtime.toISOString() ?? new Date(0).toISOString();
   const endedAt = status !== "running" && statusStat
     ? statusStat.mtime.toISOString()
     : undefined;
@@ -185,15 +203,16 @@ async function collectDispatchRun(
     .find((l) => l.trim() && !l.startsWith("---") && !l.match(/^(Project|Dispatched):/i));
   const goalSummary = truncate(firstLine?.trim() ?? id, 140);
 
-  const ticketId = extractTicketId(goalRaw) ?? undefined;
+  const ticketId = metadata?.ticketId ?? extractTicketId(goalRaw) ?? undefined;
+  const projectId = metadata?.projectId ?? extractProjectId(goalRaw) ?? undefined;
 
   // Worktree branch: parse from run.sh --worktree flag presence
   // The branch is typically worktree-<runid> or from --name flag
   const runSh = (await safeReadFile(join(runDir, "run.sh"))) ?? "";
   const branchMatch = runSh.match(/--name\s+"([^"]+)"/);
-  const worktreeBranch = branchMatch?.[1]
+  const worktreeBranch = metadata?.branch ?? (branchMatch?.[1]
     ? `worktree-${branchMatch[1].toLowerCase().replace(/\s+/g, "-")}`
-    : undefined;
+    : undefined);
 
   // Last log line for active runs
   const lastLogLine = status === "running"
@@ -202,7 +221,7 @@ async function collectDispatchRun(
 
   // Failure reason for terminal non-shipped runs
   let failureReason: string | undefined;
-  if (status !== "running" && status !== "shipped") {
+  if (status !== "running" && status !== "shipped" && status !== "review_ready") {
     failureReason = (await tailLines(join(runDir, "output.log"), 5)) ?? undefined;
   }
 
@@ -214,6 +233,7 @@ async function collectDispatchRun(
     endedAt,
     elapsedSec,
     ticketId,
+    projectId,
     goalSummary,
     worktreeBranch,
     lastLogLine,
@@ -469,7 +489,8 @@ export type RunRef = {
 };
 
 /**
- * Build a Map<ticketId, RunRef[]> from a CollectedRuns result.
+ * Build a Map<project/ticket, RunRef[]> from a CollectedRuns result. Legacy
+ * runs without a project remain keyed by ticket ID as a fallback.
  * One pass over active + terminal; only entries with a ticketId are indexed.
  * Results per ticket are sorted newest-first (by original array order which
  * is already time-sorted).
@@ -481,11 +502,12 @@ export function runsByTicket(data: CollectedRuns): Map<string, RunRef[]> {
     if (!row.ticketId) return;
     const ref: RunRef = { id: row.id, status: row.status };
     if (row.failureReason) ref.failureReason = row.failureReason;
-    const list = map.get(row.ticketId);
+    const key = row.projectId ? `${row.projectId}/${row.ticketId}` : row.ticketId;
+    const list = map.get(key);
     if (list) {
       list.push(ref);
     } else {
-      map.set(row.ticketId, [ref]);
+      map.set(key, [ref]);
     }
   };
 
@@ -569,7 +591,7 @@ function rollUpGoalStatus(children: GoalArcChild[], openTicketIds: Set<string>):
 
   for (const child of children) {
     const { ticket, runs } = child;
-    const hasRunningRun = runs.some((r) => r.status === "running");
+    const hasRunningRun = runs.some((r) => r.status === "running" || r.status === "review_ready");
     const hasShippedRun = runs.some((r) => r.status === "shipped");
     const isBlocked = ticket.depends.length > 0 && ticket.depends.some((d) => openTicketIds.has(d));
 
@@ -658,27 +680,34 @@ export async function collectArcs(
   // at runtime — cast to preserve the body for epic rendering.
   const projectIds = await listProjects(paths.projectsDir);
   const allTickets: TicketWithBody[] = [];
+  const ticketProject = new Map<TicketWithBody, string>();
   for (const pid of projectIds) {
     const tickets = await listTickets(paths, pid).catch(() => [] as Ticket[]);
-    allTickets.push(...(tickets as TicketWithBody[]));
+    for (const ticket of tickets as TicketWithBody[]) {
+      allTickets.push(ticket);
+      ticketProject.set(ticket, pid);
+    }
   }
 
   // Build lookup structures
-  const ticketById = new Map<string, TicketWithBody>(allTickets.map((t) => [t.id, t]));
-  const openTicketIds = new Set<string>(
-    allTickets.filter((t) => t.status !== "closed").map((t) => t.id),
-  );
+  const openTicketIdsByProject = new Map<string, Set<string>>();
+  for (const projectId of projectIds) openTicketIdsByProject.set(projectId, new Set());
+  for (const ticket of allTickets) {
+    const projectId = ticketProject.get(ticket)!;
+    if (ticket.status !== "closed") openTicketIdsByProject.get(projectId)!.add(ticket.id);
+  }
 
   // Identify epics and their children
   const epics = allTickets.filter((t) => t.type === "epic");
   const childrenByEpic = new Map<string, TicketWithBody[]>();
   for (const t of allTickets) {
     if (t.parentEpic) {
-      const list = childrenByEpic.get(t.parentEpic);
+      const key = `${ticketProject.get(t)}/${t.parentEpic}`;
+      const list = childrenByEpic.get(key);
       if (list) {
         list.push(t);
       } else {
-        childrenByEpic.set(t.parentEpic, [t]);
+        childrenByEpic.set(key, [t]);
       }
     }
   }
@@ -689,19 +718,21 @@ export async function collectArcs(
   // --- Goal arcs ---
   const goalArcs: GoalArc[] = [];
   for (const epic of epics) {
-    const children = childrenByEpic.get(epic.id) ?? [];
-    claimedTicketIds.add(epic.id);
+    const projectId = ticketProject.get(epic)!;
+    const children = childrenByEpic.get(`${projectId}/${epic.id}`) ?? [];
+    claimedTicketIds.add(`${projectId}/${epic.id}`);
 
     const arcChildren: GoalArcChild[] = children.map((child) => {
-      claimedTicketIds.add(child.id);
+      const key = `${projectId}/${child.id}`;
+      claimedTicketIds.add(key);
       return {
         ticket: child,
-        runs: ticketRunMap.get(child.id) ?? [],
+        runs: ticketRunMap.get(key) ?? ticketRunMap.get(child.id) ?? [],
       };
     });
 
     const runCount = arcChildren.reduce((sum, c) => sum + c.runs.length, 0);
-    const status = rollUpGoalStatus(arcChildren, openTicketIds);
+    const status = rollUpGoalStatus(arcChildren, openTicketIdsByProject.get(projectId) ?? new Set());
 
     goalArcs.push({
       kind: "goal",
@@ -725,7 +756,7 @@ export async function collectArcs(
   const campaignTicketIds = new Set<string>();
 
   for (const row of campaignRunRows) {
-    if (row.ticketId) campaignTicketIds.add(row.ticketId);
+    if (row.ticketId) campaignTicketIds.add(row.projectId ? `${row.projectId}/${row.ticketId}` : row.ticketId);
 
     const campDir = join(paths.campaignsDir, row.id);
 
@@ -813,8 +844,9 @@ export async function collectArcs(
   for (const row of allDispatchRows) {
     // If it has a ticket ID, check if that ticket is claimed by a goal arc or campaign
     if (row.ticketId) {
-      if (claimedTicketIds.has(row.ticketId)) continue;
-      if (campaignTicketIds.has(row.ticketId)) continue;
+      const key = row.projectId ? `${row.projectId}/${row.ticketId}` : row.ticketId;
+      if (claimedTicketIds.has(key)) continue;
+      if (campaignTicketIds.has(key)) continue;
     }
     directArcs.push({ kind: "direct", run: row });
   }

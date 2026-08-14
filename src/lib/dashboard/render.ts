@@ -14,6 +14,7 @@ import type {
   HealthEntry,
   ProjectCard,
   InboxEntry,
+  ProposeEntry,
   BriefingEntry,
   RunEntry,
   TicketBuckets,
@@ -232,6 +233,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
 
   const jumpLinks = [
     ["#section-briefing", "Briefing"],
+    ...(data.propose ? [["#section-propose", "Propose"] as [string, string]] : []),
     ["#section-projects", "Projects"],
     ["#section-inboxes", "Inbox"],
     ["#section-reflections", "Reflections"],
@@ -240,6 +242,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     ["/tickets", "Tickets"],
     ["/runs", "Runs"],
     ["/taste", "Taste"],
+    ["/watches", "Watches"],
   ]
     .map(([href, label]) => `<a href="${href}">${label}</a>`)
     .join("");
@@ -251,13 +254,16 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
        </div>`
     : "";
 
+  // Two rows so both groups scale: sections wrap horizontally beside the
+  // title; the project filter gets its own full-width row. A single flex row
+  // starves whichever group is smaller once projects and sections multiply.
   return `
 <nav class="sticky-nav" aria-label="Dashboard navigation">
   <div class="sticky-row">
     <div class="sticky-title">HIVE <span class="sep">·</span> ${escapeHtml(weekdayDate(data.today))}</div>
     <div class="jump-links">${jumpLinks}</div>
-    ${filterGroup}
   </div>
+  ${filterGroup ? `<div class="sticky-row sticky-row--filter">${filterGroup}</div>` : ""}
   <div id="filter-banner" class="filter-banner" aria-live="polite"></div>
 </nav>`;
 }
@@ -369,6 +375,16 @@ export function renderBriefings(data: DashboardData): string {
   <div class="briefing-wrap">
     ${articles}
   </div>
+</section>`;
+}
+
+/** Latest Propose output beside the morning briefing. Quiet nights omit it. */
+export function renderPropose(propose: ProposeEntry | null | undefined): string {
+  if (!propose) return "";
+  return `<section class="section" id="section-propose">
+  <div class="section-head"><h2>Propose</h2><span class="kicker">${escapeHtml(propose.date)} · nightly propose cycle · <a href="/watches">fleet →</a></span></div>
+  <hr class="amber"/>
+  <div class="briefing">${md(propose.body)}</div>
 </section>`;
 }
 
@@ -706,6 +722,7 @@ export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOpt
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
     ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
   ];
   const nav = navItems
     .map(([label, href]) => {
@@ -1005,6 +1022,7 @@ const TASTE_NAV: Array<[string, string]> = [
   ["TICKETS", "/tickets"],
   ["RUNS", "/runs"],
   ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
 ];
 
 /** A single taste unit — rule scannable, the WHY behind a disclosure. */
@@ -1284,6 +1302,7 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     `<main class="page">`,
     renderTopThree(data),
     renderBriefings(data),
+    renderPropose(data.propose),
     renderProjects(data, c),
     renderInboxes(data.inboxes, c),
     renderReflections(data.latestReflection),

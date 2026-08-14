@@ -43,6 +43,12 @@ import {
 import { resolveHiveBin, HiveBinNotFoundError } from "./hive-bin";
 import { renderDashboard, renderTicketsPageDocument, renderTastePageDocument } from "./render";
 import { collectDashboardData, collectTicketsPage, collectTastePage } from "./collect";
+import { collectWatchesPage, renderWatchesPageDocument } from "./watches-page";
+import {
+  collectWatchDetailPage,
+  renderWatchDetailDocument,
+  renderWatchNotFound,
+} from "./watch-detail-page";
 import { collectRuns, collectArcs } from "./runs/collect";
 import { renderRunsPageDocument, renderArcRunsPageDocument } from "./runs/render";
 import { collectDispatchDetail } from "./runs/collect-detail";
@@ -128,6 +134,12 @@ export async function handleRequest(req: Request, rctx: RequestCtx): Promise<Res
     if (req.method === "GET" && url.pathname === "/taste") {
       return serveTastePage(rctx);
     }
+    if (req.method === "GET" && url.pathname === "/watches") {
+      return serveWatchesPage(rctx);
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/watches/")) {
+      return serveWatchDetail(rctx, url.pathname.slice("/watches/".length));
+    }
     if (req.method === "GET" && url.pathname.startsWith("/runs/")) {
       return serveRunDetail(rctx, url.pathname.slice("/runs/".length));
     }
@@ -182,6 +194,38 @@ async function serveTastePage(rctx: RequestCtx): Promise<Response> {
       "cache-control": "no-store",
     },
   });
+}
+
+async function serveWatchesPage(rctx: RequestCtx): Promise<Response> {
+  const data = await collectWatchesPage(rctx.paths);
+  const html = renderWatchesPageDocument(data);
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+/** `ref` is the qualified watch name — `propose` or `<project>/<name>`, so the
+ * whole remainder of the path is the ref, slashes included. It is matched
+ * against discovered watches, never used as a filesystem path. */
+async function serveWatchDetail(rctx: RequestCtx, ref: string): Promise<Response> {
+  const decoded = ref
+    .split("/")
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part; // malformed escape — fall back to the raw segment
+      }
+    })
+    .join("/");
+  const data = await collectWatchDetailPage(rctx.paths, decoded);
+  if (!data) {
+    return htmlResponse(renderWatchNotFound(decoded), 404);
+  }
+  return htmlResponse(renderWatchDetailDocument(data), 200);
 }
 
 async function serveRunsPage(rctx: RequestCtx): Promise<Response> {
@@ -408,6 +452,7 @@ function render404(id: string): string {
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
     ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
   ];
   const nav = navItems
     .map(([label, href]) => `<a href="${href}">${label}</a>`)
@@ -449,6 +494,7 @@ function renderRunDetailDocument(id: string, fragmentHtml: string): string {
     ["TICKETS", "/tickets"],
     ["RUNS", "/runs"],
     ["TASTE", "/taste"],
+    ["WATCHES", "/watches"],
   ];
   const nav = navItems
     .map(([label, href]) => {

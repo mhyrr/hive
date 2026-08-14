@@ -65,6 +65,7 @@ function normalizeStatus(raw: string, alive: boolean): RunRowStatus {
   const s = raw.trim().toLowerCase();
   if (s === "running" && !alive) return "crashed";
   if (s === "running") return "running";
+  if (s === "review_ready") return "review_ready";
   if (s === "complete" || s === "shipped") return "shipped";
   if (s === "partial") return "partial";
   if (s === "failed" || s === "timed_out" || s === "killed") return "failed";
@@ -187,12 +188,22 @@ export async function collectDispatchDetail(
   const pidStr = (await safeReadFile(join(runDir, "pid")))?.trim() ?? "";
   const alive = checkPid ? isProcessAlive(pidStr) : false;
   const status = normalizeStatus(statusRaw, alive);
+  const metadataRaw = await safeReadFile(join(runDir, "run.json"));
+  const metadata = metadataRaw
+    ? (() => {
+        try {
+          return JSON.parse(metadataRaw) as { ticketId?: string; branch?: string; workspacePath?: string; createdAt?: string };
+        } catch {
+          return null;
+        }
+      })()
+    : null;
 
   // Timing
   const goalStat = await safeStat(join(runDir, "goal.md"));
   const statusStat = await safeStat(join(runDir, "status"));
 
-  const startedAt = goalStat?.mtime.toISOString() ?? new Date(0).toISOString();
+  const startedAt = metadata?.createdAt ?? goalStat?.mtime.toISOString() ?? new Date(0).toISOString();
   const endedAt = status !== "running" && statusStat
     ? statusStat.mtime.toISOString()
     : undefined;
@@ -208,22 +219,24 @@ export async function collectDispatchDetail(
   const goalRaw = (await safeReadFile(join(runDir, "goal.md"))) ?? "";
   const goalFull = goalRaw.replace(/^#\s*Goal\s*\n+/i, "").trim();
 
-  const ticketId = extractTicketId(goalRaw) ?? undefined;
+  const ticketId = metadata?.ticketId ?? extractTicketId(goalRaw) ?? undefined;
 
   // Worktree branch
   const runSh = (await safeReadFile(join(runDir, "run.sh"))) ?? "";
   const branchMatch = runSh.match(/--name\s+"([^"]+)"/);
-  const worktreeBranch = branchMatch?.[1]
+  const worktreeBranch = metadata?.branch ?? (branchMatch?.[1]
     ? `worktree-${branchMatch[1].toLowerCase().replace(/\s+/g, "-")}`
-    : undefined;
+    : undefined);
 
   // Worktree state
   let worktreeState: WorktreeState | undefined;
   if (worktreeBranch) {
-    worktreeState = detectWorktreeState(worktreeBranch, {
-      skipGit: opts.skipGit ?? false,
-      projectPath: opts.projectPath,
-    });
+    worktreeState = metadata?.workspacePath && existsSync(metadata.workspacePath)
+      ? "alive"
+      : detectWorktreeState(worktreeBranch, {
+          skipGit: opts.skipGit ?? false,
+          projectPath: opts.projectPath,
+        });
   }
 
   // Log tail

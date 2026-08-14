@@ -505,7 +505,7 @@ second orchestration stacks.
 | Add a fact | `hive memory fact "Uses Joken for JWT"` |
 | Convene council | `hive council "Should we use X or Y?"` |
 | Create a ticket | `hive ticket create "Add auth middleware" --type feature --priority 1` |
-| List open tickets | `hive ticket list --status open` |
+| List open tickets | `hive tickets` |
 | Show unblocked work | `hive ticket ready` |
 | Start a ticket | `hive ticket start TK-005` |
 | Close a ticket | `hive ticket close TK-005` |

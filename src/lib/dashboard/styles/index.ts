@@ -19,6 +19,7 @@ export { REFLECTIONS_CSS } from "./reflections";
 export { INBOX_CSS } from "./inbox";
 export { TICKETS_CSS } from "./tickets";
 export { TASTE_CSS } from "./taste";
+export { WATCHES_CSS } from "./watches";
 export { DISPATCH_CSS } from "./dispatch";
 export { RUNS_CSS } from "./runs";
 export { ARCHIVE_CSS } from "./archive";
@@ -36,6 +37,7 @@ import { REFLECTIONS_CSS } from "./reflections";
 import { INBOX_CSS } from "./inbox";
 import { TICKETS_CSS } from "./tickets";
 import { TASTE_CSS } from "./taste";
+import { WATCHES_CSS } from "./watches";
 import { DISPATCH_CSS } from "./dispatch";
 import { RUNS_CSS } from "./runs";
 import { ARCHIVE_CSS } from "./archive";
@@ -55,6 +57,7 @@ export const DASHBOARD_CSS = [
   INBOX_CSS,
   TICKETS_CSS,
   TASTE_CSS,
+  WATCHES_CSS,
   DISPATCH_CSS,
   RUNS_CSS,
   ARCHIVE_CSS,

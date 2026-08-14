@@ -22,7 +22,8 @@ import { tasteCommand } from "./commands/taste";
 import { projectCommand } from "./commands/project";
 import { psCommand } from "./commands/ps";
 import { stackCommand } from "./commands/stack";
-import { ticketCommand } from "./commands/ticket";
+import { ticketCommand, ticketsCommand } from "./commands/ticket";
+import { watchCommand } from "./commands/watch";
 import { UsageError } from "./lib/errors";
 import { resolveHarness, type ClaudeMode, type Harness } from "./lib/harness";
 import { writeCodexAgentsMd } from "./lib/codex-wire";
@@ -41,6 +42,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   memory: memoryCommand,
   taste: tasteCommand,
   ticket: ticketCommand,
+  tickets: ticketsCommand,
   goal: goalCommand,
   dispatch: dispatchCommand,
   heartbeat: heartbeatCommand,
@@ -49,6 +51,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   kill: killCommand,
   ps: psCommand,
   dashboard: dashboardCommand,
+  watch: watchCommand,
 };
 
 function getUsage(): string {
@@ -68,11 +71,13 @@ HIVE Commands:
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
   taste extract [opts]       Mine taste candidates from transcripts (phase 1)
+  tickets                    Open tickets for the project you're standing in
   ticket [create|list|...]   Project ticket tracker
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
   campaign run|list|show     Long-horizon campaign orchestration
   dispatch "<goal>" [opts]   Dispatch autonomous goal execution
   heartbeat start|stop|...   Periodic project awareness
+  watch list|status|run|...  Standing-question watches (ambient passes)
   identity emit              Print canonical identity prefix (used by SessionStart hook)
   inbox                      Show project inbox (clear with: inbox clear)
   kill <run-id>              Kill a running dispatch

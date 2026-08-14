@@ -26,6 +26,9 @@ export type Ticket = {
   ref: string | null; // external reference (github issue, etc.)
   depends: string[]; // ticket IDs this depends on
   parentEpic: string | null; // ticket ID of the epic this is a child of
+  /** Owning autonomous dispatch, when one has claimed this ticket for review. */
+  dispatchRun?: string | null;
+  dispatchBranch?: string | null;
 };
 
 export type TicketWithBody = Ticket & { body: string };
@@ -96,6 +99,8 @@ function parseTicketFile(raw: string, id: string): TicketWithBody {
     ref: attributes.ref || null,
     depends: attributes.depends ? attributes.depends.split(",").map((d) => d.trim()).filter(Boolean) : [],
     parentEpic: attributes.parent_epic || null,
+    dispatchRun: attributes.dispatch_run || null,
+    dispatchBranch: attributes.dispatch_branch || null,
     body,
   };
 }
@@ -115,6 +120,8 @@ function serializeTicket(ticket: TicketWithBody): string {
   if (ticket.ref) attrs.ref = ticket.ref;
   if (ticket.depends.length > 0) attrs.depends = ticket.depends.join(", ");
   if (ticket.parentEpic) attrs.parent_epic = ticket.parentEpic;
+  if (ticket.dispatchRun) attrs.dispatch_run = ticket.dispatchRun;
+  if (ticket.dispatchBranch) attrs.dispatch_branch = ticket.dispatchBranch;
 
   return stringifyFrontmatter(attrs, ticket.body);
 }
@@ -168,6 +175,8 @@ export async function createTicket(
     ref: input.ref ?? null,
     depends: input.depends ?? [],
     parentEpic: input.parentEpic ?? null,
+    dispatchRun: null,
+    dispatchBranch: null,
     body: input.body?.trim() || "",
   };
 
@@ -193,7 +202,7 @@ export async function updateTicket(
   paths: HivePaths,
   projectId: string,
   id: string,
-  updates: Partial<Pick<Ticket, "status" | "title" | "type" | "priority" | "tags" | "ref" | "depends" | "parentEpic">>,
+  updates: Partial<Pick<Ticket, "status" | "title" | "type" | "priority" | "tags" | "ref" | "depends" | "parentEpic" | "dispatchRun" | "dispatchBranch">>,
 ): Promise<TicketWithBody | null> {
   const ticket = await readTicket(paths, projectId, id);
   if (!ticket) return null;
@@ -202,6 +211,10 @@ export async function updateTicket(
     ticket.status = updates.status;
     if (updates.status === "closed") ticket.closed = toIsoTimestamp();
     if (updates.status === "open") ticket.closed = null;
+    if (updates.status === "closed" || updates.status === "open") {
+      ticket.dispatchRun = null;
+      ticket.dispatchBranch = null;
+    }
   }
   if (updates.title !== undefined) ticket.title = updates.title;
   if (updates.type !== undefined) ticket.type = updates.type;
@@ -210,6 +223,8 @@ export async function updateTicket(
   if (updates.ref !== undefined) ticket.ref = updates.ref;
   if (updates.depends !== undefined) ticket.depends = updates.depends;
   if (updates.parentEpic !== undefined) ticket.parentEpic = updates.parentEpic;
+  if (updates.dispatchRun !== undefined) ticket.dispatchRun = updates.dispatchRun;
+  if (updates.dispatchBranch !== undefined) ticket.dispatchBranch = updates.dispatchBranch;
   ticket.updated = toIsoTimestamp();
 
   await Bun.write(ticketFilePath(ticketsDir(paths, projectId), ticket.id), serializeTicket(ticket));
@@ -221,6 +236,46 @@ export async function updateTicket(
   }
 
   return ticket;
+}
+
+/** Claim an open ticket for one review dispatch. The caller must hold the
+ * global dispatch lock; the expected-state check prevents stale selections. */
+export async function claimTicketForDispatch(
+  paths: HivePaths,
+  projectId: string,
+  id: string,
+  runId: string,
+  branch: string,
+): Promise<TicketWithBody> {
+  const ticket = await readTicket(paths, projectId, id);
+  if (!ticket) throw new Error(`Ticket not found: ${projectId}/${id}`);
+  if (ticket.status !== "open" || ticket.dispatchRun) {
+    throw new Error(`Ticket is no longer available: ${projectId}/${ticket.id}`);
+  }
+  const claimed = await updateTicket(paths, projectId, ticket.id, {
+    status: "in_progress",
+    dispatchRun: runId,
+    dispatchBranch: branch,
+  });
+  if (!claimed) throw new Error(`Failed to claim ticket: ${projectId}/${ticket.id}`);
+  return claimed;
+}
+
+/** Release only the claim owned by `runId`; never overwrite a human or newer run. */
+export async function releaseTicketDispatchClaim(
+  paths: HivePaths,
+  projectId: string,
+  id: string,
+  runId: string,
+): Promise<boolean> {
+  const ticket = await readTicket(paths, projectId, id);
+  if (!ticket || ticket.dispatchRun !== runId) return false;
+  await updateTicket(paths, projectId, ticket.id, {
+    status: "open",
+    dispatchRun: null,
+    dispatchBranch: null,
+  });
+  return true;
 }
 
 /**
@@ -381,11 +436,82 @@ const priorityLabels: Record<TicketPriority, string> = {
   3: "P3-low",
 };
 
-export function formatTicketSummary(t: Ticket): string {
+const statusRank: Record<TicketStatus, number> = {
+  in_progress: 0,
+  open: 1,
+  closed: 2,
+};
+
+function ticketNumber(id: string): number {
+  const n = parseInt(id.replace(/^\D+/, ""), 10);
+  return Number.isNaN(n) ? Number.MAX_SAFE_INTEGER : n;
+}
+
+/**
+ * Reading order for a ticket list: what's being worked on, then what's most
+ * urgent, then oldest first. Does not mutate the input.
+ */
+export function sortTicketsForDisplay(tickets: Ticket[]): Ticket[] {
+  return [...tickets].sort((a, b) => {
+    const s = (statusRank[a.status] ?? 3) - (statusRank[b.status] ?? 3);
+    if (s !== 0) return s;
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return ticketNumber(a.id) - ticketNumber(b.id);
+  });
+}
+
+function ticketColumns(t: Ticket): { prefix: string; description: string } {
   const tags = t.tags.length > 0 ? ` [${t.tags.join(", ")}]` : "";
   const deps = t.depends.length > 0 ? ` (blocked by: ${t.depends.join(", ")})` : "";
   const pLabel = priorityLabels[t.priority] ?? `P?-unknown`;
-  return `${t.id}  ${t.status.padEnd(11)}  ${pLabel.padEnd(12)}  ${t.type.padEnd(7)}  ${t.title}${tags}${deps}`;
+  return {
+    prefix: `${t.id}  ${t.status.padEnd(11)}  ${pLabel.padEnd(12)}  ${t.type.padEnd(7)}  `,
+    description: `${t.title}${tags}${deps}`,
+  };
+}
+
+/** Greedy word wrap. Words longer than the column are broken rather than allowed to bleed. */
+function wrapWords(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+
+  for (let word of text.split(/\s+/).filter(Boolean)) {
+    while (word.length > width) {
+      if (line) { lines.push(line); line = ""; }
+      lines.push(word.slice(0, width));
+      word = word.slice(width);
+    }
+    if (!line) line = word;
+    else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+    else { lines.push(line); line = word; }
+  }
+
+  if (line) lines.push(line);
+  return lines.length > 0 ? lines : [""];
+}
+
+export function formatTicketSummary(t: Ticket): string {
+  const { prefix, description } = ticketColumns(t);
+  return prefix + description;
+}
+
+/** Minimum description column worth wrapping into — below this, leave the line alone. */
+const MIN_DESCRIPTION_WIDTH = 24;
+
+/**
+ * One ticket, wrapped so the description stays inside its own column with a
+ * hanging indent. `width` of 0 (non-TTY, unknown terminal) returns the plain
+ * single-line form, which keeps piped output one ticket per line.
+ */
+export function formatTicketRow(t: Ticket, width: number): string {
+  const { prefix, description } = ticketColumns(t);
+  const available = width - prefix.length;
+  if (available < MIN_DESCRIPTION_WIDTH) return prefix + description;
+
+  const indent = " ".repeat(prefix.length);
+  return wrapWords(description, available)
+    .map((line, i) => (i === 0 ? prefix : indent) + line)
+    .join("\n");
 }
 
 export function formatTicketDetail(t: TicketWithBody): string {

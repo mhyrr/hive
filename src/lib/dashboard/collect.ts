@@ -133,7 +133,7 @@ async function listTicketsWithBodies(
 
 export type RunEntry = {
   id: string;               // "RUN-009"
-  status: string;           // "complete" | "partial" | "failed" | "crashed" | "running" | "timed_out"
+  status: string;           // includes "review_ready" for unmerged Act work
   durationMs: number | null;
   startedAt: string | null;
   goalSnippet: string;      // first ~240 chars of goal.md body
@@ -201,6 +201,12 @@ export type RunUsageSnapshot = {
   passes: RunUsagePassEntry[];
 };
 
+export type ProposeEntry = {
+  date: string;
+  /** propose.md body with the artifact's own H1 stripped. */
+  body: string;
+};
+
 export type DashboardData = {
   generatedAt: string;
   volumeNumber: number;     // count of briefings (proxy for "days since install")
@@ -219,6 +225,8 @@ export type DashboardData = {
   runUsage: RunUsageSnapshot;
   tasteTrack: TasteTrackSnapshot;
   latestReflection: ReflectionDay | null;
+  /** Latest nightly Propose output within the last 7 run dirs (TK-138). */
+  propose: ProposeEntry | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -466,7 +474,7 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
         for (const ticket of tickets) all.push({ projectId: id, ticket });
       }
     })(),
-    collectRunsPage(paths, { checkPid: false }),
+    collectRunsPage(paths, { checkPid: true }),
   ]);
 
   // Build runs-by-ticket index for cross-linking.
@@ -480,7 +488,7 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
   }
 
   const toCitation = (it: Indexed): TicketCitation => {
-    const refs = runsMap.get(it.ticket.id);
+    const refs = runsMap.get(`${it.projectId}/${it.ticket.id}`) ?? runsMap.get(it.ticket.id);
     return {
       id: it.ticket.id,
       title: it.ticket.title,
@@ -601,11 +609,21 @@ export async function collectRuns(paths: HivePaths, limit = 20): Promise<RunEntr
     const runDir = join(paths.runsDir, id);
     const goal = (await safeReadFile(join(runDir, "goal.md"))) ?? "";
     const status = ((await safeReadFile(join(runDir, "status"))) ?? "running").trim();
+    const metadataRaw = await safeReadFile(join(runDir, "run.json"));
+    const metadata = metadataRaw
+      ? (() => {
+          try {
+            return JSON.parse(metadataRaw) as { projectId?: string; ticketId?: string; createdAt?: string };
+          } catch {
+            return null;
+          }
+        })()
+      : null;
 
     const goalStat = await safeStat(join(runDir, "goal.md"));
     const statusStat = await safeStat(join(runDir, "status"));
 
-    const startedAt = goalStat ? goalStat.mtime.toISOString() : null;
+    const startedAt = metadata?.createdAt ?? (goalStat ? goalStat.mtime.toISOString() : null);
     const durationMs = goalStat && statusStat
       ? Math.max(0, statusStat.mtime.getTime() - goalStat.mtime.getTime())
       : null;
@@ -623,12 +641,33 @@ export async function collectRuns(paths: HivePaths, limit = 20): Promise<RunEntr
       durationMs,
       startedAt,
       goalSnippet,
-      projectId: extractProjectId(body, knownProjects),
-      ticketId: extractTicketId(body),
+      projectId: metadata?.projectId ?? extractProjectId(body, knownProjects),
+      ticketId: metadata?.ticketId ?? extractTicketId(body),
     });
   }
 
   return out;
+}
+
+/** Latest Propose artifact. Historical bets.md is read only as a migration fallback. */
+export async function collectPropose(paths: HivePaths): Promise<ProposeEntry | null> {
+  const entries = await readdir(paths.memoryRunsDir, { withFileTypes: true }).catch(() => []);
+  const dates = entries
+    .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
+    .map((e) => e.name)
+    .sort()
+    .reverse()
+    .slice(0, 7);
+  for (const date of dates) {
+    const raw =
+      (await safeReadFile(join(paths.memoryRunsDir, date, "propose.md"))) ??
+      (await safeReadFile(join(paths.memoryRunsDir, date, "bets.md")));
+    if (raw && raw.trim()) {
+      // Strip the artifact's own H1 — the dashboard section supplies the heading.
+      return { date, body: raw.trim().replace(/^# .*\n+/, "") };
+    }
+  }
+  return null;
 }
 
 export async function collectBriefings(paths: HivePaths): Promise<BriefingEntry[]> {
@@ -1114,7 +1153,7 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, tasteTrack, latestReflection] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -1127,6 +1166,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectRunUsage(paths),
     collectTasteTrack(paths),
     collectLatestReflection(paths),
+    collectPropose(paths),
   ]);
 
   const today = briefings[0]?.date ?? new Date().toISOString().slice(0, 10);
@@ -1149,5 +1189,6 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     runUsage,
     tasteTrack,
     latestReflection,
+    propose,
   };
 }

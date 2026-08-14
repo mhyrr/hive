@@ -30,7 +30,7 @@ export const NAVIGATION_CSS = `
 
 /* ---------- Sticky top navigation ---------- */
 
-html { scroll-padding-top: 48px; }
+html { scroll-padding-top: 84px; }
 
 .sticky-nav {
   position: sticky;
@@ -44,14 +44,15 @@ html { scroll-padding-top: 48px; }
 .sticky-row {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: 4px 18px;
   padding: 6px 0;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: var(--smallcaps-tracking);
   text-transform: uppercase;
 }
+.sticky-row--filter { padding-top: 0; justify-content: flex-end; }
 .sticky-title {
   font-weight: 700;
   color: var(--ink);
@@ -64,13 +65,15 @@ html { scroll-padding-top: 48px; }
 }
 .jump-links {
   display: flex;
-  gap: 16px;
+  gap: 4px 16px;
   flex: 1;
   justify-content: center;
   flex-wrap: wrap;
+  min-width: 0;
 }
 .jump-links a {
   color: var(--ink);
+  white-space: nowrap;
   text-decoration: none;
   padding-bottom: 2px;
   border-bottom: 1px solid transparent;
@@ -83,16 +86,17 @@ html { scroll-padding-top: 48px; }
 .sticky-filter {
   display: flex;
   align-items: baseline;
-  gap: 14px;
+  gap: 6px 14px;
+  flex: 1;
+  min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-.sticky-filter .pills { gap: 10px; }
-.sticky-filter .pill { font-size: 10.5px; padding: 0; }
-.sticky-filter .needs-action-toggle { font-size: 10px; }
+.sticky-filter .pills { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.sticky-filter .pill { font-size: 10.5px; padding: 0; white-space: nowrap; }
+.sticky-filter .needs-action-toggle { font-size: 10px; white-space: nowrap; }
 @media (max-width: 900px) {
-  .sticky-row { flex-wrap: wrap; gap: 8px; }
-  .jump-links { justify-content: flex-start; order: 3; flex-basis: 100%; }
-  .sticky-filter { order: 2; }
+  .jump-links { justify-content: flex-start; }
+  .sticky-filter { justify-content: flex-start; }
 }
 `;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  collectPropose,
   collectOpenQuestions,
   collectRecentMemory,
   collectRunUsage,
@@ -26,6 +27,39 @@ async function freshHome(): Promise<HivePaths> {
   const home = await mkdtemp(join(tmpdir(), "hive-dash-v1-"));
   return ensureHiveScaffold(home);
 }
+
+describe("collectPropose", () => {
+  test("returns the latest propose.md with its H1 stripped; null when none", async () => {
+    const paths = await freshHome();
+    expect(await collectPropose(paths)).toBeNull();
+
+    for (const [date, body] of [
+      ["2026-08-10", "# Watch: propose — 2026-08-10\n\nOld proposal."],
+      ["2026-08-12", "# Watch: propose — 2026-08-12\n\nProposal: TK-001 — ship it."],
+    ] as const) {
+      await mkdir(join(paths.memoryRunsDir, date), { recursive: true });
+      await writeFile(join(paths.memoryRunsDir, date, "propose.md"), body);
+    }
+    // A newer run dir with no artifact must not shadow the latest proposal.
+    await mkdir(join(paths.memoryRunsDir, "2026-08-13"), { recursive: true });
+
+    const propose = await collectPropose(paths);
+    expect(propose?.date).toBe("2026-08-12");
+    expect(propose?.body).toBe("Proposal: TK-001 — ship it.");
+    expect(propose?.body).not.toContain("# Watch");
+  });
+
+  test("prefers the renamed artifact but can read historical output", async () => {
+    const paths = await freshHome();
+    const runDir = join(paths.memoryRunsDir, "2026-08-12");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "bets.md"), "# Watch: bets\n\nHistorical proposal.");
+    expect((await collectPropose(paths))?.body).toBe("Historical proposal.");
+
+    await writeFile(join(runDir, "propose.md"), "# Watch: propose\n\nCurrent proposal.");
+    expect((await collectPropose(paths))?.body).toBe("Current proposal.");
+  });
+});
 
 async function registerProject(paths: HivePaths, projectId: string): Promise<void> {
   await mkdir(join(paths.projectsDir, projectId), { recursive: true });

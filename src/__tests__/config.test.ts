@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 
-import { extractConfigValue, extractConfigValueAlias, parsePositiveInt } from "../lib/config";
+import { extractConfigValue, extractConfigValueAlias, parsePositiveInt, setConfigValue } from "../lib/config";
 import { parseModelPool, normalizeProjectName } from "../lib/project";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +34,21 @@ describe("extractConfigValueAlias", () => {
 
   test("returns null when no alias matches", () => {
     expect(extractConfigValueAlias(config, ["missing1", "missing2"])).toBeNull();
+  });
+});
+
+describe("setConfigValue", () => {
+  test("replaces a dotted key without disturbing nearby config", () => {
+    const config = "runtime: claude\n\nwatches.max_autonomy: propose\nmodel: opus\n";
+    expect(setConfigValue(config, "watches.max_autonomy", "act")).toBe(
+      "runtime: claude\n\nwatches.max_autonomy: act\nmodel: opus\n",
+    );
+  });
+
+  test("appends a missing key with one blank line", () => {
+    expect(setConfigValue("runtime: claude\n", "watches.max_autonomy", "act")).toBe(
+      "runtime: claude\n\nwatches.max_autonomy: act\n",
+    );
   });
 });
 

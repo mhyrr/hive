@@ -266,6 +266,7 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive dashboard serve [--port N] [--open]` | Start the interactive server on `127.0.0.1:7777` |
 | `hive dashboard open` | Open the existing static dashboard in browser |
 | `hive dashboard path` | Print the dashboard file path |
+| `hive tickets` | Open tickets for the project you're standing in (`--all`, `--status`, `--type`, `--tags`) |
 | `hive ticket create <title>` | Create a ticket (`--type`, `--priority`, `--tags`, `--depends`) |
 | `hive ticket list` | List tickets (`--status`, `--type`, `--tags`) |
 | `hive ticket show <id>` | Show ticket details (partial IDs work: `1` matches `TK-001`) |

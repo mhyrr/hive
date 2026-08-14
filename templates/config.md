@@ -14,6 +14,9 @@ steward: steward
 message-check-seconds: 30
 archive-curation: deferred
 
+## Watches
+watches.max_autonomy: propose
+
 ## Model Pool
 - opus: claude, claude-opus-4-6, frontier deep work
 - sonnet: claude, claude-sonnet-4-6, general workhorse
