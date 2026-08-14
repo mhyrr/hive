@@ -22,6 +22,7 @@ import {
   type MemorySection,
 } from "../memory";
 import { loadUsageSummary, formatUsd } from "../pricing";
+import { collectActivity, type ProjectActivity } from "./activity";
 import {
   collectRuns as collectRunsPage,
   runsByTicket as buildRunsByTicket,
@@ -208,6 +209,10 @@ export type ProposeEntry = {
 };
 
 export type DashboardData = {
+  /** Projects with commits inside the activity window, busiest first. */
+  activity: ProjectActivity[];
+  /** Whole-store memory totals per project. Not the recentMemory slice. */
+  memoryStats: MemoryStat[];
   generatedAt: string;
   volumeNumber: number;     // count of briefings (proxy for "days since install")
   today: string;            // YYYY-MM-DD (from latest briefing or system)
@@ -794,6 +799,51 @@ export async function collectOpenQuestions(paths: HivePaths): Promise<OpenQuesti
   return out;
 }
 
+export type MemoryStat = {
+  projectId: string;
+  /** Live (non-superseded) entries across all four sections. */
+  total: number;
+  /** ISO date of the newest entry, or null when the colony has no memory. */
+  newestAt: string | null;
+};
+
+/**
+ * Per-project memory totals, read from the whole knowledge store.
+ *
+ * Deliberately NOT derived from `collectRecentMemory`, which is a 7-day,
+ * 25-entry display slice: a project with deep canon but a quiet week has no
+ * entries in that slice, and reading it as "knows nothing" is wrong. Stores
+ * are what the colony has accumulated, not what it added this week.
+ */
+export async function collectMemoryStats(paths: HivePaths): Promise<MemoryStat[]> {
+  const ids = await listProjects(paths.projectsDir);
+  const out: MemoryStat[] = [];
+
+  for (const projectId of ids) {
+    let snap;
+    let meta;
+    try {
+      snap = await readProjectMemorySnapshot(paths, projectId);
+      meta = await readMeta(paths, projectId);
+    } catch {
+      continue; // intentional: project memory unreadable
+    }
+
+    const all = [...snap.facts, ...snap.conventions, ...snap.decisions, ...snap.questions];
+    const live = all.filter((e) => !e.superseded);
+
+    let newestAt: string | null = null;
+    for (const e of live) {
+      const created = meta.entries[entryHash(e.text)]?.createdAt;
+      if (created && (!newestAt || created > newestAt)) newestAt = created;
+    }
+
+    out.push({ projectId, total: live.length, newestAt });
+  }
+
+  return out;
+}
+
 export async function collectRecentMemory(
   paths: HivePaths,
   options: { windowDays?: number; limit?: number } = {},
@@ -1153,7 +1203,7 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -1163,6 +1213,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectPromotionCandidates(paths),
     collectOpenQuestions(paths),
     collectRecentMemory(paths),
+    collectMemoryStats(paths),
     collectRunUsage(paths),
     collectTasteTrack(paths),
     collectLatestReflection(paths),
@@ -1171,8 +1222,10 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
 
   const today = briefings[0]?.date ?? new Date().toISOString().slice(0, 10);
   const todayBriefing = briefings.find((b) => b.date === today) ?? briefings[0] ?? null;
+  const activity = collectActivity(projects, today);
 
   return {
+    activity,
     generatedAt: new Date().toISOString(),
     volumeNumber: briefings.length,
     today,
@@ -1186,6 +1239,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     promotionCandidates,
     openQuestions,
     recentMemory,
+    memoryStats,
     runUsage,
     tasteTrack,
     latestReflection,

@@ -33,6 +33,8 @@ import type {
 } from "./collect";
 import { DASHBOARD_CSS } from "./styles";
 import { DASHBOARD_JS } from "./script";
+import { assignVerdicts, colourFor, needsAttention, sortYard, type Colony } from "./colony";
+import type { ProjectActivity } from "./activity";
 import type { TicketPriority } from "../ticket";
 
 // ---------------------------------------------------------------------------
@@ -189,6 +191,152 @@ function actionButton(
 // ---------------------------------------------------------------------------
 // Section renderers (exported for fragment use)
 // ---------------------------------------------------------------------------
+
+const VERDICT_LABEL: Record<Colony["verdict"], string> = {
+  "needs-you": "Needs you",
+  queenless: "Queenless",
+  "swarm-risk": "Swarm risk",
+  "needs-feeding": "Needs feeding",
+  "leave-alone": "Leave alone",
+};
+
+/**
+ * The yard: every colony standing on one baseline at the height its stores
+ * earn it, each carrying tonight's verdict. This is the first viewport and
+ * it answers one question — which colonies need you today.
+ */
+export function renderYard(data: DashboardData): string {
+  const colonies = sortYard(assignVerdicts(data));
+  const attention = needsAttention(colonies);
+  const peakBrood = Math.max(1, ...colonies.map((c) => c.brood));
+  const cardById = new Map(data.projects.map((p) => [p.id, p]));
+
+  const worked = data.activity ?? [];
+  const call = worked.length === 0
+    ? `<p class="quiet">Nothing moved in the last two days.</p>`
+    : `<p>Work landed in <span class="count">${worked.length}</span> ${
+        worked.length === 1 ? "colony" : "colonies"
+      } over the last two days.</p>`;
+
+  const attentionLine = attention.length === 0
+    ? `all ${colonies.length} quiet`
+    : `${attention.length} of ${colonies.length} need attention`;
+
+  const hives = colonies
+    .map((c, i) => {
+      // Supers above the brood chamber grow with stores, on the yard's
+      // shared scale — a taller hive is a stronger one, not a styled one.
+      const supers = 1 + Math.round(c.stores * 4);
+      const boxes = Array.from({ length: supers }, () => `<div class="super"></div>`).join("");
+      const traffic = (c.brood / peakBrood).toFixed(3);
+
+      return `
+    <li>
+      <button type="button" class="colony colony--${c.verdict}" data-colour="${c.colour}"
+              data-project="${escapeHtml(c.id)}" style="--i:${i}"
+              aria-label="${escapeHtml(c.id)}: ${escapeHtml(VERDICT_LABEL[c.verdict])}, ${escapeHtml(c.reason)}">
+        <div class="colony-name">${escapeHtml(c.id)}</div>
+        <div class="colony-stack" style="--traffic:${traffic}">
+          ${boxes}
+          <div class="super super--brood"></div>
+        </div>
+        <div class="colony-board"></div>
+        <div class="colony-plate">
+          <div class="colony-verdict">${escapeHtml(VERDICT_LABEL[c.verdict])}</div>
+          <div class="colony-reason">${escapeHtml(c.reason)}</div>
+          <div class="colony-figures">
+            <span>tickets <b>${c.brood}</b></span>
+            <span>memory <b>${c.entries.toLocaleString("en-US")}</b></span>
+          </div>
+        </div>
+      </button>
+    </li>`;
+    })
+    .join("");
+
+  const body =
+    colonies.length === 0
+      ? `<p class="yard-empty">No colonies registered. <code>hive project add</code> puts one in the yard.</p>`
+      : `<ol class="yard-row">${hives}</ol>`;
+
+  return `
+<header class="yard-head">
+  <h1>Hive</h1>
+  <div class="dateline">
+    <span>${escapeHtml(longDate(data.today))}</span>
+    <span>Inspection ${data.volumeNumber}</span>
+  </div>
+</header>
+<div class="yard-call">${call}</div>
+${renderWork(worked)}
+<section class="yard" id="section-yard">
+  <div class="yard-label">
+    <span>The yard &middot; ${escapeHtml(attentionLine)}</span>
+    <span class="yard-key">painted &middot; needs you &nbsp; taller &middot; more memory</span>
+  </div>
+  ${body}
+</section>`;
+}
+
+/** How many commit subjects a colony shows before it folds the rest away. */
+const SUBJECT_CAP = 5;
+
+/**
+ * What got done. Commit subjects as written — they are the only windowed
+ * record of work HIVE actually holds, and a subject someone wrote by hand
+ * says more than a count of closed tickets.
+ */
+export function renderWork(activity: ProjectActivity[]): string {
+  if (activity.length === 0) {
+    return `<section class="work"><p class="work-none">No commits in the window. Either a quiet stretch or the repos moved somewhere HIVE is not looking.</p></section>`;
+  }
+
+  const items = activity
+    .map((a) => {
+      const shown = a.subjects.slice(0, SUBJECT_CAP);
+      const rest = a.subjects.length - shown.length;
+      const lines = shown.map((s) => `<li>${escapeHtml(s)}</li>`).join("");
+      const more = rest > 0 ? `<li class="more">+${rest} more</li>` : "";
+
+      return `
+    <li class="work-item" data-colour="${colourFor(a.projectId)}">
+      <div class="work-name">${escapeHtml(a.projectId)}</div>
+      <div class="work-figures">
+        ${a.commits} ${a.commits === 1 ? "commit" : "commits"}
+        &middot; <span class="add">+${a.insertions.toLocaleString("en-US")}</span>
+        <span class="cut">&minus;${a.deletions.toLocaleString("en-US")}</span>
+        &middot; ${a.filesChanged} ${a.filesChanged === 1 ? "file" : "files"}
+      </div>
+      <ul class="work-subjects">${lines}${more}</ul>
+    </li>`;
+    })
+    .join("");
+
+  return `<section class="work" id="section-work"><ol class="work-list">${items}</ol></section>`;
+}
+
+/**
+ * Upkeep: the launchd jobs that keep the apiary running.
+ *
+ * Demoted on purpose — it is rarely actionable and never leads. But it is
+ * real state, and dropping the old masthead ticker would have taken it off
+ * the page entirely.
+ */
+export function renderUpkeep(health: HealthEntry[]): string {
+  if (health.length === 0) return "";
+  const jobs = health
+    .map((h) => {
+      const when = h.mtime ? relativeTime(h.mtime) : "never";
+      return `<li><span class="job">${escapeHtml(h.label)}</span><span class="when">${escapeHtml(when)}</span></li>`;
+    })
+    .join("");
+
+  return `
+<section class="upkeep" id="section-upkeep">
+  <div class="yard-label"><span>Upkeep</span></div>
+  <ul class="upkeep-list">${jobs}</ul>
+</section>`;
+}
 
 export function renderMasthead(data: DashboardData): string {
   const tickerItems = data.health
@@ -457,9 +605,8 @@ export function renderInboxes(inboxes: InboxEntry[], c: RenderContext): string {
       const when = entry.mtime ? relativeTime(entry.mtime) : "—";
       const actions = c.interactive
         ? `<div class="row-actions">
-            ${actionButton(c, "promote", { "data-action": "inbox-promote", "data-project": entry.projectId })}
-            ${actionButton(c, "dispatch", { "data-action": "inbox-dispatch", "data-project": entry.projectId })}
-            ${actionButton(c, "ack", { "data-action": "inbox-ack", "data-project": entry.projectId, "data-confirm": "true" })}
+            ${actionButton(c, "make ticket", { "data-action": "inbox-promote", "data-project": entry.projectId })}
+            ${actionButton(c, "dismiss", { "data-action": "inbox-ack", "data-project": entry.projectId, "data-confirm": "true" })}
           </div>`
         : "";
       return `<div class="inbox-entry" data-project="${projectId}">
@@ -497,8 +644,7 @@ function renderTicketRow(t: TicketCitation, c: RenderContext): string {
   const actions = c.interactive
     ? `<div class="row-actions">
         ${actionButton(c, "start", { "data-action": "ticket-start", "data-id": t.id, "data-project": t.projectId })}
-        ${actionButton(c, "dispatch", { "data-action": "ticket-dispatch-run", "data-id": t.id, "data-project": t.projectId })}
-        ${actionButton(c, "note", { "data-action": "ticket-note", "data-id": t.id, "data-project": t.projectId })}
+        ${actionButton(c, "add note", { "data-action": "ticket-note", "data-id": t.id, "data-project": t.projectId })}
         ${actionButton(c, "close", { "data-action": "ticket-close", "data-id": t.id, "data-project": t.projectId, "data-confirm": "true" })}
       </div>`
     : "";
@@ -1298,12 +1444,10 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
 
   const body = [
     renderStickyNav(data, c),
-    renderMasthead(data),
+    renderYard(data),
     `<main class="page">`,
-    renderTopThree(data),
     renderBriefings(data),
     renderPropose(data.propose),
-    renderProjects(data, c),
     renderInboxes(data.inboxes, c),
     renderReflections(data.latestReflection),
     renderOpenQuestions(data.openQuestions),
@@ -1313,6 +1457,7 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     renderRuns(data.runs, c),
     renderArchive(data, c),
     renderTickets(data.tickets, c),
+    renderUpkeep(data.health),
     renderFooter(data),
     c.interactive ? `<div class="snackbar" id="snackbar" role="status" aria-live="polite"></div>` : "",
     `</main>`,
@@ -1326,10 +1471,26 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <meta name="generator" content="hive dashboard"/>
-<title>HIVE · The Morning Edition · ${escapeHtml(shortDate(data.today))}</title>
+<title>HIVE · The Inspection · ${escapeHtml(shortDate(data.today))}</title>
 <style>${DASHBOARD_CSS}</style>
 </head>
 <body>
+<!--
+THESIS: An inspection ends in a verdict per colony, not a log. Refuses the
+equal-weight section stack that made the old page unscannable.
+OWN-WORLD: Weathered chalk ground; painted hive bodies in cobalt, verdigris,
+violet, slate, olive; oxide red reserved for escalation and never decorative;
+stencil caps; tabular figures. No hexagon, no honey-amber, no serif broadsheet.
+STORY: The reader learns which projects want them before reading a single
+number, then reads why, then opens the one that matters.
+FIRST VIEWPORT: Wordmark and dateline top-left; one sentence counting the
+colonies that want you; beneath it a baseline row of hives standing at the
+height their stores earn, brood chamber at the base with an entrance sized to
+traffic, verdict stencilled on the plate under each.
+FORM: The Apiary Record; candidate 6 of 7; seed key 2570ec1e.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the
+finish review, the verdict, and DESIGN.md
+-->
 ${body}
 ${scriptBlock}
 </body>

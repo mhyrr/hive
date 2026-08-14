@@ -176,8 +176,9 @@ describe("Tickets — action buttons + data-project", () => {
     const html = renderTickets(baseData().tickets, { interactive: true });
     expect(html).toContain('data-action="ticket-start"');
     expect(html).toContain('data-action="ticket-close"');
-    expect(html).toContain('data-action="ticket-dispatch-run"');
     expect(html).toContain('data-action="ticket-note"');
+    // Dispatch is dead (TK-143); it must not come back as a control.
+    expect(html).not.toContain('data-action="ticket-dispatch-run"');
     expect(html).toContain('data-confirm="true"'); // close is destructive
     expect(html).toContain('data-project="alpha"');
     expect(html).toContain('data-project="beta"');
@@ -191,12 +192,15 @@ describe("Tickets — action buttons + data-project", () => {
 });
 
 describe("Inbox entries — data-project + actions", () => {
-  test("non-empty inbox entries expose promote/dispatch/ack", () => {
+  test("non-empty inbox entries offer controls that name what they do", () => {
     const html = renderInboxes(baseData().inboxes, { interactive: true });
     expect(html).toContain('data-action="inbox-promote"');
-    expect(html).toContain('data-action="inbox-dispatch"');
     expect(html).toContain('data-action="inbox-ack"');
     expect(html).toContain('data-project="alpha"');
+    // "promote" posts to ticket/create, so the control says so.
+    expect(html).toContain("[ make ticket ]");
+    expect(html).toContain("[ dismiss ]");
+    expect(html).not.toContain('data-action="inbox-dispatch"');
   });
 });
 

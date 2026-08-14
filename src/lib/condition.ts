@@ -106,7 +106,7 @@ function readProjectRepoPath(paths: HivePaths, projectId: string): string | null
   }
 }
 
-function gitSignal(repoPath: string | null, sinceIso: string): GitSignal {
+export function gitSignal(repoPath: string | null, sinceIso: string): GitSignal {
   const empty: GitSignal = {
     available: false,
     commits: 0,

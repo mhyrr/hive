@@ -10,6 +10,7 @@
  */
 
 export { BASE_CSS } from "./base";
+export { YARD_CSS } from "./yard";
 export { MASTHEAD_CSS } from "./masthead";
 export { NAVIGATION_CSS } from "./navigation";
 export { SECTIONS_CSS } from "./sections";
@@ -28,6 +29,7 @@ export { INTERACTIVE_CSS } from "./interactive";
 export { RESPONSIVE_CSS } from "./responsive";
 
 import { BASE_CSS } from "./base";
+import { YARD_CSS } from "./yard";
 import { MASTHEAD_CSS } from "./masthead";
 import { NAVIGATION_CSS } from "./navigation";
 import { SECTIONS_CSS } from "./sections";
@@ -48,6 +50,7 @@ import { RESPONSIVE_CSS } from "./responsive";
 /** Full concatenated CSS — drop-in replacement for the former monolith. */
 export const DASHBOARD_CSS = [
   BASE_CSS,
+  YARD_CSS,
   MASTHEAD_CSS,
   NAVIGATION_CSS,
   SECTIONS_CSS,

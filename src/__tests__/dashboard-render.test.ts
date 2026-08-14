@@ -111,13 +111,21 @@ function baseData(overrides: Partial<DashboardData> = {}): DashboardData {
 }
 
 describe("renderDashboard", () => {
-  test("produces a full HTML document with head, body, and masthead", () => {
+  test("produces a full HTML document with head, body, and the yard head", () => {
     const html = renderDashboard(baseData());
     expect(html).toStartWith("<!doctype html>");
     expect(html).toContain("<title>HIVE");
-    expect(html).toContain('<header class="masthead">');
-    expect(html).toContain("<h1>HIVE</h1>");
-    expect(html).toContain("The Morning Edition");
+    expect(html).toContain('<header class="yard-head">');
+    expect(html).toContain("<h1>Hive</h1>");
+  });
+
+  test("carries its direction contract into the emitted markup", () => {
+    // The contract has to survive into the built page or nobody can audit
+    // the build against the direction it committed to.
+    const html = renderDashboard(baseData());
+    expect(html).toContain("THESIS:");
+    expect(html).toContain("FIRST VIEWPORT:");
+    expect(html).toContain("2570ec1e");
   });
 
   test("embeds CSS and JS inline and has no external references", () => {
@@ -142,12 +150,14 @@ describe("renderDashboard", () => {
     expect(html).toMatch(/class="briefing-article " data-briefing-date="2026-04-16"/);
   });
 
-  test("renders the Projects at a Glance table", () => {
+  test("renders every project as a colony in the yard", () => {
     const html = renderDashboard(baseData());
-    expect(html).toContain("Projects at a Glance");
-    expect(html).toContain('<table class="ledger">');
-    expect(html).toContain("alpha");
-    expect(html).toContain("/tmp/alpha");
+    expect(html).toContain('<section class="yard"');
+    expect(html).toContain('data-project="alpha"');
+    // Figures use HIVE's vocabulary, not the apiary's.
+    expect(html).toContain("tickets <b>");
+    expect(html).toContain("memory <b>");
+    expect(html).not.toContain("brood <b>");
   });
 
   test("renders three ticket buckets with the right totals", () => {
@@ -179,7 +189,7 @@ describe("renderDashboard", () => {
     expect(html).toMatch(/archive-card active"[^>]*data-archive-card="2026-04-17"/);
   });
 
-  test("masthead ticker lists all four health labels", () => {
+  test("upkeep lists all four health labels", () => {
     const html = renderDashboard(baseData());
     expect(html).toContain("HEARTBEAT");
     expect(html).toContain("MORNING");
@@ -195,9 +205,9 @@ describe("renderDashboard", () => {
     expect(html).toContain("<strong>news</strong>");
   });
 
-  test("volume number and dateline land in the masthead", () => {
+  test("inspection number and dateline land in the yard head", () => {
     const html = renderDashboard(baseData());
-    expect(html).toContain("Vol. 16");
+    expect(html).toContain("Inspection 16");
     expect(html).toContain("April 17, 2026");
   });
 
