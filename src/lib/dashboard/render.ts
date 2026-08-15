@@ -85,13 +85,16 @@ function md(source: string): string {
  */
 function tagProjectSections(html: string, projectIds: string[]): string {
   if (!html || projectIds.length === 0) return html;
-  const idSet = new Set(projectIds.map((p) => p.toLowerCase()));
+  const canonical = canonicalIds(projectIds);
   const tokens = html.split(/(<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>)/i);
-  const out: string[] = [];
+  const out: { project: boolean; html: string }[] = [];
   let wrap: { id: string; level: number; buf: string[] } | null = null;
   const flush = () => {
     if (!wrap) return;
-    out.push(`<section class="briefing-project-section" data-project="${wrap.id}">${wrap.buf.join("")}</section>`);
+    out.push({
+      project: true,
+      html: `<section class="briefing-project-section" data-project="${escapeHtml(wrap.id)}">${wrap.buf.join("")}</section>`,
+    });
     wrap = null;
   };
   for (const tok of tokens) {
@@ -100,21 +103,76 @@ function tagProjectSections(html: string, projectIds: string[]): string {
       const level = parseInt(hm[1]!, 10);
       const text = hm[2]!.replace(/<[^>]+>/g, "").trim().toLowerCase();
       if (wrap && level <= wrap.level) flush();
-      if (idSet.has(text)) {
-        wrap = { id: text, level, buf: [tok] };
+      const id = canonical.get(text);
+      if (id) {
+        wrap = { id, level, buf: [tok] };
       } else if (wrap) {
         wrap.buf.push(tok);
       } else {
-        out.push(tok);
+        out.push({ project: false, html: tok });
       }
     } else if (wrap) {
       wrap.buf.push(tok);
     } else {
-      out.push(tok);
+      out.push({ project: false, html: tok });
     }
   }
   flush();
-  return out.join("");
+
+  // A run of adjacent project sections is one thing — the night, colony by
+  // colony — so it gets one container to flow through. Without it each block
+  // is an independent grid cell and the shortest colony leaves a hole the
+  // height of the longest.
+  const parts: string[] = [];
+  let run: string[] = [];
+  const closeRun = () => {
+    if (run.length === 0) return;
+    parts.push(`<div class="briefing-colonies">${run.join("")}</div>`);
+    run = [];
+  };
+  for (const node of out) {
+    // Whitespace between two sections is not a section break — marked leaves
+    // an empty chunk between adjacent headings and it must not split the run.
+    if (node.project || (run.length > 0 && node.html.trim() === "")) {
+      run.push(node.html);
+      continue;
+    }
+    closeRun();
+    parts.push(node.html);
+  }
+  closeRun();
+  return parts.join("");
+}
+
+/** Lowercased project id → the id as registered, for case-tolerant matching. */
+function canonicalIds(projectIds: string[]): Map<string, string> {
+  return new Map(projectIds.map((p) => [p.toLowerCase(), p]));
+}
+
+/**
+ * The briefing's flat lists are project-keyed too, just in prose rather than
+ * headings: "What needs your attention" and the verifier flags each lead a
+ * bullet with a bolded project — `**revrec — fabricated testimonials**` or
+ * `**dobby** — Sonnet's extraction`. Tag those `<li>`s so the filter reaches
+ * the two sections that most often say why a colony needs you.
+ *
+ * Deliberately narrow: only a `<li>` opening with `<strong>` is considered,
+ * and only the leading token before a dash or colon is matched. A bullet that
+ * merely mentions a project mid-sentence stays untagged — a filter that
+ * guesses is worse than one that visibly covers less.
+ */
+function tagProjectBullets(html: string, projectIds: string[]): string {
+  if (!html || projectIds.length === 0) return html;
+  const canonical = canonicalIds(projectIds);
+  return html.replace(
+    /<li>(\s*)<strong>([^<]{1,120})<\/strong>/g,
+    (whole: string, space: string, bold: string) => {
+      const lead = bold.split(/[—–:-]/)[0]!.trim().toLowerCase();
+      const id = canonical.get(lead);
+      if (!id) return whole;
+      return `<li data-project="${escapeHtml(id)}">${space}<strong>${bold}</strong>`;
+    },
+  );
 }
 
 function longDate(iso: string): string {
@@ -301,7 +359,7 @@ export function renderWork(activity: ProjectActivity[]): string {
       const more = rest > 0 ? `<li class="more">+${rest} more</li>` : "";
 
       return `
-    <li class="work-item" data-colour="${colourFor(a.projectId)}">
+    <li class="work-item" data-colour="${colourFor(a.projectId)}" data-project="${escapeHtml(a.projectId)}">
       <div class="work-name">${escapeHtml(a.projectId)}</div>
       <div class="work-figures">
         ${a.commits} ${a.commits === 1 ? "commit" : "commits"}
@@ -375,17 +433,30 @@ function band(id: string, title: string, aside: string, body: string): string {
  * The briefing, condensed: the headline carries it, the body reads beneath.
  * It no longer leads the page — prose cannot be scanned, and the yard
  * answers "what needs me" faster than a paragraph can.
+ *
+ * The body is one grid, not one column. The briefing's own shape is a lede
+ * plus a per-project block per colony, so the per-project blocks sit side by
+ * side on the same track the work band and the ticket shortlist already use,
+ * and the cross-project prose spans. A single 72ch column inside a 1280px
+ * page left half the band empty and pushed "what needs your attention" three
+ * thousand pixels down.
+ *
+ * Tagging is the same pass in two shapes — project headings become sections,
+ * project-led bullets become tagged rows — so the filter reaches the text and
+ * not just the tables.
  */
 export function renderBriefingBand(data: DashboardData): string {
   const b = data.todayBriefing;
   if (!b) return "";
   // Drop the artifact's own H1: the band already carries the date.
   const body = b.body.replace(/^#\s+.*\n?/, "").trim();
+  const projectIds = data.projects.map((p) => p.id);
+  const html = tagProjectBullets(tagProjectSections(md(body), projectIds), projectIds);
   return band(
     "briefing",
     "Briefing",
     escapeHtml(longDate(b.date)),
-    `<div class="prose">${md(body)}</div>`,
+    `<div class="briefing-body">${html}</div>`,
   );
 }
 
@@ -404,16 +475,22 @@ export function renderWatchesBand(w: DashboardData["watches"]): string {
   }
 
   const cards = spoke
-    .map(
-      (c) => `
-    <li class="watch-card">
+    .map((c) => {
+      // A watch is qualified `project/name` when it is scoped to one colony,
+      // and bare when it reasons across the whole apiary. Only the scoped ones
+      // belong to the project filter; the fleet's standing questions are not
+      // any single project's, and hiding them would be a lie.
+      const scope = c.watch.includes("/") ? c.watch.slice(0, c.watch.indexOf("/")) : null;
+      const projectAttr = scope ? ` data-project="${escapeHtml(scope)}"` : "";
+      return `
+    <li class="watch-card"${projectAttr}>
       <div class="watch-head">
         <span class="watch-name">${escapeHtml(c.watch)}</span>
         <span class="watch-when">${escapeHtml(relativeTime(c.at))}</span>
       </div>
       <div class="prose">${md(c.output ?? "")}</div>
-    </li>`,
-    )
+    </li>`;
+    })
     .join("");
 
   return band("watches", "Watches", aside, `<ol class="watch-list">${cards}</ol>`);
@@ -524,21 +601,37 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
         ),
       ].join("");
 
-  const jumpLinks = [
-    ["#section-briefing", "Briefing"],
-    ...(data.propose ? [["#section-propose", "Propose"] as [string, string]] : []),
-    ["#section-projects", "Projects"],
-    ["#section-inboxes", "Inbox"],
-    ["#section-reflections", "Reflections"],
-    ["#section-runs", "Dispatch"],
-    ["#section-archive", "Archive"],
-    ["/tickets", "Tickets"],
+  // Anchors for the sections this page actually renders — and only those. The
+  // condense pass cut projects, inbox, reflections and dispatch off the page
+  // but left their links here, so five of seven jumps landed nowhere. Each
+  // band renders conditionally, so each link asks the same question the band
+  // does. Pages follow the sections, after a separator, named for where they
+  // go rather than for the band they duplicate.
+  const hasStores =
+    (data.recentMemory ?? []).length > 0 ||
+    (data.openQuestions ?? []).length > 0 ||
+    (data.promotionCandidates ?? []).length > 0;
+  const sections: [boolean, string, string][] = [
+    [(data.activity ?? []).some((a) => a.commits > 0), "#section-work", "Work"],
+    [true, "#section-yard", "Yard"],
+    [!!data.todayBriefing, "#section-briefing", "Briefing"],
+    [(data.watches?.rows.length ?? 0) > 0, "#section-watches", "Watches"],
+    [true, "#section-tickets", "Tickets"],
+    [hasStores, "#section-stores", "Stores"],
+    [data.briefings.length > 0, "#section-archive", "Archive"],
+  ];
+  const pages: [string, string][] = [
+    ["/tickets", "Full board"],
     ["/runs", "Runs"],
     ["/taste", "Taste"],
-    ["/watches", "Watches"],
-  ]
-    .map(([href, label]) => `<a href="${href}">${label}</a>`)
-    .join("");
+    ["/watches", "All watches"],
+  ];
+  const anchor = ([href, label]: [string, string]) => `<a href="${href}">${label}</a>`;
+  const jumpLinks = [
+    ...sections.filter(([shown]) => shown).map(([, href, label]) => anchor([href, label])),
+    `<span class="nav-sep">&middot;</span>`,
+    ...pages.map(anchor),
+  ].join("");
 
   const filterGroup = pills
     ? `<div class="sticky-filter">

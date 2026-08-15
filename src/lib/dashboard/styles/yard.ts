@@ -171,6 +171,64 @@ export const YARD_CSS = `
 .prose li { margin-bottom: 5px; line-height: 1.5; }
 .prose code { background: var(--chalk-deep); padding: 1px 4px; }
 
+/* ---------- The briefing, set in columns ----------
+
+   The document's own shape is a cross-project lede, then one block per
+   colony, then two ranked lists. Run as a single 72ch column it left the
+   right half of the band empty and pushed "what needs your attention" three
+   thousand pixels below the fold.
+
+   Two column runs, one mechanism: the colony blocks and the lists both flow
+   through column boxes, which balance them. A grid was the other option and it
+   holes out — the shortest colony leaves dead space the height of the
+   longest, and a fourth colony starts a new row alone. Ranked order survives
+   either way, since a column run reads top to bottom before moving right. */
+.briefing-body > * { max-width: 74ch; margin-top: 0; }
+.briefing-body > h2, .briefing-body > h3 { margin-top: 26px; }
+.briefing-body > *:first-child { margin-top: 0; }
+
+.briefing-colonies,
+.briefing-body > ul,
+.briefing-body > ol {
+  max-width: none;
+  columns: 3 300px;
+  column-gap: 32px;
+}
+.briefing-body > ul > li, .briefing-body > ol > li { break-inside: avoid; }
+
+.briefing-body p { margin: 0 0 12px; line-height: 1.6; }
+.briefing-body h2, .briefing-body h3 {
+  font-family: var(--stencil);
+  letter-spacing: var(--stencil-tracking);
+  text-transform: uppercase;
+  font-size: 14px;
+  font-weight: 400;
+  margin: 0 0 8px;
+}
+.briefing-body ul, .briefing-body ol { margin: 0 0 12px; padding-left: 18px; }
+.briefing-body li { margin-bottom: 6px; line-height: 1.5; }
+.briefing-body code { background: var(--chalk-deep); padding: 1px 4px; }
+
+/* The lede: the one sentence the night decided mattered. */
+.briefing-body > h2:first-child + p {
+  font-size: 20px;
+  line-height: 1.45;
+  max-width: 62ch;
+  margin-bottom: 4px;
+}
+
+/* One colony's paragraph of the night. Unbreakable: a colony split across
+   two columns reads as two colonies. */
+.briefing-project-section {
+  break-inside: avoid;
+  border-top: 1px solid var(--faint);
+  padding-top: 9px;
+  margin: 0 0 22px;
+}
+.briefing-project-section h3 { color: var(--ink); font-size: 15px; }
+.briefing-project-section ul { padding-left: 15px; }
+.briefing-project-section li { font-size: 13.5px; color: var(--ink-soft); }
+
 /* Watches */
 .watch-list { list-style: none; margin: 0; padding: 0; }
 .watch-card {
@@ -321,6 +379,12 @@ export const YARD_CSS = `
 .yard.filtering .colony:not(.colony--selected) { opacity: 0.3; }
 .colony--selected .colony-name { color: var(--oxide); }
 .colony--selected .colony-board { height: 8px; }
+
+/* Filtered to one colony, the briefing is one colony's briefing: a column of
+   prose, not one survivor rattling around in three tracks. */
+body.filtered-to-project .briefing-colonies,
+body.filtered-to-project .briefing-body > ul,
+body.filtered-to-project .briefing-body > ol { columns: 1; max-width: 74ch; }
 
 /* ---------- Upkeep: quiet by design ---------- */
 

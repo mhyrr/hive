@@ -115,6 +115,9 @@ export const DASHBOARD_JS = `
     });
     var yard = document.getElementById("section-yard");
     if (yard) yard.classList.toggle("filtering", !all);
+    // Sections that lay out as a grid of colonies read as one column when
+    // only one colony survives; CSS can't count the survivors, so say it here.
+    document.body.classList.toggle("filtered-to-project", !all);
     document.querySelectorAll("[data-project-filter]").forEach(function (p) {
       if (p.getAttribute("data-project-filter") === id) p.classList.add("pill--active");
       else p.classList.remove("pill--active");

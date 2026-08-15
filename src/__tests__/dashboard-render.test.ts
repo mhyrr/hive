@@ -262,6 +262,17 @@ describe("renderDashboard", () => {
     expect(html).toContain("hive project add");
   });
 
+  test("every in-page jump link lands on a section the page actually renders", () => {
+    // The condense pass cut four sections and left their links in the nav, so
+    // five of seven jumps went nowhere. Enumerate, don't assume.
+    for (const data of [baseData(), baseData({ todayBriefing: null, briefings: [], activity: [] })]) {
+      const html = renderDashboard(data);
+      const anchors = [...html.matchAll(/<a href="#(section-[a-z-]+)">/g)].map((m) => m[1]!);
+      expect(anchors.length).toBeGreaterThan(0);
+      for (const id of anchors) expect(html).toContain(`id="${id}"`);
+    }
+  });
+
   test("escapes HTML in ticket titles", () => {
     const data = baseData({
       tickets: {
@@ -283,5 +294,98 @@ describe("renderDashboard", () => {
     const html = renderDashboard(data);
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+});
+
+// The project filter hides `[data-project]` and nothing else, so every surface
+// that speaks about one project has to say so in the markup. This has now been
+// missed twice — once when the filter shipped, once when the redesign rebuilt
+// the briefing band — which is what these tests are for.
+describe("project filter — the surfaces it has to reach", () => {
+  const briefed = (overrides: Partial<DashboardData> = {}) =>
+    baseData({
+      projects: [
+        { ...baseData().projects[0]!, id: "alpha" },
+        { ...baseData().projects[0]!, id: "bravo" },
+      ],
+      activity: [
+        { projectId: "alpha", commits: 3, insertions: 90, deletions: 4, filesChanged: 6, subjects: ["did a thing"] },
+        { projectId: "bravo", commits: 1, insertions: 5, deletions: 0, filesChanged: 1, subjects: ["did another"] },
+      ],
+      todayBriefing: {
+        date: "2026-04-17",
+        body: [
+          "# HIVE — 2026-04-17",
+          "",
+          "## Headline",
+          "A quiet night.",
+          "",
+          "## Per project",
+          "### alpha",
+          "- alpha shipped something",
+          "### bravo",
+          "- bravo shipped something",
+          "",
+          "## What needs your attention",
+          "- **alpha — the thing.** Decide about it.",
+          "- **bravo** — the other thing.",
+          "- **Something else entirely.** Mentions alpha in passing.",
+        ].join("\n"),
+        headline: "A quiet night",
+      },
+      ...overrides,
+    });
+
+  test("per-project briefing subsections are tagged and flow as one run", () => {
+    const html = renderDashboard(briefed());
+    expect(html).toContain('<section class="briefing-project-section" data-project="alpha">');
+    expect(html).toContain('<section class="briefing-project-section" data-project="bravo">');
+    // Adjacent colonies share one column run; separate runs would hole out.
+    expect(html).toMatch(/<div class="briefing-colonies">[\s\S]*bravo[\s\S]*?<\/div>/);
+  });
+
+  test("project-led bullets are tagged; a passing mention is not", () => {
+    const html = renderDashboard(briefed());
+    expect(html).toContain('<li data-project="alpha"><strong>alpha — the thing.</strong>');
+    expect(html).toContain('<li data-project="bravo"><strong>bravo</strong>');
+    // Guessing from prose is worse than covering less: this one stays untagged.
+    expect(html).toContain("<li><strong>Something else entirely.</strong>");
+  });
+
+  test("the work band says which colony each row belongs to", () => {
+    const html = renderDashboard(briefed());
+    expect(html).toMatch(/<li class="work-item"[^>]*data-project="alpha"/);
+    expect(html).toMatch(/<li class="work-item"[^>]*data-project="bravo"/);
+  });
+
+  test("a project-scoped watch is filterable; a fleet-wide one is not", () => {
+    const card = {
+      at: "2026-04-17T06:00:00Z",
+      outcome: "surfaced",
+      model: "opus",
+      durationMs: 1000,
+      error: null,
+      quiet: false,
+      dropped: false,
+      logPath: "/tmp/log",
+    };
+    const watches = {
+      generatedAt: "2026-04-17T07:00:00Z",
+      ceiling: "propose",
+      lastTick: "2026-04-17T06:00:00Z",
+      tickStale: false,
+      rows: [{ qualifiedName: "propose" }, { qualifiedName: "alpha/drift" }],
+      latest: [
+        { ...card, watch: "alpha/drift", output: "alpha is drifting" },
+        { ...card, watch: "propose", output: "a fleet-wide thought" },
+      ],
+      artifacts: [],
+      warnings: [],
+    } as unknown as DashboardData["watches"];
+    const html = renderDashboard(briefed({ watches }));
+    expect(html).toContain('<li class="watch-card" data-project="alpha">');
+    // A standing question about the whole apiary belongs to no colony, and
+    // hiding it under a filter would claim it did.
+    expect(html).toContain('<li class="watch-card">');
   });
 });
