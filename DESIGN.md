@@ -222,9 +222,12 @@ Five slots, assigned by a stable hash of the project id so a colony keeps its co
 - **Body Small** (13.5px / 1.45, soft ink): ticket titles, briefing list items, memory entries, work subjects. 12.5px / 1.35 muted for a colony's reason clause.
 - **Label** (mono, 11 / 10.5 / 10px, +0.04em to +0.08em, uppercase, muted): datelines, figures, counts, yard key, upkeep, footer, and all action buttons (lowercase in that one case).
 
-Thirteen steps in total, enumerated in the frontmatter `scale`. Every `font-size`
-on the surface is one of them — the ramp is the whole vocabulary, not a starting
-point, and a new literal size is a design decision that belongs here first.
+Fourteen named entries in the frontmatter `scale`, resolving to thirteen distinct
+sizes — `title` and `body` both sit at 15px, which is deliberate: a name and a
+sentence share a size and are told apart by face and case, not by scale. Every
+`font-size` on the surface is one of them. The ramp is the whole vocabulary, not
+a starting point, and a new literal size is a design decision that belongs here
+first.
 
 ### Named Rules
 **The Stencil-For-Names Rule.** The stencil face is for names, verdicts, and section headings only. It never sets a sentence, never sets body copy, and is always uppercase with its `--stencil-tracking` applied.

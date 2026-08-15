@@ -1,9 +1,12 @@
 # HIVE Dashboard
 
-The Morning Edition dashboard pulls everything HIVE knows into one
-glanceable surface — health, tickets, runs, memory, the morning briefing,
-and last night's pipeline cost. Designed to be read over coffee, not
-navigated.
+The nightly pass is an inspection, and the dashboard is its report. It
+opens with a verdict per project rather than a log — which projects want
+you today, and why — and everything below that is the evidence. Designed
+to be read over coffee, not navigated.
+
+The design system it is built against is recorded in
+[DESIGN.md](../DESIGN.md).
 
 ## Two Surfaces, One Renderer
 
@@ -34,28 +37,35 @@ collectors. Tests assert on the data, not on HTML.
 
 ## What's On It
 
-- **Per-project cards.** Heartbeat status, last tick, last result,
-  ticket counts (open / in-progress / closed by priority), inbox
-  freshness.
-- **Ticket buckets.** Ready, in-progress, blocked. Sorted by priority
-  then age. Click-through on the interactive server.
-- **Recent runs.** Dispatch runs with status, duration, goal snippet,
-  ticket linkage. Failed runs get prominence so you don't miss them.
-- **Recent memory.** Newest facts, conventions, decisions, open
-  questions across all projects, with strength scores from the BM25 +
-  decay model.
-- **Promotion candidates.** Memory entries that have accumulated enough
-  recall strength to be worth promoting from project-local to broadly
-  applicable.
-- **Open questions.** Cross-project rollup of unresolved questions —
-  the things HIVE knows it doesn't know.
-- **Morning briefing.** The narrative summary written by the nightly
-  Opus verifier — what landed, what shifted, what's worth attention.
-- **Pipeline cost.** Last night's V1 nightly cost broken out by pass
-  (B, C, V) with input/output tokens and USD per project. Typically
-  $1–3.
-- **System health.** Tail line and mtime for `heartbeat`, `nightly`,
-  `morning`, and `sync` launchd jobs.
+Eight bands, in the order a morning actually wants them.
+
+- **The yard.** Every project as a colony on one baseline. Height is
+  accumulated memory on a shared scale, the entrance at the base is as
+  wide as ticket traffic, and the plate underneath carries the verdict —
+  `NEEDS YOU`, `QUEENLESS`, `ACTIVE`, `WAITING`, `QUIET`. Painted means
+  look at me; unpainted pine means fine. Attention is a rubric over real
+  signals (failed runs, stale work, unconfigured paths), not a single
+  threshold. Clicking a colony filters the whole page to it.
+- **Work.** What actually landed in the last two days, as the commit
+  subjects people wrote — the only windowed record of work HIVE holds.
+- **Briefing.** The narrative written by the nightly Opus verifier, set
+  in columns: a lede, a block per project, then what needs your attention
+  and the verifier's flags.
+- **Watches.** What each standing watch last said, inline. The full
+  fleet and its prompts live at `/watches`.
+- **Tickets.** A five-per-project shortlist of what would be picked up
+  next, with start / note / close inline. The whole board is at
+  `/tickets`.
+- **Stores.** Everything HIVE knows in one place — lately admitted
+  entries, still-open questions, and promotion candidates that have
+  accumulated enough recall strength to be worth broadening.
+- **Archive.** 30 days of past briefings; click a date to open it.
+- **Upkeep.** Deliberately quiet at the bottom: mtime for the
+  `heartbeat`, `nightly`, `morning` and `sync` launchd jobs, last
+  night's pipeline cost, and the taste queue when something is waiting.
+
+Cut on purpose: the dispatch log and the inbox band. Both were dead or
+lying, and neither earns a place on the page while that is true.
 
 ## Archive
 
