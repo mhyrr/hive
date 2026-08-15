@@ -231,25 +231,24 @@ export const YARD_CSS = `
   padding: 6px 0;
   font-size: 13px;
 }
-/* Controls stay out of the way until wanted, but never out of reach:
-   focus-within keeps them on the keyboard path. */
+/* Controls stay out of the way until wanted, but never out of reach.
+   Clipped by height rather than display:none, which would drop them from
+   the tab order and make focus-within unreachable by keyboard; clipped
+   buttons still take focus, and taking focus is what opens the row.
+   Deliberately not animated: the yard's stagger is the page's one authored
+   motion moment, and a transition here would both scatter that and animate
+   a layout property. */
 .tk-actions {
   grid-column: 1 / -1;
   display: flex;
   gap: 8px;
-  max-height: 0;
+  height: 0;
   overflow: hidden;
-  opacity: 0;
-  transition: max-height 140ms ease-out, opacity 140ms ease-out;
 }
 .tk:hover .tk-actions,
 .tk:focus-within .tk-actions {
-  max-height: 32px;
-  opacity: 1;
+  height: auto;
   margin-top: 4px;
-}
-@media (prefers-reduced-motion: reduce) {
-  .tk-actions { transition: none; }
 }
 .tk-id {
   font-family: var(--mono);
