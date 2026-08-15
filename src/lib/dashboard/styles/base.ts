@@ -18,11 +18,18 @@ export const BASE_CSS = `
   --chalk-deep: #dad7cc;
   --ink: #16150f;
   --ink-soft: #3d3a30;
-  --muted: #6e6a5c;
+  /* 5.6:1 on chalk. Was #6e6a5c at 4.26:1, which fails AA for small text and
+     is what nearly every small string on the page is set in — colony reasons,
+     band labels, figures, dateline, upkeep, footer. */
+  --muted: #5c584b;
+  /* A rule colour, not a text colour: 1.45:1 on chalk. Anything readable
+     belongs in --muted or darker. */
   --faint: #c3bfb1;
 
-  /* Reserved. Escalation only — never decoration. */
-  --oxide: #b8532c;
+  /* Reserved. Escalation only — never decoration.
+     4.9:1 on chalk. Was #b8532c at 3.83:1, and it sets the colony verdict at
+     13px — the single most load-bearing string on the surface. */
+  --oxide: #a0421f;
 
   /* Painted hive bodies. Stable slot per project.
      Values alternate dark / mid / dark / mid / dark so any two neighbours

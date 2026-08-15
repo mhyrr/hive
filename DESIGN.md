@@ -6,9 +6,9 @@ colors:
   chalk-deep: "#dad7cc"
   ink: "#16150f"
   ink-soft: "#3d3a30"
-  muted: "#6e6a5c"
+  muted: "#5c584b"
   faint: "#c3bfb1"
-  oxide: "#b8532c"
+  oxide: "#a0421f"
   wood: "#c6ab7e"
   hive-0: "#17529e"
   hive-1: "#57ad8b"
@@ -63,8 +63,9 @@ typography:
   # but three of the tiers are ranked rather than single-valued — title runs
   # 17/15/14/13 by how load-bearing the name is, body-small runs 13.5/12.5, and
   # the mono label tier runs 11/10.5/10. Plus the verdict sentence's 22px
-  # compact step below 860px. Thirteen steps and no strays: every font-size on
-  # the surface is one of these.
+  # compact step below 860px. Fourteen entries, thirteen distinct sizes (title
+  # and body deliberately share 15px), and no strays: every font-size on the
+  # surface is one of these.
   scale:
     display: "40px"
     headline: "27px"
@@ -161,7 +162,9 @@ The density is that of a working record rather than a product page. Rules are ha
 
 Three anti-references are binding and were chosen against explicitly. **No hexagon** appears anywhere — the world is a yard of boxes, not a bee mascot. **Honey-amber is not the accent**; the only warm tone in the system is unpainted pine, and it means the opposite of "look here". And this replaces a **serif broadsheet** dashboard: the incumbent's double-rule masthead, 68px display weight, and equal-weight section stack are what the thesis refuses, not a style to preserve.
 
-Two things are open, not settled. The display face `--stencil` currently resolves to a condensed *system* stack (`"Haettenschweiler", "Arial Narrow"`) carrying an explicit do-not-ship comment in `base.ts`; the stencil voice wants a real embedded face and the frontmatter records the placeholder, not an endorsement. And the Impeccable finish review has not run, so no verdict table exists for this surface yet.
+One thing is open, not settled. The display face `--stencil` resolves to a condensed *system* stack (`"Haettenschweiler", "Arial Narrow"`) carrying an explicit do-not-ship comment in `base.ts`. Measured on the build machine, Haettenschweiler is absent, so the display voice renders as Arial Narrow Bold — a condensed grotesque with no stencil character at all. The frontmatter records the placeholder, not an endorsement.
+
+The Impeccable finish review ran and returned eight material findings, all since fixed: the largest sentence answered the wrong question, the work band stood between that sentence and the hives, oxide was used decoratively four times, four colours failed AA contrast, and six sections carried no heading semantics. The colour and contrast decisions below are post-review.
 
 **Key Characteristics:**
 - Weathered chalk ground; all colour is on objects, none on the page.
@@ -176,13 +179,13 @@ Two things are open, not settled. The display face `--stencil` currently resolve
 A near-monochrome mineral ground carrying five saturated painted-object slots, one reserved alarm, and one deliberately unsaturated "nothing to do here" tone.
 
 ### Primary
-- **Oxide Red** (`--oxide`): Escalation. The count in the verdict sentence, a `needs-you` or `queenless` verdict on a colony plate, the priority mark on a blocked ticket, deletions in the work band, the error snackbar, the hovered/selected colony name. It appears nowhere else and never as a surface, border, or decoration.
+- **Oxide Red** (`--oxide`): Escalation. Four uses and no others: the count in the verdict sentence (how many colonies want you), a `needs-you` or `queenless` verdict on a colony plate, the priority mark on a blocked ticket, and the error snackbar. It never appears as a surface, border, or decoration. The finish review found four that failed this rule — deletions in the work band, the hovered colony name, the selected colony name, and a commit count — and all four were replaced with ink, muted, or a rule.
 
 ### Secondary — the painted hive bodies
 Five slots, assigned by a stable hash of the project id so a colony keeps its colour across days and across reorderings. Values alternate dark / mid / dark / mid / dark so any two neighbours separate by lightness as well as hue; the first attempt used five mid-tones and read as mud.
 
 - **Cobalt** (`--hive-0`): Slot 0. Also carries interactive affordances inherited through the `--amber` migration alias (action labels, pill underlines, focus ring on legacy routes).
-- **Verdigris** (`--hive-1`): Slot 1. Also the additive figure (`+lines`) in the work band.
+- **Verdigris** (`--hive-1`): Slot 1. Paint only — it briefly set the additive figure (`+lines`) in the work band at 2.13:1, which is the kind of use the ground rule forbids: all colour is on objects, none on the page.
 - **Violet** (`--hive-2`): Slot 2.
 - **Slate Blue** (`--hive-3`): Slot 3.
 - **Olive** (`--hive-4`): Slot 4.

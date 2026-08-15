@@ -56,6 +56,8 @@ export const YARD_CSS = `
   text-wrap: balance;
   max-width: 34ch;
 }
+/* Oxide earns its place here now: the count is how many colonies want you,
+   which is the escalation itself. It was a commit count, which was not. */
 .yard-call .count { color: var(--oxide); }
 .yard-call .quiet { color: var(--muted); }
 
@@ -98,8 +100,11 @@ export const YARD_CSS = `
   color: var(--muted);
   margin-top: 2px;
 }
-.work-figures .add { color: var(--hive-1); }
-.work-figures .cut { color: var(--oxide); }
+/* Insertions and deletions are measurements, not escalations, and the sign
+   already says which is which. Verdigris on chalk was 2.13:1 and oxide is
+   reserved — all colour in this system sits on objects, none on the page. */
+.work-figures .add,
+.work-figures .cut { color: var(--muted); }
 
 .work-subjects {
   list-style: none;
@@ -151,7 +156,20 @@ export const YARD_CSS = `
   justify-content: space-between;
   gap: 20px;
 }
-.yard-key { color: var(--faint); }
+/* The section title is a real h2 for the outline and the accessible name, and
+   it must look exactly like the span it replaced — the label is a label, not
+   a heading you read. Everything here undoes a user-agent default. */
+.yard-label h2 {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  margin: 0;
+}
+/* This line teaches the two encodings the whole yard rests on — "painted ·
+   needs you, taller · more memory" — and at --faint it was 1.45:1, which is
+   to say it was not there. Same class carries every band's count. */
+.yard-key { color: var(--muted); }
 
 /* ---------- Bands below the yard ---------- */
 
@@ -209,8 +227,10 @@ export const YARD_CSS = `
 .briefing-body li { margin-bottom: 6px; line-height: 1.5; }
 .briefing-body code { background: var(--chalk-deep); padding: 1px 4px; }
 
-/* The lede: the one sentence the night decided mattered. */
-.briefing-body > h2:first-child + p {
+/* The lede: the one sentence the night decided mattered. It is the first
+   thing in the band now that the "Headline" label is stripped in the
+   renderer, so it is selected directly rather than through the eyebrow. */
+.briefing-body > p:first-child {
   font-size: 20px;
   line-height: 1.45;
   max-width: 62ch;
@@ -376,8 +396,15 @@ export const YARD_CSS = `
 
 /* ---------- Project filter: the colonies are the control ---------- */
 
+/* Being the selected colony is not an escalation, so it is not oxide. The
+   dimming of every other colony is already the loud signal; the board thickens
+   and the name is ruled to say which one you are standing in. */
 .yard.filtering .colony:not(.colony--selected) { opacity: 0.3; }
-.colony--selected .colony-name { color: var(--oxide); }
+.colony--selected .colony-name {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
 .colony--selected .colony-board { height: 8px; }
 
 /* Filtered to one colony, the briefing is one colony's briefing: a column of
@@ -548,8 +575,13 @@ body.filtered-to-project .briefing-body > ol { columns: 1; max-width: 74ch; }
 
 /* ---------- States ---------- */
 
+/* Hover is not an escalation either. A rule under the name is the ordinary
+   grammar for "this is the thing you are about to click". */
 .colony:hover .colony-name,
-.colony:focus-visible .colony-name { color: var(--oxide); }
+.colony:focus-visible .colony-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .colony:hover .super { border-color: var(--ink); }
 
 /* Wood already reads as quiet; dimming on top of it only muddies the seams. */

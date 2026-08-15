@@ -273,15 +273,22 @@ export function renderYard(data: DashboardData): string {
   // The work band is about what actually landed, so a project that is only
   // live on the month scale scores in the yard but earns no row here.
   const worked = (data.activity ?? []).filter((a) => a.commits > 0);
-  const call = worked.length === 0
-    ? `<p class="quiet">Nothing moved in the last two days.</p>`
-    : `<p>Work landed in <span class="count">${worked.length}</span> ${
-        worked.length === 1 ? "colony" : "colonies"
-      } over the last two days.</p>`;
 
-  const attentionLine = attention.length === 0
-    ? `all ${colonies.length} quiet`
-    : `${attention.length} of ${colonies.length} need attention`;
+  // The largest sentence on the page answers the question the reader came
+  // with. It used to count commits, which is activity, not a verdict — the
+  // number that actually decides the morning was set at 10.5px in the yard
+  // label. Scale follows how load-bearing a sentence is, not where it sits.
+  const call = colonies.length === 0
+    ? `<p class="quiet">No colonies in the yard.</p>`
+    : attention.length === 0
+      ? `<p class="quiet">All ${colonies.length} colonies are quiet.</p>`
+      : `<p><span class="count">${attention.length}</span> of ${colonies.length} ${
+          colonies.length === 1 ? "colony needs" : "colonies need"
+        } you today.</p>`;
+
+  const workedLine = worked.length === 0
+    ? "nothing landed in the last two days"
+    : `${worked.length} ${worked.length === 1 ? "colony" : "colonies"} &middot; last two days`;
 
   const hives = colonies
     .map((c, i) => {
@@ -329,14 +336,14 @@ export function renderYard(data: DashboardData): string {
   </div>
 </header>
 <div class="yard-call">${call}</div>
-${renderWork(worked)}
-<section class="yard" id="section-yard">
+<section class="yard" id="section-yard" aria-labelledby="yard-label">
   <div class="yard-label">
-    <span>The yard &middot; ${escapeHtml(attentionLine)}</span>
+    <h2 id="yard-label">The yard</h2>
     <span class="yard-key">painted &middot; needs you &nbsp; taller &middot; more memory</span>
   </div>
   ${body}
-</section>`;
+</section>
+${renderWork(worked, workedLine)}`;
 }
 
 /** How many commit subjects a colony shows before it folds the rest away. */
@@ -347,7 +354,7 @@ const SUBJECT_CAP = 5;
  * record of work HIVE actually holds, and a subject someone wrote by hand
  * says more than a count of closed tickets.
  */
-export function renderWork(activity: ProjectActivity[]): string {
+export function renderWork(activity: ProjectActivity[], aside = ""): string {
   if (activity.length === 0) {
     return `<section class="work"><p class="work-none">No commits in the window. Either a quiet stretch or the repos moved somewhere HIVE is not looking.</p></section>`;
   }
@@ -373,7 +380,16 @@ export function renderWork(activity: ProjectActivity[]): string {
     })
     .join("");
 
-  return `<section class="work" id="section-work"><ol class="work-list">${items}</ol></section>`;
+  // The commit count moved here from the page's largest sentence. It belongs
+  // to this band — it says how much landed, not whether anything wants you.
+  return `
+<section class="work" id="section-work" aria-labelledby="work-label">
+  <div class="yard-label">
+    <h2 id="work-label">Work</h2>
+    ${aside ? `<span class="yard-key">${aside}</span>` : ""}
+  </div>
+  <ol class="work-list">${items}</ol>
+</section>`;
 }
 
 /**
@@ -408,8 +424,8 @@ export function renderUpkeep(data: DashboardData): string {
     : "";
 
   return `
-<section class="upkeep" id="section-upkeep">
-  <div class="yard-label"><span>Upkeep</span></div>
+<section class="upkeep" id="section-upkeep" aria-labelledby="upkeep-label">
+  <div class="yard-label"><h2 id="upkeep-label">Upkeep</h2></div>
   <ul class="upkeep-list">${jobs}${cost}${taste}</ul>
 </section>`;
 }
@@ -418,12 +434,17 @@ export function renderUpkeep(data: DashboardData): string {
  * Section shell: one heading language for every band below the yard.
  * `aside` is author-written markup, never user content — callers escape
  * anything interpolated into it themselves.
+ *
+ * The title is a real `h2` carrying the section's accessible name. It was a
+ * span in a div, which looked identical and left six major sections with no
+ * heading and no name — the page's only real headings came from briefing
+ * markdown, at 14px, below body size.
  */
 function band(id: string, title: string, aside: string, body: string): string {
   return `
-<section class="band" id="section-${id}">
+<section class="band" id="section-${id}" aria-labelledby="${id}-label">
   <div class="yard-label">
-    <span>${escapeHtml(title)}</span>
+    <h2 id="${id}-label">${escapeHtml(title)}</h2>
     ${aside ? `<span class="yard-key">${aside}</span>` : ""}
   </div>
   ${body}
@@ -449,8 +470,16 @@ function band(id: string, title: string, aside: string, body: string): string {
 export function renderBriefingBand(data: DashboardData): string {
   const b = data.todayBriefing;
   if (!b) return "";
-  // Drop the artifact's own H1: the band already carries the date.
-  const body = b.body.replace(/^#\s+.*\n?/, "").trim();
+  // Drop the artifact's own H1 (the band already carries the date) and the
+  // "## Headline" label above the lede. The label is an eyebrow over a
+  // heading — the sentence beneath it is self-evidently the headline, and
+  // naming it costs a line and says nothing. The briefing template still
+  // writes it because the section names are how the generator is steered;
+  // stripping it here keeps that contract intact and the page clean.
+  const body = b.body
+    .replace(/^#\s+.*\n?/, "")
+    .replace(/^\s*##\s+headline\s*\n/i, "")
+    .trim();
   const projectIds = data.projects.map((p) => p.id);
   const html = tagProjectBullets(tagProjectSections(md(body), projectIds), projectIds);
   return band(
@@ -613,8 +642,8 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     (data.openQuestions ?? []).length > 0 ||
     (data.promotionCandidates ?? []).length > 0;
   const sections: [boolean, string, string][] = [
-    [(data.activity ?? []).some((a) => a.commits > 0), "#section-work", "Work"],
     [true, "#section-yard", "Yard"],
+    [(data.activity ?? []).some((a) => a.commits > 0), "#section-work", "Work"],
     [!!data.todayBriefing, "#section-briefing", "Briefing"],
     [(data.watches?.rows.length ?? 0) > 0, "#section-watches", "Watches"],
     [true, "#section-tickets", "Tickets"],

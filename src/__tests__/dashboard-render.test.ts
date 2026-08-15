@@ -297,6 +297,60 @@ describe("renderDashboard", () => {
   });
 });
 
+// The direction contract promises a first viewport of one sentence counting
+// the colonies that want you, with the hives beneath it. The build shipped a
+// commit count in that slot and the work band in between; the finish review
+// caught it. These pin the shape.
+describe("first viewport — the answer, then the hives", () => {
+  test("the page's largest sentence counts the colonies that want you", () => {
+    const html = renderDashboard(baseData());
+    const call = html.match(/<div class="yard-call">([\s\S]*?)<\/div>/)![1]!;
+    expect(call).toMatch(/need(s)? you today/);
+    expect(call).toContain('<span class="count">');
+    // Activity is not a verdict, and it used to hold this slot.
+    expect(call).not.toContain("Work landed");
+  });
+
+  test("a quiet apiary says so rather than counting to zero", () => {
+    const html = renderDashboard(baseData({ projects: [], briefings: [], todayBriefing: null }));
+    expect(html).toContain("No colonies in the yard");
+  });
+
+  test("nothing stands between the sentence and the yard", () => {
+    const html = renderDashboard(
+      baseData({
+        activity: [
+          { projectId: "alpha", commits: 2, insertions: 8, deletions: 1, filesChanged: 2, subjects: ["a thing"] },
+        ],
+      }),
+    );
+    expect(html.indexOf('class="yard-call"')).toBeLessThan(html.indexOf('id="section-yard"'));
+    expect(html.indexOf('id="section-yard"')).toBeLessThan(html.indexOf('id="section-work"'));
+  });
+
+  test("every section carries a heading and an accessible name", () => {
+    const html = renderDashboard(baseData());
+    for (const id of ["yard", "briefing", "tickets", "stores", "archive", "upkeep"]) {
+      expect(html).toContain(`aria-labelledby="${id}-label"`);
+      expect(html).toContain(`<h2 id="${id}-label">`);
+    }
+  });
+
+  test("the briefing leads with its lede, not with the word Headline", () => {
+    const html = renderDashboard(
+      baseData({
+        todayBriefing: {
+          date: "2026-04-17",
+          body: "# HIVE\n\n## Headline\nOne sentence that mattered.\n",
+          headline: "One sentence",
+        },
+      }),
+    );
+    expect(html).toContain("One sentence that mattered.");
+    expect(html).not.toContain("<h2>Headline</h2>");
+  });
+});
+
 // The project filter hides `[data-project]` and nothing else, so every surface
 // that speaks about one project has to say so in the markup. This has now been
 // missed twice — once when the filter shipped, once when the redesign rebuilt

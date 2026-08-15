@@ -95,19 +95,20 @@ Every night HIVE inspects the projects it tracks. The dashboard is the
 inspection report, and it opens with the answer: which projects want you
 today, and why.
 
-<img src="img/dashboard.png" alt="The HIVE dashboard: a wordmark and the line 'Work landed in 3 colonies over the last two days', three columns of commit subjects per project, then a row of painted hive boxes standing at different heights on a shared baseline, each labelled with a verdict — NEEDS YOU, QUEENLESS, ACTIVE, WAITING, QUIET — and its ticket and memory counts" width="900">
+<img src="img/dashboard.png" alt="The HIVE dashboard: the wordmark, then in large type '9 of 14 colonies need you today', then a yard of painted hive boxes standing at different heights on a shared baseline — each labelled with a verdict (NEEDS YOU, QUEENLESS, ACTIVE, WAITING, QUIET), a one-line reason, and its ticket and memory counts" width="900">
 
-Each project is a colony. A colony stands as tall as its accumulated
-memory, its entrance is as wide as its ticket traffic, and the plate
-underneath carries the verdict the night reached — `NEEDS YOU`,
-`QUEENLESS`, `ACTIVE`, `WAITING`, `QUIET`. Painted means look at me;
-unpainted pine means fine. Height and width are data, not decoration, so
-the yard reads as magnitude before it reads as text.
+The whole first screen is that answer and nothing else. Each project is a
+colony: it stands as tall as its accumulated memory, its entrance at the
+base is as wide as its ticket traffic, and the plate underneath carries
+the verdict the night reached with the reason it reached it. Painted means
+look at me; unpainted pine means fine. Height and width are data, not
+decoration, so the yard reads as magnitude before it reads as text.
 
-Below the yard: the morning briefing set in columns, whatever the watches
-said overnight, a five-per-project ticket shortlist, the memory store, and
-30 days of past briefings. Click any colony to narrow the whole page to
-that project. `/tickets`, `/taste` and `/watches` are their own pages.
+Below the yard: what actually landed (commit subjects as people wrote
+them), the morning briefing set in columns, whatever the watches said
+overnight, a five-per-project ticket shortlist, the memory store, and 30
+days of past briefings. Click any colony to narrow the whole page to that
+project. `/tickets`, `/taste` and `/watches` are their own pages.
 
 The design system it was built against is recorded in
 [DESIGN.md](DESIGN.md).
