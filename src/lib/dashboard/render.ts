@@ -324,8 +324,10 @@ export function renderWork(activity: ProjectActivity[]): string {
  * real state, and dropping the old masthead ticker would have taken it off
  * the page entirely.
  */
-export function renderUpkeep(health: HealthEntry[]): string {
+export function renderUpkeep(data: DashboardData): string {
+  const health = data.health ?? [];
   if (health.length === 0) return "";
+
   const jobs = health
     .map((h) => {
       const when = h.mtime ? relativeTime(h.mtime) : "never";
@@ -333,11 +335,148 @@ export function renderUpkeep(health: HealthEntry[]): string {
     })
     .join("");
 
+  const usage = data.runUsage;
+  const cost =
+    usage?.available && usage.totalUsd > 0
+      ? `<li><span class="job">Last night</span><span class="when">${escapeHtml(usage.totalUsdFormatted)}</span></li>`
+      : "";
+
+  // The full taste surface stays at /taste; this is only a pointer, and only
+  // when there is something waiting.
+  const pending = data.tasteTrack?.reviewEligible ?? 0;
+  const taste = pending > 0
+    ? `<li><span class="job">Taste queue</span><span class="when"><a href="/taste">${pending} waiting</a></span></li>`
+    : "";
+
   return `
 <section class="upkeep" id="section-upkeep">
   <div class="yard-label"><span>Upkeep</span></div>
-  <ul class="upkeep-list">${jobs}</ul>
+  <ul class="upkeep-list">${jobs}${cost}${taste}</ul>
 </section>`;
+}
+
+/** Section shell: one heading language for every band below the yard. */
+function band(id: string, title: string, aside: string, body: string): string {
+  return `
+<section class="band" id="section-${id}">
+  <div class="yard-label">
+    <span>${escapeHtml(title)}</span>
+    ${aside ? `<span class="yard-key">${escapeHtml(aside)}</span>` : ""}
+  </div>
+  ${body}
+</section>`;
+}
+
+/**
+ * The briefing, condensed: the headline carries it, the body reads beneath.
+ * It no longer leads the page — prose cannot be scanned, and the yard
+ * answers "what needs me" faster than a paragraph can.
+ */
+export function renderBriefingBand(data: DashboardData): string {
+  const b = data.todayBriefing;
+  if (!b) return "";
+  // Drop the artifact's own H1: the band already carries the date.
+  const body = b.body.replace(/^#\s+.*\n?/, "").trim();
+  return band(
+    "briefing",
+    "Briefing",
+    longDate(b.date),
+    `<div class="prose">${md(body)}</div>`,
+  );
+}
+
+/**
+ * Watches, inline. The full control surface lives on /watches; this is what
+ * each watch last actually said, which is the part worth a morning read.
+ */
+export function renderWatchesBand(w: DashboardData["watches"]): string {
+  if (!w || w.rows.length === 0) return "";
+
+  const spoke = (w.latest ?? []).filter((c) => !c.quiet && !c.dropped && c.output);
+  const aside = w.tickStale ? "tick stale" : `${w.rows.length} watching`;
+
+  if (spoke.length === 0) {
+    return band("watches", "Watches", aside, `<p class="band-none">Every watch chose silence.</p>`);
+  }
+
+  const cards = spoke
+    .map(
+      (c) => `
+    <li class="watch-card">
+      <div class="watch-head">
+        <span class="watch-name">${escapeHtml(c.watch)}</span>
+        <span class="watch-when">${escapeHtml(relativeTime(c.at))}</span>
+      </div>
+      <div class="prose">${md(c.output ?? "")}</div>
+    </li>`,
+    )
+    .join("");
+
+  return band("watches", "Watches", aside, `<ol class="watch-list">${cards}</ol>`);
+}
+
+/**
+ * Stores: everything HIVE knows, in one place.
+ *
+ * Replaces three separate sections — recent memory, open questions, and
+ * promotion candidates — that were three views of one store and read as
+ * three unrelated tables.
+ */
+export function renderStores(data: DashboardData): string {
+  const recent = (data.recentMemory ?? []).slice(0, 12);
+  const questions = (data.openQuestions ?? []).slice(0, 8);
+  const candidates = data.promotionCandidates ?? [];
+
+  if (recent.length === 0 && questions.length === 0 && candidates.length === 0) return "";
+
+  const total = (data.memoryStats ?? []).reduce((a, s) => a + s.total, 0);
+
+  const admitted = recent.length === 0 ? "" : `
+    <div class="stores-col">
+      <h3>Lately admitted</h3>
+      <ul class="entry-list">${recent
+        .map(
+          (e) => `<li data-project="${escapeHtml(e.projectId)}">
+            <span class="entry-meta">${escapeHtml(e.projectId)} &middot; ${escapeHtml(e.section)}</span>
+            <span class="entry-text">${escapeHtml(e.text)}</span>
+          </li>`,
+        )
+        .join("")}</ul>
+    </div>`;
+
+  const asked = questions.length === 0 ? "" : `
+    <div class="stores-col">
+      <h3>Still open</h3>
+      <ul class="entry-list">${questions
+        .map(
+          (q) => `<li data-project="${escapeHtml(q.projectId)}">
+            <span class="entry-meta">${escapeHtml(q.projectId)}</span>
+            <span class="entry-text">${escapeHtml(q.text)}</span>
+          </li>`,
+        )
+        .join("")}</ul>
+    </div>`;
+
+  const ready = candidates.length === 0 ? "" : `
+    <div class="stores-col">
+      <h3>Ready to promote</h3>
+      <ul class="entry-list">${candidates
+        .slice(0, 6)
+        .map(
+          (c) => `<li data-project="${escapeHtml(c.projectId)}">
+            <span class="entry-meta">${escapeHtml(c.projectId)} &middot; recalled ${c.recallCount}&times;</span>
+            <span class="entry-text">${escapeHtml(c.text)}</span>
+          </li>`,
+        )
+        .join("")}</ul>
+    </div>`;
+
+  return band(
+    "stores",
+    "Stores",
+    `${total.toLocaleString("en-US")} entries`,
+    `<div class="stores">${admitted}${asked}${ready}</div>`,
+  );
 }
 
 export function renderMasthead(data: DashboardData): string {
@@ -1448,18 +1587,12 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     renderStickyNav(data, c),
     renderYard(data),
     `<main class="page">`,
-    renderBriefings(data),
-    renderPropose(data.propose),
-    renderInboxes(data.inboxes, c),
-    renderReflections(data.latestReflection),
-    renderOpenQuestions(data.openQuestions),
-    renderRecentMemory(data.recentMemory),
-    renderRunUsage(data.runUsage),
-    renderTasteTrack(data.tasteTrack),
-    renderRuns(data.runs, c),
-    renderArchive(data, c),
+    renderBriefingBand(data),
+    renderWatchesBand(data.watches),
     renderTickets(data.tickets, c),
-    renderUpkeep(data.health),
+    renderStores(data),
+    renderArchive(data, c),
+    renderUpkeep(data),
     renderFooter(data),
     c.interactive ? `<div class="snackbar" id="snackbar" role="status" aria-live="polite"></div>` : "",
     `</main>`,

@@ -8,6 +8,20 @@ function baseData(overrides: Partial<DashboardData> = {}): DashboardData {
     generatedAt: "2026-04-17T12:34:56.000Z",
     volumeNumber: 16,
     today: "2026-04-17",
+    recentMemory: [
+      {
+        projectId: "alpha",
+        section: "fact",
+        text: "The nightly verifier is the only path into knowledge.md.",
+        tags: ["memory"],
+        createdAt: "2026-04-16",
+        lastRecalled: null,
+        strength: 0.9,
+      },
+    ],
+    openQuestions: [
+      { projectId: "alpha", text: "Should open questions expire?", tags: ["memory"] },
+    ],
     health: [
       { label: "HEARTBEAT", lastLine: "heartbeat complete", mtime: "2026-04-17T12:00:00Z" },
       { label: "MORNING", lastLine: "morning complete", mtime: "2026-04-17T07:03:00Z" },
@@ -140,14 +154,12 @@ describe("renderDashboard", () => {
     expect(html).not.toContain("cdn.");
   });
 
-  test("renders all briefings but marks only today's as active", () => {
+  test("the briefing band carries today only; past days live in the archive", () => {
     const html = renderDashboard(baseData());
-    expect(html).toContain('data-briefing-date="2026-04-17"');
-    expect(html).toContain('data-briefing-date="2026-04-16"');
-    // Today's should carry the `active` class
-    expect(html).toMatch(/class="briefing-article active" data-briefing-date="2026-04-17"/);
-    // Yesterday's should not be active
-    expect(html).toMatch(/class="briefing-article " data-briefing-date="2026-04-16"/);
+    expect(html).toContain('id="section-briefing"');
+    expect(html).toContain("April 17, 2026");
+    // The old every-day-stacked article list is gone.
+    expect(html).not.toContain('data-briefing-date="2026-04-16"');
   });
 
   test("renders every project as a colony in the yard", () => {
@@ -172,13 +184,15 @@ describe("renderDashboard", () => {
     expect(html).toContain("3 Active across all projects");
   });
 
-  test("renders recent dispatches with status classes", () => {
+  test("the page carries only the sections worth a morning read", () => {
     const html = renderDashboard(baseData());
-    expect(html).toContain("Dispatch Log");
-    expect(html).toContain("RUN-001");
-    expect(html).toContain("RUN-002");
-    expect(html).toContain("status-failed");
-    expect(html).toContain("status-complete");
+    for (const id of ["yard", "briefing", "stores", "upkeep"]) {
+      expect(html).toContain(`id="section-${id}"`);
+    }
+    // Cut deliberately: dispatch (TK-143) and the inbox (TK-144) are dead or
+    // lying, and neither earns a place on the page while that is true.
+    expect(html).not.toContain("Dispatch Log");
+    expect(html).not.toContain('class="inbox-entry');
   });
 
   test("renders archive cards and marks today's card active", () => {
@@ -197,12 +211,13 @@ describe("renderDashboard", () => {
     expect(html).toContain("SYNC");
   });
 
-  test("renders inbox entries, marks empty ones, and keeps header stripped", () => {
+  test("stores merges recent memory, open questions, and promotion candidates", () => {
     const html = renderDashboard(baseData());
-    expect(html).toContain('class="inbox-entry empty"');
-    expect(html).toContain(">bravo");
-    // Non-empty inbox body should go through markdown render
-    expect(html).toContain("<strong>news</strong>");
+    expect(html).toContain('id="section-stores"');
+    expect(html).toContain("Lately admitted");
+    // Three views of one store, in one place rather than three sections.
+    expect(html).not.toContain('id="section-openquestions"');
+    expect(html).not.toContain('id="section-memory"');
   });
 
   test("inspection number and dateline land in the yard head", () => {
@@ -223,8 +238,9 @@ describe("renderDashboard", () => {
     });
     const html = renderDashboard(data);
     expect(html).toStartWith("<!doctype html>");
-    expect(html).toContain("Clean desk.");
-    expect(html).toContain("No briefings on file");
+    // A fresh install should say what to do, not render empty furniture.
+    expect(html).toContain("No colonies registered");
+    expect(html).toContain("hive project add");
   });
 
   test("escapes HTML in ticket titles", () => {

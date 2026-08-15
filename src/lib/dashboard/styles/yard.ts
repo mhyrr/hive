@@ -153,6 +153,88 @@ export const YARD_CSS = `
 }
 .yard-key { color: var(--faint); }
 
+/* ---------- Bands below the yard ---------- */
+
+.band { margin-top: 46px; }
+.band-none { color: var(--muted); margin: 0; }
+
+.prose { max-width: 72ch; }
+.prose p { margin: 0 0 12px; line-height: 1.6; }
+.prose h1, .prose h2, .prose h3 {
+  font-family: var(--stencil);
+  letter-spacing: var(--stencil-tracking);
+  text-transform: uppercase;
+  font-size: 14px;
+  margin: 22px 0 8px;
+}
+.prose ul, .prose ol { margin: 0 0 12px; padding-left: 20px; }
+.prose li { margin-bottom: 5px; line-height: 1.5; }
+.prose code { background: var(--chalk-deep); padding: 1px 4px; }
+
+/* Watches */
+.watch-list { list-style: none; margin: 0; padding: 0; }
+.watch-card {
+  border-top: 1px solid var(--faint);
+  padding: 14px 0 4px;
+}
+.watch-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.watch-name {
+  font-family: var(--stencil);
+  font-size: 15px;
+  letter-spacing: var(--stencil-tracking);
+  text-transform: uppercase;
+}
+.watch-when {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Stores */
+.stores {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 32px;
+}
+.stores-col h3 {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 400;
+  margin: 0 0 10px;
+}
+.entry-list { list-style: none; margin: 0; padding: 0; }
+.entry-list li {
+  border-top: 1px solid var(--faint);
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.entry-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.entry-text { font-size: 13.5px; line-height: 1.45; color: var(--ink-soft); }
+
+/* ---------- Project filter: the colonies are the control ---------- */
+
+.yard.filtering .colony:not(.colony--selected) { opacity: 0.3; }
+.colony--selected .colony-name { color: var(--oxide); }
+.colony--selected .colony-board { height: 8px; }
+
 /* ---------- Upkeep: quiet by design ---------- */
 
 .upkeep { margin-top: 44px; }

@@ -23,6 +23,7 @@ import {
 } from "../memory";
 import { loadUsageSummary, formatUsd } from "../pricing";
 import { collectActivity, type ProjectActivity } from "./activity";
+import { collectWatchesPage, type WatchesPageData } from "./watches-page";
 import {
   collectRuns as collectRunsPage,
   runsByTicket as buildRunsByTicket,
@@ -216,6 +217,8 @@ export type DashboardData = {
   activity: ProjectActivity[];
   /** Whole-store memory totals per project. Not the recentMemory slice. */
   memoryStats: MemoryStat[];
+  /** Watch state and the last thing each watch actually said. */
+  watches: WatchesPageData;
   generatedAt: string;
   volumeNumber: number;     // count of briefings (proxy for "days since install")
   today: string;            // YYYY-MM-DD (from latest briefing or system)
@@ -1217,7 +1220,7 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, watches, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -1228,6 +1231,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectOpenQuestions(paths),
     collectRecentMemory(paths),
     collectMemoryStats(paths),
+    collectWatchesPage(paths),
     collectRunUsage(paths),
     collectTasteTrack(paths),
     collectLatestReflection(paths),
@@ -1254,6 +1258,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     openQuestions,
     recentMemory,
     memoryStats,
+    watches,
     runUsage,
     tasteTrack,
     latestReflection,
