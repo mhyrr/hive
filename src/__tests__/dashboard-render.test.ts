@@ -172,16 +172,35 @@ describe("renderDashboard", () => {
     expect(html).not.toContain("brood <b>");
   });
 
-  test("renders three ticket buckets with the right totals", () => {
+  test("tickets are a per-project shortlist, with the full board one click away", () => {
     const html = renderDashboard(baseData());
-    expect(html).toContain("In Progress");
-    expect(html).toContain("Ready");
-    expect(html).toContain("Blocked");
     expect(html).toContain("TK-001");
     expect(html).toContain("TK-002");
     expect(html).toContain("TK-003");
-    expect(html).toContain("depends on TK-001"); // dependency citation
-    expect(html).toContain("3 Active across all projects");
+    expect(html).toContain("3 active");
+    expect(html).toContain('href="/tickets"');
+  });
+
+  test("a long queue is capped per project and says how much it withheld", () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({
+      id: `TK-1${String(i).padStart(2, "0")}`,
+      title: `ticket ${i}`,
+      projectId: "alpha",
+      priority: 2 as const,
+      tags: [],
+      depends: [],
+      ageDays: i,
+      updatedDays: i,
+    }));
+    const html = renderDashboard(baseData({ tickets: { ready: many, inProgress: [], blocked: [] } }));
+    expect(html).toContain("4 more"); // 9 - 5 shown
+    expect(html).toContain('href="/tickets#project=alpha"');
+  });
+
+  test("the shortlist keeps its controls rather than shipping a read-only list", () => {
+    const html = renderDashboard(baseData());
+    expect(html).toContain('data-action="ticket-start"');
+    expect(html).toContain('data-action="ticket-close"');
   });
 
   test("the page carries only the sections worth a morning read", () => {

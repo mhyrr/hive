@@ -86,6 +86,10 @@ export type TicketCitation = {
   tags: string[];
   depends: string[];
   ageDays: number;
+  /** Days since last touched. Age says when it was filed; this says whether
+   *  anyone still cares. Optional so citations from lighter collectors still
+   *  typecheck; sorters treat a missing value as cold. */
+  updatedDays?: number;
   // Optional. Populated by collectTicketsPage so cards can expand inline.
   // Empty / unset for collectors that only need summary citations.
   body?: string;
@@ -450,6 +454,7 @@ export async function collectTickets(paths: HivePaths): Promise<TicketBuckets> {
       tags: ticket.tags,
       depends: ticket.depends,
       ageDays: daysBetween(new Date(ticket.created), now),
+      updatedDays: daysBetween(new Date(ticket.updated), now),
     };
 
     if (ticket.status === "in_progress") {

@@ -355,13 +355,17 @@ export function renderUpkeep(data: DashboardData): string {
 </section>`;
 }
 
-/** Section shell: one heading language for every band below the yard. */
+/**
+ * Section shell: one heading language for every band below the yard.
+ * `aside` is author-written markup, never user content — callers escape
+ * anything interpolated into it themselves.
+ */
 function band(id: string, title: string, aside: string, body: string): string {
   return `
 <section class="band" id="section-${id}">
   <div class="yard-label">
     <span>${escapeHtml(title)}</span>
-    ${aside ? `<span class="yard-key">${escapeHtml(aside)}</span>` : ""}
+    ${aside ? `<span class="yard-key">${aside}</span>` : ""}
   </div>
   ${body}
 </section>`;
@@ -380,7 +384,7 @@ export function renderBriefingBand(data: DashboardData): string {
   return band(
     "briefing",
     "Briefing",
-    longDate(b.date),
+    escapeHtml(longDate(b.date)),
     `<div class="prose">${md(body)}</div>`,
   );
 }
@@ -393,7 +397,7 @@ export function renderWatchesBand(w: DashboardData["watches"]): string {
   if (!w || w.rows.length === 0) return "";
 
   const spoke = (w.latest ?? []).filter((c) => !c.quiet && !c.dropped && c.output);
-  const aside = w.tickStale ? "tick stale" : `${w.rows.length} watching`;
+  const aside = w.tickStale ? "tick stale" : `${w.rows.length} watching`; // author text
 
   if (spoke.length === 0) {
     return band("watches", "Watches", aside, `<p class="band-none">Every watch chose silence.</p>`);
@@ -803,44 +807,90 @@ function renderTicketRow(t: TicketCitation, c: RenderContext): string {
 </div>`;
 }
 
+/** Per project, on the main page. The full board lives at /tickets. */
+const TICKETS_PER_PROJECT = 5;
+
+/** State first, then priority, then how recently anyone touched it. */
+function ticketWeight(t: TicketCitation, state: number): number[] {
+  return [state, t.priority, t.updatedDays ?? Number.POSITIVE_INFINITY];
+}
+
+/**
+ * Tickets, capped.
+ *
+ * The old band rendered every open ticket across every project — 164 rows
+ * on this machine, which is a listing, not a briefing. Each colony shows the
+ * few that would actually be picked up next; the whole board is one click
+ * away and does not need reprinting here.
+ */
 export function renderTickets(buckets: TicketBuckets, c: RenderContext): string {
-  const total = buckets.ready.length + buckets.inProgress.length + buckets.blocked.length;
+  const tagged = [
+    ...buckets.inProgress.map((t) => ({ t, state: 0, kind: "progress" as const })),
+    ...buckets.ready.map((t) => ({ t, state: 1, kind: "ready" as const })),
+    ...buckets.blocked.map((t) => ({ t, state: 2, kind: "blocked" as const })),
+  ];
+  const total = tagged.length;
+
   if (total === 0) {
-    return `
-<section class="section" id="section-tickets">
-  <div class="section-head"><h2>Tickets</h2><span class="kicker">None open</span></div>
-  <hr class="amber"/>
-  <p>Clean desk.</p>
-</section>`;
+    return band("tickets", "Tickets", "none open", `<p class="band-none">Clean desk.</p>`);
   }
 
-  const renderGroup = (label: string, kind: "ready" | "progress" | "blocked", items: TicketCitation[]): string => {
-    if (items.length === 0) {
-      return `<div class="ticket-group">
-  <h3>${escapeHtml(label)}</h3>
-  <div class="ticket-row" style="color: var(--muted); font-style: italic;">None.</div>
-</div>`;
-    }
-    const rows = items.map((t) => renderTicketRow(t, c)).join("\n");
-    return `<div class="ticket-group">
-  <h3>${escapeHtml(label)} <span class="status-tag ${kind}">${items.length}</span></h3>
-${rows}
-</div>`;
-  };
+  const byProject = new Map<string, typeof tagged>();
+  for (const row of tagged) {
+    const list = byProject.get(row.t.projectId) ?? [];
+    list.push(row);
+    byProject.set(row.t.projectId, list);
+  }
 
-  return `
-<section class="section" id="section-tickets">
-  <div class="section-head">
-    <h2>Tickets</h2>
-    <span class="kicker">${total} Active across all projects</span>
-  </div>
-  <hr class="amber"/>
-  <div class="ticket-groups">
-    ${renderGroup("In Progress", "progress", buckets.inProgress)}
-    ${renderGroup("Ready", "ready", buckets.ready)}
-    ${renderGroup("Blocked", "blocked", buckets.blocked)}
-  </div>
-</section>`;
+  // Busiest queue first — the same instinct the yard sorts on.
+  const projects = [...byProject.entries()].sort(
+    (a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]),
+  );
+
+  const columns = projects
+    .map(([projectId, rows]) => {
+      const sorted = [...rows].sort((a, b) => {
+        const wa = ticketWeight(a.t, a.state);
+        const wb = ticketWeight(b.t, b.state);
+        for (let i = 0; i < wa.length; i++) if (wa[i] !== wb[i]) return wa[i] - wb[i];
+        return a.t.id.localeCompare(b.t.id);
+      });
+      const shown = sorted.slice(0, TICKETS_PER_PROJECT);
+      const rest = sorted.length - shown.length;
+
+      const items = shown
+        .map(
+          ({ t, kind }) => `<li class="tk tk--${kind}">
+        <span class="tk-id">${escapeHtml(t.id)}</span>
+        <span class="tk-title">${escapeHtml(t.title)}</span>
+        <span class="tk-pri">P${t.priority}</span>
+        <span class="tk-actions">
+          ${actionButton(c, "start", { "data-action": "ticket-start", "data-id": t.id, "data-project": t.projectId })}
+          ${actionButton(c, "note", { "data-action": "ticket-note", "data-id": t.id, "data-project": t.projectId })}
+          ${actionButton(c, "close", { "data-action": "ticket-close", "data-id": t.id, "data-project": t.projectId, "data-confirm": "true" })}
+        </span>
+      </li>`,
+        )
+        .join("");
+
+      const more = rest > 0
+        ? `<li class="tk-more"><a href="/tickets#project=${encodeURIComponent(projectId)}">${rest} more</a></li>`
+        : "";
+
+      return `
+    <div class="tk-col" data-project="${escapeHtml(projectId)}">
+      <h3>${escapeHtml(projectId)} <span class="tk-count">${sorted.length}</span></h3>
+      <ul class="tk-list">${items}${more}</ul>
+    </div>`;
+    })
+    .join("");
+
+  return band(
+    "tickets",
+    "Tickets",
+    `${total} active &middot; <a href="/tickets">full board</a>`,
+    `<div class="tk-grid">${columns}</div>`,
+  );
 }
 
 // ---------------------------------------------------------------------------

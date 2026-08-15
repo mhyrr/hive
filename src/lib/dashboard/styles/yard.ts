@@ -197,6 +197,94 @@ export const YARD_CSS = `
   color: var(--muted);
 }
 
+/* Tickets: a shortlist per colony, not the whole board */
+.tk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 28px;
+}
+.tk-col h3 {
+  font-family: var(--stencil);
+  font-size: 14px;
+  letter-spacing: var(--stencil-tracking);
+  text-transform: uppercase;
+  font-weight: 400;
+  margin: 0 0 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.tk-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.tk-list { list-style: none; margin: 0; padding: 0; }
+.tk {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  border-top: 1px solid var(--faint);
+  padding: 6px 0;
+  font-size: 13px;
+}
+/* Controls stay out of the way until wanted, but never out of reach:
+   focus-within keeps them on the keyboard path. */
+.tk-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 140ms ease-out, opacity 140ms ease-out;
+}
+.tk:hover .tk-actions,
+.tk:focus-within .tk-actions {
+  max-height: 32px;
+  opacity: 1;
+  margin-top: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tk-actions { transition: none; }
+}
+.tk-id {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.tk-title {
+  line-height: 1.35;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.tk-pri {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+/* State reads off the rail, not off a coloured pill. */
+.tk--progress { border-top-color: var(--ink); }
+.tk--progress .tk-id { color: var(--ink); font-weight: 600; }
+.tk--blocked .tk-title { color: var(--muted); }
+.tk--blocked .tk-pri { color: var(--oxide); }
+.tk-more {
+  padding: 7px 0 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 /* Stores */
 .stores {
   display: grid;
