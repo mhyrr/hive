@@ -431,7 +431,9 @@ describe("renderArcRunsPageDocument", () => {
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain("<title>HIVE · Runs");
     expect(html).toContain('class="page-nav"');
-    expect(html).toContain('<a href="/runs" class="nav-active">RUNS</a>');
+    expect(html).toContain('<a href="/">BRIEFING</a>');
+    // No tab of its own: you arrive here from a ticket, not from the nav.
+    expect(html).not.toContain('href="/runs"');
     expect(html).toContain("<style>");
     expect(html).toContain("<script>");
   });

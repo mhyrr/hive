@@ -100,12 +100,24 @@ export const DASHBOARD_JS = `
   function applyFilter(id) {
     var all = id === "ALL";
     document.querySelectorAll("[data-project]").forEach(function (el) {
+      // Colonies are the filter control, not filtered content: hiding the
+      // yard would remove the only way back out of the filter.
+      if (el.classList.contains("colony")) {
+        if (!all && el.getAttribute("data-project") === id) el.classList.add("colony--selected");
+        else el.classList.remove("colony--selected");
+        return;
+      }
       if (all || el.getAttribute("data-project") === id) {
         el.classList.remove("gone");
       } else {
         el.classList.add("gone");
       }
     });
+    var yard = document.getElementById("section-yard");
+    if (yard) yard.classList.toggle("filtering", !all);
+    // Sections that lay out as a grid of colonies read as one column when
+    // only one colony survives; CSS can't count the survivors, so say it here.
+    document.body.classList.toggle("filtered-to-project", !all);
     document.querySelectorAll("[data-project-filter]").forEach(function (p) {
       if (p.getAttribute("data-project-filter") === id) p.classList.add("pill--active");
       else p.classList.remove("pill--active");
@@ -139,6 +151,15 @@ export const DASHBOARD_JS = `
     p.addEventListener("click", function () {
       var id = p.getAttribute("data-project-filter");
       if (id) setFilter(id);
+    });
+  });
+  // The yard is the project filter. Clicking a colony narrows the page to it;
+  // clicking the selected one again clears, so the control is its own escape.
+  document.querySelectorAll(".colony[data-project]").forEach(function (c) {
+    c.addEventListener("click", function () {
+      var id = c.getAttribute("data-project");
+      if (!id) return;
+      setFilter(activeFilter() === id ? "ALL" : id);
     });
   });
   // The shortcut button in each project <summary>

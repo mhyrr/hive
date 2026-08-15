@@ -14,6 +14,7 @@ import { marked } from "marked";
 import type { CollectedRuns, RunRow, RunRowStatus, DirectArc, GoalArc, CampaignArc, CampaignIteration, ArcStatus, Arc } from "./collect";
 import { DASHBOARD_CSS } from "../styles";
 import { DASHBOARD_JS } from "../script";
+import { renderPageNav } from "../html";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -817,24 +818,9 @@ function renderFullDocument(bodyContent: string, opts: RunsPageRenderOptions = {
   const interactive = opts.interactive !== false;
   const today = new Date().toISOString().slice(0, 10);
 
-  const navItems: Array<[string, string]> = [
-    ["BRIEFING", "/"],
-    ["PROJECTS", "/#section-projects"],
-    ["INBOX", "/#section-inboxes"],
-    ["REFLECTIONS", "/#section-reflections"],
-    ["DISPATCH", "/#section-dispatch"],
-    ["ARCHIVE", "/#section-archive"],
-    ["TICKETS", "/tickets"],
-    ["RUNS", "/runs"],
-    ["TASTE", "/taste"],
-    ["WATCHES", "/watches"],
-  ];
-  const nav = navItems
-    .map(([label, href]) => {
-      const active = href === "/runs" ? ' class="nav-active"' : "";
-      return `<a href="${href}"${active}>${label}</a>`;
-    })
-    .join(' <span class="nav-sep">·</span> ');
+  // /runs has no tab of its own — it is reached from the tickets that cite a
+  // run, not navigated to. The nav is the way back out.
+  const nav = renderPageNav("/runs");
 
   const scriptBlock = interactive ? `<script>${DASHBOARD_JS}</script>` : "";
 

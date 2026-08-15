@@ -33,6 +33,9 @@ import type {
 } from "./collect";
 import { DASHBOARD_CSS } from "./styles";
 import { DASHBOARD_JS } from "./script";
+import { renderPageNav } from "./html";
+import { assignVerdicts, colourFor, needsAttention, sortYard, type Colony } from "./colony";
+import type { ProjectActivity } from "./activity";
 import type { TicketPriority } from "../ticket";
 
 // ---------------------------------------------------------------------------
@@ -83,13 +86,16 @@ function md(source: string): string {
  */
 function tagProjectSections(html: string, projectIds: string[]): string {
   if (!html || projectIds.length === 0) return html;
-  const idSet = new Set(projectIds.map((p) => p.toLowerCase()));
+  const canonical = canonicalIds(projectIds);
   const tokens = html.split(/(<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>)/i);
-  const out: string[] = [];
+  const out: { project: boolean; html: string }[] = [];
   let wrap: { id: string; level: number; buf: string[] } | null = null;
   const flush = () => {
     if (!wrap) return;
-    out.push(`<section class="briefing-project-section" data-project="${wrap.id}">${wrap.buf.join("")}</section>`);
+    out.push({
+      project: true,
+      html: `<section class="briefing-project-section" data-project="${escapeHtml(wrap.id)}">${wrap.buf.join("")}</section>`,
+    });
     wrap = null;
   };
   for (const tok of tokens) {
@@ -98,21 +104,76 @@ function tagProjectSections(html: string, projectIds: string[]): string {
       const level = parseInt(hm[1]!, 10);
       const text = hm[2]!.replace(/<[^>]+>/g, "").trim().toLowerCase();
       if (wrap && level <= wrap.level) flush();
-      if (idSet.has(text)) {
-        wrap = { id: text, level, buf: [tok] };
+      const id = canonical.get(text);
+      if (id) {
+        wrap = { id, level, buf: [tok] };
       } else if (wrap) {
         wrap.buf.push(tok);
       } else {
-        out.push(tok);
+        out.push({ project: false, html: tok });
       }
     } else if (wrap) {
       wrap.buf.push(tok);
     } else {
-      out.push(tok);
+      out.push({ project: false, html: tok });
     }
   }
   flush();
-  return out.join("");
+
+  // A run of adjacent project sections is one thing — the night, colony by
+  // colony — so it gets one container to flow through. Without it each block
+  // is an independent grid cell and the shortest colony leaves a hole the
+  // height of the longest.
+  const parts: string[] = [];
+  let run: string[] = [];
+  const closeRun = () => {
+    if (run.length === 0) return;
+    parts.push(`<div class="briefing-colonies">${run.join("")}</div>`);
+    run = [];
+  };
+  for (const node of out) {
+    // Whitespace between two sections is not a section break — marked leaves
+    // an empty chunk between adjacent headings and it must not split the run.
+    if (node.project || (run.length > 0 && node.html.trim() === "")) {
+      run.push(node.html);
+      continue;
+    }
+    closeRun();
+    parts.push(node.html);
+  }
+  closeRun();
+  return parts.join("");
+}
+
+/** Lowercased project id → the id as registered, for case-tolerant matching. */
+function canonicalIds(projectIds: string[]): Map<string, string> {
+  return new Map(projectIds.map((p) => [p.toLowerCase(), p]));
+}
+
+/**
+ * The briefing's flat lists are project-keyed too, just in prose rather than
+ * headings: "What needs your attention" and the verifier flags each lead a
+ * bullet with a bolded project — `**revrec — fabricated testimonials**` or
+ * `**dobby** — Sonnet's extraction`. Tag those `<li>`s so the filter reaches
+ * the two sections that most often say why a colony needs you.
+ *
+ * Deliberately narrow: only a `<li>` opening with `<strong>` is considered,
+ * and only the leading token before a dash or colon is matched. A bullet that
+ * merely mentions a project mid-sentence stays untagged — a filter that
+ * guesses is worse than one that visibly covers less.
+ */
+function tagProjectBullets(html: string, projectIds: string[]): string {
+  if (!html || projectIds.length === 0) return html;
+  const canonical = canonicalIds(projectIds);
+  return html.replace(
+    /<li>(\s*)<strong>([^<]{1,120})<\/strong>/g,
+    (whole: string, space: string, bold: string) => {
+      const lead = bold.split(/[—–:-]/)[0]!.trim().toLowerCase();
+      const id = canonical.get(lead);
+      if (!id) return whole;
+      return `<li data-project="${escapeHtml(id)}">${space}<strong>${bold}</strong>`;
+    },
+  );
 }
 
 function longDate(iso: string): string {
@@ -190,6 +251,345 @@ function actionButton(
 // Section renderers (exported for fragment use)
 // ---------------------------------------------------------------------------
 
+const VERDICT_LABEL: Record<Colony["verdict"], string> = {
+  "needs-you": "Needs you",
+  queenless: "Queenless",
+  active: "Active",
+  waiting: "Waiting",
+  quiet: "Quiet",
+};
+
+/**
+ * The yard: every colony standing on one baseline at the height its stores
+ * earn it, each carrying tonight's verdict. This is the first viewport and
+ * it answers one question — which colonies need you today.
+ */
+export function renderYard(data: DashboardData): string {
+  const colonies = sortYard(assignVerdicts(data));
+  const attention = needsAttention(colonies);
+  const peakBrood = Math.max(1, ...colonies.map((c) => c.brood));
+  const cardById = new Map(data.projects.map((p) => [p.id, p]));
+
+  // The work band is about what actually landed, so a project that is only
+  // live on the month scale scores in the yard but earns no row here.
+  const worked = (data.activity ?? []).filter((a) => a.commits > 0);
+
+  // The largest sentence on the page answers the question the reader came
+  // with. It used to count commits, which is activity, not a verdict — the
+  // number that actually decides the morning was set at 10.5px in the yard
+  // label. Scale follows how load-bearing a sentence is, not where it sits.
+  const call = colonies.length === 0
+    ? `<p class="quiet">No colonies in the yard.</p>`
+    : attention.length === 0
+      ? `<p class="quiet">All ${colonies.length} colonies are quiet.</p>`
+      : `<p><span class="count">${attention.length}</span> of ${colonies.length} ${
+          colonies.length === 1 ? "colony needs" : "colonies need"
+        } you today.</p>`;
+
+  const workedLine = worked.length === 0
+    ? "nothing landed in the last two days"
+    : `${worked.length} ${worked.length === 1 ? "colony" : "colonies"} &middot; last two days`;
+
+  const hives = colonies
+    .map((c, i) => {
+      // Supers above the brood chamber grow with stores, on the yard's
+      // shared scale — a taller hive is a stronger one, not a styled one.
+      const supers = 1 + Math.round(c.stores * 4);
+      const boxes = Array.from({ length: supers }, () => `<div class="super"></div>`).join("");
+      const traffic = (c.brood / peakBrood).toFixed(3);
+
+      return `
+    <li>
+      <button type="button" class="colony colony--${c.verdict}" data-colour="${c.colour}"
+              data-project="${escapeHtml(c.id)}" style="--i:${i}"
+              aria-label="${escapeHtml(c.id)}: ${escapeHtml(VERDICT_LABEL[c.verdict])}, ${escapeHtml(c.reason)}">
+        <div class="colony-name">${escapeHtml(c.id)}</div>
+        <div class="colony-stack" style="--traffic:${traffic}">
+          ${boxes}
+          <div class="super super--brood"></div>
+        </div>
+        <div class="colony-board"></div>
+        <div class="colony-plate">
+          <div class="colony-verdict">${escapeHtml(VERDICT_LABEL[c.verdict])}</div>
+          <div class="colony-reason">${escapeHtml(c.reason)}</div>
+          <div class="colony-figures">
+            <span>tickets <b>${c.brood}</b></span>
+            <span>memory <b>${c.entries.toLocaleString("en-US")}</b></span>
+          </div>
+        </div>
+      </button>
+    </li>`;
+    })
+    .join("");
+
+  const body =
+    colonies.length === 0
+      ? `<p class="yard-empty">No colonies registered. <code>hive project add</code> puts one in the yard.</p>`
+      : `<ol class="yard-row">${hives}</ol>`;
+
+  return `
+<header class="yard-head">
+  <h1>Hive</h1>
+  <div class="dateline">
+    <span>${escapeHtml(longDate(data.today))}</span>
+    <span>Inspection ${data.volumeNumber}</span>
+  </div>
+</header>
+<div class="yard-call">${call}</div>
+<section class="yard" id="section-yard" aria-labelledby="yard-label">
+  <div class="yard-label">
+    <h2 id="yard-label">The yard</h2>
+    <span class="yard-key">painted &middot; needs you &nbsp; taller &middot; more memory</span>
+  </div>
+  ${body}
+</section>
+${renderWork(worked, workedLine)}`;
+}
+
+/** How many commit subjects a colony shows before it folds the rest away. */
+const SUBJECT_CAP = 5;
+
+/**
+ * What got done. Commit subjects as written — they are the only windowed
+ * record of work HIVE actually holds, and a subject someone wrote by hand
+ * says more than a count of closed tickets.
+ */
+export function renderWork(activity: ProjectActivity[], aside = ""): string {
+  if (activity.length === 0) {
+    return `<section class="work"><p class="work-none">No commits in the window. Either a quiet stretch or the repos moved somewhere HIVE is not looking.</p></section>`;
+  }
+
+  const items = activity
+    .map((a) => {
+      const shown = a.subjects.slice(0, SUBJECT_CAP);
+      const rest = a.subjects.length - shown.length;
+      const lines = shown.map((s) => `<li>${escapeHtml(s)}</li>`).join("");
+      const more = rest > 0 ? `<li class="more">+${rest} more</li>` : "";
+
+      return `
+    <li class="work-item" data-colour="${colourFor(a.projectId)}" data-project="${escapeHtml(a.projectId)}">
+      <div class="work-name">${escapeHtml(a.projectId)}</div>
+      <div class="work-figures">
+        ${a.commits} ${a.commits === 1 ? "commit" : "commits"}
+        &middot; <span class="add">+${a.insertions.toLocaleString("en-US")}</span>
+        <span class="cut">&minus;${a.deletions.toLocaleString("en-US")}</span>
+        &middot; ${a.filesChanged} ${a.filesChanged === 1 ? "file" : "files"}
+      </div>
+      <ul class="work-subjects">${lines}${more}</ul>
+    </li>`;
+    })
+    .join("");
+
+  // The commit count moved here from the page's largest sentence. It belongs
+  // to this band — it says how much landed, not whether anything wants you.
+  return `
+<section class="work" id="section-work" aria-labelledby="work-label">
+  <div class="yard-label">
+    <h2 id="work-label">Work</h2>
+    ${aside ? `<span class="yard-key">${aside}</span>` : ""}
+  </div>
+  <ol class="work-list">${items}</ol>
+</section>`;
+}
+
+/**
+ * Upkeep: the launchd jobs that keep the apiary running.
+ *
+ * Demoted on purpose — it is rarely actionable and never leads. But it is
+ * real state, and dropping the old masthead ticker would have taken it off
+ * the page entirely.
+ */
+export function renderUpkeep(data: DashboardData): string {
+  const health = data.health ?? [];
+  if (health.length === 0) return "";
+
+  const jobs = health
+    .map((h) => {
+      const when = h.mtime ? relativeTime(h.mtime) : "never";
+      return `<li><span class="job">${escapeHtml(h.label)}</span><span class="when">${escapeHtml(when)}</span></li>`;
+    })
+    .join("");
+
+  const usage = data.runUsage;
+  const cost =
+    usage?.available && usage.totalUsd > 0
+      ? `<li><span class="job">Last night</span><span class="when">${escapeHtml(usage.totalUsdFormatted)}</span></li>`
+      : "";
+
+  // The full taste surface stays at /taste; this is only a pointer, and only
+  // when there is something waiting.
+  const pending = data.tasteTrack?.reviewEligible ?? 0;
+  const taste = pending > 0
+    ? `<li><span class="job">Taste queue</span><span class="when"><a href="/taste">${pending} waiting</a></span></li>`
+    : "";
+
+  return `
+<section class="upkeep" id="section-upkeep" aria-labelledby="upkeep-label">
+  <div class="yard-label"><h2 id="upkeep-label">Upkeep</h2></div>
+  <ul class="upkeep-list">${jobs}${cost}${taste}</ul>
+</section>`;
+}
+
+/**
+ * Section shell: one heading language for every band below the yard.
+ * `aside` is author-written markup, never user content — callers escape
+ * anything interpolated into it themselves.
+ *
+ * The title is a real `h2` carrying the section's accessible name. It was a
+ * span in a div, which looked identical and left six major sections with no
+ * heading and no name — the page's only real headings came from briefing
+ * markdown, at 14px, below body size.
+ */
+function band(id: string, title: string, aside: string, body: string): string {
+  return `
+<section class="band" id="section-${id}" aria-labelledby="${id}-label">
+  <div class="yard-label">
+    <h2 id="${id}-label">${escapeHtml(title)}</h2>
+    ${aside ? `<span class="yard-key">${aside}</span>` : ""}
+  </div>
+  ${body}
+</section>`;
+}
+
+/**
+ * The briefing, condensed: the headline carries it, the body reads beneath.
+ * It no longer leads the page — prose cannot be scanned, and the yard
+ * answers "what needs me" faster than a paragraph can.
+ *
+ * The body is one grid, not one column. The briefing's own shape is a lede
+ * plus a per-project block per colony, so the per-project blocks sit side by
+ * side on the same track the work band and the ticket shortlist already use,
+ * and the cross-project prose spans. A single 72ch column inside a 1280px
+ * page left half the band empty and pushed "what needs your attention" three
+ * thousand pixels down.
+ *
+ * Tagging is the same pass in two shapes — project headings become sections,
+ * project-led bullets become tagged rows — so the filter reaches the text and
+ * not just the tables.
+ */
+export function renderBriefingBand(data: DashboardData): string {
+  const b = data.todayBriefing;
+  if (!b) return "";
+  // Drop the artifact's own H1 (the band already carries the date) and the
+  // "## Headline" label above the lede. The label is an eyebrow over a
+  // heading — the sentence beneath it is self-evidently the headline, and
+  // naming it costs a line and says nothing. The briefing template still
+  // writes it because the section names are how the generator is steered;
+  // stripping it here keeps that contract intact and the page clean.
+  const body = b.body
+    .replace(/^#\s+.*\n?/, "")
+    .replace(/^\s*##\s+headline\s*\n/i, "")
+    .trim();
+  const projectIds = data.projects.map((p) => p.id);
+  const html = tagProjectBullets(tagProjectSections(md(body), projectIds), projectIds);
+  return band(
+    "briefing",
+    "Briefing",
+    escapeHtml(longDate(b.date)),
+    `<div class="briefing-body">${html}</div>`,
+  );
+}
+
+/**
+ * Watches, inline. The full control surface lives on /watches; this is what
+ * each watch last actually said, which is the part worth a morning read.
+ */
+export function renderWatchesBand(w: DashboardData["watches"]): string {
+  if (!w || w.rows.length === 0) return "";
+
+  const spoke = (w.latest ?? []).filter((c) => !c.quiet && !c.dropped && c.output);
+  const aside = w.tickStale ? "tick stale" : `${w.rows.length} watching`; // author text
+
+  if (spoke.length === 0) {
+    return band("watches", "Watches", aside, `<p class="band-none">Every watch chose silence.</p>`);
+  }
+
+  const cards = spoke
+    .map((c) => {
+      // A watch is qualified `project/name` when it is scoped to one colony,
+      // and bare when it reasons across the whole apiary. Only the scoped ones
+      // belong to the project filter; the fleet's standing questions are not
+      // any single project's, and hiding them would be a lie.
+      const scope = c.watch.includes("/") ? c.watch.slice(0, c.watch.indexOf("/")) : null;
+      const projectAttr = scope ? ` data-project="${escapeHtml(scope)}"` : "";
+      return `
+    <li class="watch-card"${projectAttr}>
+      <div class="watch-head">
+        <span class="watch-name">${escapeHtml(c.watch)}</span>
+        <span class="watch-when">${escapeHtml(relativeTime(c.at))}</span>
+      </div>
+      <div class="prose">${md(c.output ?? "")}</div>
+    </li>`;
+    })
+    .join("");
+
+  return band("watches", "Watches", aside, `<ol class="watch-list">${cards}</ol>`);
+}
+
+/**
+ * Stores: everything HIVE knows, in one place.
+ *
+ * Replaces three separate sections — recent memory, open questions, and
+ * promotion candidates — that were three views of one store and read as
+ * three unrelated tables.
+ */
+export function renderStores(data: DashboardData): string {
+  const recent = (data.recentMemory ?? []).slice(0, 12);
+  const questions = (data.openQuestions ?? []).slice(0, 8);
+  const candidates = data.promotionCandidates ?? [];
+
+  if (recent.length === 0 && questions.length === 0 && candidates.length === 0) return "";
+
+  const total = (data.memoryStats ?? []).reduce((a, s) => a + s.total, 0);
+
+  const admitted = recent.length === 0 ? "" : `
+    <div class="stores-col">
+      <h3>Lately admitted</h3>
+      <ul class="entry-list">${recent
+        .map(
+          (e) => `<li data-project="${escapeHtml(e.projectId)}">
+            <span class="entry-meta">${escapeHtml(e.projectId)} &middot; ${escapeHtml(e.section)}</span>
+            <span class="entry-text">${escapeHtml(e.text)}</span>
+          </li>`,
+        )
+        .join("")}</ul>
+    </div>`;
+
+  const asked = questions.length === 0 ? "" : `
+    <div class="stores-col">
+      <h3>Still open</h3>
+      <ul class="entry-list">${questions
+        .map(
+          (q) => `<li data-project="${escapeHtml(q.projectId)}">
+            <span class="entry-meta">${escapeHtml(q.projectId)}</span>
+            <span class="entry-text">${escapeHtml(q.text)}</span>
+          </li>`,
+        )
+        .join("")}</ul>
+    </div>`;
+
+  const ready = candidates.length === 0 ? "" : `
+    <div class="stores-col">
+      <h3>Ready to promote</h3>
+      <ul class="entry-list">${candidates
+        .slice(0, 6)
+        .map(
+          (c) => `<li data-project="${escapeHtml(c.projectId)}">
+            <span class="entry-meta">${escapeHtml(c.projectId)} &middot; recalled ${c.recallCount}&times;</span>
+            <span class="entry-text">${escapeHtml(c.text)}</span>
+          </li>`,
+        )
+        .join("")}</ul>
+    </div>`;
+
+  return band(
+    "stores",
+    "Stores",
+    `${total.toLocaleString("en-US")} entries`,
+    `<div class="stores">${admitted}${asked}${ready}</div>`,
+  );
+}
+
 export function renderMasthead(data: DashboardData): string {
   const tickerItems = data.health
     .map((h: HealthEntry) => {
@@ -231,21 +631,36 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
         ),
       ].join("");
 
-  const jumpLinks = [
-    ["#section-briefing", "Briefing"],
-    ...(data.propose ? [["#section-propose", "Propose"] as [string, string]] : []),
-    ["#section-projects", "Projects"],
-    ["#section-inboxes", "Inbox"],
-    ["#section-reflections", "Reflections"],
-    ["#section-runs", "Dispatch"],
-    ["#section-archive", "Archive"],
-    ["/tickets", "Tickets"],
-    ["/runs", "Runs"],
+  // Anchors for the sections this page actually renders — and only those. The
+  // condense pass cut projects, inbox, reflections and dispatch off the page
+  // but left their links here, so five of seven jumps landed nowhere. Each
+  // band renders conditionally, so each link asks the same question the band
+  // does. Pages follow the sections, after a separator, named for where they
+  // go rather than for the band they duplicate.
+  const hasStores =
+    (data.recentMemory ?? []).length > 0 ||
+    (data.openQuestions ?? []).length > 0 ||
+    (data.promotionCandidates ?? []).length > 0;
+  const sections: [boolean, string, string][] = [
+    [true, "#section-yard", "Yard"],
+    [(data.activity ?? []).some((a) => a.commits > 0), "#section-work", "Work"],
+    [!!data.todayBriefing, "#section-briefing", "Briefing"],
+    [(data.watches?.rows.length ?? 0) > 0, "#section-watches", "Watches"],
+    [true, "#section-tickets", "Tickets"],
+    [hasStores, "#section-stores", "Stores"],
+    [data.briefings.length > 0, "#section-archive", "Archive"],
+  ];
+  const pages: [string, string][] = [
+    ["/tickets", "Full board"],
     ["/taste", "Taste"],
-    ["/watches", "Watches"],
-  ]
-    .map(([href, label]) => `<a href="${href}">${label}</a>`)
-    .join("");
+    ["/watches", "All watches"],
+  ];
+  const anchor = ([href, label]: [string, string]) => `<a href="${href}">${label}</a>`;
+  const jumpLinks = [
+    ...sections.filter(([shown]) => shown).map(([, href, label]) => anchor([href, label])),
+    `<span class="nav-sep">&middot;</span>`,
+    ...pages.map(anchor),
+  ].join("");
 
   const filterGroup = pills
     ? `<div class="sticky-filter">
@@ -457,9 +872,8 @@ export function renderInboxes(inboxes: InboxEntry[], c: RenderContext): string {
       const when = entry.mtime ? relativeTime(entry.mtime) : "—";
       const actions = c.interactive
         ? `<div class="row-actions">
-            ${actionButton(c, "promote", { "data-action": "inbox-promote", "data-project": entry.projectId })}
-            ${actionButton(c, "dispatch", { "data-action": "inbox-dispatch", "data-project": entry.projectId })}
-            ${actionButton(c, "ack", { "data-action": "inbox-ack", "data-project": entry.projectId, "data-confirm": "true" })}
+            ${actionButton(c, "make ticket", { "data-action": "inbox-promote", "data-project": entry.projectId })}
+            ${actionButton(c, "dismiss", { "data-action": "inbox-ack", "data-project": entry.projectId, "data-confirm": "true" })}
           </div>`
         : "";
       return `<div class="inbox-entry" data-project="${projectId}">
@@ -497,8 +911,7 @@ function renderTicketRow(t: TicketCitation, c: RenderContext): string {
   const actions = c.interactive
     ? `<div class="row-actions">
         ${actionButton(c, "start", { "data-action": "ticket-start", "data-id": t.id, "data-project": t.projectId })}
-        ${actionButton(c, "dispatch", { "data-action": "ticket-dispatch-run", "data-id": t.id, "data-project": t.projectId })}
-        ${actionButton(c, "note", { "data-action": "ticket-note", "data-id": t.id, "data-project": t.projectId })}
+        ${actionButton(c, "add note", { "data-action": "ticket-note", "data-id": t.id, "data-project": t.projectId })}
         ${actionButton(c, "close", { "data-action": "ticket-close", "data-id": t.id, "data-project": t.projectId, "data-confirm": "true" })}
       </div>`
     : "";
@@ -516,44 +929,90 @@ function renderTicketRow(t: TicketCitation, c: RenderContext): string {
 </div>`;
 }
 
+/** Per project, on the main page. The full board lives at /tickets. */
+const TICKETS_PER_PROJECT = 5;
+
+/** State first, then priority, then how recently anyone touched it. */
+function ticketWeight(t: TicketCitation, state: number): number[] {
+  return [state, t.priority, t.updatedDays ?? Number.POSITIVE_INFINITY];
+}
+
+/**
+ * Tickets, capped.
+ *
+ * The old band rendered every open ticket across every project — 164 rows
+ * on this machine, which is a listing, not a briefing. Each colony shows the
+ * few that would actually be picked up next; the whole board is one click
+ * away and does not need reprinting here.
+ */
 export function renderTickets(buckets: TicketBuckets, c: RenderContext): string {
-  const total = buckets.ready.length + buckets.inProgress.length + buckets.blocked.length;
+  const tagged = [
+    ...buckets.inProgress.map((t) => ({ t, state: 0, kind: "progress" as const })),
+    ...buckets.ready.map((t) => ({ t, state: 1, kind: "ready" as const })),
+    ...buckets.blocked.map((t) => ({ t, state: 2, kind: "blocked" as const })),
+  ];
+  const total = tagged.length;
+
   if (total === 0) {
-    return `
-<section class="section" id="section-tickets">
-  <div class="section-head"><h2>Tickets</h2><span class="kicker">None open</span></div>
-  <hr class="amber"/>
-  <p>Clean desk.</p>
-</section>`;
+    return band("tickets", "Tickets", "none open", `<p class="band-none">Clean desk.</p>`);
   }
 
-  const renderGroup = (label: string, kind: "ready" | "progress" | "blocked", items: TicketCitation[]): string => {
-    if (items.length === 0) {
-      return `<div class="ticket-group">
-  <h3>${escapeHtml(label)}</h3>
-  <div class="ticket-row" style="color: var(--muted); font-style: italic;">None.</div>
-</div>`;
-    }
-    const rows = items.map((t) => renderTicketRow(t, c)).join("\n");
-    return `<div class="ticket-group">
-  <h3>${escapeHtml(label)} <span class="status-tag ${kind}">${items.length}</span></h3>
-${rows}
-</div>`;
-  };
+  const byProject = new Map<string, typeof tagged>();
+  for (const row of tagged) {
+    const list = byProject.get(row.t.projectId) ?? [];
+    list.push(row);
+    byProject.set(row.t.projectId, list);
+  }
 
-  return `
-<section class="section" id="section-tickets">
-  <div class="section-head">
-    <h2>Tickets</h2>
-    <span class="kicker">${total} Active across all projects</span>
-  </div>
-  <hr class="amber"/>
-  <div class="ticket-groups">
-    ${renderGroup("In Progress", "progress", buckets.inProgress)}
-    ${renderGroup("Ready", "ready", buckets.ready)}
-    ${renderGroup("Blocked", "blocked", buckets.blocked)}
-  </div>
-</section>`;
+  // Busiest queue first — the same instinct the yard sorts on.
+  const projects = [...byProject.entries()].sort(
+    (a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]),
+  );
+
+  const columns = projects
+    .map(([projectId, rows]) => {
+      const sorted = [...rows].sort((a, b) => {
+        const wa = ticketWeight(a.t, a.state);
+        const wb = ticketWeight(b.t, b.state);
+        for (let i = 0; i < wa.length; i++) if (wa[i] !== wb[i]) return wa[i] - wb[i];
+        return a.t.id.localeCompare(b.t.id);
+      });
+      const shown = sorted.slice(0, TICKETS_PER_PROJECT);
+      const rest = sorted.length - shown.length;
+
+      const items = shown
+        .map(
+          ({ t, kind }) => `<li class="tk tk--${kind}">
+        <span class="tk-id">${escapeHtml(t.id)}</span>
+        <span class="tk-title">${escapeHtml(t.title)}</span>
+        <span class="tk-pri">P${t.priority}</span>
+        <span class="tk-actions">
+          ${actionButton(c, "start", { "data-action": "ticket-start", "data-id": t.id, "data-project": t.projectId })}
+          ${actionButton(c, "note", { "data-action": "ticket-note", "data-id": t.id, "data-project": t.projectId })}
+          ${actionButton(c, "close", { "data-action": "ticket-close", "data-id": t.id, "data-project": t.projectId, "data-confirm": "true" })}
+        </span>
+      </li>`,
+        )
+        .join("");
+
+      const more = rest > 0
+        ? `<li class="tk-more"><a href="/tickets#project=${encodeURIComponent(projectId)}">${rest} more</a></li>`
+        : "";
+
+      return `
+    <div class="tk-col" data-project="${escapeHtml(projectId)}">
+      <h3>${escapeHtml(projectId)} <span class="tk-count">${sorted.length}</span></h3>
+      <ul class="tk-list">${items}${more}</ul>
+    </div>`;
+    })
+    .join("");
+
+  return band(
+    "tickets",
+    "Tickets",
+    `${total} active &middot; <a href="/tickets">full board</a>`,
+    `<div class="tk-grid">${columns}</div>`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -712,24 +1171,7 @@ export function renderTicketsPage(data: TicketsPageData, _c: RenderContext): str
 export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOptions = {}): string {
   const c = ctx(opts);
   const today = data.generatedAt.slice(0, 10);
-  const navItems: Array<[string, string]> = [
-    ["BRIEFING", "/"],
-    ["PROJECTS", "/#section-projects"],
-    ["INBOX", "/#section-inboxes"],
-    ["REFLECTIONS", "/#section-reflections"],
-    ["DISPATCH", "/#section-dispatch"],
-    ["ARCHIVE", "/#section-archive"],
-    ["TICKETS", "/tickets"],
-    ["RUNS", "/runs"],
-    ["TASTE", "/taste"],
-    ["WATCHES", "/watches"],
-  ];
-  const nav = navItems
-    .map(([label, href]) => {
-      const active = href === "/tickets" ? ' class="nav-active"' : "";
-      return `<a href="${href}"${active}>${label}</a>`;
-    })
-    .join(' <span class="nav-sep">·</span> ');
+  const nav = renderPageNav("/tickets");
 
   const scriptBlock = c.interactive ? `<script>${DASHBOARD_JS}</script>` : "";
   const filterBar = c.interactive ? renderTicketsFilterBar(data.projectIds) : "";
@@ -1013,18 +1455,6 @@ ${counts}
 // /taste — the durable taste library (its own page, like /tickets and /runs)
 // ---------------------------------------------------------------------------
 
-const TASTE_NAV: Array<[string, string]> = [
-  ["BRIEFING", "/"],
-  ["PROJECTS", "/#section-projects"],
-  ["INBOX", "/#section-inboxes"],
-  ["REFLECTIONS", "/#section-reflections"],
-  ["DISPATCH", "/#section-dispatch"],
-  ["TICKETS", "/tickets"],
-  ["RUNS", "/runs"],
-  ["TASTE", "/taste"],
-    ["WATCHES", "/watches"],
-];
-
 /** A single taste unit — rule scannable, the WHY behind a disclosure. */
 function renderTasteUnit(u: TastePageUnit): string {
   const glob = u.glob ? `:${escapeHtml(u.glob)}` : "";
@@ -1181,10 +1611,7 @@ function renderTastePageBody(data: TastePageData): string {
 export function renderTastePageDocument(data: TastePageData, opts: RenderOptions = {}): string {
   const c = ctx(opts);
   const today = data.generatedAt.slice(0, 10);
-  const nav = TASTE_NAV.map(([label, href]) => {
-    const active = href === "/taste" ? ' class="nav-active"' : "";
-    return `<a href="${href}"${active}>${label}</a>`;
-  }).join(' <span class="nav-sep">·</span> ');
+  const nav = renderPageNav("/taste");
   const scriptBlock = c.interactive ? `<script>${DASHBOARD_JS}</script>` : "";
 
   return `<!DOCTYPE html>
@@ -1268,17 +1695,15 @@ export function renderArchive(data: DashboardData, c: RenderContext): string {
     })
     .join("\n");
 
-  return `
-<section class="section" id="section-archive">
-  <div class="section-head">
-    <h2>The Archive</h2>
-    <span class="kicker">Past ${Math.min(limit, data.briefings.length)} days · click a date to load</span>
-  </div>
-  <hr class="amber"/>
-  <div class="archive">
-${cards}
-  </div>
-</section>`;
+  // The last band still wearing the old world: a section-head and kicker where
+  // every sibling uses the yard label, which made it read as a different page
+  // stapled to the bottom of this one.
+  return band(
+    "archive",
+    "Archive",
+    `past ${Math.min(limit, data.briefings.length)} days &middot; click a date to open`,
+    `<div class="archive">\n${cards}\n</div>`,
+  );
 }
 
 export function renderFooter(data: DashboardData): string {
@@ -1298,21 +1723,14 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
 
   const body = [
     renderStickyNav(data, c),
-    renderMasthead(data),
+    renderYard(data),
     `<main class="page">`,
-    renderTopThree(data),
-    renderBriefings(data),
-    renderPropose(data.propose),
-    renderProjects(data, c),
-    renderInboxes(data.inboxes, c),
-    renderReflections(data.latestReflection),
-    renderOpenQuestions(data.openQuestions),
-    renderRecentMemory(data.recentMemory),
-    renderRunUsage(data.runUsage),
-    renderTasteTrack(data.tasteTrack),
-    renderRuns(data.runs, c),
-    renderArchive(data, c),
+    renderBriefingBand(data),
+    renderWatchesBand(data.watches),
     renderTickets(data.tickets, c),
+    renderStores(data),
+    renderArchive(data, c),
+    renderUpkeep(data),
     renderFooter(data),
     c.interactive ? `<div class="snackbar" id="snackbar" role="status" aria-live="polite"></div>` : "",
     `</main>`,
@@ -1326,10 +1744,26 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <meta name="generator" content="hive dashboard"/>
-<title>HIVE · The Morning Edition · ${escapeHtml(shortDate(data.today))}</title>
+<title>HIVE · The Inspection · ${escapeHtml(shortDate(data.today))}</title>
 <style>${DASHBOARD_CSS}</style>
 </head>
 <body>
+<!--
+THESIS: An inspection ends in a verdict per colony, not a log. Refuses the
+equal-weight section stack that made the old page unscannable.
+OWN-WORLD: Weathered chalk ground; painted hive bodies in cobalt, verdigris,
+violet, slate, olive; oxide red reserved for escalation and never decorative;
+stencil caps; tabular figures. No hexagon, no honey-amber, no serif broadsheet.
+STORY: The reader learns which projects want them before reading a single
+number, then reads why, then opens the one that matters.
+FIRST VIEWPORT: Wordmark and dateline top-left; one sentence counting the
+colonies that want you; beneath it a baseline row of hives standing at the
+height their stores earn, brood chamber at the base with an entrance sized to
+traffic, verdict stencilled on the plate under each.
+FORM: The Apiary Record; candidate 6 of 7; seed key 2570ec1e.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the
+finish review, the verdict, and DESIGN.md
+-->
 ${body}
 ${scriptBlock}
 </body>

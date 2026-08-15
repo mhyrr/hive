@@ -163,18 +163,16 @@ describe("dashboard server end-to-end", () => {
 
   // --- Nav link presence ---
 
-  test("/tickets page includes RUNS nav link", async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/tickets`);
-    const body = await res.text();
-    expect(body).toContain('href="/runs"');
-    expect(body).toContain("RUNS");
-  });
-
-  test("/ home page includes Runs jump link", async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/`);
-    const body = await res.text();
-    expect(body).toContain('href="/runs"');
-    expect(body).toContain("Runs");
+  // /runs is served and still reachable from any ticket that cites a run, but
+  // it is not a destination anyone navigates to on purpose, so it holds no tab.
+  test("every page carries the same four-tab nav, and none of them is RUNS", async () => {
+    for (const path of ["/", "/tickets", "/taste", "/watches"]) {
+      const body = await (await fetch(`http://127.0.0.1:${port}${path}`)).text();
+      expect(body).toContain('href="/tickets"');
+      expect(body).toContain('href="/taste"');
+      expect(body).toContain('href="/watches"');
+      expect(body).not.toContain('href="/runs"');
+    }
   });
 
   // --- /runs deep content assertions (TK-091) ---

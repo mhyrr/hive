@@ -83,6 +83,8 @@ html { scroll-padding-top: 84px; }
   color: var(--amber);
   border-bottom-color: var(--amber);
 }
+/* Left of it, sections of this page; right of it, other pages. */
+.jump-links .nav-sep { color: var(--faint); }
 .sticky-filter {
   display: flex;
   align-items: baseline;

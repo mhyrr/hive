@@ -41,6 +41,7 @@ import {
   type ArgvBuild,
 } from "./actions";
 import { resolveHiveBin, HiveBinNotFoundError } from "./hive-bin";
+import { renderPageNav } from "./html";
 import { renderDashboard, renderTicketsPageDocument, renderTastePageDocument } from "./render";
 import { collectDashboardData, collectTicketsPage, collectTastePage } from "./collect";
 import { collectWatchesPage, renderWatchesPageDocument } from "./watches-page";
@@ -447,16 +448,7 @@ function escapeHtml(s: string): string {
 
 /** Broadsheet-styled 404 page for unknown run IDs. */
 function render404(id: string): string {
-  const navItems: Array<[string, string]> = [
-    ["BRIEFING", "/"],
-    ["TICKETS", "/tickets"],
-    ["RUNS", "/runs"],
-    ["TASTE", "/taste"],
-    ["WATCHES", "/watches"],
-  ];
-  const nav = navItems
-    .map(([label, href]) => `<a href="${href}">${label}</a>`)
-    .join(' <span class="nav-sep">·</span> ');
+  const nav = renderPageNav("");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -484,24 +476,7 @@ function render404(id: string): string {
 
 /** Wrap a per-run fragment in a full HTML document shell. */
 function renderRunDetailDocument(id: string, fragmentHtml: string): string {
-  const navItems: Array<[string, string]> = [
-    ["BRIEFING", "/"],
-    ["PROJECTS", "/#section-projects"],
-    ["INBOX", "/#section-inboxes"],
-    ["REFLECTIONS", "/#section-reflections"],
-    ["DISPATCH", "/#section-dispatch"],
-    ["ARCHIVE", "/#section-archive"],
-    ["TICKETS", "/tickets"],
-    ["RUNS", "/runs"],
-    ["TASTE", "/taste"],
-    ["WATCHES", "/watches"],
-  ];
-  const nav = navItems
-    .map(([label, href]) => {
-      const active = href === "/runs" ? ' class="nav-active"' : "";
-      return `<a href="${href}"${active}>${label}</a>`;
-    })
-    .join(' <span class="nav-sep">·</span> ');
+  const nav = renderPageNav("/runs");
 
   return `<!DOCTYPE html>
 <html lang="en">

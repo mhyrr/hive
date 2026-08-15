@@ -85,9 +85,33 @@ Smaller surfaces — reach for them when a project needs them.
 
 - **Multi-model council.** Send one question to Claude, GPT, Gemini, and local models in parallel; the current agent chairs and synthesizes agreement and disagreement. Standard or adversarial-dialectic modes. `hive council "<question>"`. Inspired by [Perplexity](https://perplexity.ai/).
 - **Heartbeat & autonomous dispatch.** A stateless agent wakes on a timer, checks project state behind a deterministic trigger gate (no changes, no model call, no cost), and can dispatch well-specified work to a background executor in a git worktree that plans, builds, tests, and merges. `hive dispatch "<goal>"`, `hive ps`, `hive kill`. Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw).
-- **Morning Edition dashboard.** A single-page broadsheet pulling health, tickets, runs, recent memory, and the morning briefing into one surface — a static `~/.hive/dashboard/index.html` or an interactive server at `127.0.0.1:7777`. A `/taste` page renders the durable taste library. `hive dashboard`. See [docs/dashboard.md](docs/dashboard.md).
+- **The dashboard.** One page that opens with a verdict per project instead of a log — see [The Dashboard](#the-dashboard) below. A static `~/.hive/dashboard/index.html` or an interactive server at `127.0.0.1:7777`. `hive dashboard`. See [docs/dashboard.md](docs/dashboard.md).
 - **Language stacks.** Domain-knowledge bundles — Iron Laws, patterns, idioms — packaged as Claude Code skills and auto-detected per project (`mix.exs` → elixir, `package.json` → typescript). Ships **elixir** and **typescript**; `hive stack init <name>` scaffolds your own. Elixir content from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix), TypeScript from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills) (both MIT).
 - **Local MCP server.** The consistency layer that exposes memory, tickets, and council to every harness — markdown underneath, no database.
+
+## The Dashboard
+
+Every night HIVE inspects the projects it tracks. The dashboard is the
+inspection report, and it opens with the answer: which projects want you
+today, and why.
+
+<img src="img/dashboard.png" alt="The HIVE dashboard: the wordmark, then in large type '9 of 14 colonies need you today', then a yard of painted hive boxes standing at different heights on a shared baseline — each labelled with a verdict (NEEDS YOU, QUEENLESS, ACTIVE, WAITING, QUIET), a one-line reason, and its ticket and memory counts" width="900">
+
+The whole first screen is that answer and nothing else. Each project is a
+colony: it stands as tall as its accumulated memory, its entrance at the
+base is as wide as its ticket traffic, and the plate underneath carries
+the verdict the night reached with the reason it reached it. Painted means
+look at me; unpainted pine means fine. Height and width are data, not
+decoration, so the yard reads as magnitude before it reads as text.
+
+Below the yard: what actually landed (commit subjects as people wrote
+them), the morning briefing set in columns, whatever the watches said
+overnight, a five-per-project ticket shortlist, the memory store, and 30
+days of past briefings. Click any colony to narrow the whole page to that
+project. `/tickets`, `/taste` and `/watches` are their own pages.
+
+The design system it was built against is recorded in
+[DESIGN.md](DESIGN.md).
 
 ## Quick Start
 

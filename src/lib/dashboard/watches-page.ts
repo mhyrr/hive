@@ -21,7 +21,7 @@ import {
 import { latestInvocations, type WatchInvocation } from "../watch-log";
 import { freshEntry, loadWatchState, usageSince } from "../watch-state";
 import { clampAutonomy, readAutonomyCeiling, NO_SIGNAL } from "../watch-run";
-import { escapeHtml, md } from "./html";
+import { escapeHtml, md, renderPageNav } from "./html";
 import { DASHBOARD_CSS } from "./styles";
 
 // ---------------------------------------------------------------------------
@@ -191,20 +191,9 @@ export async function collectWatchesPage(paths: HivePaths): Promise<WatchesPageD
 // Render
 // ---------------------------------------------------------------------------
 
-const WATCHES_NAV: Array<[string, string]> = [
-  ["BRIEFING", "/"],
-  ["TICKETS", "/tickets"],
-  ["RUNS", "/runs"],
-  ["TASTE", "/taste"],
-  ["WATCHES", "/watches"],
-];
-
 /** Nav strip for the watch pages; `active` marks the current href. */
 export function renderWatchesNav(active: string): string {
-  return WATCHES_NAV.map(([label, href]) => {
-    const on = href === active ? ' class="nav-active"' : "";
-    return `<a href="${href}"${on}>${label}</a>`;
-  }).join(' <span class="nav-sep">·</span> ');
+  return renderPageNav(active);
 }
 
 /** URL for a watch's detail page. Qualified names carry `/`, which is a real

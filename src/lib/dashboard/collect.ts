@@ -22,6 +22,8 @@ import {
   type MemorySection,
 } from "../memory";
 import { loadUsageSummary, formatUsd } from "../pricing";
+import { collectActivity, type ProjectActivity } from "./activity";
+import { collectWatchesPage, type WatchesPageData } from "./watches-page";
 import {
   collectRuns as collectRunsPage,
   runsByTicket as buildRunsByTicket,
@@ -58,6 +60,9 @@ export type ProjectCard = {
     closed: number;
     byPriority: Record<TicketPriority, number>;
   };
+  /** Open/in-progress tickets touched inside TICKET_MOVEMENT_DAYS. Momentum,
+   *  not backlog: a queue nobody has touched says the opposite of a live one. */
+  ticketsTouched: number;
   inboxMtime: string | null;
 };
 
@@ -81,6 +86,10 @@ export type TicketCitation = {
   tags: string[];
   depends: string[];
   ageDays: number;
+  /** Days since last touched. Age says when it was filed; this says whether
+   *  anyone still cares. Optional so citations from lighter collectors still
+   *  typecheck; sorters treat a missing value as cold. */
+  updatedDays?: number;
   // Optional. Populated by collectTicketsPage so cards can expand inline.
   // Empty / unset for collectors that only need summary citations.
   body?: string;
@@ -208,6 +217,12 @@ export type ProposeEntry = {
 };
 
 export type DashboardData = {
+  /** Projects with commits inside the activity window, busiest first. */
+  activity: ProjectActivity[];
+  /** Whole-store memory totals per project. Not the recentMemory slice. */
+  memoryStats: MemoryStat[];
+  /** Watch state and the last thing each watch actually said. */
+  watches: WatchesPageData;
   generatedAt: string;
   volumeNumber: number;     // count of briefings (proxy for "days since install")
   today: string;            // YYYY-MM-DD (from latest briefing or system)
@@ -356,6 +371,13 @@ export async function collectProjects(paths: HivePaths): Promise<ProjectCard[]> 
       counts.byPriority[t.priority] = (counts.byPriority[t.priority] ?? 0) + 1;
     }
 
+    const movementCutoff = Date.now() - TICKET_MOVEMENT_DAYS * 86_400_000;
+    const ticketsTouched = tickets.filter((t) => {
+      if (t.status === "closed") return false;
+      const at = Date.parse(t.updated);
+      return !Number.isNaN(at) && at >= movementCutoff;
+    }).length;
+
     // Inbox mtime
     const inboxStat = await safeStat(pp.inbox);
 
@@ -366,6 +388,7 @@ export async function collectProjects(paths: HivePaths): Promise<ProjectCard[]> 
       tickCount,
       lastResult,
       ticketCounts: counts,
+      ticketsTouched,
       inboxMtime: inboxStat ? inboxStat.mtime.toISOString() : null,
     });
   }
@@ -431,6 +454,7 @@ export async function collectTickets(paths: HivePaths): Promise<TicketBuckets> {
       tags: ticket.tags,
       depends: ticket.depends,
       ageDays: daysBetween(new Date(ticket.created), now),
+      updatedDays: daysBetween(new Date(ticket.updated), now),
     };
 
     if (ticket.status === "in_progress") {
@@ -773,6 +797,9 @@ export async function collectPromotionCandidates(paths: HivePaths): Promise<Prom
 // V1 cross-cutting widgets — open questions, recent memory, run usage.
 // ---------------------------------------------------------------------------
 
+/** How recently a ticket must have moved to count as momentum. */
+export const TICKET_MOVEMENT_DAYS = 7;
+
 const RECENT_MEMORY_WINDOW_DAYS = 7;
 const RECENT_MEMORY_LIMIT = 25;
 
@@ -791,6 +818,51 @@ export async function collectOpenQuestions(paths: HivePaths): Promise<OpenQuesti
       out.push({ projectId, text: q.text, tags: q.tags });
     }
   }
+  return out;
+}
+
+export type MemoryStat = {
+  projectId: string;
+  /** Live (non-superseded) entries across all four sections. */
+  total: number;
+  /** ISO date of the newest entry, or null when the colony has no memory. */
+  newestAt: string | null;
+};
+
+/**
+ * Per-project memory totals, read from the whole knowledge store.
+ *
+ * Deliberately NOT derived from `collectRecentMemory`, which is a 7-day,
+ * 25-entry display slice: a project with deep canon but a quiet week has no
+ * entries in that slice, and reading it as "knows nothing" is wrong. Stores
+ * are what the colony has accumulated, not what it added this week.
+ */
+export async function collectMemoryStats(paths: HivePaths): Promise<MemoryStat[]> {
+  const ids = await listProjects(paths.projectsDir);
+  const out: MemoryStat[] = [];
+
+  for (const projectId of ids) {
+    let snap;
+    let meta;
+    try {
+      snap = await readProjectMemorySnapshot(paths, projectId);
+      meta = await readMeta(paths, projectId);
+    } catch {
+      continue; // intentional: project memory unreadable
+    }
+
+    const all = [...snap.facts, ...snap.conventions, ...snap.decisions, ...snap.questions];
+    const live = all.filter((e) => !e.superseded);
+
+    let newestAt: string | null = null;
+    for (const e of live) {
+      const created = meta.entries[entryHash(e.text)]?.createdAt;
+      if (created && (!newestAt || created > newestAt)) newestAt = created;
+    }
+
+    out.push({ projectId, total: live.length, newestAt });
+  }
+
   return out;
 }
 
@@ -1153,7 +1225,7 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
+  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, watches, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -1163,6 +1235,8 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectPromotionCandidates(paths),
     collectOpenQuestions(paths),
     collectRecentMemory(paths),
+    collectMemoryStats(paths),
+    collectWatchesPage(paths),
     collectRunUsage(paths),
     collectTasteTrack(paths),
     collectLatestReflection(paths),
@@ -1171,8 +1245,10 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
 
   const today = briefings[0]?.date ?? new Date().toISOString().slice(0, 10);
   const todayBriefing = briefings.find((b) => b.date === today) ?? briefings[0] ?? null;
+  const activity = collectActivity(projects, today);
 
   return {
+    activity,
     generatedAt: new Date().toISOString(),
     volumeNumber: briefings.length,
     today,
@@ -1186,6 +1262,8 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     promotionCandidates,
     openQuestions,
     recentMemory,
+    memoryStats,
+    watches,
     runUsage,
     tasteTrack,
     latestReflection,
