@@ -216,7 +216,7 @@ describe("renderDashboard", () => {
 
   test("renders archive cards and marks today's card active", () => {
     const html = renderDashboard(baseData());
-    expect(html).toContain("The Archive");
+    expect(html).toContain("Archive");
     expect(html).toContain('data-archive-card="2026-04-17"');
     expect(html).toContain('data-archive-card="2026-04-16"');
     expect(html).toMatch(/archive-card active"[^>]*data-archive-card="2026-04-17"/);

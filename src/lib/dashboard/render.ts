@@ -1666,17 +1666,15 @@ export function renderArchive(data: DashboardData, c: RenderContext): string {
     })
     .join("\n");
 
-  return `
-<section class="section" id="section-archive">
-  <div class="section-head">
-    <h2>The Archive</h2>
-    <span class="kicker">Past ${Math.min(limit, data.briefings.length)} days · click a date to load</span>
-  </div>
-  <hr class="amber"/>
-  <div class="archive">
-${cards}
-  </div>
-</section>`;
+  // The last band still wearing the old world: a section-head and kicker where
+  // every sibling uses the yard label, which made it read as a different page
+  // stapled to the bottom of this one.
+  return band(
+    "archive",
+    "Archive",
+    `past ${Math.min(limit, data.briefings.length)} days &middot; click a date to open`,
+    `<div class="archive">\n${cards}\n</div>`,
+  );
 }
 
 export function renderFooter(data: DashboardData): string {

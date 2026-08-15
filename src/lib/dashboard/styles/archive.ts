@@ -17,10 +17,15 @@ export const ARCHIVE_CSS = `
   cursor: pointer;
   background: transparent;
 }
-.archive-card:hover { background: rgba(196, 123, 28, 0.06); }
+/* Honey-amber is the direction's binding anti-reference, and these two rules
+   were the last hardcoded #c47b1c on the page — the migration alias never
+   caught them because they never went through a token. Today's card is marked
+   the way the yard marks a colony: by paint on the object, not a wash behind
+   it. */
+.archive-card:hover { border-top-color: var(--hive-0); }
 .archive-card.active {
-  background: rgba(196, 123, 28, 0.1);
-  border-top: 2px solid var(--amber);
+  border-top: 2px solid var(--hive-0);
+  padding-top: 9px;
 }
 .archive-card .date {
   font-family: var(--mono);
