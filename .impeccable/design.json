@@ -8,110 +8,306 @@
         "role": "neutral",
         "displayName": "Weathered Chalk",
         "canonical": "oklch(91.8% 0.01 93.6)",
-        "tonalRamp": ["oklch(15% 0.01 93.6)", "oklch(25% 0.01 93.6)", "oklch(35% 0.01 93.6)", "oklch(45% 0.01 93.6)", "oklch(60% 0.01 93.6)", "oklch(72% 0.01 93.6)", "oklch(85% 0.01 93.6)", "oklch(95% 0.01 93.6)"]
+        "tonalRamp": [
+          "oklch(15% 0.01 93.6)",
+          "oklch(25% 0.01 93.6)",
+          "oklch(35% 0.01 93.6)",
+          "oklch(45% 0.01 93.6)",
+          "oklch(60% 0.01 93.6)",
+          "oklch(72% 0.01 93.6)",
+          "oklch(85% 0.01 93.6)",
+          "oklch(95% 0.01 93.6)"
+        ]
       },
       "chalk-deep": {
         "role": "neutral",
         "displayName": "Deep Chalk",
         "canonical": "oklch(87.8% 0.015 94.2)",
-        "tonalRamp": ["oklch(15% 0.015 94.2)", "oklch(25% 0.015 94.2)", "oklch(35% 0.015 94.2)", "oklch(45% 0.015 94.2)", "oklch(60% 0.015 94.2)", "oklch(72% 0.015 94.2)", "oklch(85% 0.015 94.2)", "oklch(95% 0.015 94.2)"]
+        "tonalRamp": [
+          "oklch(15% 0.015 94.2)",
+          "oklch(25% 0.015 94.2)",
+          "oklch(35% 0.015 94.2)",
+          "oklch(45% 0.015 94.2)",
+          "oklch(60% 0.015 94.2)",
+          "oklch(72% 0.015 94.2)",
+          "oklch(85% 0.015 94.2)",
+          "oklch(95% 0.015 94.2)"
+        ]
       },
       "ink": {
         "role": "neutral",
         "displayName": "Ink",
         "canonical": "oklch(19.5% 0.012 99.5)",
-        "tonalRamp": ["oklch(15% 0.012 99.5)", "oklch(25% 0.012 99.5)", "oklch(35% 0.012 99.5)", "oklch(45% 0.012 99.5)", "oklch(60% 0.012 99.5)", "oklch(72% 0.012 99.5)", "oklch(85% 0.012 99.5)", "oklch(95% 0.012 99.5)"]
+        "tonalRamp": [
+          "oklch(15% 0.012 99.5)",
+          "oklch(25% 0.012 99.5)",
+          "oklch(35% 0.012 99.5)",
+          "oklch(45% 0.012 99.5)",
+          "oklch(60% 0.012 99.5)",
+          "oklch(72% 0.012 99.5)",
+          "oklch(85% 0.012 99.5)",
+          "oklch(95% 0.012 99.5)"
+        ]
       },
       "ink-soft": {
         "role": "neutral",
         "displayName": "Soft Ink",
         "canonical": "oklch(34.8% 0.017 93.3)",
-        "tonalRamp": ["oklch(15% 0.017 93.3)", "oklch(25% 0.017 93.3)", "oklch(35% 0.017 93.3)", "oklch(45% 0.017 93.3)", "oklch(60% 0.017 93.3)", "oklch(72% 0.017 93.3)", "oklch(85% 0.017 93.3)", "oklch(95% 0.017 93.3)"]
+        "tonalRamp": [
+          "oklch(15% 0.017 93.3)",
+          "oklch(25% 0.017 93.3)",
+          "oklch(35% 0.017 93.3)",
+          "oklch(45% 0.017 93.3)",
+          "oklch(60% 0.017 93.3)",
+          "oklch(72% 0.017 93.3)",
+          "oklch(85% 0.017 93.3)",
+          "oklch(95% 0.017 93.3)"
+        ]
       },
       "muted": {
         "role": "neutral",
         "displayName": "Muted Stone",
         "canonical": "oklch(52.4% 0.022 93.8)",
-        "tonalRamp": ["oklch(15% 0.022 93.8)", "oklch(25% 0.022 93.8)", "oklch(35% 0.022 93.8)", "oklch(45% 0.022 93.8)", "oklch(60% 0.022 93.8)", "oklch(72% 0.022 93.8)", "oklch(85% 0.022 93.8)", "oklch(95% 0.022 93.8)"]
+        "tonalRamp": [
+          "oklch(15% 0.022 93.8)",
+          "oklch(25% 0.022 93.8)",
+          "oklch(35% 0.022 93.8)",
+          "oklch(45% 0.022 93.8)",
+          "oklch(60% 0.022 93.8)",
+          "oklch(72% 0.022 93.8)",
+          "oklch(85% 0.022 93.8)",
+          "oklch(95% 0.022 93.8)"
+        ]
       },
       "faint": {
         "role": "neutral",
         "displayName": "Faint Hairline",
         "canonical": "oklch(80.4% 0.02 93.7)",
-        "tonalRamp": ["oklch(15% 0.02 93.7)", "oklch(25% 0.02 93.7)", "oklch(35% 0.02 93.7)", "oklch(45% 0.02 93.7)", "oklch(60% 0.02 93.7)", "oklch(72% 0.02 93.7)", "oklch(85% 0.02 93.7)", "oklch(95% 0.02 93.7)"]
+        "tonalRamp": [
+          "oklch(15% 0.02 93.7)",
+          "oklch(25% 0.02 93.7)",
+          "oklch(35% 0.02 93.7)",
+          "oklch(45% 0.02 93.7)",
+          "oklch(60% 0.02 93.7)",
+          "oklch(72% 0.02 93.7)",
+          "oklch(85% 0.02 93.7)",
+          "oklch(95% 0.02 93.7)"
+        ]
       },
       "oxide": {
         "role": "primary",
         "displayName": "Oxide Red",
         "canonical": "oklch(56.4% 0.141 40.6)",
-        "tonalRamp": ["oklch(15% 0.141 40.6)", "oklch(25% 0.141 40.6)", "oklch(35% 0.141 40.6)", "oklch(45% 0.141 40.6)", "oklch(60% 0.141 40.6)", "oklch(72% 0.141 40.6)", "oklch(85% 0.141 40.6)", "oklch(95% 0.141 40.6)"],
+        "tonalRamp": [
+          "oklch(15% 0.141 40.6)",
+          "oklch(25% 0.141 40.6)",
+          "oklch(35% 0.141 40.6)",
+          "oklch(45% 0.141 40.6)",
+          "oklch(60% 0.141 40.6)",
+          "oklch(72% 0.141 40.6)",
+          "oklch(85% 0.141 40.6)",
+          "oklch(95% 0.141 40.6)"
+        ],
         "note": "Escalation only. Never decorative, never a surface, never a border."
       },
       "wood": {
         "role": "tertiary",
         "displayName": "Unpainted Pine",
         "canonical": "oklch(75.4% 0.068 80.1)",
-        "tonalRamp": ["oklch(15% 0.068 80.1)", "oklch(25% 0.068 80.1)", "oklch(35% 0.068 80.1)", "oklch(45% 0.068 80.1)", "oklch(60% 0.068 80.1)", "oklch(72% 0.068 80.1)", "oklch(85% 0.068 80.1)", "oklch(95% 0.068 80.1)"],
+        "tonalRamp": [
+          "oklch(15% 0.068 80.1)",
+          "oklch(25% 0.068 80.1)",
+          "oklch(35% 0.068 80.1)",
+          "oklch(45% 0.068 80.1)",
+          "oklch(60% 0.068 80.1)",
+          "oklch(72% 0.068 80.1)",
+          "oklch(85% 0.068 80.1)",
+          "oklch(95% 0.068 80.1)"
+        ],
         "note": "Overrides a colony's painted slot when the colony is quiet. Means 'fine', not 'muted decoration'."
       },
       "hive-0": {
         "role": "secondary",
         "displayName": "Cobalt (slot 0)",
         "canonical": "oklch(44.6% 0.137 256.9)",
-        "tonalRamp": ["oklch(15% 0.137 256.9)", "oklch(25% 0.137 256.9)", "oklch(35% 0.137 256.9)", "oklch(45% 0.137 256.9)", "oklch(60% 0.137 256.9)", "oklch(72% 0.137 256.9)", "oklch(85% 0.137 256.9)", "oklch(95% 0.137 256.9)"]
+        "tonalRamp": [
+          "oklch(15% 0.137 256.9)",
+          "oklch(25% 0.137 256.9)",
+          "oklch(35% 0.137 256.9)",
+          "oklch(45% 0.137 256.9)",
+          "oklch(60% 0.137 256.9)",
+          "oklch(72% 0.137 256.9)",
+          "oklch(85% 0.137 256.9)",
+          "oklch(95% 0.137 256.9)"
+        ]
       },
       "hive-1": {
         "role": "secondary",
         "displayName": "Verdigris (slot 1)",
         "canonical": "oklch(68.4% 0.099 165.6)",
-        "tonalRamp": ["oklch(15% 0.099 165.6)", "oklch(25% 0.099 165.6)", "oklch(35% 0.099 165.6)", "oklch(45% 0.099 165.6)", "oklch(60% 0.099 165.6)", "oklch(72% 0.099 165.6)", "oklch(85% 0.099 165.6)", "oklch(95% 0.099 165.6)"]
+        "tonalRamp": [
+          "oklch(15% 0.099 165.6)",
+          "oklch(25% 0.099 165.6)",
+          "oklch(35% 0.099 165.6)",
+          "oklch(45% 0.099 165.6)",
+          "oklch(60% 0.099 165.6)",
+          "oklch(72% 0.099 165.6)",
+          "oklch(85% 0.099 165.6)",
+          "oklch(95% 0.099 165.6)"
+        ]
       },
       "hive-2": {
         "role": "secondary",
         "displayName": "Violet (slot 2)",
         "canonical": "oklch(45.0% 0.12 310.4)",
-        "tonalRamp": ["oklch(15% 0.12 310.4)", "oklch(25% 0.12 310.4)", "oklch(35% 0.12 310.4)", "oklch(45% 0.12 310.4)", "oklch(60% 0.12 310.4)", "oklch(72% 0.12 310.4)", "oklch(85% 0.12 310.4)", "oklch(95% 0.12 310.4)"]
+        "tonalRamp": [
+          "oklch(15% 0.12 310.4)",
+          "oklch(25% 0.12 310.4)",
+          "oklch(35% 0.12 310.4)",
+          "oklch(45% 0.12 310.4)",
+          "oklch(60% 0.12 310.4)",
+          "oklch(72% 0.12 310.4)",
+          "oklch(85% 0.12 310.4)",
+          "oklch(95% 0.12 310.4)"
+        ]
       },
       "hive-3": {
         "role": "secondary",
         "displayName": "Slate Blue (slot 3)",
         "canonical": "oklch(70.8% 0.07 241.0)",
-        "tonalRamp": ["oklch(15% 0.07 241.0)", "oklch(25% 0.07 241.0)", "oklch(35% 0.07 241.0)", "oklch(45% 0.07 241.0)", "oklch(60% 0.07 241.0)", "oklch(72% 0.07 241.0)", "oklch(85% 0.07 241.0)", "oklch(95% 0.07 241.0)"]
+        "tonalRamp": [
+          "oklch(15% 0.07 241.0)",
+          "oklch(25% 0.07 241.0)",
+          "oklch(35% 0.07 241.0)",
+          "oklch(45% 0.07 241.0)",
+          "oklch(60% 0.07 241.0)",
+          "oklch(72% 0.07 241.0)",
+          "oklch(85% 0.07 241.0)",
+          "oklch(95% 0.07 241.0)"
+        ]
       },
       "hive-4": {
         "role": "secondary",
         "displayName": "Olive (slot 4)",
         "canonical": "oklch(60.7% 0.118 117.4)",
-        "tonalRamp": ["oklch(15% 0.118 117.4)", "oklch(25% 0.118 117.4)", "oklch(35% 0.118 117.4)", "oklch(45% 0.118 117.4)", "oklch(60% 0.118 117.4)", "oklch(72% 0.118 117.4)", "oklch(85% 0.118 117.4)", "oklch(95% 0.118 117.4)"]
+        "tonalRamp": [
+          "oklch(15% 0.118 117.4)",
+          "oklch(25% 0.118 117.4)",
+          "oklch(35% 0.118 117.4)",
+          "oklch(45% 0.118 117.4)",
+          "oklch(60% 0.118 117.4)",
+          "oklch(72% 0.118 117.4)",
+          "oklch(85% 0.118 117.4)",
+          "oklch(95% 0.118 117.4)"
+        ]
       }
     },
     "typographyMeta": {
       "display": {
         "displayName": "Stencil Wordmark",
-        "purpose": "The yard-head wordmark, once per page. NOTE: --stencil is a PLACEHOLDER system stack carrying a do-not-ship-as-is comment in base.ts; the voice wants a real embedded condensed face. Tracked on TK-142."
+        "purpose": "The yard-head wordmark, once per page. NOTE: --stencil is a PLACEHOLDER system stack carrying a do-not-ship-as-is comment in base.ts; the voice wants a real embedded condensed face. Tracked on TK-142.",
+        "fontSize": "40px"
       },
-      "headline": { "displayName": "Verdict Sentence", "purpose": "The one line that answers the morning before any data. Balanced wrap, 34ch cap, 22px below 860px." },
-      "title": { "displayName": "Stencil Caps", "purpose": "Names, verdicts, and section headings only. Never a sentence. 17/15/14/13px by rank." },
-      "body": { "displayName": "Record Body", "purpose": "Default reading text at 15px/1.55, tabular figures on at the root." },
-      "body-small": { "displayName": "Row Text", "purpose": "Ticket titles, briefing items, memory entries, work subjects." },
-      "label": { "displayName": "Mono Measure", "purpose": "Datelines, figures, counts, keys, upkeep, footer, action buttons. Uppercase except action buttons." }
+      "headline": {
+        "displayName": "Verdict Sentence",
+        "purpose": "The one line that answers the morning before any data. Balanced wrap, 34ch cap, 22px below 860px.",
+        "fontSize": "27px"
+      },
+      "title": {
+        "displayName": "Stencil Caps",
+        "purpose": "Names, verdicts, and section headings only. Never a sentence. 17/15/14/13px by rank.",
+        "fontSize": "15px"
+      },
+      "body": {
+        "displayName": "Record Body",
+        "purpose": "Default reading text at 15px/1.55, tabular figures on at the root.",
+        "fontSize": "15px"
+      },
+      "body-small": {
+        "displayName": "Row Text",
+        "purpose": "Ticket titles, briefing items, memory entries, work subjects.",
+        "fontSize": "13.5px"
+      },
+      "label": {
+        "displayName": "Mono Measure",
+        "purpose": "Datelines, figures, counts, keys, upkeep, footer, action buttons. Uppercase except action buttons.",
+        "fontSize": "10.5px"
+      },
+      "lede": {
+        "displayName": "Briefing Lede",
+        "purpose": "The briefing's first paragraph — the single sentence the night decided mattered. 62ch cap.",
+        "fontSize": "20px"
+      },
+      "scale": {
+        "_note": "The whole ramp, enumerated. Three tiers are ranked rather than single-valued: title runs 17/15/14/13 by how load-bearing the name is, body-small runs 13.5/12.5, the mono label tier runs 11/10.5/10. Plus the verdict sentence 22px compact step below 860px. Every font-size on the surface is one of these.",
+        "display": "40px",
+        "headline": "27px",
+        "headline-compact": "22px",
+        "lede": "20px",
+        "title-lg": "17px",
+        "title": "15px",
+        "body": "15px",
+        "title-sm": "14px",
+        "body-small": "13.5px",
+        "title-xs": "13px",
+        "body-fine": "12.5px",
+        "label-lg": "11px",
+        "label": "10.5px",
+        "label-sm": "10px"
+      }
     },
     "shadows": [],
     "motion": [
-      { "name": "colony-rise", "value": "scaleY(0.82) -> scaleY(1) over 620ms cubic-bezier(0.16, 1, 0.3, 1), transform-origin bottom center, animation-delay calc(var(--i) * 55ms), backwards", "purpose": "The page's single authored motion moment: colony stacks rise from the baseline once on load, staggered. Wrapped entirely in @media (prefers-reduced-motion: no-preference) — removed, not reduced." },
-      { "name": "state-fade", "value": "opacity 0.2s ease", "purpose": "Snackbar in/out and optimistic row pending state. Opacity only; no layout property is ever animated." },
-      { "name": "nav-underline", "value": "border-color 120ms, color 120ms", "purpose": "Jump-link hover in the sticky nav." }
+      {
+        "name": "colony-rise",
+        "value": "scaleY(0.82) -> scaleY(1) over 620ms cubic-bezier(0.16, 1, 0.3, 1), transform-origin bottom center, animation-delay calc(var(--i) * 55ms), backwards",
+        "purpose": "The page's single authored motion moment: colony stacks rise from the baseline once on load, staggered. Wrapped entirely in @media (prefers-reduced-motion: no-preference) — removed, not reduced."
+      },
+      {
+        "name": "state-fade",
+        "value": "opacity 0.2s ease",
+        "purpose": "Snackbar in/out and optimistic row pending state. Opacity only; no layout property is ever animated."
+      },
+      {
+        "name": "nav-underline",
+        "value": "border-color 120ms, color 120ms",
+        "purpose": "Jump-link hover in the sticky nav."
+      }
     ],
     "breakpoints": [
-      { "name": "yard", "value": "860px" },
-      { "name": "nav", "value": "900px" },
-      { "name": "columns", "value": "1100px" },
-      { "name": "narrow", "value": "760px" }
+      {
+        "name": "yard",
+        "value": "860px"
+      },
+      {
+        "name": "nav",
+        "value": "900px"
+      },
+      {
+        "name": "columns",
+        "value": "1100px"
+      },
+      {
+        "name": "narrow",
+        "value": "760px"
+      }
     ],
     "encodings": [
-      { "name": "colony-height", "value": "supers = 1 + round(stores * 4); stores = project memory entries / yard peak", "purpose": "Colony height encodes memory stores on one shared yard scale, never a per-card scale." },
-      { "name": "entrance-width", "value": "calc(6% + var(--traffic) * 62%); traffic = (open + inProgress tickets) / yard peak", "purpose": "The brood-chamber entrance slot encodes ticket traffic." },
-      { "name": "paint-threshold", "value": "weighted attention score >= 3", "purpose": "At or above the line a colony is painted its slot colour; below it, unpainted pine." }
+      {
+        "name": "colony-height",
+        "value": "supers = 1 + round(stores * 4); stores = project memory entries / yard peak",
+        "purpose": "Colony height encodes memory stores on one shared yard scale, never a per-card scale."
+      },
+      {
+        "name": "entrance-width",
+        "value": "calc(6% + var(--traffic) * 62%); traffic = (open + inProgress tickets) / yard peak",
+        "purpose": "The brood-chamber entrance slot encodes ticket traffic."
+      },
+      {
+        "name": "paint-threshold",
+        "value": "weighted attention score >= 3",
+        "purpose": "At or above the line a colony is painted its slot colour; below it, unpainted pine."
+      }
     ]
   },
   "components": [
@@ -192,17 +388,61 @@
       "One authored motion moment on the whole page."
     ],
     "rules": [
-      { "name": "The Oxide Reserve Rule", "body": "Oxide red is escalation and nothing else. If a proposed use of oxide could be replaced by ink or muted without losing an alarm, it is decoration and must be replaced. Test: cover every oxide pixel on a screen — everything you hid should be something you had to act on today.", "section": "colors" },
-      { "name": "The Unpainted Pine Rule", "body": "Paint is the attention signal. A colony below the paint threshold loses its slot colour and stands in bare wood; it is never additionally dimmed, greyed, or shrunk. Wood already reads as quiet, and stacking a second quiet-signal on it only muddies the seams.", "section": "colors" },
-      { "name": "The Stable Slot Rule", "body": "A project's painted colour is derived from its id, not from its position. Sorting the yard, filtering it, or adding a colony never reassigns anyone's paint.", "section": "colors" },
-      { "name": "The Stencil-For-Names Rule", "body": "The stencil face is for names, verdicts, and section headings only. It never sets a sentence, never sets body copy, and is always uppercase with its --stencil-tracking applied.", "section": "typography" },
-      { "name": "The Tabular Figures Rule", "body": "Every number on the surface is tabular (tnum), and any number the reader might compare down a column is mono. Figures read as measurements, not as prose.", "section": "typography" },
-      { "name": "The Answer-First Rule", "body": "The largest non-display type on the page is the verdict sentence, not a heading. Scale follows how load-bearing the sentence is, not where it sits in the document tree.", "section": "typography" },
-      { "name": "The Column-Box Rule", "body": "When blocks are self-contained and of unequal height, set them in column boxes and mark them break-inside: avoid. Reach for a grid only when the cells are genuinely a matrix.", "section": "layout" },
-      { "name": "The One-Column-When-Filtered Rule", "body": "Filtered to a single project, every column run collapses to columns: 1 at a 74ch cap. One survivor rattling around three tracks is not a layout.", "section": "layout" },
-      { "name": "The Data-Project Rule", "body": "The project filter is a pure [data-project] sweep. Anything project-scoped must carry data-project=\"<id>\" or it will silently survive every filter. Colonies carry the attribute too but are exempt from hiding: they are the control, and hiding them removes the way back out.", "section": "layout" },
-      { "name": "The No-Shadow Rule", "body": "There are no box-shadow values in this system. If an element needs to separate from its neighbour, give it a hairline, a tonal step, or space.", "section": "elevation" },
-      { "name": "The One Moment Rule", "body": "The page has exactly one authored motion: the colony stacks rise from the baseline once on load — scaleY(0.82) to 1 over 620ms on cubic-bezier(0.16, 1, 0.3, 1), staggered 55ms per colony. It lives entirely inside @media (prefers-reduced-motion: no-preference), so under reduced-motion it is not slowed or shortened — it does not exist. No layout property is ever animated.", "section": "components" }
+      {
+        "name": "The Oxide Reserve Rule",
+        "body": "Oxide red is escalation and nothing else. If a proposed use of oxide could be replaced by ink or muted without losing an alarm, it is decoration and must be replaced. Test: cover every oxide pixel on a screen — everything you hid should be something you had to act on today.",
+        "section": "colors"
+      },
+      {
+        "name": "The Unpainted Pine Rule",
+        "body": "Paint is the attention signal. A colony below the paint threshold loses its slot colour and stands in bare wood; it is never additionally dimmed, greyed, or shrunk. Wood already reads as quiet, and stacking a second quiet-signal on it only muddies the seams.",
+        "section": "colors"
+      },
+      {
+        "name": "The Stable Slot Rule",
+        "body": "A project's painted colour is derived from its id, not from its position. Sorting the yard, filtering it, or adding a colony never reassigns anyone's paint.",
+        "section": "colors"
+      },
+      {
+        "name": "The Stencil-For-Names Rule",
+        "body": "The stencil face is for names, verdicts, and section headings only. It never sets a sentence, never sets body copy, and is always uppercase with its --stencil-tracking applied.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "Every number on the surface is tabular (tnum), and any number the reader might compare down a column is mono. Figures read as measurements, not as prose.",
+        "section": "typography"
+      },
+      {
+        "name": "The Answer-First Rule",
+        "body": "The largest non-display type on the page is the verdict sentence, not a heading. Scale follows how load-bearing the sentence is, not where it sits in the document tree.",
+        "section": "typography"
+      },
+      {
+        "name": "The Column-Box Rule",
+        "body": "When blocks are self-contained and of unequal height, set them in column boxes and mark them break-inside: avoid. Reach for a grid only when the cells are genuinely a matrix.",
+        "section": "layout"
+      },
+      {
+        "name": "The One-Column-When-Filtered Rule",
+        "body": "Filtered to a single project, every column run collapses to columns: 1 at a 74ch cap. One survivor rattling around three tracks is not a layout.",
+        "section": "layout"
+      },
+      {
+        "name": "The Data-Project Rule",
+        "body": "The project filter is a pure [data-project] sweep. Anything project-scoped must carry data-project=\"<id>\" or it will silently survive every filter. Colonies carry the attribute too but are exempt from hiding: they are the control, and hiding them removes the way back out.",
+        "section": "layout"
+      },
+      {
+        "name": "The No-Shadow Rule",
+        "body": "There are no box-shadow values in this system. If an element needs to separate from its neighbour, give it a hairline, a tonal step, or space.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One Moment Rule",
+        "body": "The page has exactly one authored motion: the colony stacks rise from the baseline once on load — scaleY(0.82) to 1 over 620ms on cubic-bezier(0.16, 1, 0.3, 1), staggered 55ms per colony. It lives entirely inside @media (prefers-reduced-motion: no-preference), so under reduced-motion it is not slowed or shortened — it does not exist. No layout property is ever animated.",
+        "section": "components"
+      }
     ],
     "dos": [
       "Do reserve oxide red (--oxide) for escalation. If it is not something the reader must act on, it is not oxide.",

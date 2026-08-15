@@ -28,6 +28,12 @@ typography:
     fontWeight: 400
     lineHeight: 1.25
     letterSpacing: "-0.015em"
+  lede:
+    fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+    fontSize: "20px"
+    fontWeight: 400
+    lineHeight: 1.45
+    letterSpacing: "normal"
   title:
     fontFamily: "Haettenschweiler, Arial Narrow, ui-sans-serif, system-ui, sans-serif"
     fontSize: "15px"
@@ -53,6 +59,27 @@ typography:
     lineHeight: 1.4
     letterSpacing: "0.06em"
     fontFeature: "tnum 1"
+  # The whole ramp, enumerated. Each role above names one representative size,
+  # but three of the tiers are ranked rather than single-valued — title runs
+  # 17/15/14/13 by how load-bearing the name is, body-small runs 13.5/12.5, and
+  # the mono label tier runs 11/10.5/10. Plus the verdict sentence's 22px
+  # compact step below 860px. Thirteen steps and no strays: every font-size on
+  # the surface is one of these.
+  scale:
+    display: "40px"
+    headline: "27px"
+    headline-compact: "22px"
+    lede: "20px"
+    title-lg: "17px"
+    title: "15px"
+    body: "15px"
+    title-sm: "14px"
+    body-small: "13.5px"
+    title-xs: "13px"
+    body-fine: "12.5px"
+    label-lg: "11px"
+    label: "10.5px"
+    label-sm: "10px"
 rounded:
   none: "0"
 spacing:
@@ -193,7 +220,11 @@ Five slots, assigned by a stable hash of the project id so a colony keeps its co
 - **Title** (stencil, +0.06em, uppercase, weight 400): every named object, sized by rank — 17px work-band project, 15px colony name and watch name, 14px band and ticket-column headings, 13px colony verdict.
 - **Body** (body sans, 15px / 1.55): default reading text. Prose blocks cap at 72ch, briefing blocks at 74ch.
 - **Body Small** (13.5px / 1.45, soft ink): ticket titles, briefing list items, memory entries, work subjects. 12.5px / 1.35 muted for a colony's reason clause.
-- **Label** (mono, 10–11px, +0.04em to +0.08em, uppercase, muted): datelines, figures, counts, yard key, upkeep, footer, and all action buttons (lowercase in that one case).
+- **Label** (mono, 11 / 10.5 / 10px, +0.04em to +0.08em, uppercase, muted): datelines, figures, counts, yard key, upkeep, footer, and all action buttons (lowercase in that one case).
+
+Thirteen steps in total, enumerated in the frontmatter `scale`. Every `font-size`
+on the surface is one of them — the ramp is the whole vocabulary, not a starting
+point, and a new literal size is a design decision that belongs here first.
 
 ### Named Rules
 **The Stencil-For-Names Rule.** The stencil face is for names, verdicts, and section headings only. It never sets a sentence, never sets body copy, and is always uppercase with its `--stencil-tracking` applied.
