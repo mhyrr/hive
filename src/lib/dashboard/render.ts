@@ -33,6 +33,7 @@ import type {
 } from "./collect";
 import { DASHBOARD_CSS } from "./styles";
 import { DASHBOARD_JS } from "./script";
+import { renderPageNav } from "./html";
 import { assignVerdicts, colourFor, needsAttention, sortYard, type Colony } from "./colony";
 import type { ProjectActivity } from "./activity";
 import type { TicketPriority } from "../ticket";
@@ -622,7 +623,6 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
   ];
   const pages: [string, string][] = [
     ["/tickets", "Full board"],
-    ["/runs", "Runs"],
     ["/taste", "Taste"],
     ["/watches", "All watches"],
   ];
@@ -1142,24 +1142,7 @@ export function renderTicketsPage(data: TicketsPageData, _c: RenderContext): str
 export function renderTicketsPageDocument(data: TicketsPageData, opts: RenderOptions = {}): string {
   const c = ctx(opts);
   const today = data.generatedAt.slice(0, 10);
-  const navItems: Array<[string, string]> = [
-    ["BRIEFING", "/"],
-    ["PROJECTS", "/#section-projects"],
-    ["INBOX", "/#section-inboxes"],
-    ["REFLECTIONS", "/#section-reflections"],
-    ["DISPATCH", "/#section-dispatch"],
-    ["ARCHIVE", "/#section-archive"],
-    ["TICKETS", "/tickets"],
-    ["RUNS", "/runs"],
-    ["TASTE", "/taste"],
-    ["WATCHES", "/watches"],
-  ];
-  const nav = navItems
-    .map(([label, href]) => {
-      const active = href === "/tickets" ? ' class="nav-active"' : "";
-      return `<a href="${href}"${active}>${label}</a>`;
-    })
-    .join(' <span class="nav-sep">·</span> ');
+  const nav = renderPageNav("/tickets");
 
   const scriptBlock = c.interactive ? `<script>${DASHBOARD_JS}</script>` : "";
   const filterBar = c.interactive ? renderTicketsFilterBar(data.projectIds) : "";
@@ -1443,18 +1426,6 @@ ${counts}
 // /taste — the durable taste library (its own page, like /tickets and /runs)
 // ---------------------------------------------------------------------------
 
-const TASTE_NAV: Array<[string, string]> = [
-  ["BRIEFING", "/"],
-  ["PROJECTS", "/#section-projects"],
-  ["INBOX", "/#section-inboxes"],
-  ["REFLECTIONS", "/#section-reflections"],
-  ["DISPATCH", "/#section-dispatch"],
-  ["TICKETS", "/tickets"],
-  ["RUNS", "/runs"],
-  ["TASTE", "/taste"],
-    ["WATCHES", "/watches"],
-];
-
 /** A single taste unit — rule scannable, the WHY behind a disclosure. */
 function renderTasteUnit(u: TastePageUnit): string {
   const glob = u.glob ? `:${escapeHtml(u.glob)}` : "";
@@ -1611,10 +1582,7 @@ function renderTastePageBody(data: TastePageData): string {
 export function renderTastePageDocument(data: TastePageData, opts: RenderOptions = {}): string {
   const c = ctx(opts);
   const today = data.generatedAt.slice(0, 10);
-  const nav = TASTE_NAV.map(([label, href]) => {
-    const active = href === "/taste" ? ' class="nav-active"' : "";
-    return `<a href="${href}"${active}>${label}</a>`;
-  }).join(' <span class="nav-sep">·</span> ');
+  const nav = renderPageNav("/taste");
   const scriptBlock = c.interactive ? `<script>${DASHBOARD_JS}</script>` : "";
 
   return `<!DOCTYPE html>

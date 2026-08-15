@@ -291,16 +291,17 @@ describe("renderRunsPage", () => {
 });
 
 describe("renderRunsPageDocument", () => {
-  test("emits a full HTML document with RUNS active in nav", () => {
+  test("emits a full HTML document whose nav is the way back out", () => {
     const data = makeFullFixture();
     const html = renderRunsPageDocument(data);
 
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain("<title>HIVE · Runs");
     expect(html).toContain('class="page-nav"');
-    expect(html).toContain('<a href="/runs" class="nav-active">RUNS</a>');
     expect(html).toContain('<a href="/">BRIEFING</a>');
     expect(html).toContain('<a href="/tickets">TICKETS</a>');
+    // No tab of its own: you arrive here from a ticket, not from the nav.
+    expect(html).not.toContain('href="/runs"');
   });
 
   test("includes CSS and JS in interactive mode", () => {
