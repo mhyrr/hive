@@ -86,7 +86,7 @@ describe("buildConditionReport — trivial-day detection", () => {
   });
 });
 
-describe("buildConditionReport — heartbeat signal", () => {
+describe("buildConditionReport — inbox signal", () => {
   test("counts bullet-list findings in inbox.md", async () => {
     const home = await emptyHome();
     const paths = await ensureHiveScaffold(home);
@@ -103,8 +103,8 @@ describe("buildConditionReport — heartbeat signal", () => {
     );
 
     const report = await buildConditionReport(paths);
-    expect(report.projects[0]?.heartbeat.findings).toBe(3);
-    expect(report.projects[0]?.heartbeat.inboxBytes).toBeGreaterThan(0);
+    expect(report.projects[0]?.inbox.findings).toBe(3);
+    expect(report.projects[0]?.inbox.inboxBytes).toBeGreaterThan(0);
   });
 
   test("missing inbox returns zeros", async () => {
@@ -112,8 +112,21 @@ describe("buildConditionReport — heartbeat signal", () => {
     const paths = await ensureHiveScaffold(home);
     await writeProjectConfig(home, "no-inbox", "/nonexistent/path");
     const report = await buildConditionReport(paths);
-    expect(report.projects[0]?.heartbeat.findings).toBe(0);
-    expect(report.projects[0]?.heartbeat.inboxBytes).toBe(0);
+    expect(report.projects[0]?.inbox.findings).toBe(0);
+    expect(report.projects[0]?.inbox.inboxBytes).toBe(0);
+  });
+
+  test("legacy Pass F tombstones carry no inbox signal", async () => {
+    const home = await emptyHome();
+    const paths = await ensureHiveScaffold(home);
+    await writeProjectConfig(home, "cleared", "/nonexistent/path");
+    await writeFile(
+      join(home, "projects", "cleared", "inbox.md"),
+      "# Inbox: cleared\n\n_Truncated by Pass F at 2026-08-14T02:00:00.000Z_\n",
+    );
+
+    const report = await buildConditionReport(paths);
+    expect(report.projects[0]?.inbox).toEqual({ inboxBytes: 0, findings: 0 });
   });
 });
 

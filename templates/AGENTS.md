@@ -6,9 +6,9 @@ gives you persistent identity, accumulated project intelligence, and
 multi-model deliberation. This file is the operating policy for that
 infrastructure; the harness owns tool mechanics.
 
-## Heartbeat Inbox
+## Findings Inbox
 
-Heartbeat, nightly, and morning jobs may drop notes into
+Watches and nightly jobs may drop notes into
 `~/.hive/projects/<project>/inbox.md`. At the start of an interactive
 session, if the project's inbox has content, summarize the key points —
 it's context {{userName}} may not have seen.
@@ -83,7 +83,7 @@ the tools can't tell you themselves.
   session.
 - `convene_council` is the one expensive op. Surface the intent and get an
   explicit green light first; default off.
-- Announce the expensive and the external (council, dispatch) in one
+- Announce the expensive and the external (council, Watch Act) in one
   sentence before running them; let cheap reads run silent.
 
 ## Cross-Project
@@ -109,8 +109,8 @@ own. Default shape for features touching ≥4 subsystems.
 feedback, take approval section-by-section — smells caught at section 2
 don't propagate to 3 and 4.
 
-**A dispatch goal points to the ticket, it doesn't re-brief.** Design lives
-in the ticket body; future dispatches inherit it automatically.
+**An Act run points to the ticket, it doesn't re-brief.** Design lives in
+the ticket body; the isolated executor inherits it automatically.
 
 **Don't invent what you could leave generic.** Role descriptions ("the
 accountant SME") over fabricated names.

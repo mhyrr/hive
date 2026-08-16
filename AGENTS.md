@@ -23,26 +23,22 @@ HIVE MCP tools (loaded eagerly via `alwaysLoad: true` on the MCP registration):
 - `update_ticket` — Update ticket status, priority, tags, or other fields.
 - `add_ticket_note` — Add a timestamped note to a ticket.
 - `add_project` — Register a new project with HIVE.
-- `hive_status` — Full system dashboard (identity, projects, tickets, runs, agents).
-- `manage_heartbeat` — Enable, disable, or check project heartbeat status.
+- `hive_status` — Full system dashboard (identity, projects, tickets, scheduled jobs, agents).
 
 ## Auth
 
-HIVE defaults to **subscription OAuth** for spawned claude runs (dispatch,
-heartbeat). API key auth is supported for users who don't have a Claude
-subscription, but the default is OAuth — the dispatch wrapper unsets
-`ANTHROPIC_API_KEY` before launch to enforce that default. If subscription
-OAuth fails, the run fails — surface the failure, don't silently fall back.
+HIVE defaults to **subscription OAuth** for detached Claude work. Watch Act's
+branch executor unsets `ANTHROPIC_API_KEY` before launch to enforce that
+default. If subscription OAuth fails, the run fails — surface the failure,
+don't silently fall back.
 
 On macOS the OAuth token lives in Keychain (`Claude Code-credentials` in
 `login.keychain-db`). Detached subprocesses without a GUI session can hit
 Keychain access errors, which claude surfaces as `ConnectionRefused`. That's
 a real failure to expose, not paper over with an API key fallback.
 
-To opt into API key auth (e.g. forks running on machines without a
-subscription), edit the `unset ANTHROPIC_API_KEY` line out of the wrapper
-in `src/commands/dispatch.ts`. A proper opt-in env var (`HIVE_ALLOW_API_KEY`)
-is a future TK if it becomes a recurring ask.
+Watch Act does not offer an API-key fallback. Interactive harnesses retain
+their native authentication behavior.
 
 ## Development
 
@@ -59,13 +55,14 @@ is a future TK if it becomes a recurring ask.
 
 ## Architecture
 
-~80 source files, ~22,900 lines. Two entry points:
-- `src/cli.ts` — CLI (init, doctor, context, identity, project, stack, council, memory, ticket, dispatch, heartbeat, inbox, kill, ps, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
+Two entry points:
+- `src/cli.ts` — CLI (init, doctor, context, identity, project, stack, council, memory, ticket, watch, inbox, taste, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
 - `src/mcp-server.ts` — MCP server (same tools as the bullet list above).
 
 Crown-jewel modules:
 - `src/lib/council.ts` — parallel multi-model deliberation
 - `src/lib/harness.ts` / `src/lib/pi-wire.ts` / `src/lib/codex-wire.ts` — interactive harness selection and optional runtime wiring
+- `src/lib/watch.ts` / `src/lib/watch-run.ts` — standing-question schedules, evidence gates, and bounded action
 - `src/lib/orchestrator.ts` — nightly pipeline (Pass A → B → C → V → F → P)
 - `src/lib/verify.ts` — Opus verifier; the only path into `knowledge.md`
 - `src/lib/memory.ts` — storage layer: BM25, decay, hashed supersede/merge primitives, candidates queue

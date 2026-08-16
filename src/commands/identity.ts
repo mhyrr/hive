@@ -8,11 +8,11 @@ export async function identityCommand(args: string[]): Promise<void> {
   const usage = `Usage:
   hive identity emit [--harness claude|codex|pi] [--persona <name>]
       Print the canonical identity prefix to stdout. Used by the SessionStart
-      hook so that interactive, dispatch, and heartbeat all share one source
+      hook so every interactive harness shares one source
       of truth. --harness only affects stack-hint wording (Codex has no Skill
       tool, so it gets a direct "read the file" variant). Defaults to claude.
       --persona selects the swappable register from ~/.hive/personas/<name>.md
-      (falls back to HIVE_PERSONA env, then greg-dry). emit is an interactive
+      (falls back to HIVE_PERSONA env, then dry). emit is an interactive
       path, so it always includes the persona slot.`;
 
   const subcommand = args[0];

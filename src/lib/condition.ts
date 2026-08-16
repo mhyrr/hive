@@ -5,13 +5,14 @@
 //
 // docs/specs/2026-04-26-memory-design.md §Pass A — Conditioning
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { HivePaths } from "./paths";
 import { listProjects } from "./paths";
 import { parseFrontmatter } from "./frontmatter";
 import { readProjectMemorySnapshot } from "./memory";
+import { parseInbox } from "./inbox";
 import { listTickets } from "./ticket";
 import {
   extractAllRecentExchanges,
@@ -53,7 +54,8 @@ export interface TicketMovement {
   updated: string;
 }
 
-export interface HeartbeatSignal {
+export interface InboxSignal {
+  /** UTF-8 bytes of semantic findings, excluding headers and machine markers. */
   inboxBytes: number;
   findings: number;
 }
@@ -64,7 +66,7 @@ export interface ProjectSignal {
   sessions: SessionSignal;
   git: GitSignal;
   tickets: { moved: TicketMovement[] };
-  heartbeat: HeartbeatSignal;
+  inbox: InboxSignal;
 }
 
 export interface ConditionReport {
@@ -175,23 +177,22 @@ async function ticketMovement(
   return moved;
 }
 
-function heartbeatSignal(paths: HivePaths, projectId: string): HeartbeatSignal {
+function inboxSignal(paths: HivePaths, projectId: string): InboxSignal {
   const inboxPath = join(paths.projectsDir, projectId, "inbox.md");
   if (!existsSync(inboxPath)) return { inboxBytes: 0, findings: 0 };
-  let inboxBytes = 0;
+  let raw: string;
   try {
-    inboxBytes = statSync(inboxPath).size;
+    raw = readFileSync(inboxPath, "utf-8");
   } catch {
-    // intentional: stat failure on inbox file — treat as empty
+    // intentional: unreadable inbox file — treat as empty
     return { inboxBytes: 0, findings: 0 };
   }
-  if (inboxBytes === 0) return { inboxBytes: 0, findings: 0 };
-  const content = readFileSync(inboxPath, "utf-8");
-  const findings = content
+  const content = parseInbox(raw, projectId);
+  const findings = content.body
     .split("\n")
     .filter((l) => l.match(/^\s*[-*]\s+\S/))
     .length;
-  return { inboxBytes, findings };
+  return { inboxBytes: content.byteLength, findings };
 }
 
 async function projectKnowledgeCorpus(
@@ -282,7 +283,7 @@ export async function buildConditionReport(
 
     const git = gitSignal(projectPath, sinceIso);
     const moved = await ticketMovement(paths, projectId, sinceMs);
-    const heartbeat = heartbeatSignal(paths, projectId);
+    const inbox = inboxSignal(paths, projectId);
 
     projects.push({
       projectName: projectId,
@@ -290,7 +291,7 @@ export async function buildConditionReport(
       sessions,
       git,
       tickets: { moved },
-      heartbeat,
+      inbox,
     });
   }
 
@@ -303,7 +304,7 @@ export async function buildConditionReport(
   };
 
   // Trivial-day detection — no commits, no sessions of substance, no tickets moved.
-  // Heartbeat findings alone don't disqualify trivial; they're often automated noise.
+  // Inbox findings alone don't disqualify trivial; they're often automated noise.
   const trivial =
     totals.commitCount === 0 &&
     totals.exchangeCount === 0 &&

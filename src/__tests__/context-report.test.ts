@@ -40,7 +40,7 @@ async function seedHive(hiveDir: string, projectId: string, projectPath: string)
 
   const personasDir = join(hiveDir, "personas");
   await mkdir(personasDir, { recursive: true });
-  await writeFile(join(personasDir, "greg-dry.md"), "# persona-greg-dry-marker\n");
+  await writeFile(join(personasDir, "dry.md"), "# persona-dry-marker\n");
 }
 
 async function addProject(projectId: string, projectPath?: string): Promise<string> {
@@ -85,7 +85,7 @@ describe("buildContextReport — components", () => {
     expect(labels).toEqual([
       "SOUL.md",
       "IDENTITY.md",
-      "persona: greg-dry",
+      "persona: dry",
       "SELF.md",
       "AGENTS.md",
       "TRUST.md",
@@ -167,7 +167,7 @@ describe("buildContextReport — budgets", () => {
 
   test("an oversized persona register warns", async () => {
     await writeFile(
-      join(tempHive, "personas", "greg-dry.md"),
+      join(tempHive, "personas", "dry.md"),
       "p".repeat(CONTEXT_BUDGETS.personaBytes + 1),
     );
     const report = await buildContextReport();

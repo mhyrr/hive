@@ -79,6 +79,26 @@ describe("evaluateWatchDelta", () => {
     expect(result.changed).toBe(false);
   });
 
+  test("a legacy Pass F tombstone is an empty inbox fingerprint", async () => {
+    await writeFile(
+      join(paths.projectsDir, "alpha", "inbox.md"),
+      "# Inbox: alpha\n\n_Truncated by Pass F at 2026-08-14T02:00:00.000Z_\n",
+    );
+    const watch = makeWatch({ scope: ["inbox"], project: "alpha" });
+
+    const result = await evaluateWatchDelta({
+      paths,
+      watch,
+      lastDigests: {},
+      since: SINCE,
+      now: ANCHOR,
+      seams: seams({}),
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.fingerprints.inbox).toBe("");
+  });
+
   test("a new ticket re-triggers a previously settled watch", async () => {
     await createTicket(paths, "alpha", { title: "First" });
     const watch = makeWatch({ scope: ["tickets"], project: "alpha" });
@@ -225,6 +245,27 @@ describe("assembleWatchDigest", () => {
     const watch = makeWatch({ scope: ["tickets", "commits"], project: "gamma" });
     const digest = await assembleWatchDigest({ paths, watch, since: SINCE, now: ANCHOR, seams: seams({}) });
     expect(digest.empty).toBe(true);
+  });
+
+  test("legacy Pass F tombstones stay out of the digest", async () => {
+    const inboxPath = join(paths.projectsDir, "alpha", "inbox.md");
+    await writeFile(
+      inboxPath,
+      "# Inbox: alpha\n\n_Truncated by Pass F at 2026-08-14T02:00:00.000Z_\n",
+    );
+    await utimes(inboxPath, ANCHOR, ANCHOR);
+    const watch = makeWatch({ scope: ["inbox"], project: "alpha" });
+
+    const digest = await assembleWatchDigest({
+      paths,
+      watch,
+      since: SINCE,
+      now: ANCHOR,
+      seams: seams({}),
+    });
+
+    expect(digest.empty).toBe(true);
+    expect(digest.text).not.toContain("Truncated by Pass F");
   });
 });
 

@@ -18,8 +18,6 @@ import {
   renderProjects,
   renderTickets,
   renderTicketsPage,
-  renderInboxes,
-  renderRuns,
   renderArchive,
   renderTopThree,
   renderBriefings,
@@ -30,8 +28,6 @@ export const FRAGMENT_NAMES = [
   "projects",
   "tickets",
   "tickets-page",
-  "inboxes",
-  "runs",
   "archive",
   "top-three",
   "briefing",
@@ -73,8 +69,6 @@ export function renderFragmentFromData(data: DashboardData, name: FragmentName):
       // Should be handled by renderFragment(); fragments-from-data doesn't
       // have access to the tickets-page data. Throw so the bug surfaces.
       throw new Error("tickets-page fragment must be rendered via renderFragment, not from DashboardData");
-    case "inboxes":  return renderInboxes(data.inboxes, c);
-    case "runs":     return renderRuns(data.runs, c);
     case "archive":  return renderArchive(data, c);
     case "top-three": return renderTopThree(data);
     case "briefing": return renderBriefings(data);

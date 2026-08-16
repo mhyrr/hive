@@ -19,7 +19,7 @@ name: propose
 cadence: @nightly       # 2h | 45m | 1d | @nightly | @morning | mon,thu
 scope: runs, tickets    # tickets | commits | transcripts | memory | inbox | runs
 model: judgment         # fast | standard | judgment
-venue: briefing         # inbox | briefing | dispatch
+venue: briefing         # inbox | briefing | tickets | act
 autonomy: propose       # observe | propose | act
 enabled: true
 ---
@@ -41,7 +41,7 @@ epics, bodyless tickets, `needs-greg`, unresolved dependencies, projects with
 no valid repository/main ref, and tickets owned by another run. The judgment
 model may select at most one shortlisted ticket.
 
-A selected ticket is revalidated under a dispatch lock, claimed with the run
+A selected ticket is revalidated under an Act lock, claimed with the run
 ID, and opened in an explicit feature branch based on `main`. The executor
 plans, builds, verifies, and commits there. It never merges, pushes, closes the
 ticket, or removes the worktree. A successful run ends as `review_ready`; the
@@ -119,12 +119,12 @@ and manual invocations from overwriting one another's state.
   actions or change state.
 - `propose` recommends every item that clears the bar, without a quota. It
   may not execute or change state.
-- `act` may dispatch only a deterministically eligible ticket into an
+- `act` may start only a deterministically eligible ticket on an
   isolated review branch.
 
 The global ceiling is `watches.max_autonomy: observe|propose|act` in
 `~/.hive/config.md`; missing or invalid values default to `propose`. A watch
-above the ceiling runs at the lower level and cannot dispatch.
+above the ceiling runs at the lower level and cannot execute work.
 
 ## Model calls and quota
 
@@ -152,7 +152,8 @@ on the next tick without an immediate retry storm.
 
 Historical `bets` and `muse` files are retired to `.legacy` by `hive init`;
 their state cursors move to `propose` and `observe`, and their invocation logs
-remain visible through read-only aliases.
+remain visible through read-only aliases. The old Act venue name `dispatch`
+is rewritten to `act`; the parser also accepts it until that migration runs.
 
 ```text
 hive watch list

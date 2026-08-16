@@ -1,8 +1,8 @@
 // Watch delta gate + scope assembly (TK-138).
 //
 // Deterministic pre-check before any model call — the rules engine in front of
-// the standing question, same posture as heartbeat-trigger.ts: all signals are
-// cheap and local (no network, no LLM). If nothing in scope changed since the
+// the standing question. All signals are cheap and local (no network, no
+// LLM). If nothing in scope changed since the
 // watch last looked, the tick costs zero tokens.
 //
 // Two detector styles, chosen to avoid phantom deltas from sliding windows:
@@ -23,6 +23,7 @@ import { readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { getProjectPaths, listProjects, type HivePaths } from "./paths";
+import { parseInbox } from "./inbox";
 import { listTickets, readTicket } from "./ticket";
 import { extractRepoPath } from "./project";
 import { extractExchanges, findRecentSessions, redact, resolveProjectName, shouldSkipUserText } from "./sessions";
@@ -197,8 +198,9 @@ async function observeKind(
     }
     case "inbox": {
       for (const p of projects) {
-        const inbox = await readIfExists(getProjectPaths(paths, p).inbox);
-        values[p] = inbox && inbox.trim() !== "" ? hash(inbox) : "";
+        const raw = await readIfExists(getProjectPaths(paths, p).inbox);
+        const inbox = parseInbox(raw ?? "", p);
+        values[p] = inbox.kind === "content" ? hash(inbox.body) : "";
       }
       return { values, watermark: false };
     }
@@ -247,7 +249,7 @@ export interface WatchDeltaEvaluation {
  * some project: a hash kind whose non-empty value differs from what this watch
  * last saw, or a watermark kind whose mark moved forward. First evaluation of
  * a watch over non-empty scope counts as new (establish baseline AND look —
- * heartbeat's first-tick rule); an entirely empty scope never triggers.
+ * the first-tick rule); an entirely empty scope never triggers.
  */
 export async function evaluateWatchDelta(args: {
   paths: HivePaths;
@@ -447,7 +449,7 @@ async function runningTicketKeys(paths: HivePaths): Promise<Set<string>> {
   return out;
 }
 
-/** Deterministic half of Act: judgment sees only tickets code can safely dispatch. */
+/** Deterministic half of Act: judgment sees only tickets code can safely execute. */
 async function assembleActCandidates(
   paths: HivePaths,
   projects: string[],
@@ -675,10 +677,11 @@ export async function assembleWatchDigest(args: {
 
     if (watch.scope.includes("inbox")) {
       const inboxPath = getProjectPaths(paths, project).inbox;
-      const inbox = await readIfExists(inboxPath);
-      if (inbox && inbox.trim() && changedWithin(inboxPath, sinceMs, untilMs)) {
+      const raw = await readIfExists(inboxPath);
+      const inbox = parseInbox(raw ?? "", project);
+      if (inbox.kind === "content" && changedWithin(inboxPath, sinceMs, untilMs)) {
         const tag = `[I:${project}]`;
-        projLines.push(`### ${tag} Inbox (tail)`, inbox.trim().slice(-1_200));
+        projLines.push(`### ${tag} Inbox (tail)`, inbox.body.slice(-1_200));
         provenance.push(tag);
       }
     }

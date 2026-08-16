@@ -338,7 +338,7 @@ describe("buildBriefingUserContent", () => {
       date: "2026-04-26",
       condition: emptyCondition,
       inboxes: [
-        { projectId: "alpha", inboxText: "- heartbeat found a stale lock" },
+        { projectId: "alpha", inboxText: "- watch found a stale lock" },
         { projectId: "bravo", inboxText: "   " },
       ],
       cCandidates: [
@@ -676,7 +676,7 @@ describe("loadVerifierBundle", () => {
     const { home, paths } = await syntheticHome("hive-verify-bundle-");
     await writeFile(
       join(home, "projects", "alpha", "inbox.md"),
-      "# Inbox: alpha\n\n- heartbeat found a stale lock\n",
+      "# Inbox: alpha\n\n- watch found a stale lock\n",
     );
 
     const report = await buildConditionReport(paths);
@@ -705,6 +705,18 @@ describe("loadVerifierBundle", () => {
 
   test("a project with neither candidates nor inbox is left out entirely", async () => {
     const { paths } = await syntheticHome("hive-verify-bundle-skip-");
+    const today = new Date().toISOString().slice(0, 10);
+    const bundle = await loadVerifierBundle(paths, today);
+    expect(bundle.perProject).toEqual([]);
+  });
+
+  test("a legacy Pass F tombstone does not put a project in the bundle", async () => {
+    const { home, paths } = await syntheticHome("hive-verify-bundle-tombstone-");
+    await writeFile(
+      join(home, "projects", "alpha", "inbox.md"),
+      "# Inbox: alpha\n\n_Truncated by Pass F at 2026-08-14T02:00:00.000Z_\n",
+    );
+
     const today = new Date().toISOString().slice(0, 10);
     const bundle = await loadVerifierBundle(paths, today);
     expect(bundle.perProject).toEqual([]);

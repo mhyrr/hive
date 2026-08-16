@@ -200,32 +200,6 @@ export const DASHBOARD_JS = `
     "ticket-close":        { path: "ticket/close",        section: "tickets", build: idProj, optimistic: fadeRow },
     "ticket-reopen":       { path: "ticket/reopen",       section: "tickets", build: idProj },
     "ticket-note":         { path: "ticket/note",         section: "tickets", build: idProjPrompt("note to add") },
-    "ticket-dispatch-run": { path: "ticket/dispatch-run", section: "runs",    build: idProj },
-    "ticket-tag-dispatch": { path: "ticket/tag-dispatch", section: "tickets", build: idProj },
-    "dispatch-kill":       { path: "dispatch/kill",       section: "runs",    build: runIdFromBtn, optimistic: fadeRow },
-    "dispatch-override":   { path: "dispatch/override-status", section: "runs",
-                             build: function (btn) {
-                               var status = window.prompt("Override to (complete / partial / failed):", "complete");
-                               if (!status) return null;
-                               return { runId: btn.getAttribute("data-run-id"), status: status.trim() };
-                             } },
-    "inbox-promote":       { path: "ticket/create", section: "inboxes",
-                             build: function (btn) {
-                               var body = btn.closest(".inbox-entry").querySelector("[data-inbox-body]");
-                               var first = body ? (body.innerText.trim().split("\\n")[0] || "from inbox") : "from inbox";
-                               return { project: btn.getAttribute("data-project"), title: first.slice(0, 80) };
-                             } },
-    "inbox-dispatch":      { path: "dispatch", section: "runs",
-                             build: function (btn) {
-                               var body = btn.closest(".inbox-entry").querySelector("[data-inbox-body]");
-                               return { project: btn.getAttribute("data-project"), goal: (body ? body.innerText.trim() : "") };
-                             } },
-    "inbox-ack":           { path: "inbox/ack", section: "inboxes",
-                             build: function (btn) {
-                               var body = btn.closest(".inbox-entry").querySelector("[data-inbox-body]");
-                               return { project: btn.getAttribute("data-project"), entry: (body ? body.innerText.trim() : "") };
-                             },
-                             optimistic: fadeRow },
   };
 
   function idProj(btn) {
@@ -238,11 +212,8 @@ export const DASHBOARD_JS = `
       return { id: btn.getAttribute("data-id"), project: btn.getAttribute("data-project"), note: note };
     };
   }
-  function runIdFromBtn(btn) {
-    return { runId: btn.getAttribute("data-run-id") };
-  }
   function fadeRow(btn) {
-    var row = btn.closest(".ticket-row, .dispatch-row, .inbox-entry");
+    var row = btn.closest(".ticket-row");
     if (row) row.classList.add("pending");
     return function revert() { if (row) row.classList.remove("pending"); };
   }
@@ -409,74 +380,8 @@ export const DASHBOARD_JS = `
 
   document.querySelectorAll(".epic-board").forEach(wireEpicBoard);
 
-  // ---------- Arc card expand/collapse ----------
-  function arcCardKey(card) {
-    // Support both id-based (goal arcs) and data-arc-id (campaign arcs)
-    var id = card.getAttribute("data-arc-id") || card.id || "";
-    return "arc-expanded:" + id;
-  }
-
-  function setArcExpanded(card, expanded) {
-    var body = card.querySelector(":scope > .arc-body");
-    var header = card.querySelector(":scope > .arc-header");
-    var glyph = card.querySelector(":scope > .arc-header .arc-expand");
-    if (!body || !header) return;
-    if (expanded) {
-      card.classList.add("expanded");
-      header.setAttribute("aria-expanded", "true");
-      if (glyph) glyph.textContent = "−"; // minus sign
-      state[arcCardKey(card)] = 1;
-    } else {
-      card.classList.remove("expanded");
-      header.setAttribute("aria-expanded", "false");
-      if (glyph) glyph.textContent = "+";
-      delete state[arcCardKey(card)];
-    }
-    saveState();
-  }
-
-  function wireArcCard(card) {
-    var header = card.querySelector(":scope > .arc-header");
-    if (!header) return;
-
-    // Restore persisted state
-    if (state[arcCardKey(card)]) setArcExpanded(card, true);
-
-    header.addEventListener("click", function (e) {
-      // Don't toggle when clicking links inside the header
-      if (e.target.closest && e.target.closest("a")) return;
-      setArcExpanded(card, !card.classList.contains("expanded"));
-    });
-    header.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        setArcExpanded(card, !card.classList.contains("expanded"));
-      }
-    });
-  }
-
-  document.querySelectorAll(".arc-card").forEach(wireArcCard);
-
-  // ---------- Why-failed expand/collapse ----------
-  function wireWhyFailed(el) {
-    el.addEventListener("click", function (e) {
-      el.classList.toggle("expanded");
-      var toggle = el.querySelector(".why-failed-toggle");
-      if (toggle) toggle.textContent = el.classList.contains("expanded") ? "click to collapse" : "click to expand";
-    });
-  }
-  document.querySelectorAll("[data-why-failed]").forEach(wireWhyFailed);
-
-  function wireWhyFailedInline(el) {
-    el.addEventListener("click", function (e) {
-      e.stopPropagation();
-      el.classList.toggle("expanded");
-    });
-  }
-  document.querySelectorAll("[data-why-failed-inline]").forEach(wireWhyFailedInline);
-
   // ---------- Keyboard ----------
-  var focusables = function () { return Array.prototype.slice.call(document.querySelectorAll(".ticket-row, .dispatch-row, .inbox-entry:not(.empty)")); };
+  var focusables = function () { return Array.prototype.slice.call(document.querySelectorAll(".ticket-row")); };
   var focusIdx = -1;
 
   function moveFocus(delta) {
@@ -502,14 +407,6 @@ export const DASHBOARD_JS = `
       case "j": moveFocus(+1); break;
       case "k": moveFocus(-1); break;
       case "x": focusedAction("ticket-close"); break;
-      case "d":
-        focusedAction("ticket-dispatch-run") ||
-        focusedAction("inbox-dispatch");
-        break;
-      case "p":
-        focusedAction("inbox-promote") ||
-        focusedAction("memory-promote");
-        break;
       case "/": {
         var pill = document.querySelector("[data-project-filter='ALL']");
         if (pill) { pill.focus(); e.preventDefault(); }

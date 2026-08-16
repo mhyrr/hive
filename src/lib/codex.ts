@@ -89,7 +89,7 @@ function spawnCodex(
       const onAbort = () => {
         child.kill("SIGTERM");
         // Escalate to SIGKILL if SIGTERM is ignored, so an aborted call always
-        // settles via 'close' instead of hanging. Mirrors campaign/executor.ts.
+        // settles via 'close' instead of hanging.
         killTimer = setTimeout(() => {
           try {
             child.kill("SIGKILL");

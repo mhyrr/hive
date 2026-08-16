@@ -9,7 +9,7 @@ through `hive -3` and `hive -x`.
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │ 1. Soul stack     ~/.hive/{SOUL,IDENTITY,SELF,AGENTS,TRUST}.md     │  always
-│ 2. Project memory ~/.hive/memory/projects/<p>/_index.md            │  interactive + dispatch
+│ 2. Project memory ~/.hive/memory/projects/<p>/_index.md            │  project-scoped sessions
 │ 3. Stack hint     derived from repo markers (mix.exs → elixir)     │  per-project
 │ 4. Taste          ~/.hive/taste/principles.md                      │  when present (LAST = loudest)
 └────────────────────────────────────────────────────────────────────┘
@@ -83,16 +83,12 @@ assembles the identity prefix. All consumers route through it:
 | Claude Code via `hive` | temp `--append-system-prompt-file` -> `assembleIdentity()` |
 | Pi via `hive -3` | generated `pi -e <tempfile>` extension -> `assembleIdentity()` |
 | Codex via `hive -x` | `~/.codex/AGENTS.md`, refreshed before launch and by `~/.hive/codex-load-identity.sh` -> `hive identity emit` |
-| Dispatch (`hive dispatch`) | `--append-system-prompt-file` -> `assembleIdentity()` |
-| Heartbeat (`hive heartbeat tick`) | `--append-system-prompt-file` -> `assembleHeartbeatIdentity()` |
+| Watch Act branch executor | `--append-system-prompt-file` -> `assembleIdentity()` |
 
 The Claude Code SessionStart hook and Codex's direct-session hook are thin
 shell wrappers that delegate to `hive identity emit`. Pi gets a runtime-generated extension
 because its launch API supports prompt mutation directly. Drift is
 structurally limited: there is only one program that builds the prefix.
-
-Heartbeat skips project memory (TK-024 cache stability) — same code path,
-different option (`includeProjectMemory: false`).
 
 ## Wiring
 
@@ -234,8 +230,8 @@ everything is green and Maya still feels off:
    (and PostCompact). Old sessions won't pick up changes until restart.
 2. **Check the model.** `claude --version` should show ≥ 2.1.x. Interactive
    sessions use whatever `--model` / `~/.claude/settings.json` specifies.
-   Dispatch and heartbeat pin to `claude-opus-4-6` by default (override
-   with `--model` or `HIVE_DISPATCH_MODEL` / `HIVE_HEARTBEAT_MODEL`).
+   Watch Act defaults to `claude-opus-4-6`; override it with
+   `HIVE_WATCH_ACT_MODEL`.
 3. **Dry-run the hook.** `bash ~/.claude/hooks/load-identity.sh | less` —
    should show soul stack → project memory → stack hint → taste.
 4. **Dry-run the command directly.** `hive identity emit | less` — same
@@ -253,5 +249,4 @@ everything is green and Maya still feels off:
 
 - `docs/hive-reach.md` — reach matrix across runtimes (identity is one row)
 - Tickets TK-047 through TK-053 (the identity-reconsolidation epic)
-- TK-024 — heartbeat cache stability discipline (why heartbeat skips memory)
 - `docs/memory-architecture.md` — how project memory works

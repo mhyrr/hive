@@ -533,7 +533,6 @@ function checkModels(): Check[] {
 function checkScheduler(): Check[] {
   const checks: Check[] = [];
   const plists = [
-    "com.hive.heartbeat",
     "com.hive.nightly",
     "com.hive.sync",
     "com.hive.dashboard",
@@ -555,6 +554,15 @@ function checkScheduler(): Check[] {
     } else {
       checks.push({ status: "warn", label: `${plist} not installed`, detail: "Run: hive init" });
     }
+  }
+
+  const retiredHeartbeat = join(launchAgentsDir, "com.hive.heartbeat.plist");
+  if (existsSync(retiredHeartbeat)) {
+    checks.push({
+      status: "warn",
+      label: "obsolete com.hive.heartbeat still installed",
+      detail: "Run: hive init (unloads it and preserves the plist as .retired)",
+    });
   }
 
   return checks;
@@ -600,27 +608,6 @@ async function checkProject(): Promise<{ heading: string; checks: Check[] }> {
     checks.push({ status: "pass", label: `_index.md present` });
   } else {
     checks.push({ status: "warn", label: "_index.md missing", detail: "Session start won't have memory summary" });
-  }
-
-  // Heartbeat
-  const heartbeatJson = join(paths.projectsDir, projectId, "heartbeat.json");
-  if (existsSync(heartbeatJson)) {
-    try {
-      const config = JSON.parse(require("fs").readFileSync(heartbeatJson, "utf-8"));
-      const state = config.enabled ? `enabled (${config.intervalMinutes}m)` : "disabled";
-      checks.push({ status: "pass", label: `heartbeat ${state}` });
-    } catch {
-      // intentional: malformed heartbeat config — report as warning
-      checks.push({ status: "warn", label: "heartbeat.json malformed" });
-    }
-  } else {
-    checks.push({ status: "warn", label: "no heartbeat config" });
-  }
-
-  // HEARTBEAT.md
-  const heartbeatMd = join(paths.projectsDir, projectId, "HEARTBEAT.md");
-  if (!existsSync(heartbeatMd)) {
-    checks.push({ status: "warn", label: "HEARTBEAT.md missing", detail: "Heartbeat has no standing orders" });
   }
 
   return { heading: `Project (${projectId})`, checks };

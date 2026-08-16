@@ -2,10 +2,8 @@
 //
 // Turns a rough goal into an epic + 3-10 child tickets with a valid DAG.
 // LLM-driven decompose, LLM-driven orient on failure, deterministic validate.
-// Standalone shape only — campaign-plan target deferred until campaign V1
-// locks its schema.
-//
-// docs/specs are TK-036 ticket body and 2026-04-20-campaign-dispatch-design.md.
+// The TK-036 ticket body remains the behavioral source for validation and
+// recovery-loop decisions.
 
 import type { TicketType, TicketPriority } from "./ticket";
 

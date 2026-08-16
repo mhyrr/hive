@@ -1,6 +1,7 @@
 import { ensureHiveScaffold, getProjectPaths } from "../lib/paths";
 import { UsageError } from "../lib/errors";
 import { resolveProjectFromCwd } from "../lib/project";
+import { emptyInbox, parseInbox } from "../lib/inbox";
 
 export async function inboxCommand(args: string[]): Promise<void> {
   const usage = `Usage:
@@ -30,7 +31,7 @@ export async function inboxCommand(args: string[]): Promise<void> {
   const file = Bun.file(pp.inbox);
 
   if (subcommand === "clear") {
-    await Bun.write(pp.inbox, `# Inbox: ${projectId}\n\n`);
+    await Bun.write(pp.inbox, emptyInbox(projectId));
     console.log(`Inbox cleared for ${projectId}.`);
     return;
   }
@@ -45,11 +46,11 @@ export async function inboxCommand(args: string[]): Promise<void> {
   }
 
   const content = await file.text();
-  const headerOnly = content.trim() === `# Inbox: ${projectId}`;
-  if (headerOnly || content.trim().length === 0) {
+  const parsed = parseInbox(content, projectId);
+  if (parsed.kind === "empty") {
     console.log(`Inbox empty for ${projectId}.`);
     return;
   }
 
-  console.log(content);
+  console.log(parsed.body);
 }

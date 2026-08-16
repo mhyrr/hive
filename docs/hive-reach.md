@@ -50,15 +50,9 @@ verifies each.
 
 These are intentional. They are not on a roadmap.
 
-- **`hive dispatch` stays Claude-Code-only.** Dispatch leans on
-  worktrees + the Claude Code Agent tool's session shape. Re-implementing
-  for Pi or Codex would duplicate the orchestrator without adding
-  reach.
-- **`hive heartbeat tick` stays Claude-Code-only.** Same reasoning.
-  Heartbeat depends on the deterministic prefix cache discipline
-  established in TK-024; that discipline is verified against Claude
-  Code's exact prompt path and would need re-verification per harness
-  for marginal gain.
+- **Watch Act stays Claude-Code-only.** Act leans on worktrees + Claude
+  Code's branch-executor session shape. Re-implementing it for Pi or Codex
+  would duplicate the executor without adding interactive reach.
 - **Pi nightly transcript ingestion is not on the roadmap.** Pi
   sessions don't write a stable per-session transcript file the way
   Claude Code and Codex do. If they start to, this becomes trivial.

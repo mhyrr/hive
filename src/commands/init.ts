@@ -7,6 +7,7 @@ import { wireCodex } from "../lib/codex-wire";
 import { assembleIdentity } from "../lib/identity";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
 import { wirePi } from "../lib/pi-wire";
+import { discoverWatches, rewriteWatchFrontmatter } from "../lib/watch";
 
 type SettingsHookEntry = { hooks?: Array<{ type?: string; command?: string }> };
 type SettingsShape = { hooks?: Record<string, SettingsHookEntry[]> };
@@ -25,6 +26,15 @@ async function writeIfMissing(path: string, templatePath: string, replacements?:
   }
   await Bun.write(path, content);
   return true;
+}
+
+async function preserveRetiredFile(path: string): Promise<string | null> {
+  if (!existsSync(path)) return null;
+  let retired = `${path}.retired`;
+  let suffix = 1;
+  while (existsSync(retired)) retired = `${path}.retired-${suffix++}`;
+  await rename(path, retired);
+  return retired;
 }
 
 function prompt(question: string): string {
@@ -66,7 +76,8 @@ async function retireLegacyWatch(path: string): Promise<string> {
 
 /** One-time Bets/Muse → Propose/Observe migration. The old files are retained
  * with a non-.md suffix, so custom edits remain recoverable without running a
- * duplicate cycle. State cursors move with the identity; audit logs stay put. */
+ * duplicate cycle. State cursors move with the identity; audit logs stay put.
+ * The same pass rewrites the old Act venue name in place. */
 export async function migrateLegacyWatches(paths: Awaited<ReturnType<typeof ensureHiveScaffold>>): Promise<number> {
   const aliases = [["bets", "propose"], ["muse", "observe"]] as const;
   let migrated = 0;
@@ -94,6 +105,15 @@ export async function migrateLegacyWatches(paths: Awaited<ReturnType<typeof ensu
         : `Migrated legacy watch state ${legacy} → ${current}`);
       migrated++;
     }
+  }
+  const { watches } = await discoverWatches(paths);
+  for (const watch of watches) {
+    if (watch.venue !== "act") continue;
+    const content = await Bun.file(watch.filePath).text();
+    if (!/^venue:\s*dispatch\s*$/m.test(content)) continue;
+    await rewriteWatchFrontmatter(watch.filePath, { venue: "act" });
+    console.log(`Migrated watch venue dispatch → act (${watch.qualifiedName})`);
+    migrated++;
   }
   if (migrated > 0 && state) await Bun.write(statePath, JSON.stringify(state, null, 2) + "\n");
   return migrated;
@@ -197,6 +217,20 @@ function installLaunchAgent(plistName: string): boolean {
   }
 }
 
+/** Stop a scheduler whose command no longer exists and preserve its plist for
+ * inspection. The next `hive init` performs the upgrade; this code never
+ * touches user-authored launch agents. */
+async function retireShippedLaunchAgent(plistName: string): Promise<string | null> {
+  const dest = join(process.env.HOME || "", "Library", "LaunchAgents", plistName);
+  if (!existsSync(dest)) return null;
+  try {
+    execSync(`launchctl unload ${dest}`, { encoding: "utf-8" });
+  } catch {
+    // Already unloaded is a successful retirement state.
+  }
+  return preserveRetiredFile(dest);
+}
+
 /** Older watch installs invoked the CLI directly, which left detached model
  * calls dependent on GUI Keychain access. Upgrade only that exact shipped
  * command; custom launchd definitions remain untouched. */
@@ -247,13 +281,23 @@ export async function initCommand(args: string[]): Promise<void> {
   await writeIfMissing(paths.config, "config.md");
 
   // Default swappable persona register (user-editable; non-clobbering).
-  await writeIfMissing(
-    join(paths.home, "personas", "greg-dry.md"),
-    "personas/greg-dry.md",
-  );
+  // Installs made before the rename hold the register at personas/greg-dry.md.
+  // Move it to personas/dry.md so an edited register survives. Otherwise
+  // DEFAULT_PERSONA resolves to "dry", finds nothing, and drops the slot.
+  const personaPath = join(paths.home, "personas", "dry.md");
+  const legacyPersonaPath = join(paths.home, "personas", "greg-dry.md");
+  if (existsSync(legacyPersonaPath) && !existsSync(personaPath)) {
+    await rename(legacyPersonaPath, personaPath);
+    console.log("Renamed persona register: greg-dry.md -> dry.md");
+  }
+  await writeIfMissing(personaPath, "personas/dry.md", replacements);
 
   // Install HIVE agents and skills to ~/.claude/
   const claudeAgentsDir = join(process.env.HOME || "", ".claude", "agents");
+  for (const retiredAgent of ["maya-executor.md", "maya-heartbeat.md"]) {
+    const retired = await preserveRetiredFile(join(claudeAgentsDir, retiredAgent));
+    if (retired) console.log(`Retired obsolete Claude agent (${retired})`);
+  }
   const agentsInstalled = await installTemplateDir("agents", claudeAgentsDir);
   const claudeSkillsDir = join(process.env.HOME || "", ".claude", "skills");
   const skillsInstalled = await installSkillDirs(claudeSkillsDir);
@@ -295,14 +339,15 @@ export async function initCommand(args: string[]): Promise<void> {
   }
 
   // Install launchd agents for scheduled jobs
+  const retiredHeartbeat = await retireShippedLaunchAgent("com.hive.heartbeat.plist");
+  if (retiredHeartbeat) {
+    console.log(`Retired obsolete heartbeat scheduler (${retiredHeartbeat})`);
+  }
   if (installLaunchAgent("com.hive.nightly.plist")) {
     console.log("Installed nightly extraction (2am daily via launchd)");
   }
   if (installLaunchAgent("com.hive.sync.plist")) {
     console.log("Installed hive-sync (2:30am daily via launchd)");
-  }
-  if (installLaunchAgent("com.hive.heartbeat.plist")) {
-    console.log("Installed heartbeat (every 30m via launchd)");
   }
   if (installLaunchAgent("com.hive.dashboard.plist")) {
     console.log("Installed dashboard server (127.0.0.1:7777, KeepAlive, via launchd)");

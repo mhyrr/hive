@@ -12,7 +12,7 @@ import {
   formatTicketRow,
   formatTicketDetail,
   sortTicketsForDisplay,
-  releaseTicketDispatchClaim,
+  releaseTicketActClaim,
   type TicketType,
   type TicketPriority,
   type TicketStatus,
@@ -29,7 +29,7 @@ function terminalWidth(): number {
 /** Subcommands `hive tickets` forwards to `hive ticket` untouched. */
 const TICKET_SUBCOMMANDS = new Set([
   "create", "list", "ls", "show", "start", "close", "reopen", "note",
-  "dispatch", "ready", "blocked", "relink-epics", "release-claim", "help",
+  "ready", "blocked", "relink-epics", "release-claim", "help",
 ]);
 
 function parseFlags(args: string[]): { flags: Record<string, string>; positional: string[] } {
@@ -81,11 +81,10 @@ export async function ticketCommand(args: string[]): Promise<void> {
   hive ticket close <id>
   hive ticket reopen <id>
   hive ticket note <id> <text>
-  hive ticket dispatch <id>                Tag ticket for auto-dispatch
   hive ticket ready                        Show unblocked tickets
   hive ticket blocked                      Show dependency-blocked tickets
   hive ticket relink-epics                 Best-effort backfill of parent_epic on children
-  hive ticket release-claim <id> --run RUN-NNN  Release only an owning failed dispatch
+  hive ticket release-claim <id> --run RUN-NNN  Release only an owning failed Act run
   hive ticket --project <name> ...         Specify project
 
   hive tickets                             Open tickets for this project`;
@@ -189,8 +188,8 @@ export async function ticketCommand(args: string[]): Promise<void> {
       const id = positional[0];
       if (!id) throw new UsageError("Ticket ID required.");
       if (!flags.run) throw new UsageError("--run RUN-NNN required.");
-      const released = await releaseTicketDispatchClaim(paths, projectId, id, flags.run);
-      if (!released) throw new UsageError(`Dispatch claim does not belong to ${flags.run}: ${projectId}/${id}`);
+      const released = await releaseTicketActClaim(paths, projectId, id, flags.run);
+      if (!released) throw new UsageError(`Act claim does not belong to ${flags.run}: ${projectId}/${id}`);
       console.log(`Released ${projectId}/${id} from ${flags.run}`);
       break;
     }
@@ -203,24 +202,6 @@ export async function ticketCommand(args: string[]): Promise<void> {
       const ticket = await addTicketNote(paths, projectId, id, text);
       if (!ticket) throw new UsageError(`Ticket not found: ${id}`);
       console.log(`Added note to ${ticket.id}`);
-      break;
-    }
-
-    case "dispatch": {
-      const id = positional[0];
-      if (!id) throw new UsageError("Ticket ID required.");
-      const ticket = await readTicket(paths, projectId, id);
-      if (!ticket) throw new UsageError(`Ticket not found: ${id}`);
-
-      if (ticket.tags.includes("auto-dispatch")) {
-        console.log(`${ticket.id} already tagged auto-dispatch`);
-      } else {
-        const updated = await updateTicket(paths, projectId, id, {
-          tags: [...ticket.tags, "auto-dispatch"],
-        });
-        if (!updated) throw new UsageError(`Failed to update ticket: ${id}`);
-        console.log(`Tagged ${updated.id} for auto-dispatch: ${updated.title}`);
-      }
       break;
     }
 

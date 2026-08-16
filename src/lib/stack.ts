@@ -26,8 +26,7 @@ export function getStackPaths(): StackPaths {
   };
 }
 
-/** Resolve templates/stacks/ relative to this module. Matches how the project
- * command resolves its HEARTBEAT.md template. */
+/** Resolve templates/stacks/ relative to this module. */
 export function resolveTemplatesStacksDir(): string {
   return join(dirname(import.meta.dir), "..", "templates", "stacks");
 }
@@ -339,7 +338,7 @@ export function buildStackHint(stack: string | null, harness: Harness = "claude"
     return `${canon} — read the matching ~/.claude/skills/${stack}-*/SKILL.md when the work calls for it.`;
   }
 
-  return `${canon} — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read it directly: ~/.claude/skills/${stack}-*/SKILL.md`;
+  return `${canon} — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex or --agent mode), read it directly: ~/.claude/skills/${stack}-*/SKILL.md`;
 }
 
 /**

@@ -8,14 +8,14 @@ import { extractRepoPath } from "./project";
 import type { HivePaths } from "./paths";
 import {
   addTicketNote,
-  claimTicketForDispatch,
+  claimTicketForAct,
   listTickets,
   readTicket,
-  releaseTicketDispatchClaim,
+  releaseTicketActClaim,
 } from "./ticket";
 import { toIsoTimestamp } from "./time";
 
-export interface ReviewDispatchRequest {
+export interface ActRunRequest {
   paths: HivePaths;
   projectId: string;
   ticketId: string;
@@ -24,7 +24,7 @@ export interface ReviewDispatchRequest {
   timeoutMin?: number;
 }
 
-export interface ReviewDispatchResult {
+export interface ActRunResult {
   runId: string;
   projectId: string;
   ticketId: string;
@@ -32,7 +32,7 @@ export interface ReviewDispatchResult {
   workspacePath: string;
 }
 
-export interface ReviewRunMetadata extends ReviewDispatchResult {
+export interface ActRunMetadata extends ActRunResult {
   sourceWatch: string;
   baseSha: string;
   completionMode: "review";
@@ -68,8 +68,8 @@ function executable(name: "claude" | "hive"): string {
   }
 }
 
-async function acquireDispatchLock(paths: HivePaths): Promise<() => Promise<void>> {
-  const path = join(paths.runsDir, ".review-dispatch.lock");
+async function acquireActLock(paths: HivePaths): Promise<() => Promise<void>> {
+  const path = join(paths.runsDir, ".act-run.lock");
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const handle = await open(path, "wx", 0o600);
@@ -82,15 +82,15 @@ async function acquireDispatchLock(paths: HivePaths): Promise<() => Promise<void
       if (typeof owner.pid === "number") {
         try {
           process.kill(owner.pid, 0);
-          throw new Error(`Another review dispatch is preparing work (pid ${owner.pid})`);
+          throw new Error(`Another Act execution is preparing work (pid ${owner.pid})`);
         } catch (probe) {
-          if (probe instanceof Error && probe.message.startsWith("Another review dispatch")) throw probe;
+          if (probe instanceof Error && probe.message.startsWith("Another Act execution")) throw probe;
         }
       }
       await unlink(path).catch(() => undefined);
     }
   }
-  throw new Error("Could not acquire review-dispatch lock");
+  throw new Error("Could not acquire Act execution lock");
 }
 
 async function allocateRun(paths: HivePaths): Promise<{ runId: string; runDir: string }> {
@@ -112,7 +112,7 @@ async function allocateRun(paths: HivePaths): Promise<{ runId: string; runDir: s
 async function validateTicket(paths: HivePaths, projectId: string, ticketId: string): Promise<void> {
   const ticket = await readTicket(paths, projectId, ticketId);
   if (!ticket) throw new Error(`Ticket not found: ${projectId}/${ticketId}`);
-  if (ticket.status !== "open" || ticket.dispatchRun) throw new Error(`Ticket is no longer available: ${projectId}/${ticket.id}`);
+  if (ticket.status !== "open" || ticket.actRun) throw new Error(`Ticket is no longer available: ${projectId}/${ticket.id}`);
   if (ticket.type === "epic" || ticket.priority === 0 || ticket.tags.includes("needs-greg") || !ticket.body.trim()) {
     throw new Error(`Ticket no longer passes Act eligibility: ${projectId}/${ticket.id}`);
   }
@@ -208,8 +208,8 @@ fi
 `;
 }
 
-export async function dispatchTicketForReview(request: ReviewDispatchRequest): Promise<ReviewDispatchResult> {
-  const releaseLock = await acquireDispatchLock(request.paths);
+export async function startActRun(request: ActRunRequest): Promise<ActRunResult> {
+  const releaseLock = await acquireActLock(request.paths);
   let claimed = false;
   let runId = "";
   let runDir = "";
@@ -224,7 +224,7 @@ export async function dispatchTicketForReview(request: ReviewDispatchRequest): P
     runDir = allocated.runDir;
     const branch = `hive/act/${request.projectId}-${request.ticketId.toLowerCase()}-${runId.toLowerCase()}`;
     const workspacePath = join(allocated.runDir, "workspace");
-    const metadata: ReviewRunMetadata = {
+    const metadata: ActRunMetadata = {
       runId,
       projectId: request.projectId,
       ticketId: request.ticketId,
@@ -236,7 +236,7 @@ export async function dispatchTicketForReview(request: ReviewDispatchRequest): P
       createdAt: toIsoTimestamp(),
     };
     await writeFile(join(allocated.runDir, "run.json"), JSON.stringify(metadata, null, 2) + "\n");
-    const ticket = await claimTicketForDispatch(request.paths, request.projectId, request.ticketId, runId, branch);
+    const ticket = await claimTicketForAct(request.paths, request.projectId, request.ticketId, runId, branch);
     claimed = true;
     git(projectPath, ["worktree", "add", "-b", branch, workspacePath, baseSha]);
 
@@ -262,7 +262,7 @@ export async function dispatchTicketForReview(request: ReviewDispatchRequest): P
     await writeFile(wrapperPath, buildReviewRunWrapper({
       claude: executable("claude"),
       hive: executable("hive"),
-      model: request.model ?? process.env.HIVE_DISPATCH_MODEL ?? "claude-opus-4-6",
+      model: request.model ?? process.env.HIVE_WATCH_ACT_MODEL ?? "claude-opus-4-6",
       timeoutMin: request.timeoutMin ?? 60,
       workspacePath,
       runDir: allocated.runDir,
@@ -284,10 +284,10 @@ export async function dispatchTicketForReview(request: ReviewDispatchRequest): P
     });
     child.unref();
     await writeFile(join(allocated.runDir, "pid"), String(child.pid));
-    await addTicketNote(request.paths, request.projectId, ticket.id, `${runId} dispatched by watch:${request.sourceWatch} to review branch \`${branch}\`. It will not merge or push.`, "watch:act");
+    await addTicketNote(request.paths, request.projectId, ticket.id, `${runId} started by watch:${request.sourceWatch} on review branch \`${branch}\`. It will not merge or push.`, "watch:act");
     return { runId, projectId: request.projectId, ticketId: ticket.id, branch, workspacePath };
   } catch (error) {
-    if (claimed && runId) await releaseTicketDispatchClaim(request.paths, request.projectId, request.ticketId, runId);
+    if (claimed && runId) await releaseTicketActClaim(request.paths, request.projectId, request.ticketId, runId);
     if (runDir) {
       const message = error instanceof Error ? error.message : String(error);
       await writeFile(join(runDir, "status"), "failed").catch(() => undefined);

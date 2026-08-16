@@ -121,9 +121,7 @@ body.filtered-by-actions .row-less:not(.has-action) {
   flex-wrap: wrap;
 }
 
-.ticket-row .row-actions,
-.dispatch-row .row-actions,
-.inbox-entry .row-actions {
+.ticket-row .row-actions {
   margin-top: 4px;
 }
 

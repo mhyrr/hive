@@ -90,9 +90,9 @@ async function readIfExists(file: string): Promise<string> {
 //
 // Deliberate non-adoptions:
 // - DAG with explicit `depends:[]` (vs phases/ordered-list in Plandex/OpenHands)
-//   — needed for parallel dispatch.
-// - No clarifying-questions affordance (vs Cline/OpenHands PLAN MODE) — async
-//   dispatch contract; orient.abort covers "too vague."
+//   — needed for independent execution.
+// - No clarifying-questions affordance (vs Cline/OpenHands PLAN MODE) — the
+//   decomposition is asynchronous; orient.abort covers "too vague."
 // - No `Uses:` file list per child (Plandex) — defer until prompt context
 //   carries a file index.
 // ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ PROCESS
    - Self-contained — an agent picking it up cold knows what "done" looks like.
    - Sized for one focused session (< 2h of agent work).
    - Titled in imperative form ("Add session model", not "Session model").
-3. Wire dependencies as a DAG. No cycles. A child can depend on another child via its ref placeholder. Independent branches are dispatchable in parallel.
+3. Wire dependencies as a DAG. No cycles. A child can depend on another child via its ref placeholder. Independent branches can be executed in parallel.
 4. On dedup: your job at this stage is COVERAGE, not filtering. If a child might overlap an open ticket, INCLUDE the child anyway and add the tag "possibly-covered"; cite the overlapping ticket(s) in that child's Notes section. A downstream step handles final dedup. The exception: if the entire goal is unambiguously covered by existing tickets, return a single child whose body explains the overlap.
 
 OUTPUT — first an <analysis> block holding your decomposition plan in prose (the shape you chose, and the constraints that drove it), then a single <json> block. Nothing outside those two blocks.
@@ -135,7 +135,7 @@ CONSTRAINTS
 - Tags must be drawn from the project's existing tag distribution (visible in the index). Don't invent new tags unless the goal genuinely introduces new territory. Exception: "possibly-covered" is a reserved tag for the dedup case above.
 - Children inherit the epic's domain. Don't decompose across unrelated domains.
 - Body markdown lines use \\n for line breaks (this is JSON).
-- Do NOT include the epic in children. Do NOT include placeholder children whose bodies say "TBD" — every ticket must be substantive enough to dispatch.
+- Do NOT include the epic in children. Do NOT include placeholder children whose bodies say "TBD" — every ticket must be substantive enough to execute.
 
 SELF-CHECK (do this in your <analysis> block before emitting the JSON)
 - [ ] Every ref in any "depends" array exists as another child's ref.
@@ -149,39 +149,39 @@ SELF-CHECK (do this in your <analysis> block before emitting the JSON)
 EXAMPLE (illustrative — do not copy verbatim)
 
 <example>
-<input_goal>Add overnight retry for flaky dispatch runs.</input_goal>
-<analysis>The goal is to make dispatch self-heal on transient failures. Project memory mentions dispatch is the atomic primitive and that retries are off by default. Open tickets include TK-040 (hive tail) which is adjacent but not overlapping. Natural decomposition: a retry-policy module, then wire it into the orchestrator, then surface counts on the dashboard. Three children, linear deps. No cycles, count fine, tags drawn from {dispatch, dashboard}.</analysis>
+<input_goal>Add retry for transient nightly extraction failures.</input_goal>
+<analysis>The goal is to stop a temporary provider failure from losing one project's nightly extraction. Project memory says projects are isolated during Pass B and retries are currently off. Natural decomposition: a pure retry policy, wire it around each project extraction, then record attempts in the nightly usage artifact. Three children, linear dependencies. No cycles; tags drawn from {nightly, memory}.</analysis>
 <json>
 {
   "epic": {
-    "title": "Add overnight retry for flaky dispatch runs",
-    "body": "## Goal\\nMake dispatch self-heal on transient failures during overnight campaigns.\\n\\n## Why\\nFlakes currently surface as 'partial' status and stall multi-iteration runs. Self-healing buys oxygen for legitimate work.\\n\\n## Children\\n- C1 — retry-policy module\\n- C2 — wire into orchestrator (depends on C1)\\n- C3 — dashboard surface (depends on C2)",
-    "tags": ["dispatch"]
+    "title": "Add retry for transient nightly extraction failures",
+    "body": "## Goal\\nRetry transient Pass B failures without hiding structural errors.\\n\\n## Why\\nA temporary provider failure currently drops one project's candidates for the night.\\n\\n## Children\\n- C1 — retry-policy module\\n- C2 — wire into project extraction (depends on C1)\\n- C3 — usage artifact fields (depends on C2)",
+    "tags": ["nightly", "memory"]
   },
   "children": [
     {
       "ref": "C1",
       "title": "Add retry-policy module",
       "type": "task",
-      "tags": ["dispatch"],
+      "tags": ["nightly"],
       "depends": [],
       "body": "## Scope\\nA pure module that decides retry vs abort given a failure signature. No side effects.\\n\\n## Acceptance\\n- [ ] Decision tree handles transient (timeout, ECONNREFUSED) vs structural (assertion, parse error) failures\\n- [ ] Returns {retry: bool, after_seconds, reason}\\n- [ ] Tested with 6+ failure-signature fixtures"
     },
     {
       "ref": "C2",
-      "title": "Wire retry into dispatch orchestrator",
+      "title": "Wire retry into project extraction",
       "type": "feature",
-      "tags": ["dispatch"],
+      "tags": ["nightly", "memory"],
       "depends": ["C1"],
-      "body": "## Scope\\nCall the retry-policy module on each iteration's exit; if retry, schedule the next dispatch with the policy's delay. Cap at 3 retries per iteration.\\n\\n## Acceptance\\n- [ ] Transient failures fire a retry within the cap\\n- [ ] Structural failures bypass retry and exit\\n- [ ] Retry count + reason recorded in run state"
+      "body": "## Scope\\nCall the retry-policy module after each project extraction failure. Cap attempts and preserve project isolation.\\n\\n## Acceptance\\n- [ ] Transient failures retry within the cap\\n- [ ] Structural failures bypass retry and fail that project\\n- [ ] Other projects continue unaffected"
     },
     {
       "ref": "C3",
-      "title": "Surface retry counts on dashboard",
+      "title": "Record extraction retry attempts",
       "type": "feature",
-      "tags": ["dispatch", "dashboard"],
+      "tags": ["nightly", "memory"],
       "depends": ["C2"],
-      "body": "## Scope\\nAdd a 'Retries' column to the dispatch run table on the morning dashboard. Show count + last reason on hover.\\n\\n## Acceptance\\n- [ ] Column visible for runs that retried\\n- [ ] Column hidden when no run retried that day"
+      "body": "## Scope\\nRecord retry count and final reason in the nightly usage artifact.\\n\\n## Acceptance\\n- [ ] Each project reports its attempt count\\n- [ ] Final failure reason remains auditable\\n- [ ] Successful first attempts remain compact"
     }
   ]
 }

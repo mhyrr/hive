@@ -3,8 +3,7 @@
 // Renders what `hive watch status` knows, the latest output of every watch
 // inline (the results, not a path to them), and recent surfaced artifacts.
 // Each watch name links to /watches/<name> for the exact prompts.
-// Scope boundary: this is the WATCH fleet, not a run monitor — dispatch-run
-// monitoring stays TK-030.
+// Scope boundary: this is the watch fleet, not an execution-history monitor.
 
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";

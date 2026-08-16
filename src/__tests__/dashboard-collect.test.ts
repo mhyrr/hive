@@ -9,14 +9,14 @@ import {
   collectHealth,
   collectInboxes,
   collectProjects,
-  collectRuns,
+  collectActWork,
   collectTickets,
 } from "../lib/dashboard/collect";
 import { ensureHiveScaffold } from "../lib/paths";
 
 // ---------------------------------------------------------------------------
 // Fixture: a fake ~/.hive tree with two projects, a few tickets, briefings,
-// inboxes, runs, and log lines. Exercises every collector.
+// inboxes, Act work, and log lines. Exercises every collector.
 // ---------------------------------------------------------------------------
 
 async function buildFixture(): Promise<string> {
@@ -34,16 +34,7 @@ async function buildFixture(): Promise<string> {
   );
   await writeFile(
     join(paths.projectsDir, "alpha", "inbox.md"),
-    "# Inbox: alpha\n\n## 2026-04-17 — Heartbeat tick\n\nSome news.\n",
-  );
-  await writeFile(
-    join(paths.projectsDir, "alpha", "heartbeat.json"),
-    JSON.stringify({
-      lastTick: "2026-04-17T08:00:00Z",
-      tickCount: 42,
-      lastResult: "ACTION_TAKEN",
-      enabled: true,
-    }),
+    "# Inbox: alpha\n\n## 2026-04-17 — Watch finding\n\nSome news.\n",
   );
 
   await writeFile(
@@ -98,17 +89,17 @@ async function buildFixture(): Promise<string> {
     "# Goal\n\nProject: bravo\n\nFix TK-999 — hypothetical bug.\n",
   );
   await writeFile(join(r2, "status"), "failed\n");
+  await writeFile(
+    join(r2, "run.json"),
+    JSON.stringify({ completionMode: "review", projectId: "bravo", ticketId: "TK-999" }),
+  );
 
   // --- logs ---
   const logsDir = join(home, "logs");
   await mkdir(logsDir, { recursive: true });
   await writeFile(
-    join(logsDir, "heartbeat.log"),
-    "=== HIVE heartbeat: 2026-04-17T08:00:00Z ===\n=== HIVE heartbeat complete: 2026-04-17T08:00:01Z ===\n",
-  );
-  await writeFile(
-    join(logsDir, "morning.log"),
-    "=== HIVE morning: 2026-04-17 07:00:00 ===\n=== HIVE morning complete: 07:03:10 ===\n",
+    join(logsDir, "watches.log"),
+    "2026-04-17T07:00:00Z observe: no-delta\n",
   );
   await writeFile(join(logsDir, "nightly.log"), "=== HIVE nightly complete: 2026-04-17T02:00:00Z ===\n");
   await writeFile(join(logsDir, "hive-sync.log"), "synced OK\n");
@@ -136,9 +127,6 @@ describe("dashboard collectors", () => {
     const alpha = projects.find((p) => p.id === "alpha")!;
     expect(alpha).toBeDefined();
     expect(alpha.path).toBe("/tmp/fake/alpha");
-    expect(alpha.lastHeartbeat).toBe("2026-04-17T08:00:00Z");
-    expect(alpha.tickCount).toBe(42);
-    expect(alpha.lastResult).toBe("ACTION_TAKEN");
     expect(alpha.ticketCounts.open).toBe(2);          // TK-001, TK-003
     expect(alpha.ticketCounts.inProgress).toBe(1);    // TK-002
     expect(alpha.ticketCounts.closed).toBe(0);
@@ -148,7 +136,6 @@ describe("dashboard collectors", () => {
 
     const bravo = projects.find((p) => p.id === "bravo")!;
     expect(bravo.ticketCounts.open).toBe(0);
-    expect(bravo.lastHeartbeat).toBeNull();
   });
 
   test("collectInboxes returns per-project content with isEmpty flag", async () => {
@@ -159,12 +146,26 @@ describe("dashboard collectors", () => {
 
     const alpha = inboxes.find((i) => i.projectId === "alpha")!;
     expect(alpha.isEmpty).toBe(false);
-    expect(alpha.body).toContain("Heartbeat tick");
+    expect(alpha.body).toContain("Watch finding");
     // Header line "# Inbox: alpha" should be stripped.
     expect(alpha.body.split("\n")[0]).not.toMatch(/^#\s*Inbox/);
 
     const bravo = inboxes.find((i) => i.projectId === "bravo")!;
     expect(bravo.isEmpty).toBe(true);
+  });
+
+  test("collectInboxes treats a legacy Pass F tombstone as empty", async () => {
+    const paths = await ensureHiveScaffold(home);
+    await writeFile(
+      join(paths.projectsDir, "bravo", "inbox.md"),
+      "# Inbox: bravo\n\n_Truncated by Pass F at 2026-08-14T02:00:00.000Z_\n",
+    );
+
+    const inboxes = await collectInboxes(paths);
+    expect(inboxes.find((i) => i.projectId === "bravo")).toMatchObject({
+      body: "",
+      isEmpty: true,
+    });
   });
 
   test("collectTickets groups into ready / inProgress / blocked", async () => {
@@ -197,21 +198,11 @@ describe("dashboard collectors", () => {
     expect(allIds).not.toContain("TK-004");
   });
 
-  test("collectRuns extracts projectId and ticketId from goal.md", async () => {
+  test("collectActWork excludes legacy dispatch history", async () => {
     const paths = await ensureHiveScaffold(home);
-    const runs = await collectRuns(paths);
+    const work = await collectActWork(paths);
 
-    expect(runs.length).toBe(2);
-    // Reversed: RUN-002 newest-first
-    expect(runs[0]!.id).toBe("RUN-002");
-    expect(runs[0]!.status).toBe("failed");
-    expect(runs[0]!.projectId).toBe("bravo");
-    expect(runs[0]!.ticketId).toBe("TK-999");
-
-    expect(runs[1]!.id).toBe("RUN-001");
-    expect(runs[1]!.status).toBe("complete");
-    expect(runs[1]!.ticketId).toBe("TK-001");
-    expect(runs[1]!.goalSnippet.length).toBeGreaterThan(0);
+    expect(work).toEqual([{ status: "failed", projectId: "bravo" }]);
   });
 
   test("collectBriefings sorts newest-first and produces headlines", async () => {
@@ -229,11 +220,7 @@ describe("dashboard collectors", () => {
     const health = await collectHealth(paths);
 
     const labels = health.map((h) => h.label);
-    expect(labels).toEqual(["HEARTBEAT", "MORNING", "NIGHTLY", "SYNC"]);
-
-    const heartbeat = health.find((h) => h.label === "HEARTBEAT")!;
-    expect(heartbeat.lastLine).toContain("heartbeat complete");
-    expect(heartbeat.mtime).not.toBeNull();
+    expect(labels).toEqual(["WATCHES", "NIGHTLY", "SYNC"]);
 
     // SYNC has no marker requirement — last line is just "synced OK"
     const sync = health.find((h) => h.label === "SYNC")!;
@@ -246,12 +233,12 @@ describe("dashboard collectors", () => {
 
     expect(data.projects.length).toBe(2);
     expect(data.tickets.ready.length + data.tickets.inProgress.length + data.tickets.blocked.length).toBe(3);
-    expect(data.runs.length).toBe(2);
+    expect(data.actWork).toEqual([{ status: "failed", projectId: "bravo" }]);
     expect(data.briefings.length).toBe(2);
     expect(data.volumeNumber).toBe(2);
     expect(data.today).toBe("2026-04-17");
     expect(data.todayBriefing?.date).toBe("2026-04-17");
-    expect(data.health.length).toBe(4);
+    expect(data.health.length).toBe(3);
     expect(data.inboxes.length).toBe(2);
   });
 
@@ -262,7 +249,7 @@ describe("dashboard collectors", () => {
       const data = await collectDashboardData(paths);
       expect(data.projects).toEqual([]);
       expect(data.briefings).toEqual([]);
-      expect(data.runs).toEqual([]);
+      expect(data.actWork).toEqual([]);
       expect(data.tickets.ready).toEqual([]);
       expect(data.inboxes).toEqual([]);
       expect(data.todayBriefing).toBeNull();

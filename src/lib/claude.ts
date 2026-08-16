@@ -81,7 +81,7 @@ function spawnClaude(
         child.kill("SIGTERM");
         // Escalate if the child ignores SIGTERM, so an aborted call always
         // settles via 'close' instead of leaving the promise pending forever.
-        // Mirrors the SIGTERM→grace→SIGKILL pattern in campaign/executor.ts.
+        // Give the child a grace period before the hard stop.
         killTimer = setTimeout(() => {
           try {
             child.kill("SIGKILL");

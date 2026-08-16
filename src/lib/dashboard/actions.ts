@@ -6,16 +6,15 @@
  *      request data and return `{ argv }`. The server serialises each
  *      into a `Bun.spawn([bin, ...argv])` call. Tests assert on argv.
  *   2. Direct-file actions for things the CLI does not do yet
- *      (override-status, inbox-ack, identity-propose, reflection-dismiss).
+ *      (identity-propose, reflection-dismiss).
  *      These take `{ paths, ... }` and perform small file writes. Tests
  *      assert on the resulting filesystem state.
  *
- * Split both kinds into a single module so the server's dispatch table
+ * Split both kinds into a single module so the server's action table
  * has one import. Never construct a shell string; argv is argv.
  */
 
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -83,34 +82,6 @@ export function actionTicketNote(input: {
   return { argv };
 }
 
-/** Tag a ticket for auto-dispatch (the `hive ticket dispatch <id>` command). */
-export function actionTicketTagDispatch(input: { id: string; project?: string }): ArgvBuild {
-  requireTicketId(input.id);
-  const argv = ["ticket", "dispatch", input.id];
-  if (input.project) argv.push("--project", input.project);
-  return { argv };
-}
-
-/** Actually dispatch a run for a ticket (the `hive dispatch --ticket <id>` command). */
-export function actionTicketDispatchRun(input: { id: string; project?: string }): ArgvBuild {
-  requireTicketId(input.id);
-  const argv = ["dispatch", "--ticket", input.id];
-  if (input.project) argv.push("--project", input.project);
-  return { argv };
-}
-
-export function actionDispatch(input: { goal: string; project?: string }): ArgvBuild {
-  if (!input.goal?.trim()) throw new Error("goal is required");
-  const argv = ["dispatch", input.goal];
-  if (input.project) argv.push("--project", input.project);
-  return { argv };
-}
-
-export function actionDispatchKill(input: { runId: string }): ArgvBuild {
-  if (!/^RUN-\d+$/.test(input.runId)) throw new Error(`invalid run id: ${input.runId}`);
-  return { argv: ["kill", input.runId] };
-}
-
 export function actionMemoryPromote(input: {
   kind: "fact" | "convention" | "decision" | "question";
   project: string;
@@ -127,55 +98,6 @@ export function actionMemoryPromote(input: {
 // ---------------------------------------------------------------------------
 // Direct-file actions — small file writes, no CLI spawn
 // ---------------------------------------------------------------------------
-
-const ALLOWED_OVERRIDE_STATUSES = new Set(["complete", "partial", "failed"]);
-
-/**
- * Workaround for TK-041 (dispatch status false-negatives). Writes a
- * terminal status directly to `~/.hive/runs/<runId>/status`. Only
- * accepts statuses from an allowlist so a typo can't permanently
- * corrupt the status file.
- */
-export async function actionOverrideStatus(
-  paths: HivePaths,
-  input: { runId: string; status: string },
-): Promise<{ path: string }> {
-  if (!/^RUN-\d+$/.test(input.runId)) throw new Error(`invalid run id: ${input.runId}`);
-  if (!ALLOWED_OVERRIDE_STATUSES.has(input.status)) {
-    throw new Error(`invalid override status: ${input.status}`);
-  }
-  const statusPath = join(paths.runsDir, input.runId, "status");
-  if (!existsSync(dirname(statusPath))) {
-    throw new Error(`run not found: ${input.runId}`);
-  }
-  await writeFile(statusPath, `${input.status}\n`, "utf-8");
-  return { path: statusPath };
-}
-
-/**
- * Hide an inbox entry for this user. The dashboard hashes the entry
- * body (SHA256, first 16 hex chars) and stores the hash in
- * `~/.hive/projects/<p>/inbox-ack.json` — an array of hashes. The
- * renderer consults this list and drops matching entries.
- *
- * Using a hash (not the full text) keeps the file small and avoids
- * storing user text twice.
- */
-export async function actionInboxAck(
-  paths: HivePaths,
-  input: { project: string; entry: string },
-): Promise<{ path: string; hash: string }> {
-  if (!input.project?.trim()) throw new Error("project is required");
-  if (!input.entry?.trim()) throw new Error("entry text is required");
-
-  const hash = hashEntry(input.entry);
-  const ackPath = join(paths.projectsDir, input.project, "inbox-ack.json");
-  const existing = await readJsonArray(ackPath);
-  if (!existing.includes(hash)) existing.push(hash);
-  await mkdir(dirname(ackPath), { recursive: true });
-  await writeFile(ackPath, JSON.stringify(existing, null, 2) + "\n", "utf-8");
-  return { path: ackPath, hash };
-}
 
 /**
  * File an identity proposal. The dashboard NEVER writes SOUL.md /

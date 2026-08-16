@@ -29,7 +29,7 @@ describe("topologicalOrder", () => {
     expect(topologicalOrder(proposal)).toEqual(["C1", "C2", "C3"]);
   });
 
-  test("independent branches dispatch in declaration order", () => {
+  test("independent branches remain in declaration order", () => {
     const proposal: Proposal = {
       epic: { title: "X", body: "", tags: [] },
       children: [
@@ -116,8 +116,8 @@ describe("writeProposal — live", () => {
     const proposal: Proposal = {
       epic: {
         title: "Add overnight retry",
-        body: "## Goal\nMake dispatch self-heal\n## Why\nFlakes",
-        tags: ["dispatch"],
+        body: "## Goal\nMake nightly extraction retry transient failures\n## Why\nFlakes",
+        tags: ["nightly"],
       },
       children: [
         // C2 listed first to prove writer reorders.
@@ -126,7 +126,7 @@ describe("writeProposal — live", () => {
           title: "Wire retry into orchestrator",
           body: "## Scope\n…\n## Acceptance\n- [ ] retries fire",
           type: "feature",
-          tags: ["dispatch"],
+          tags: ["nightly"],
           depends: ["C1"],
         },
         {
@@ -134,7 +134,7 @@ describe("writeProposal — live", () => {
           title: "Add retry-policy module",
           body: "## Scope\n…\n## Acceptance\n- [ ] decision tree exists",
           type: "task",
-          tags: ["dispatch"],
+          tags: ["nightly"],
           depends: [],
         },
         {
@@ -142,7 +142,7 @@ describe("writeProposal — live", () => {
           title: "Surface retry counts in dashboard",
           body: "## Scope\n…\n## Acceptance\n- [ ] count visible",
           type: "feature",
-          tags: ["dispatch", "dashboard"],
+          tags: ["nightly", "dashboard"],
           depends: ["C2"],
         },
       ],

@@ -27,8 +27,8 @@ The design system it is built against is recorded in
   at 2am and on demand via `hive dashboard build`. Read-only, fast, opens
   with any file:// browser. The morning glance.
 - **Interactive** — `hive dashboard serve` runs Bun.serve bound to
-  `127.0.0.1:7777`. Adds action buttons (close ticket, dispatch, promote
-  memory, ack inbox) backed by allowlisted handlers that shell out to the
+  `127.0.0.1:7777`. Adds action buttons (start, close, and annotate
+  tickets) backed by allowlisted handlers that shell out to the
   `hive` CLI via argv. Same renderer underneath, plus per-section
   fragment endpoints for optimistic swap on action.
 
@@ -44,8 +44,9 @@ Eight bands, in the order a morning actually wants them.
   wide as ticket traffic, and the plate underneath carries the verdict —
   `NEEDS YOU`, `QUEENLESS`, `ACTIVE`, `WAITING`, `QUIET`. Painted means
   look at me; unpainted pine means fine. Attention is a rubric over real
-  signals (failed runs, stale work, unconfigured paths), not a single
-  threshold. Clicking a colony filters the whole page to it.
+  signals (failed Act branches, non-empty project inboxes, stale work,
+  unconfigured paths), not a single threshold. Clicking a colony filters the
+  whole page to it.
 - **Work.** What actually landed in the last two days, as the commit
   subjects people wrote — the only windowed record of work HIVE holds.
 - **Briefing.** The narrative written by the nightly Opus verifier, set
@@ -60,12 +61,13 @@ Eight bands, in the order a morning actually wants them.
   entries, still-open questions, and promotion candidates that have
   accumulated enough recall strength to be worth broadening.
 - **Archive.** 30 days of past briefings; click a date to open it.
-- **Upkeep.** Deliberately quiet at the bottom: mtime for the
-  `heartbeat`, `nightly`, `morning` and `sync` launchd jobs, last
+- **Upkeep.** Deliberately quiet at the bottom: log activity for the
+  `nightly`, `watches` and `sync` launchd jobs, last
   night's pipeline cost, and the taste queue when something is waiting.
 
-Cut on purpose: the dispatch log and the inbox band. Both were dead or
-lying, and neither earns a place on the page while that is true.
+Cut on purpose: generic execution history and the inbox band. Watch Act
+surfaces only failed or review-ready branches in the yard's attention signal;
+full private execution records stay off the dashboard.
 
 ## Archive
 

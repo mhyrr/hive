@@ -8,7 +8,7 @@ import {
   type VerdictKind,
 } from "./colony";
 import type { ProjectActivity } from "./activity";
-import type { DashboardData, MemoryStat, ProjectCard, RunEntry } from "./collect";
+import type { ActWorkEntry, DashboardData, MemoryStat, ProjectCard } from "./collect";
 
 const TODAY = "2026-08-14";
 
@@ -22,9 +22,6 @@ function project(id: string, over: Partial<ProjectCard> = {}): ProjectCard {
   return {
     id,
     path: `/work/${id}`,
-    lastHeartbeat: daysBefore(0),
-    tickCount: 4,
-    lastResult: "quiet",
     ticketCounts: { open: 1, inProgress: 0, closed: 8, byPriority: { 0: 0, 1: 0, 2: 1, 3: 0 } },
     ticketsTouched: 0,
     inboxMtime: null,
@@ -50,16 +47,8 @@ function activity(projectId: string, over: Partial<ProjectActivity> = {}): Proje
   };
 }
 
-function run(projectId: string, status: string): RunEntry {
-  return {
-    id: "RUN-001",
-    status,
-    durationMs: 1000,
-    startedAt: daysBefore(0),
-    goalSnippet: "do the thing",
-    projectId,
-    ticketId: null,
-  };
+function actWork(projectId: string, status: string): ActWorkEntry {
+  return { status, projectId };
 }
 
 function dash(over: Partial<DashboardData> = {}): DashboardData {
@@ -73,7 +62,7 @@ function dash(over: Partial<DashboardData> = {}): DashboardData {
     projects: [],
     inboxes: [],
     tickets: { ready: [], inProgress: [], blocked: [] },
-    runs: [],
+    actWork: [],
     briefings: [],
     todayBriefing: null,
     promotionCandidates: [],
@@ -98,16 +87,16 @@ function verdictOf(data: DashboardData, id: string): VerdictKind {
 }
 
 describe("escalations bypass the rubric", () => {
-  test("a failed run needs you no matter how quiet the colony is", () => {
+  test("a failed Act branch needs you no matter how quiet the colony is", () => {
     const c = only(
       dash({
         projects: [project("hive")],
         memoryStats: [stat("hive")],
-        runs: [run("hive", "failed")],
+        actWork: [actWork("hive", "failed")],
       }),
     );
     expect(c.verdict).toBe("needs-you");
-    expect(c.reason).toBe("1 run failed");
+    expect(c.reason).toBe("1 Act branch failed");
     expect(c.score).toBeLessThan(PAINT_THRESHOLD); // painted despite scoring low
   });
 
@@ -116,11 +105,11 @@ describe("escalations bypass the rubric", () => {
       dash({
         projects: [project("hive")],
         memoryStats: [stat("hive")],
-        runs: [run("hive", "review_ready")],
+        actWork: [actWork("hive", "review_ready")],
       }),
     );
     expect(c.verdict).toBe("needs-you");
-    expect(c.reason).toBe("1 run waiting on review");
+    expect(c.reason).toBe("1 Act branch waiting on review");
   });
 
   test("a project with no configured path is queenless", () => {
@@ -129,13 +118,6 @@ describe("escalations bypass the rubric", () => {
     expect(c.reason).toBe("no path configured");
   });
 
-  test("an errored last inspection is queenless", () => {
-    const data = dash({
-      projects: [project("hive", { lastResult: "ERROR: dispatch refused" })],
-      memoryStats: [stat("hive")],
-    });
-    expect(verdictOf(data, "hive")).toBe("queenless");
-  });
 });
 
 describe("the attention rubric", () => {
@@ -240,24 +222,17 @@ describe("the attention rubric", () => {
     expect(c.reason).toContain("blocked, none moving");
   });
 
-  test("the inbox does not drive the score while its signal is broken", () => {
-    // TK-144: Pass F tombstones make every inbox read as unread. Pinned off
-    // so re-wiring it is a deliberate act with a failing test, not a drift.
+  test("a non-empty inbox asks for attention", () => {
     const data = dash({
       projects: [project("hive")],
       memoryStats: [stat("hive")],
       inboxes: [{ projectId: "hive", mtime: daysBefore(0), body: "note", isEmpty: false }],
     });
-    expect(verdictOf(data, "hive")).toBe("quiet");
+    const colony = only(data);
+    expect(colony.verdict).toBe("needs-you");
+    expect(colony.reason).toBe("inbox has findings");
   });
 
-  test("a missing heartbeat is not evidence of anything", () => {
-    const data = dash({
-      projects: [project("hive", { tickCount: 0, lastHeartbeat: null })],
-      memoryStats: [stat("hive")],
-    });
-    expect(verdictOf(data, "hive")).toBe("quiet");
-  });
 });
 
 describe("what a quiet colony still says", () => {
@@ -314,7 +289,7 @@ describe("yard shape", () => {
       projects: [project("calm"), project("broken"), project("busy")],
       memoryStats: [stat("calm"), stat("broken"), stat("busy")],
       activity: [activity("busy", { commits: 9, monthCommits: 30 })],
-      runs: [run("broken", "failed")],
+      actWork: [actWork("broken", "failed")],
     });
     expect(sortYard(assignVerdicts(data)).map((c) => c.id)).toEqual(["broken", "busy", "calm"]);
   });
@@ -323,7 +298,7 @@ describe("yard shape", () => {
     const data = dash({
       projects: [project("calm"), project("broken")],
       memoryStats: [stat("calm"), stat("broken")],
-      runs: [run("broken", "failed")],
+      actWork: [actWork("broken", "failed")],
     });
     expect(needsAttention(assignVerdicts(data)).map((c) => c.id)).toEqual(["broken"]);
   });

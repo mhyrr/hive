@@ -345,10 +345,9 @@ describe("applyDecisions — end to end", () => {
     expect(reflection).toContain("## About the System");
     expect(reflection).toContain("Heartbeat tick");
 
-    // Inbox truncated
+    // Inbox truncated to the canonical header-only empty file.
     const alphaInbox = await Bun.file(join(paths.projectsDir, "alpha", "inbox.md")).text();
-    expect(alphaInbox).toContain("Truncated by Pass F");
-    expect(alphaInbox).not.toContain("earlier finding");
+    expect(alphaInbox).toBe("# Inbox: alpha\n\n");
 
     // No leftover errors
     expect(result.errors).toEqual([]);

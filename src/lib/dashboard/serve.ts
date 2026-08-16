@@ -6,8 +6,6 @@
  * Routes:
  *   GET  /                      → full interactive dashboard
  *   GET  /tickets               → tickets page
- *   GET  /runs                  → runs index (active panel + terminal timeline)
- *   GET  /runs/:id              → per-run fragment (dispatch or campaign)
  *   GET  /archive/:date         → frozen HTML snapshot for a day
  *   GET  /fragment/:name        → one section, fresh data, for optimistic swap
  *   POST /action/:kind/:verb    → run an action, return { ok, message }
@@ -29,19 +27,12 @@ import {
   actionTicketClose,
   actionTicketReopen,
   actionTicketNote,
-  actionTicketTagDispatch,
-  actionTicketDispatchRun,
-  actionDispatch,
-  actionDispatchKill,
   actionMemoryPromote,
-  actionOverrideStatus,
-  actionInboxAck,
   actionIdentityPropose,
   actionReflectionDismiss,
   type ArgvBuild,
 } from "./actions";
 import { resolveHiveBin, HiveBinNotFoundError } from "./hive-bin";
-import { renderPageNav } from "./html";
 import { renderDashboard, renderTicketsPageDocument, renderTastePageDocument } from "./render";
 import { collectDashboardData, collectTicketsPage, collectTastePage } from "./collect";
 import { collectWatchesPage, renderWatchesPageDocument } from "./watches-page";
@@ -50,13 +41,6 @@ import {
   renderWatchDetailDocument,
   renderWatchNotFound,
 } from "./watch-detail-page";
-import { collectRuns, collectArcs } from "./runs/collect";
-import { renderRunsPageDocument, renderArcRunsPageDocument } from "./runs/render";
-import { collectDispatchDetail } from "./runs/collect-detail";
-import { renderDispatchFragment } from "./render-dispatch";
-import { collectCampaignFragment } from "./runs/collect-campaign";
-import { renderCampaignFragment } from "./runs/campaign-fragment";
-import { DASHBOARD_CSS } from "./styles";
 import {
   archivePathForDate,
   isValidArchiveDate,
@@ -129,9 +113,6 @@ export async function handleRequest(req: Request, rctx: RequestCtx): Promise<Res
     if (req.method === "GET" && url.pathname === "/tickets") {
       return serveTicketsPage(rctx);
     }
-    if (req.method === "GET" && url.pathname === "/runs") {
-      return serveRunsPage(rctx);
-    }
     if (req.method === "GET" && url.pathname === "/taste") {
       return serveTastePage(rctx);
     }
@@ -140,9 +121,6 @@ export async function handleRequest(req: Request, rctx: RequestCtx): Promise<Res
     }
     if (req.method === "GET" && url.pathname.startsWith("/watches/")) {
       return serveWatchDetail(rctx, url.pathname.slice("/watches/".length));
-    }
-    if (req.method === "GET" && url.pathname.startsWith("/runs/")) {
-      return serveRunDetail(rctx, url.pathname.slice("/runs/".length));
     }
     if (req.method === "GET" && url.pathname.startsWith("/archive/")) {
       return serveArchive(rctx, url.pathname.slice("/archive/".length));
@@ -229,45 +207,6 @@ async function serveWatchDetail(rctx: RequestCtx, ref: string): Promise<Response
   return htmlResponse(renderWatchDetailDocument(data), 200);
 }
 
-async function serveRunsPage(rctx: RequestCtx): Promise<Response> {
-  const arcs = await collectArcs(rctx.paths);
-  const html = renderArcRunsPageDocument(arcs, { interactive: true });
-  return new Response(html, {
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-store",
-    },
-  });
-}
-
-async function serveRunDetail(rctx: RequestCtx, id: string): Promise<Response> {
-  // Validate ID format
-  if (!id || (!id.startsWith("RUN-") && !id.startsWith("CAMP-"))) {
-    return htmlResponse(render404(id), 404);
-  }
-
-  let fragmentHtml: string | null = null;
-
-  if (id.startsWith("RUN-")) {
-    const detail = await collectDispatchDetail(rctx.paths, id, { skipGit: true });
-    if (detail) {
-      fragmentHtml = renderDispatchFragment(detail);
-    }
-  } else if (id.startsWith("CAMP-")) {
-    const data = await collectCampaignFragment(id, rctx.paths);
-    if (data) {
-      fragmentHtml = renderCampaignFragment(data);
-    }
-  }
-
-  if (!fragmentHtml) {
-    return htmlResponse(render404(id), 404);
-  }
-
-  const html = renderRunDetailDocument(id, fragmentHtml);
-  return htmlResponse(html, 200);
-}
-
 async function serveArchive(rctx: RequestCtx, date: string): Promise<Response> {
   if (!isValidArchiveDate(date)) {
     return new Response("bad request", { status: 400 });
@@ -323,7 +262,7 @@ async function serveAction(rctx: RequestCtx, rest: string, req: Request): Promis
 }
 
 /**
- * Dispatch a single action. Split out so tests can target it directly.
+ * Route a single action. Split out so tests can target it directly.
  */
 export async function dispatchAction(
   rctx: RequestCtx,
@@ -358,41 +297,13 @@ export async function dispatchAction(
       await runCliOrFail(rctx, build);
       return { message: `note added to ${body.id}`, refreshedSection: "tickets" };
     }
-    case "ticket/tag-dispatch": {
-      const build = wrap(() => actionTicketTagDispatch(safe()));
-      await runCliOrFail(rctx, build);
-      return { message: `${body.id} tagged auto-dispatch`, refreshedSection: "tickets" };
-    }
-    case "ticket/dispatch-run": {
-      const build = wrap(() => actionTicketDispatchRun(safe()));
-      await runCliOrFail(rctx, build);
-      return { message: `dispatched ${body.id}`, refreshedSection: "runs" };
-    }
-    // ----- CLI-backed dispatch/memory -----
-    case "dispatch": {
-      const build = wrap(() => actionDispatch(safe()));
-      await runCliOrFail(rctx, build);
-      return { message: "dispatched", refreshedSection: "runs" };
-    }
-    case "dispatch/kill": {
-      const build = wrap(() => actionDispatchKill(safe()));
-      await runCliOrFail(rctx, build);
-      return { message: `killed ${body.runId}`, refreshedSection: "runs" };
-    }
+    // ----- CLI-backed memory -----
     case "memory/promote": {
       const build = wrap(() => actionMemoryPromote(safe()));
       await runCliOrFail(rctx, build);
       return { message: "promoted to memory" };
     }
     // ----- Direct-file actions -----
-    case "dispatch/override-status": {
-      await wrapAsync(() => actionOverrideStatus(rctx.paths, safe()));
-      return { message: `${body.runId} → ${body.status}`, refreshedSection: "runs" };
-    }
-    case "inbox/ack": {
-      await wrapAsync(() => actionInboxAck(rctx.paths, safe()));
-      return { message: `acknowledged`, refreshedSection: "inboxes" };
-    }
     case "identity/propose": {
       const { path } = await wrapAsync(() =>
         actionIdentityPropose(rctx.paths, safe()),
@@ -435,71 +346,6 @@ function htmlResponse(html: string, status = 200): Response {
       "cache-control": "no-store",
     },
   });
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-/** Broadsheet-styled 404 page for unknown run IDs. */
-function render404(id: string): string {
-  const nav = renderPageNav("");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>HIVE · Not Found</title>
-<style>${DASHBOARD_CSS}</style>
-</head>
-<body>
-<div class="page page-wide">
-  <nav class="page-nav">${nav}</nav>
-  <header class="masthead">
-    <h1>HIVE</h1>
-    <div class="dateline"><span>404 — Not Found</span></div>
-  </header>
-  <section class="section">
-    <hr class="amber"/>
-    <p class="error-message">No run found for <code class="mono">${escapeHtml(id || "(empty)")}</code>.</p>
-    <p><a href="/runs">← Back to runs</a></p>
-  </section>
-</div>
-</body>
-</html>`;
-}
-
-/** Wrap a per-run fragment in a full HTML document shell. */
-function renderRunDetailDocument(id: string, fragmentHtml: string): string {
-  const nav = renderPageNav("/runs");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>HIVE · ${escapeHtml(id)}</title>
-<style>${DASHBOARD_CSS}</style>
-</head>
-<body>
-<div class="page page-wide">
-  <nav class="page-nav">${nav}</nav>
-  <header class="masthead">
-    <h1>HIVE</h1>
-    <div class="dateline">
-      <span>${escapeHtml(id)}</span>
-      <span class="sep">·</span>
-      <span><a href="/runs">← All Runs</a></span>
-    </div>
-  </header>
-  ${fragmentHtml}
-</div>
-</body>
-</html>`;
 }
 
 async function safeReadJson(req: Request): Promise<any | null> {

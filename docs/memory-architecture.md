@@ -57,7 +57,7 @@ everything.
     └── ...
 
 ~/.hive/memory/runs/<DATE>/
-├── condition.json              # Pass A signal report (sessions/git/tickets/heartbeat)
+├── condition.json              # Pass A signal report (sessions/git/tickets/inbox)
 ├── candidates.B.<project>.json # Sonnet's per-project extractions
 ├── candidates.C.json           # Sonnet's cross-project reflections
 ├── decisions.json              # Opus's per-candidate verdicts (accept/supersede/merge/reject)
@@ -76,7 +76,7 @@ with ranked relevance scoring.
 
 ### How It Works
 
-Given a query like "heartbeat dispatch", BM25 scores each memory
+Given a query like "watch evidence", BM25 scores each memory
 entry by three factors:
 
 1. **Term Frequency (TF)** — How often the query term appears in the
@@ -84,15 +84,15 @@ entry by three factors:
    doesn't linearly increase the score.
 
 2. **Inverse Document Frequency (IDF)** — Terms that appear in fewer
-   entries are more discriminating. "heartbeat" scores higher than
+   entries are more discriminating. "evidence" scores higher than
    "the" because it's rarer across the corpus.
 
 3. **Document Length Normalization** — Short, focused entries aren't
    penalized relative to long ones. Controlled by `b = 0.75`.
 
 Multi-term queries score each term independently and sum. An entry
-matching both "heartbeat" and "dispatch" ranks higher than one
-matching only "heartbeat".
+matching both "watch" and "evidence" ranks higher than one
+matching only "watch".
 
 ### Parameters
 
@@ -312,7 +312,8 @@ Pass F — Apply (mechanical)
   ↓                 mergeTagsIntoEntry / drop rejected
   ↓                 (directives marked reject are force-admitted, not dropped)
   ↓ drain candidates.md → runs/{DATE}/candidates.consumed.{name}.md
-  ↓ truncate inbox.md, rebuild _index.md per project touched
+  ↓ truncate inbox.md to its canonical header-only empty form,
+  ↓ rebuild _index.md per project touched
   ↓ land accepted reflections + project-scoped gaps as questions
   ↓ copy briefing.md → ~/.hive/briefings/{DATE}.md
 ```

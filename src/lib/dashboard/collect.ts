@@ -12,6 +12,7 @@ import { join } from "node:path";
 
 import { type HivePaths, listProjects, getProjectPaths } from "../paths";
 import { parseFrontmatter } from "../frontmatter";
+import { parseInbox } from "../inbox";
 import { listTickets, readTicket, type Ticket, type TicketPriority } from "../ticket";
 import {
   readProjectMemorySnapshot,
@@ -24,11 +25,6 @@ import {
 import { loadUsageSummary, formatUsd } from "../pricing";
 import { collectActivity, type ProjectActivity } from "./activity";
 import { collectWatchesPage, type WatchesPageData } from "./watches-page";
-import {
-  collectRuns as collectRunsPage,
-  runsByTicket as buildRunsByTicket,
-  type RunRef as RunsRunRef,
-} from "./runs/collect";
 import {
   readTasteUnits,
   generalTasteDir,
@@ -43,7 +39,7 @@ import { TASTE_CATEGORIES, type TasteCategory } from "../taste-types";
 // ---------------------------------------------------------------------------
 
 export type HealthEntry = {
-  label: string;           // "HEARTBEAT", "NIGHTLY", "MORNING", "SYNC"
+  label: string;           // "NIGHTLY", "WATCHES", "SYNC"
   lastLine: string;        // trimmed tail line
   mtime: string | null;    // ISO timestamp
 };
@@ -51,9 +47,6 @@ export type HealthEntry = {
 export type ProjectCard = {
   id: string;
   path: string | null;                   // from config.md "path:" field
-  lastHeartbeat: string | null;          // ISO
-  tickCount: number;
-  lastResult: string | null;
   ticketCounts: {
     open: number;
     inProgress: number;
@@ -69,13 +62,8 @@ export type ProjectCard = {
 export type InboxEntry = {
   projectId: string;
   mtime: string | null;
-  body: string;              // raw markdown (may be empty)
+  body: string;              // semantic markdown; headers and machine markers removed
   isEmpty: boolean;
-};
-
-export type RunRef = {
-  id: string;
-  status: string;
 };
 
 export type TicketCitation = {
@@ -93,8 +81,6 @@ export type TicketCitation = {
   // Optional. Populated by collectTicketsPage so cards can expand inline.
   // Empty / unset for collectors that only need summary citations.
   body?: string;
-  // Optional. Populated by collectTicketsPage from cross-referencing runs.
-  runs?: RunRef[];
 };
 
 export type TicketBuckets = {
@@ -140,14 +126,9 @@ async function listTicketsWithBodies(
   return out;
 }
 
-export type RunEntry = {
-  id: string;               // "RUN-009"
-  status: string;           // includes "review_ready" for unmerged Act work
-  durationMs: number | null;
-  startedAt: string | null;
-  goalSnippet: string;      // first ~240 chars of goal.md body
-  projectId: string | null; // parsed from goal.md if possible
-  ticketId: string | null;  // first TK-\d+ in goal.md
+export type ActWorkEntry = {
+  status: string;
+  projectId: string;
 };
 
 export type BriefingEntry = {
@@ -230,7 +211,8 @@ export type DashboardData = {
   projects: ProjectCard[];
   inboxes: InboxEntry[];
   tickets: TicketBuckets;
-  runs: RunEntry[];
+  /** Branch-only work started by an Act watch. Generic dispatch history is excluded. */
+  actWork: ActWorkEntry[];
   briefings: BriefingEntry[];
   todayBriefing: BriefingEntry | null;
   promotionCandidates: PromotionCandidate[];
@@ -286,24 +268,6 @@ function parseProjectPath(configMd: string): string | null {
   return attributes.path ?? null;
 }
 
-function extractTicketId(text: string): string | null {
-  const match = text.match(/TK-\d{1,4}/);
-  return match ? match[0] : null;
-}
-
-function extractProjectId(goalBody: string, knownProjects: string[]): string | null {
-  // "Project: hive" or "Project:hive"
-  const explicit = goalBody.match(/^Project:\s*([a-z0-9_-]+)/im);
-  if (explicit?.[1]) return explicit[1];
-
-  // Fallback: match any known project id as a whole-word hit in the goal body
-  for (const id of knownProjects) {
-    const re = new RegExp(`\\b${id}\\b`, "i");
-    if (re.test(goalBody)) return id;
-  }
-  return null;
-}
-
 // ---------------------------------------------------------------------------
 // Collectors
 // ---------------------------------------------------------------------------
@@ -311,8 +275,7 @@ function extractProjectId(goalBody: string, knownProjects: string[]): string | n
 export async function collectHealth(paths: HivePaths): Promise<HealthEntry[]> {
   const logsDir = join(paths.home, "logs");
   const jobs = [
-    { label: "HEARTBEAT", file: "heartbeat.log", marker: "heartbeat complete" },
-    { label: "MORNING", file: "morning.log", marker: "morning complete" },
+    { label: "WATCHES", file: "watches.log", marker: null as string | null },
     { label: "NIGHTLY", file: "nightly.log", marker: "nightly complete" },
     { label: "SYNC", file: "hive-sync.log", marker: null as string | null },
   ];
@@ -342,22 +305,6 @@ export async function collectProjects(paths: HivePaths): Promise<ProjectCard[]> 
     const configMd = await safeReadFile(pp.config);
     const path = configMd ? parseProjectPath(configMd) : null;
 
-    // Heartbeat
-    let lastHeartbeat: string | null = null;
-    let tickCount = 0;
-    let lastResult: string | null = null;
-    const hbRaw = await safeReadFile(pp.heartbeatConfig);
-    if (hbRaw) {
-      try {
-        const hb = JSON.parse(hbRaw);
-        lastHeartbeat = hb.lastTick ?? null;
-        tickCount = typeof hb.tickCount === "number" ? hb.tickCount : 0;
-        lastResult = hb.lastResult ?? null;
-      } catch {
-        // intentional: tolerate malformed heartbeat.json
-      }
-    }
-
     // Tickets
     const tickets = await listTickets(paths, id).catch(() => [] as Ticket[]);
     const counts = {
@@ -384,9 +331,6 @@ export async function collectProjects(paths: HivePaths): Promise<ProjectCard[]> 
     cards.push({
       id,
       path,
-      lastHeartbeat,
-      tickCount,
-      lastResult,
       ticketCounts: counts,
       ticketsTouched,
       inboxMtime: inboxStat ? inboxStat.mtime.toISOString() : null,
@@ -402,16 +346,14 @@ export async function collectInboxes(paths: HivePaths): Promise<InboxEntry[]> {
 
   for (const id of ids) {
     const pp = getProjectPaths(paths, id);
-    const body = (await safeReadFile(pp.inbox)) ?? "";
+    const raw = (await safeReadFile(pp.inbox)) ?? "";
     const st = await safeStat(pp.inbox);
-    // Drop a leading "# Inbox: <id>" header so the rendered section shows content only.
-    const cleaned = body.replace(new RegExp(`^#\\s+Inbox:\\s+${id}\\s*\\n?`, "i"), "").trim();
-    const isEmpty = cleaned.length === 0;
+    const content = parseInbox(raw, id);
     out.push({
       projectId: id,
       mtime: st ? st.mtime.toISOString() : null,
-      body: cleaned,
-      isEmpty,
+      body: content.body,
+      isEmpty: content.kind === "empty",
     });
   }
 
@@ -489,20 +431,11 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
   const all: Indexed[] = [];
   const projectsWithTickets = new Set<string>();
 
-  // Collect tickets and runs in parallel.
-  const [, runsData] = await Promise.all([
-    (async () => {
-      for (const id of projectIds) {
-        const tickets = await listTicketsWithBodies(paths, id).catch(() => []);
-        if (tickets.length > 0) projectsWithTickets.add(id);
-        for (const ticket of tickets) all.push({ projectId: id, ticket });
-      }
-    })(),
-    collectRunsPage(paths, { checkPid: true }),
-  ]);
-
-  // Build runs-by-ticket index for cross-linking.
-  const runsMap = buildRunsByTicket(runsData);
+  for (const id of projectIds) {
+    const tickets = await listTicketsWithBodies(paths, id).catch(() => []);
+    if (tickets.length > 0) projectsWithTickets.add(id);
+    for (const ticket of tickets) all.push({ projectId: id, ticket });
+  }
 
   // Open-by-project so the blocked check matches collectTickets' semantics.
   const openByProject = new Map<string, Set<string>>();
@@ -512,7 +445,6 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
   }
 
   const toCitation = (it: Indexed): TicketCitation => {
-    const refs = runsMap.get(`${it.projectId}/${it.ticket.id}`) ?? runsMap.get(it.ticket.id);
     return {
       id: it.ticket.id,
       title: it.ticket.title,
@@ -522,9 +454,6 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
       depends: it.ticket.depends,
       ageDays: daysBetween(new Date(it.ticket.created), now),
       body: it.ticket.body,
-      runs: refs && refs.length > 0
-        ? refs.map((r) => ({ id: r.id, status: r.status }))
-        : undefined,
     };
   };
 
@@ -618,56 +547,29 @@ export async function collectTicketsPage(paths: HivePaths): Promise<TicketsPageD
   };
 }
 
-export async function collectRuns(paths: HivePaths, limit = 20): Promise<RunEntry[]> {
+export async function collectActWork(paths: HivePaths): Promise<ActWorkEntry[]> {
   const entries = await readdir(paths.runsDir).catch(() => [] as string[]);
   const runIds = entries
     .filter((e) => /^RUN-\d+$/.test(e))
     .sort()
-    .reverse()
-    .slice(0, limit);
-
-  const knownProjects = await listProjects(paths.projectsDir);
-  const out: RunEntry[] = [];
+    .reverse();
+  const out: ActWorkEntry[] = [];
 
   for (const id of runIds) {
     const runDir = join(paths.runsDir, id);
-    const goal = (await safeReadFile(join(runDir, "goal.md"))) ?? "";
-    const status = ((await safeReadFile(join(runDir, "status"))) ?? "running").trim();
     const metadataRaw = await safeReadFile(join(runDir, "run.json"));
-    const metadata = metadataRaw
-      ? (() => {
-          try {
-            return JSON.parse(metadataRaw) as { projectId?: string; ticketId?: string; createdAt?: string };
-          } catch {
-            return null;
-          }
-        })()
-      : null;
-
-    const goalStat = await safeStat(join(runDir, "goal.md"));
-    const statusStat = await safeStat(join(runDir, "status"));
-
-    const startedAt = metadata?.createdAt ?? (goalStat ? goalStat.mtime.toISOString() : null);
-    const durationMs = goalStat && statusStat
-      ? Math.max(0, statusStat.mtime.getTime() - goalStat.mtime.getTime())
-      : null;
-
-    // Snippet: strip leading heading, take first substantial paragraph.
-    const body = goal.replace(/^#\s*Goal\s*\n+/i, "").trim();
-    const firstPara = body.split(/\n\s*\n/)[0]?.replace(/\s+/g, " ").trim() ?? "";
-    const goalSnippet = firstPara.length > 280
-      ? firstPara.slice(0, 280).replace(/\s+\S*$/, "") + "…"
-      : firstPara;
-
-    out.push({
-      id,
-      status,
-      durationMs,
-      startedAt,
-      goalSnippet,
-      projectId: metadata?.projectId ?? extractProjectId(body, knownProjects),
-      ticketId: metadata?.ticketId ?? extractTicketId(body),
-    });
+    if (!metadataRaw) continue;
+    try {
+      const metadata = JSON.parse(metadataRaw) as {
+        completionMode?: string;
+        projectId?: string;
+      };
+      if (metadata.completionMode !== "review" || !metadata.projectId) continue;
+      const status = ((await safeReadFile(join(runDir, "status"))) ?? "running").trim();
+      out.push({ status, projectId: metadata.projectId });
+    } catch {
+      // A malformed private record is ignored; the watch log remains the audit trail.
+    }
   }
 
   return out;
@@ -1225,12 +1127,12 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, runs, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, watches, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
+  const [health, projects, inboxes, tickets, actWork, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, watches, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
     collectTickets(paths),
-    collectRuns(paths),
+    collectActWork(paths),
     collectBriefings(paths),
     collectPromotionCandidates(paths),
     collectOpenQuestions(paths),
@@ -1256,7 +1158,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     projects,
     inboxes,
     tickets,
-    runs,
+    actWork,
     briefings,
     todayBriefing,
     promotionCandidates,

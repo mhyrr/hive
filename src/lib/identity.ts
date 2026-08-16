@@ -8,7 +8,7 @@ import { buildTasteLayer, getTastePaths } from "./taste";
 
 const IDENTITY_FILES = ["SOUL.md", "IDENTITY.md", "SELF.md", "AGENTS.md", "TRUST.md"];
 
-const DEFAULT_PERSONA = "greg-dry";
+const DEFAULT_PERSONA = "dry";
 
 /** Active persona name: explicit (--persona) → HIVE_PERSONA env → default. */
 function resolvePersonaName(explicit?: string | null): string {
@@ -32,13 +32,13 @@ async function loadPersona(home: string, explicit?: string | null): Promise<stri
 export interface CanonicalIdentityOpts {
   /** Project ID for memory + stack hint. Omit for a project-neutral prefix. */
   projectId?: string | null;
-  /** Include the project's memory index/knowledge. Heartbeat sets false for cache stability. */
+  /** Include the project's memory index/knowledge. */
   includeProjectMemory: boolean;
   /** Target harness — affects stack-hint wording (Codex has no Skill tool). Default "claude". */
   harness?: Harness;
   /**
    * Insert the swappable persona register after IDENTITY. Interactive sessions
-   * only — dispatch, heartbeat, campaigns, and doctor leave this false so their
+   * only — non-interactive callers leave this false so their
    * identity stays persona-neutral (scope: interactive, per design 2026-06).
    */
   includePersona?: boolean;
@@ -52,7 +52,7 @@ export interface CanonicalIdentityOpts {
  */
 export interface IdentityComponent {
   kind: "soul" | "persona" | "memory" | "stack-hint" | "taste";
-  /** Human-readable name: "SOUL.md", "persona: greg-dry", "_index.md", ... */
+  /** Human-readable name: "SOUL.md", "persona: dry", "_index.md", ... */
   label: string;
   /** Source file, when the component is file-backed (stack hint is not). */
   path: string | null;
@@ -71,7 +71,7 @@ export async function collectIdentityComponents(
   const components: IdentityComponent[] = [];
 
   // 1. Soul stack — the swappable persona register slots in after IDENTITY,
-  //    interactive sessions only (dispatch/heartbeat pass includePersona: false).
+  //    interactive sessions only (non-interactive callers pass includePersona: false).
   for (const file of IDENTITY_FILES) {
     const filePath = join(paths.home, file);
     if (existsSync(filePath)) {
@@ -91,7 +91,7 @@ export async function collectIdentityComponents(
     }
   }
 
-  // 2. Project memory — heartbeat skips for cache stability
+  // 2. Project memory — optional for cache-stable non-interactive callers
   if (opts.includeProjectMemory && opts.projectId) {
     const indexFile = join(paths.memoryProjectsDir, opts.projectId, "_index.md");
     const knowledgeFile = join(paths.memoryProjectsDir, opts.projectId, "knowledge.md");
@@ -141,8 +141,7 @@ export async function collectIdentityComponents(
  *
  * Byte-stability: with `includeProjectMemory: false`, the output is stable
  * across invocations for a fixed projectId (soul files + stack hint mutate
- * only on user edits). This is what heartbeat relies on for TK-024 cache
- * discipline.
+ * only on user edits).
  */
 async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<string> {
   const components = await collectIdentityComponents(opts);
@@ -180,21 +179,6 @@ export async function assembleIdentity(opts?: {
     harness: opts?.harness,
     includePersona: opts?.includePersona,
     persona: opts?.persona,
-  });
-}
-
-/**
- * Assemble a deterministic identity prefix for the heartbeat agent.
- *
- * Byte-stable across ticks: skips project memory (which rebuilds on every tick).
- * Project-specific state (memory index, tickets, git, dispatch runs) is
- * delivered via the per-tick context brief in the user message, below the
- * cached system prompt.
- */
-export async function assembleHeartbeatIdentity(projectId?: string): Promise<string> {
-  return buildCanonicalIdentity({
-    projectId: projectId ?? null,
-    includeProjectMemory: false,
   });
 }
 

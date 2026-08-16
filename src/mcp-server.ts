@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { readdirSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 
 import { extractConfigValue } from "./lib/config";
 
@@ -30,11 +30,6 @@ import {
   type MemorySection,
 } from "./lib/memory";
 import { parseFrontmatter } from "./lib/frontmatter";
-import {
-  readHeartbeatConfig,
-  writeHeartbeatConfig,
-  defaultConfig,
-} from "./lib/heartbeat";
 import {
   createTicket,
   readTicket,
@@ -621,21 +616,8 @@ server.registerTool("add_project", {
 
   await ensureProjectMemoryDir(paths, projectId);
 
-  // Write HEARTBEAT.md from template if missing
-  const heartbeatPath = join(projectDir, "HEARTBEAT.md");
-  if (!existsSync(heartbeatPath)) {
-    const templatePath = join(dirname(import.meta.dir), "templates", "heartbeat", "HEARTBEAT.md");
-    try {
-      let content = await Bun.file(templatePath).text();
-      content = content.replaceAll("{{projectName}}", projectId);
-      await Bun.write(heartbeatPath, content);
-    } catch {
-      // intentional: template may not exist in all installations — non-fatal
-    }
-  }
-
   return {
-    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}/\nHeartbeat: ~/.hive/projects/${projectId}/HEARTBEAT.md\n\nUse \`hive\` from ${repoPath} to start a session with project context.` }],
+    content: [{ type: "text" as const, text: `Registered project '${projectId}' at ${repoPath}\nMemory: ~/.hive/memory/projects/${projectId}/\n\nUse \`hive\` from ${repoPath} to start a session with project context.` }],
   };
 });
 
@@ -722,40 +704,12 @@ server.registerTool("hive_status", {
   // Scheduled jobs
   lines.push(`## Scheduled Jobs`);
   const launchAgentsDir = join(home, "Library", "LaunchAgents");
-  const hivePlists = ["com.hive.nightly.plist", "com.hive.sync.plist", "com.hive.heartbeat.plist", "com.hive.dashboard.plist"];
+  const hivePlists = ["com.hive.nightly.plist", "com.hive.sync.plist", "com.hive.dashboard.plist", "com.hive.watches.plist"];
   for (const plist of hivePlists) {
     const installed = existsSync(join(launchAgentsDir, plist));
     const label = plist.replace(".plist", "");
     lines.push(`- **${label}**: ${installed ? "installed" : "not installed"}`);
   }
-
-  // Active runs
-  const runsDir = join(paths.home, "runs");
-  try {
-    const runEntries = readdirSync(runsDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && e.name.startsWith("RUN-"))
-      .map((e) => e.name)
-      .sort()
-      .reverse()
-      .slice(0, 5);
-
-    const activeRuns: string[] = [];
-    for (const runId of runEntries) {
-      try {
-        const status = await Bun.file(join(runsDir, runId, "status")).text().then((s) => s.trim());
-        const goalRaw = await Bun.file(join(runsDir, runId, "goal.md")).text();
-        const goalLine = goalRaw.split("\n").find((l) => l.trim() && !l.startsWith("#") && !l.startsWith("---"))?.trim().slice(0, 60) ?? "";
-        const icon = status === "running" ? "🔵" : status === "complete" ? "✅" : status === "failed" ? "❌" : status === "blocked" ? "🟡" : "⚪";
-        activeRuns.push(`${icon} ${runId} ${status} — ${goalLine}`);
-      } catch { /* intentional: skip unreadable entry */ }
-    }
-
-    if (activeRuns.length > 0) {
-      lines.push(`## Dispatch Runs`);
-      for (const r of activeRuns) lines.push(`- ${r}`);
-      lines.push("");
-    }
-  } catch { /* intentional: no runs dir yet */ }
 
   // Latest briefing
   const briefingsDir = join(paths.home, "briefings");
@@ -868,84 +822,14 @@ server.registerTool("bootstrap_infer_conventions", {
   return { content: [{ type: "text" as const, text: report }] };
 });
 
-// Heartbeat management
-server.tool(
-  "manage_heartbeat",
-  "Enable or disable the periodic heartbeat for a project. The heartbeat wakes up every N minutes, checks project health (git status, tickets, dispatch runs), and surfaces anything that needs attention.",
-  {
-    action: z.enum(["enable", "disable", "status"]).describe("Enable, disable, or check heartbeat status"),
-    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
-    interval_minutes: z.number().optional().describe("Heartbeat interval in minutes (default 30, min 5). Only used with 'enable'."),
-  },
-  async ({ action, project, interval_minutes }) => {
-    const paths = getHivePaths();
-    const projectId = project || resolveProjectFromCwd();
-    if (!projectId) {
-      return { content: [{ type: "text" as const, text: "No project found. Specify a project name." }] };
-    }
-
-    const projectDir = join(paths.projectsDir, projectId);
-    if (!existsSync(projectDir)) {
-      return { content: [{ type: "text" as const, text: `Project not found: ${projectId}` }] };
-    }
-
-    if (action === "status") {
-      const config = readHeartbeatConfig(projectDir);
-      if (!config) {
-        return { content: [{ type: "text" as const, text: `No heartbeat configured for ${projectId}. Use action "enable" to set one up.` }] };
-      }
-      const enabled = config.enabled ? "enabled" : "disabled";
-      const lastTick = config.lastTick
-        ? `${Math.round((Date.now() - new Date(config.lastTick).getTime()) / 60000)}m ago`
-        : "never";
-      const session = config.sessionId ? `${config.sessionId.slice(0, 8)}...` : "none";
-      return { content: [{ type: "text" as const, text: `Heartbeat for ${projectId}: ${enabled}, interval ${config.intervalMinutes}m, session ${session}, last tick ${lastTick}, ${config.tickCount} ticks, ${config.consecutiveFailures} failures, last result: ${config.lastResult || "n/a"}` }] };
-    }
-
-    if (action === "enable") {
-      const interval = (interval_minutes && interval_minutes >= 5) ? interval_minutes : 30;
-      const existing = readHeartbeatConfig(projectDir);
-      const config = existing ?? defaultConfig(interval);
-      config.enabled = true;
-      config.intervalMinutes = interval;
-      await writeHeartbeatConfig(projectDir, config);
-
-      // Write HEARTBEAT.md template if missing
-      const ordersPath = join(projectDir, "HEARTBEAT.md");
-      if (!existsSync(ordersPath)) {
-        const templateDir = join(import.meta.dir, "..", "templates", "heartbeat");
-        try {
-          let template = await Bun.file(join(templateDir, "HEARTBEAT.md")).text();
-          template = template.replaceAll("{{projectName}}", projectId);
-          await Bun.write(ordersPath, template);
-        } catch { /* intentional: template missing — user can create manually */ }
-      }
-
-      return { content: [{ type: "text" as const, text: `Heartbeat enabled for ${projectId} (every ${interval}m). Standing orders at ~/.hive/projects/${projectId}/HEARTBEAT.md. Run \`hive heartbeat tick\` to test or wait for launchd.` }] };
-    }
-
-    if (action === "disable") {
-      const config = readHeartbeatConfig(projectDir);
-      if (!config) {
-        return { content: [{ type: "text" as const, text: `No heartbeat configured for ${projectId}.` }] };
-      }
-      config.enabled = false;
-      await writeHeartbeatConfig(projectDir, config);
-      return { content: [{ type: "text" as const, text: `Heartbeat disabled for ${projectId}.` }] };
-    }
-
-    return { content: [{ type: "text" as const, text: `Unknown action: ${action}` }] };
-  }
-);
-
 // Tool: decompose_goal — produce an epic + child DAG from a rough goal (TK-036).
 server.registerTool("decompose_goal", {
   description:
     "Decompose a rough natural-language goal into an epic ticket plus 3-10 child tickets " +
     "with dependencies wired as a DAG. Reads project memory, taste principles, and existing open " +
     "tickets so the decomposition is project-aware and avoids duplicating work. " +
-    "Use when the user has a goal big enough for an overnight campaign but hasn't yet been broken " +
-    "into dispatchable tickets. For 1-2 child shape, the writer creates standalone tickets without " +
+    "Use when the user has a goal large enough to need a dependency-aware work breakdown. " +
+    "For 1-2 child shape, the writer creates standalone tickets without " +
     "an epic. Use dry_run to preview without writing.",
   inputSchema: {
     goal: z.string().describe("The rough goal in natural language."),
@@ -1024,250 +908,6 @@ server.registerTool("decompose_goal", {
       reframes: result.reframes,
       dry_run: dry_run ?? false,
     },
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Campaign tools (TK-080)
-// ---------------------------------------------------------------------------
-
-// Tool: start_campaign — init a campaign and run the orchestrator detached
-server.registerTool("start_campaign", {
-  description:
-    "Start a new campaign: create the campaign directory, git worktree, and spawn the " +
-    "orchestrator loop as a detached background process. Returns the campaign ID and state " +
-    "path immediately — the orchestrator runs autonomously until terminal. " +
-    "Use for multi-iteration, long-horizon work that should proceed unattended.",
-  inputSchema: {
-    goal: z.string().describe("The campaign's prime directive — what it should achieve."),
-    project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
-    worktree: z.string().optional().describe("Existing worktree path to use instead of creating a new one."),
-    soft_tokens: z.number().optional().describe("Per-iteration soft token cap. Default 50000."),
-    soft_walltime: z.number().optional().describe("Per-iteration soft walltime in ms. Default 45 minutes."),
-    max_iterations: z.number().optional().describe("Max iterations before campaign terminates. Default 12."),
-    max_cost_usd: z.number().optional().describe("Max total campaign cost in USD. Default 40."),
-  },
-}, async ({ goal, project, worktree, soft_tokens, soft_walltime, max_iterations, max_cost_usd }) => {
-  const { initCampaign } = await import("./lib/campaign/state");
-  const { spawn } = await import("node:child_process");
-
-  const paths = getHivePaths();
-  const projectId = project ?? resolveProjectFromCwd();
-
-  if (!projectId) {
-    return {
-      content: [{ type: "text" as const, text: "No project found. Register one with: hive project add <name> <path>" }],
-      isError: true,
-    };
-  }
-
-  // Resolve project repo path
-  const projectDir = join(paths.projectsDir, projectId);
-  const configPath = join(projectDir, "config.md");
-  if (!existsSync(configPath)) {
-    return {
-      content: [{ type: "text" as const, text: `Project '${projectId}' is not registered.` }],
-      isError: true,
-    };
-  }
-
-  const configContent = await Bun.file(configPath).text();
-  const parsed = parseFrontmatter(configContent);
-  const repoPath = (parsed.attributes?.path as string) ?? null;
-
-  if (!repoPath || !existsSync(repoPath)) {
-    return {
-      content: [{ type: "text" as const, text: `Project '${projectId}' has no valid repo path.` }],
-      isError: true,
-    };
-  }
-
-  // Init campaign state directory + worktree
-  let campaignId: string;
-  try {
-    campaignId = await initCampaign({ goal, repoPath, hiveHome: paths.home });
-  } catch (err) {
-    return {
-      content: [{ type: "text" as const, text: `Failed to initialize campaign: ${err instanceof Error ? err.message : String(err)}` }],
-      isError: true,
-    };
-  }
-
-  const statePath = join(paths.home, "campaigns", campaignId);
-
-  // Spawn the orchestrator detached
-  const runnerPath = join(dirname(import.meta.dir), "src", "lib", "campaign", "run-detached.ts");
-  const optsPayload = JSON.stringify({
-    soft_tokens: soft_tokens ?? undefined,
-    soft_walltime: soft_walltime ?? undefined,
-    max_iterations: max_iterations ?? undefined,
-    max_cost_usd: max_cost_usd ?? undefined,
-  });
-
-  const logPath = join(statePath, "orchestrator.log");
-  const { openSync, closeSync } = await import("node:fs");
-  const logFd = openSync(logPath, "a");
-
-  const child = spawn("bun", ["run", runnerPath, campaignId, optsPayload], {
-    cwd: repoPath,
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-    env: { ...process.env, ANTHROPIC_API_KEY: undefined },
-  });
-
-  child.unref();
-  closeSync(logFd); // Release parent's copy — child has its own fd
-
-  // Write PID for later management
-  await Bun.write(join(statePath, "pid"), String(child.pid));
-
-  return {
-    content: [{
-      type: "text" as const,
-      text: `Campaign started: ${campaignId}\nState: ${statePath}\nPID: ${child.pid}\nGoal: ${goal.slice(0, 120)}`,
-    }],
-    structuredContent: {
-      campaign_id: campaignId,
-      state_path: statePath,
-      pid: child.pid,
-    },
-  };
-});
-
-// Tool: show_campaign — structured data about a single campaign
-server.registerTool("show_campaign", {
-  description:
-    "Show structured data about a campaign — goal, status, iteration count, latest checkpoint, " +
-    "scorecard rows, and total cost. Returns structured JSON so callers can render their own way.",
-  inputSchema: {
-    campaign_id: z.string().describe("Campaign ID (e.g. 'CAMP-001')."),
-  },
-}, async ({ campaign_id }) => {
-  const { readCampaignState, readScorecard } = await import("./lib/campaign/state");
-  const paths = getHivePaths();
-
-  const state = await readCampaignState(campaign_id, paths.home);
-  if (!state) {
-    return {
-      content: [{ type: "text" as const, text: `Campaign not found: ${campaign_id}` }],
-      isError: true,
-    };
-  }
-
-  const scorecard = await readScorecard(campaign_id, paths.home);
-  const totalCostUsd = scorecard.reduce((sum, row) => sum + row.cost_usd, 0);
-  const totalTokens = scorecard.reduce((sum, row) => sum + row.tokens_used, 0);
-
-  // Build structured response — show the raw goal, not the full frozen prefix
-  const goalText = state.goal ?? state.frozenPrefix ?? "(no goal)";
-  const displayStatus = state.wasOrphaned
-    ? "aborted (orchestrator died)"
-    : state.status;
-
-  const data = {
-    campaign_id,
-    goal: goalText,
-    status: state.status,
-    was_orphaned: state.wasOrphaned,
-    iteration_count: state.iterationCount,
-    latest_checkpoint: state.checkpoint,
-    scorecard_rows: scorecard,
-    total_cost_usd: Math.round(totalCostUsd * 1_000_000) / 1_000_000,
-    total_tokens: totalTokens,
-    current_plan: state.plan,
-  };
-
-  // Text representation for display
-  const lines: string[] = [];
-  lines.push(`# Campaign ${campaign_id}`);
-  lines.push(`**Status:** ${displayStatus}`);
-  lines.push(`**Iterations:** ${state.iterationCount}`);
-  lines.push(`**Cost:** $${data.total_cost_usd.toFixed(4)}`);
-  lines.push(`**Tokens:** ${totalTokens.toLocaleString()}`);
-  lines.push("");
-  lines.push(`## Goal`);
-  lines.push(goalText);
-  if (state.plan) {
-    lines.push("");
-    lines.push(`## Current Plan`);
-    lines.push(state.plan);
-  }
-  if (state.checkpoint) {
-    lines.push("");
-    lines.push(`## Latest Checkpoint`);
-    lines.push(state.checkpoint);
-  }
-  if (scorecard.length > 0) {
-    lines.push("");
-    lines.push(`## Scorecard (${scorecard.length} rows)`);
-    for (const row of scorecard) {
-      lines.push(`- Iter ${row.iteration_n}: ${row.exit_reason} → ${row.judge_decision} (${row.tokens_used} tok, $${row.cost_usd.toFixed(4)})`);
-    }
-  }
-
-  return {
-    content: [{ type: "text" as const, text: lines.join("\n") }],
-    structuredContent: data,
-  };
-});
-
-// Tool: list_campaigns — list all campaigns with optional status filter
-server.registerTool("list_campaigns", {
-  description:
-    "List all campaigns, optionally filtered by status. Returns an array of campaign summaries.",
-  inputSchema: {
-    status: z.enum(["running", "paused", "done", "aborted", "budget-exhausted"]).optional()
-      .describe("Filter campaigns by status."),
-  },
-}, async ({ status }) => {
-  const { listCampaigns, readCampaignState } = await import("./lib/campaign/state");
-  const paths = getHivePaths();
-
-  const ids = await listCampaigns(paths.home);
-
-  if (ids.length === 0) {
-    return { content: [{ type: "text" as const, text: "No campaigns found." }] };
-  }
-
-  const summaries: Array<{
-    campaign_id: string;
-    goal: string;
-    status: string;
-    was_orphaned: boolean;
-    display_status: string;
-    iteration_count: number;
-  }> = [];
-
-  for (const id of ids) {
-    const state = await readCampaignState(id, paths.home);
-    if (!state) continue;
-    if (status && state.status !== status) continue;
-
-    const displayStatus = state.wasOrphaned
-      ? "aborted (orchestrator died)"
-      : state.status;
-
-    summaries.push({
-      campaign_id: id,
-      goal: (state.frozenPrefix ?? "").split("\n")[0]?.slice(0, 100) ?? "",
-      status: state.status,
-      was_orphaned: state.wasOrphaned,
-      display_status: displayStatus,
-      iteration_count: state.iterationCount,
-    });
-  }
-
-  if (summaries.length === 0) {
-    return { content: [{ type: "text" as const, text: `No campaigns with status '${status}'.` }] };
-  }
-
-  const lines = summaries.map(
-    (s) => `- **${s.campaign_id}** [${s.display_status}] (${s.iteration_count} iter) — ${s.goal}`,
-  );
-
-  return {
-    content: [{ type: "text" as const, text: `${summaries.length} campaign(s):\n\n${lines.join("\n")}` }],
-    structuredContent: { campaigns: summaries },
   };
 });
 

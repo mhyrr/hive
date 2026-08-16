@@ -89,7 +89,7 @@ describe("runWatches", () => {
       "---\ncadence: 2h\nscope: tickets\nvenue: inbox\nautonomy: propose\n---\n\nWhich tickets are ready?",
     );
 
-    const { caller, calls } = stubCaller(`[T:alpha/${ticket.id}] looks ready — first step: dispatch it.`);
+    const { caller, calls } = stubCaller(`[T:alpha/${ticket.id}] looks ready — first step: start it.`);
     const { reports } = await runWatches({ paths, mode: "due", now: ANCHOR, caller, seams: NO_SESSIONS });
 
     const report = reports.find((r) => r.watch === "alpha/ready");
@@ -192,70 +192,70 @@ describe("runWatches", () => {
     expect(calls[0]?.systemPrompt).toContain("PROPOSE");
   });
 
-  test("act dispatches exactly one eligible qualified ticket for review", async () => {
+  test("act starts exactly one eligible qualified ticket for review", async () => {
     await makeActProject();
     const ticket = await createTicket(paths, "alpha", {
       title: "Add the follow-on",
       body: "Implement the already-decided follow-on and cover it with tests.",
     });
-    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: dispatch\nmodel: judgment\nautonomy: act");
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: act\nmodel: judgment\nautonomy: act");
 
     const call = stubCaller(`[A:alpha/${ticket.id}] Clear follow-on.\nACT alpha/${ticket.id}`);
-    const dispatched: string[] = [];
+    const started: string[] = [];
     const result = await runWatches({
       paths,
       mode: "due",
       now: ANCHOR,
       caller: call.caller,
       seams: NO_SESSIONS,
-      dispatcher: async (input) => {
-        dispatched.push(`${input.project}/${input.ticketId}`);
+      actRunner: async (input) => {
+        started.push(`${input.project}/${input.ticketId}`);
         return { runId: "RUN-042", detail: "review branch" };
       },
     });
 
-    expect(dispatched).toEqual([`alpha/${ticket.id}`]);
-    expect(result.reports[0]).toMatchObject({ outcome: "surfaced", detail: "RUN-042 dispatched for human review" });
+    expect(started).toEqual([`alpha/${ticket.id}`]);
+    expect(result.reports[0]).toMatchObject({ outcome: "surfaced", detail: "RUN-042 started for human review" });
     expect(call.calls[0]?.userContent).toContain(`[A:alpha/${ticket.id}]`);
     expect((await loadWatchState(paths)).watches.act?.lastRun).toBe("2026-08-12T10:00:00Z");
   });
 
-  test("act rejects multiple selections and does not dispatch", async () => {
+  test("act rejects multiple selections and does not start work", async () => {
     await makeActProject();
     const one = await createTicket(paths, "alpha", { title: "One", body: "Complete specification one." });
     const two = await createTicket(paths, "alpha", { title: "Two", body: "Complete specification two." });
-    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: dispatch\nautonomy: act");
-    let dispatches = 0;
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: act\nautonomy: act");
+    let starts = 0;
     const caller = stubCaller(`[A:alpha/${one.id}]\nACT alpha/${one.id}\n[A:alpha/${two.id}]\nACT alpha/${two.id}`);
 
     const result = await runWatches({
       paths, mode: "due", now: ANCHOR, caller: caller.caller, seams: NO_SESSIONS,
-      dispatcher: async () => { dispatches++; return { runId: "RUN-999", detail: "no" }; },
+      actRunner: async () => { starts++; return { runId: "RUN-999", detail: "no" }; },
     });
 
-    expect(dispatches).toBe(0);
+    expect(starts).toBe(0);
     expect(result.reports[0]).toMatchObject({ outcome: "quiet", detail: expect.stringContaining("exactly one") });
   });
 
   test("act makes no model call when deterministic eligibility finds no ticket", async () => {
     await makeActProject();
     await createTicket(paths, "alpha", { title: "Needs Greg", body: "Choose the product direction.", tags: ["needs-greg"] });
-    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: dispatch\nautonomy: act");
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: act\nautonomy: act");
 
     const result = await runWatches({ paths, mode: "due", now: ANCHOR, caller: throwingCaller, seams: NO_SESSIONS });
 
     expect(result.reports[0]).toMatchObject({ outcome: "no-delta", detail: "no eligible Act ticket" });
   });
 
-  test("act dispatch failure leaves the interval unsettled", async () => {
+  test("act execution failure leaves the interval unsettled", async () => {
     await makeActProject();
     const ticket = await createTicket(paths, "alpha", { title: "One", body: "Complete specification." });
-    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: dispatch\nautonomy: act");
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: act\nautonomy: act");
     const caller = stubCaller(`[A:alpha/${ticket.id}]\nACT alpha/${ticket.id}`);
 
     const result = await runWatches({
       paths, mode: "due", now: ANCHOR, caller: caller.caller, seams: NO_SESSIONS,
-      dispatcher: async () => { throw new Error("claim raced"); },
+      actRunner: async () => { throw new Error("claim raced"); },
     });
 
     expect(result.reports[0]).toMatchObject({ outcome: "error", error: "claim raced" });

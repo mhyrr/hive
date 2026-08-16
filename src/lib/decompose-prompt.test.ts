@@ -11,23 +11,23 @@ import {
 const baseCtx: DecomposeContext = {
   projectId: "hive",
   goal: "Add overnight retry for flaky test runs",
-  indexMd: "## Tags\n`testing`(5)  `dispatch`(3)\n",
+  indexMd: "## Tags\n`testing`(5)  `nightly`(3)\n",
   principlesMd: "- Solve the right problem.\n- Show, don't narrate.",
   searchHits: [
     {
       source: "knowledge",
       file: "knowledge.md",
       section: "facts",
-      entry: "Dispatch retries on transient failure are off by default.",
-      tags: ["dispatch"],
+      entry: "Nightly extraction retries on transient failure are off by default.",
+      tags: ["nightly"],
       score: 4.2,
     },
   ],
   openTickets: [
     {
       id: "TK-040",
-      title: "hive tail: live view into a running dispatch",
-      tags: ["dispatch", "ux"],
+      title: "Show per-project nightly extraction failures",
+      tags: ["nightly", "ux"],
       type: "feature",
     },
   ],
@@ -85,8 +85,8 @@ describe("buildDecomposeUserMessage", () => {
 
   test("includes search hits with tags", () => {
     const msg = buildDecomposeUserMessage(baseCtx);
-    expect(msg).toContain("Dispatch retries");
-    expect(msg).toContain("[dispatch]");
+    expect(msg).toContain("Nightly extraction retries");
+    expect(msg).toContain("[nightly]");
   });
 
   test("handles empty index gracefully", () => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 
-import { buildReviewRunWrapper } from "./review-dispatch";
+import { buildReviewRunWrapper } from "./act-run";
 
 describe("review-only Act wrapper", () => {
   const wrapper = buildReviewRunWrapper({

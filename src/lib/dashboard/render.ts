@@ -13,10 +13,8 @@ import type {
   DashboardData,
   HealthEntry,
   ProjectCard,
-  InboxEntry,
   ProposeEntry,
   BriefingEntry,
-  RunEntry,
   TicketBuckets,
   TicketCitation,
   OpenQuestion,
@@ -214,17 +212,6 @@ function relativeTime(iso: string | null): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   return `${days}d ago`;
-}
-
-function formatDuration(ms: number | null): string {
-  if (ms == null) return "—";
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rem = seconds % 60;
-  if (minutes < 60) return rem === 0 ? `${minutes}m` : `${minutes}m${rem}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h${minutes % 60}m`;
 }
 
 const PRIORITY_LABELS: Record<TicketPriority, string> = {
@@ -632,7 +619,7 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
       ].join("");
 
   // Anchors for the sections this page actually renders — and only those. The
-  // condense pass cut projects, inbox, reflections and dispatch off the page
+  // condense pass cut projects, inbox, reflections, and execution history off the page
   // but left their links here, so five of seven jumps landed nowhere. Each
   // band renders conditionally, so each link asks the same question the band
   // does. Pages follow the sections, after a separator, named for where they
@@ -766,7 +753,7 @@ export function renderBriefings(data: DashboardData): string {
 <section class="section" id="section-briefing">
   <div class="section-head"><h2>Today&rsquo;s Briefing</h2><span class="kicker">No briefings on file</span></div>
   <hr class="amber"/>
-  <p>Run the morning job to generate a briefing.</p>
+  <p>Run the nightly memory pass to generate a briefing.</p>
 </section>`;
   }
 
@@ -820,8 +807,6 @@ export function renderProjects(data: DashboardData, _c: RenderContext): string {
   <td class="num">${p.ticketCounts.inProgress}</td>
   <td class="num">${p0 + p1}</td>
   <td class="num">${p2 + p3}</td>
-  <td class="num">${escapeHtml(relativeTime(p.lastHeartbeat))}</td>
-  <td class="num">${p.tickCount}</td>
   <td class="num">${escapeHtml(relativeTime(p.inboxMtime))}</td>
 </tr>`;
     })
@@ -843,8 +828,6 @@ export function renderProjects(data: DashboardData, _c: RenderContext): string {
         <th class="num">In&nbsp;Prog.</th>
         <th class="num">P0&ndash;1</th>
         <th class="num">P2&ndash;3</th>
-        <th class="num">Heartbeat</th>
-        <th class="num">Ticks</th>
         <th class="num">Inbox</th>
       </tr>
     </thead>
@@ -852,53 +835,6 @@ export function renderProjects(data: DashboardData, _c: RenderContext): string {
 ${summaryRows}
     </tbody>
   </table>
-</section>`;
-}
-
-export function renderInboxes(inboxes: InboxEntry[], c: RenderContext): string {
-  if (inboxes.length === 0) return "";
-
-  const entries = inboxes
-    .map((entry: InboxEntry, idx: number) => {
-      const bodyId = `inbox-body-${idx}`;
-      const toggleId = `inbox-toggle-${idx}`;
-      const projectId = escapeHtml(entry.projectId);
-      if (entry.isEmpty) {
-        return `<div class="inbox-entry empty" data-project="${projectId}">
-  <div class="head"><span class="project">${projectId}</span><span class="mtime">quiet</span></div>
-  <div class="body">No dispatches on file.</div>
-</div>`;
-      }
-      const when = entry.mtime ? relativeTime(entry.mtime) : "—";
-      const actions = c.interactive
-        ? `<div class="row-actions">
-            ${actionButton(c, "make ticket", { "data-action": "inbox-promote", "data-project": entry.projectId })}
-            ${actionButton(c, "dismiss", { "data-action": "inbox-ack", "data-project": entry.projectId, "data-confirm": "true" })}
-          </div>`
-        : "";
-      return `<div class="inbox-entry" data-project="${projectId}">
-  <div class="head">
-    <span class="project">${projectId}
-      <span id="${toggleId}" class="toggle" data-toggle="${bodyId}" data-show="Show" data-hide="Hide">Hide</span>
-    </span>
-    <span class="mtime">${escapeHtml(when)}</span>
-  </div>
-  <div class="body" id="${bodyId}" data-inbox-body>${md(entry.body)}</div>
-  ${actions}
-</div>`;
-    })
-    .join("\n");
-
-  return `
-<section class="section" id="section-inboxes">
-  <div class="section-head">
-    <h2>The Inbox</h2>
-    <span class="kicker">Per-project dispatches</span>
-  </div>
-  <hr class="amber"/>
-  <div class="inbox-grid">
-${entries}
-  </div>
 </section>`;
 }
 
@@ -1020,15 +956,6 @@ export function renderTickets(buckets: TicketBuckets, c: RenderContext): string 
 // standalone block at the top. docs/specs/2026-05-09-tickets-page-design.md
 // ---------------------------------------------------------------------------
 
-function renderRunsLine(runs: TicketCitation["runs"]): string {
-  if (!runs || runs.length === 0) return "";
-  const links = runs.map((r) => {
-    const statusClass = `run-status-${r.status}`;
-    return `<a href="/runs/${escapeHtml(r.id)}" class="run-link ${statusClass}">${escapeHtml(r.id)} <span class="run-link-status">(${escapeHtml(r.status)})</span></a>`;
-  }).join(" ");
-  return `<div class="card-runs"><span class="card-runs-label">Runs:</span> ${links}</div>`;
-}
-
 function renderTicketCard(t: TicketCitation, opts: { showBlockedBy?: boolean } = {}): string {
   const priority = PRIORITY_LABELS[t.priority] ?? "P?";
   const ageLabel = t.ageDays <= 0
@@ -1044,7 +971,6 @@ function renderTicketCard(t: TicketCitation, opts: { showBlockedBy?: boolean } =
   const bodyHtml = t.body && t.body.trim()
     ? `<div class="card-body" hidden>${md(t.body)}</div>`
     : "";
-  const runsLine = renderRunsLine(t.runs);
   const tagsLine = t.tags.length > 0
     ? `<div class="card-tags">${t.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>`
     : "";
@@ -1059,7 +985,6 @@ function renderTicketCard(t: TicketCitation, opts: { showBlockedBy?: boolean } =
         <span class="card-chevron" aria-hidden="true">+</span>
       </div>
       ${blockedBy}
-      ${runsLine}
     </div>
     ${bodyHtml}
     ${bodyHtml ? tagsLine : ""}
@@ -1452,7 +1377,7 @@ ${counts}
 }
 
 // ---------------------------------------------------------------------------
-// /taste — the durable taste library (its own page, like /tickets and /runs)
+// /taste — the durable taste library (its own page, like /tickets)
 // ---------------------------------------------------------------------------
 
 /** A single taste unit — rule scannable, the WHY behind a disclosure. */
@@ -1637,45 +1562,6 @@ export function renderTastePageDocument(data: TastePageData, opts: RenderOptions
 ${scriptBlock}
 </body>
 </html>`;
-}
-
-export function renderRuns(runs: RunEntry[], c: RenderContext): string {
-  const visible = runs.slice(0, 10);
-  if (visible.length === 0) return "";
-
-  const rows = visible
-    .map((r: RunEntry) => {
-      const statusClass = `status-${(r.status || "unknown").toLowerCase()}`;
-      const ticketCell = r.ticketId ? escapeHtml(r.ticketId) : "—";
-      const projectAttr = r.projectId ? `data-project="${escapeHtml(r.projectId)}"` : "";
-      const actions = c.interactive
-        ? `<div class="row-actions">
-            ${r.status === "running" ? actionButton(c, "kill", { "data-action": "dispatch-kill", "data-run-id": r.id, "data-confirm": "true" }) : ""}
-            ${actionButton(c, "override", { "data-action": "dispatch-override", "data-run-id": r.id, "data-confirm": "true" })}
-          </div>`
-        : "";
-      return `<li class="dispatch-row" ${projectAttr} data-run-id="${escapeHtml(r.id)}">
-  <span class="id">${escapeHtml(r.id)}</span>
-  <span class="status ${statusClass}">${escapeHtml(r.status)}</span>
-  <span class="duration">${escapeHtml(formatDuration(r.durationMs))}</span>
-  <span class="goal">${escapeHtml(r.goalSnippet || "—")}</span>
-  <span class="ticket">${ticketCell}</span>
-  ${actions}
-</li>`;
-    })
-    .join("\n");
-
-  return `
-<section class="section" id="section-runs">
-  <div class="section-head">
-    <h2>Dispatch Log</h2>
-    <span class="kicker">${visible.length} Most recent</span>
-  </div>
-  <hr class="amber"/>
-  <ul class="dispatch-list">
-${rows}
-  </ul>
-</section>`;
 }
 
 export function renderArchive(data: DashboardData, c: RenderContext): string {

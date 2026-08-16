@@ -27,14 +27,8 @@ export function md(source: string): string {
 /**
  * The one nav every standalone page carries.
  *
- * It was six copies, and they rotted together: each still linked INBOX,
- * REFLECTIONS, DISPATCH and PROJECTS at anchors the home page stopped
- * rendering, and RUNS at a page that no longer earns a tab. Six copies of a
- * list nobody remembers to update is what made the rot invisible — one list
- * is the fix, not a tidier six.
- *
- * /runs is still served and still linked from the ticket cards that cite a
- * run; it just isn't a destination you navigate to on purpose.
+ * It was six copies, and they rotted together as the home page changed.
+ * One list keeps the standalone surfaces honest.
  */
 export const PAGE_NAV: ReadonlyArray<readonly [string, string]> = [
   ["BRIEFING", "/"],

@@ -25,7 +25,7 @@ import {
   type DeltaSeams,
 } from "./watch-delta";
 import { resolveWatchModel } from "./watch-model";
-import { dispatchTicketForReview } from "./review-dispatch";
+import { startActRun } from "./act-run";
 import {
   loadWatchState,
   recordUsage,
@@ -108,18 +108,18 @@ export type WatchCaller = (input: {
   userContent: string;
 }) => Promise<ClaudeTextCompletion>;
 
-export interface WatchDispatchRequest {
+export interface WatchActRequest {
   project: string;
   ticketId: string;
   watch: string;
 }
 
-export interface WatchDispatchResult {
+export interface WatchActResult {
   runId: string;
   detail: string;
 }
 
-export type WatchDispatcher = (input: WatchDispatchRequest) => Promise<WatchDispatchResult>;
+export type WatchActRunner = (input: WatchActRequest) => Promise<WatchActResult>;
 
 export interface WatchRunReport {
   watch: string;
@@ -144,7 +144,7 @@ export interface RunWatchesOptions {
   /** Artifact date for briefing-venue writes (runs/{DATE}/). Defaults to now's date. */
   date?: string;
   caller?: WatchCaller;
-  dispatcher?: WatchDispatcher;
+  actRunner?: WatchActRunner;
   seams?: DeltaSeams;
 }
 
@@ -203,8 +203,8 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
   const now = options.now ?? hiveNow();
   const date = options.date ?? now.toISOString().slice(0, 10);
   const caller: WatchCaller = options.caller ?? ((input) => completeClaudeTextBounded(input));
-  const dispatcher = options.dispatcher ?? (async (input) => {
-    const result = await dispatchTicketForReview({
+  const actRunner = options.actRunner ?? (async (input) => {
+    const result = await startActRun({
       paths,
       projectId: input.project,
       ticketId: input.ticketId,
@@ -350,13 +350,13 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
         // Provenance rule: no citation, no output. Dropped, not surfaced.
         outcome = "quiet";
         detail = "output dropped — no evidence anchor cited";
-      } else if (watch.venue === "dispatch") {
+      } else if (watch.venue === "act") {
         if (effective !== "act") {
           const heading = `## ${toIsoTimestamp(now)} — watch:${watch.qualifiedName}\n\n`;
           artifactPath = watch.project ? getProjectPaths(paths, watch.project).inbox : join(paths.home, "inbox.md");
           await appendInbox(artifactPath, watch.project ? `# Inbox: ${watch.project}` : "# Inbox", `${heading}${output}\n\n`);
           outcome = "surfaced";
-          detail = `act clamped to ${effective}; proposal surfaced without dispatch`;
+          detail = `act clamped to ${effective}; proposal surfaced without execution`;
         } else {
           const selections = [...output.matchAll(ACT_SELECTION)];
           if (selections.length !== 1) {
@@ -371,11 +371,11 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
               outcome = "quiet";
               detail = "act selection dropped — ticket was not in the eligible shortlist";
             } else {
-              let dispatched: WatchDispatchResult;
+              let started: WatchActResult;
               try {
-                dispatched = await dispatcher({ project, ticketId, watch: watch.qualifiedName });
-              } catch (dispatchError) {
-                const message = dispatchError instanceof Error ? dispatchError.message : String(dispatchError);
+                started = await actRunner({ project, ticketId, watch: watch.qualifiedName });
+              } catch (actError) {
+                const message = actError instanceof Error ? actError.message : String(actError);
                 entry.lastOutcome = "error";
                 entry.lastError = message;
                 await saveWatchState(paths, state);
@@ -383,7 +383,7 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
                   await writeInvocationLog({
                     paths, watch, now, modelId, autonomy: effective, reasons: delta.reasons,
                     systemPrompt, userContent, output: null, outcome: "error",
-                    error: `Dispatch failed: ${message}\n\nModel output:\n${output}`,
+                    error: `Act execution failed: ${message}\n\nModel output:\n${output}`,
                     durationMs: completion.durationMs,
                   });
                 } catch (logErr) {
@@ -393,11 +393,11 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
                 continue;
               }
               const heading = `## ${toIsoTimestamp(now)} — watch:${watch.qualifiedName}\n\n`;
-              const body = `${heading}${candidateTag} dispatched ${dispatched.runId} to an isolated review branch. It will not merge or push.\n\n`;
+              const body = `${heading}${candidateTag} started ${started.runId} on an isolated review branch. It will not merge or push.\n\n`;
               artifactPath = watch.project ? getProjectPaths(paths, watch.project).inbox : join(paths.home, "inbox.md");
               await appendInbox(artifactPath, watch.project ? `# Inbox: ${watch.project}` : "# Inbox", body);
               outcome = "surfaced";
-              detail = `${dispatched.runId} dispatched for human review`;
+              detail = `${started.runId} started for human review`;
             }
           }
         }
@@ -419,7 +419,7 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
         await Bun.write(artifactPath, `# Watch: ${watch.qualifiedName} — ${date}\n\n${output}\n`);
         outcome = "surfaced";
       } else {
-        // Ticket creation remains a future venue; Act dispatches existing work.
+        // Ticket creation remains a future venue; Act executes existing work.
         outcome = "error";
         detail = `venue "${watch.venue}" is not implemented`;
       }

@@ -161,6 +161,12 @@ describe("server routes", () => {
     expect(await res.text()).toContain("No watch named");
   });
 
+  test("GET /runs returns 404 after the public execution history is retired", async () => {
+    const paths = getHivePaths(home);
+    const res = await handleRequest(requestFor("GET", "/runs"), buildCtx(paths, state));
+    expect(res.status).toBe(404);
+  });
+
   test("unknown route returns 404", async () => {
     const paths = getHivePaths(home);
     const res = await handleRequest(requestFor("GET", "/nope"), buildCtx(paths, state));
@@ -223,7 +229,7 @@ describe("POST /action origin enforcement", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Action dispatch — CLI builds
+// Action routing — CLI builds
 // ---------------------------------------------------------------------------
 
 describe("dispatchAction — CLI actions", () => {
@@ -246,24 +252,6 @@ describe("dispatchAction — CLI actions", () => {
     expect(res.message).toContain("TK-007 closed");
     expect(res.refreshedSection).toBe("tickets");
     expect(state.calls).toEqual([["ticket", "close", "TK-007"]]);
-  });
-
-  test("ticket/dispatch-run invokes [dispatch, --ticket, ID]", async () => {
-    const paths = getHivePaths(home);
-    await dispatchAction(buildCtx(paths, state), "ticket/dispatch-run", { id: "TK-007" });
-    expect(state.calls[0]).toEqual(["dispatch", "--ticket", "TK-007"]);
-  });
-
-  test("ticket/tag-dispatch invokes [ticket, dispatch, ID]", async () => {
-    const paths = getHivePaths(home);
-    await dispatchAction(buildCtx(paths, state), "ticket/tag-dispatch", { id: "TK-007" });
-    expect(state.calls[0]).toEqual(["ticket", "dispatch", "TK-007"]);
-  });
-
-  test("dispatch/kill invokes [kill, RUN-ID]", async () => {
-    const paths = getHivePaths(home);
-    await dispatchAction(buildCtx(paths, state), "dispatch/kill", { runId: "RUN-009" });
-    expect(state.calls[0]).toEqual(["kill", "RUN-009"]);
   });
 
   test("CLI nonzero exit becomes 500 error", async () => {
@@ -316,39 +304,6 @@ describe("dispatchAction — direct-file actions", () => {
 
   afterEach(async () => {
     await rm(home, { recursive: true, force: true });
-  });
-
-  test("dispatch/override-status writes status file", async () => {
-    const paths = getHivePaths(home);
-    await mkdir(join(paths.runsDir, "RUN-010"), { recursive: true });
-    const res = await dispatchAction(buildCtx(paths, state), "dispatch/override-status", {
-      runId: "RUN-010",
-      status: "complete",
-    });
-    expect(res.message).toContain("complete");
-    const body = await readFile(join(paths.runsDir, "RUN-010", "status"), "utf-8");
-    expect(body.trim()).toBe("complete");
-  });
-
-  test("dispatch/override-status rejects bogus status", async () => {
-    const paths = getHivePaths(home);
-    await mkdir(join(paths.runsDir, "RUN-010"), { recursive: true });
-    const req = requestFor("POST", "/action/dispatch/override-status", {
-      body: { runId: "RUN-010", status: "pwned" },
-    });
-    const res = await handleRequest(req, buildCtx(paths, state));
-    expect(res.status).toBe(400);
-  });
-
-  test("inbox/ack writes acknowledgement", async () => {
-    const paths = getHivePaths(home);
-    await mkdir(join(paths.projectsDir, "hive"), { recursive: true });
-    await dispatchAction(buildCtx(paths, state), "inbox/ack", {
-      project: "hive",
-      entry: "some text",
-    });
-    const body = await readFile(join(paths.projectsDir, "hive", "inbox-ack.json"), "utf-8");
-    expect(JSON.parse(body)).toHaveLength(1);
   });
 
   test("identity/propose writes proposal file", async () => {

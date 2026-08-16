@@ -403,14 +403,14 @@ describe("buildStackHint", () => {
   test("elixir hint names Phoenix/Ecto/LiveView/OTP/security as triggers", () => {
     const hint = buildStackHint("elixir");
     expect(hint).toBe(
-      "Project stack: elixir. The elixir-* skills carry this project's domain canon for Phoenix contexts, Ecto, LiveView, OTP, or security patterns — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read it directly: ~/.claude/skills/elixir-*/SKILL.md",
+      "Project stack: elixir. The elixir-* skills carry this project's domain canon for Phoenix contexts, Ecto, LiveView, OTP, or security patterns — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex or --agent mode), read it directly: ~/.claude/skills/elixir-*/SKILL.md",
     );
   });
 
   test("typescript hint names React/Next.js/types as triggers", () => {
     const hint = buildStackHint("typescript");
     expect(hint).toBe(
-      "Project stack: typescript. The typescript-* skills carry this project's domain canon for React components, Next.js routing, or TypeScript types — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read it directly: ~/.claude/skills/typescript-*/SKILL.md",
+      "Project stack: typescript. The typescript-* skills carry this project's domain canon for React components, Next.js routing, or TypeScript types — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex or --agent mode), read it directly: ~/.claude/skills/typescript-*/SKILL.md",
     );
   });
 
@@ -419,7 +419,7 @@ describe("buildStackHint", () => {
     // skills, just without the specific surfaces.
     const hint = buildStackHint("rust");
     expect(hint).toBe(
-      "Project stack: rust. The rust-* skills carry this project's domain canon — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex, dispatch, or --agent mode), read it directly: ~/.claude/skills/rust-*/SKILL.md",
+      "Project stack: rust. The rust-* skills carry this project's domain canon — load the matching skill when the work calls for it. If the Skill tool is unavailable (e.g. Codex or --agent mode), read it directly: ~/.claude/skills/rust-*/SKILL.md",
     );
     // No named surfaces means no dangling "for ..." clause.
     expect(hint).not.toContain("canon for");
@@ -483,10 +483,10 @@ describe("buildStackHint", () => {
   });
 
   test("TK-114: claude variant fallback explicitly names Codex as a no-Skill-tool environment", () => {
-    // The claude-variant text is what dispatch/--agent mode sessions see, and
+    // The claude-variant text is what non-Codex agent sessions see, and
     // it's also a safety net for any path that emits claude-style text into a
     // Codex environment. Naming Codex in the fallback helps that case land.
-    expect(buildStackHint("elixir")).toContain("e.g. Codex, dispatch, or --agent mode");
+    expect(buildStackHint("elixir")).toContain("e.g. Codex or --agent mode");
   });
 
   test("TK-114: codex variant is byte-stable", () => {
@@ -528,11 +528,11 @@ describe("STACK_NAME_RE", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Identity injection — verify assembleIdentity/assembleHeartbeatIdentity
+// Identity injection — verify assembleIdentity
 // include the stack hint when a project has a detectable stack.
 // ---------------------------------------------------------------------------
 
-import { assembleIdentity, assembleHeartbeatIdentity } from "../lib/identity";
+import { assembleIdentity } from "../lib/identity";
 
 describe("identity stack hint injection", () => {
   let hiveHome: string;
@@ -598,32 +598,4 @@ describe("identity stack hint injection", () => {
     expect(output).not.toContain("Project stack:");
   });
 
-  test("assembleHeartbeatIdentity includes hint when projectId given", async () => {
-    const projRoot = join(fakeHome, "hb-elixir");
-    await mkdir(projRoot, { recursive: true });
-    await writeFile(join(projRoot, "mix.exs"), "");
-
-    await seedProject("hb-elx", projRoot);
-
-    const output = await assembleHeartbeatIdentity("hb-elx");
-    expect(output).toContain(buildStackHint("elixir"));
-  });
-
-  test("assembleHeartbeatIdentity omits hint when no projectId", async () => {
-    const output = await assembleHeartbeatIdentity();
-    expect(output).not.toContain("Project stack:");
-  });
-
-  test("assembleHeartbeatIdentity respects 'none' binding", async () => {
-    const projRoot = join(fakeHome, "hb-none");
-    await mkdir(projRoot, { recursive: true });
-    await writeFile(join(projRoot, "mix.exs"), "");
-
-    await seedProject("hb-none", projRoot);
-    await writeStackBinding("hb-none", "none");
-
-    const output = await assembleHeartbeatIdentity("hb-none");
-    expect(output).not.toContain("Project stack:");
-  });
 });
-

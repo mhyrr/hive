@@ -27,7 +27,7 @@ name: my-question       # defaults to filename
 cadence: @morning       # 2h | 45m | 1d | @nightly | @morning | mon,thu
 scope: tickets, commits # tickets|commits|transcripts|memory|inbox|runs
 model: standard         # fast | standard | judgment (aliases, never raw IDs)
-venue: inbox            # inbox | briefing | dispatch
+venue: inbox            # inbox | briefing | tickets | act
 autonomy: observe       # observe | propose | act
 enabled: true
 ---

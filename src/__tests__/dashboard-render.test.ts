@@ -23,8 +23,7 @@ function baseData(overrides: Partial<DashboardData> = {}): DashboardData {
       { projectId: "alpha", text: "Should open questions expire?", tags: ["memory"] },
     ],
     health: [
-      { label: "HEARTBEAT", lastLine: "heartbeat complete", mtime: "2026-04-17T12:00:00Z" },
-      { label: "MORNING", lastLine: "morning complete", mtime: "2026-04-17T07:03:00Z" },
+      { label: "WATCHES", lastLine: "observe: no-delta", mtime: "2026-04-17T07:03:00Z" },
       { label: "NIGHTLY", lastLine: "nightly complete", mtime: "2026-04-17T02:00:00Z" },
       { label: "SYNC", lastLine: "synced OK", mtime: "2026-04-17T11:00:00Z" },
     ],
@@ -32,15 +31,13 @@ function baseData(overrides: Partial<DashboardData> = {}): DashboardData {
       {
         id: "alpha",
         path: "/tmp/alpha",
-        lastHeartbeat: "2026-04-17T08:00:00Z",
-        tickCount: 42,
-        lastResult: "ACTION_TAKEN",
         ticketCounts: {
           open: 2,
           inProgress: 1,
           closed: 3,
           byPriority: { 0: 0, 1: 1, 2: 2, 3: 0 },
         },
+        ticketsTouched: 1,
         inboxMtime: "2026-04-17T08:00:00Z",
       },
     ],
@@ -83,26 +80,7 @@ function baseData(overrides: Partial<DashboardData> = {}): DashboardData {
         },
       ],
     },
-    runs: [
-      {
-        id: "RUN-002",
-        status: "failed",
-        durationMs: 60_000,
-        startedAt: "2026-04-17T10:00:00Z",
-        goalSnippet: "Fix some bug",
-        projectId: "bravo",
-        ticketId: "TK-999",
-      },
-      {
-        id: "RUN-001",
-        status: "complete",
-        durationMs: 120_000,
-        startedAt: "2026-04-17T09:00:00Z",
-        goalSnippet: "Implement first feature",
-        projectId: "alpha",
-        ticketId: "TK-001",
-      },
-    ],
+    actWork: [],
     briefings: [
       {
         date: "2026-04-17",
@@ -208,8 +186,8 @@ describe("renderDashboard", () => {
     for (const id of ["yard", "briefing", "stores", "upkeep"]) {
       expect(html).toContain(`id="section-${id}"`);
     }
-    // Cut deliberately: dispatch (TK-143) and the inbox (TK-144) are dead or
-    // lying, and neither earns a place on the page while that is true.
+    // Generic execution history and the inbox band stay off the morning page;
+    // repaired inbox attention is carried by the yard instead.
     expect(html).not.toContain("Dispatch Log");
     expect(html).not.toContain('class="inbox-entry');
   });
@@ -222,10 +200,9 @@ describe("renderDashboard", () => {
     expect(html).toMatch(/archive-card active"[^>]*data-archive-card="2026-04-17"/);
   });
 
-  test("upkeep lists all four health labels", () => {
+  test("upkeep lists the three scheduled health labels", () => {
     const html = renderDashboard(baseData());
-    expect(html).toContain("HEARTBEAT");
-    expect(html).toContain("MORNING");
+    expect(html).toContain("WATCHES");
     expect(html).toContain("NIGHTLY");
     expect(html).toContain("SYNC");
   });
@@ -252,7 +229,7 @@ describe("renderDashboard", () => {
       projects: [],
       inboxes: [],
       tickets: { ready: [], inProgress: [], blocked: [] },
-      runs: [],
+      actWork: [],
       volumeNumber: 0,
     });
     const html = renderDashboard(data);

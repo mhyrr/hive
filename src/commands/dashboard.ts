@@ -49,7 +49,6 @@ export async function dashboardCommand(args: string[]): Promise<void> {
     console.log(
       `  ${result.data.projects.length} projects · ` +
       `${result.data.tickets.ready.length + result.data.tickets.inProgress.length + result.data.tickets.blocked.length} active tickets · ` +
-      `${result.data.runs.length} recent runs · ` +
       `${result.data.briefings.length} briefings`,
     );
     return;

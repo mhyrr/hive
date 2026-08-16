@@ -1,7 +1,7 @@
 /**
  * Archive snapshot helpers.
  *
- * The morning build writes a frozen HTML snapshot per day under
+ * The nightly build writes a frozen HTML snapshot per day under
  * `~/.hive/dashboard/archive/YYYY-MM-DD.html`. This module lists those
  * snapshots and resolves a path by date.
  *

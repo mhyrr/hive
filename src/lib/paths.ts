@@ -15,8 +15,8 @@ export type HivePaths = {
   memoryDailyDir: string;
   memoryRunsDir: string;
   projectsDir: string;
+  /** Private execution records for Watch Act. Historical dispatch records may coexist. */
   runsDir: string;
-  campaignsDir: string;
   reflectionsDir: string;
   watchesDir: string;
 };
@@ -24,8 +24,6 @@ export type HivePaths = {
 export type ProjectPaths = {
   root: string;
   config: string;
-  heartbeatConfig: string;
-  heartbeatOrders: string;
   inbox: string;
   watchesDir: string;
 };
@@ -49,7 +47,6 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     memoryRunsDir: join(home, "memory", "runs"),
     projectsDir: join(home, "projects"),
     runsDir: join(home, "runs"),
-    campaignsDir: join(home, "campaigns"),
     reflectionsDir: join(home, "reflections"),
     watchesDir: join(home, "watches"),
   };
@@ -61,8 +58,6 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
   return {
     root,
     config: join(root, "config.md"),
-    heartbeatConfig: join(root, "heartbeat.json"),
-    heartbeatOrders: join(root, "HEARTBEAT.md"),
     inbox: join(root, "inbox.md"),
     watchesDir: join(root, "watches"),
   };
@@ -84,7 +79,6 @@ export async function ensureHiveScaffold(
   await mkdir(paths.memoryRunsDir, { recursive: true });
   await mkdir(paths.projectsDir, { recursive: true });
   await mkdir(paths.runsDir, { recursive: true });
-  await mkdir(paths.campaignsDir, { recursive: true });
   await mkdir(paths.reflectionsDir, { recursive: true });
   await mkdir(paths.watchesDir, { recursive: true });
 

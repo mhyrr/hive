@@ -21,7 +21,7 @@ import { listProjects, type HivePaths } from "./paths";
 // ---------------------------------------------------------------------------
 
 export type WatchAutonomy = "observe" | "propose" | "act";
-export type WatchVenue = "inbox" | "briefing" | "tickets" | "dispatch";
+export type WatchVenue = "inbox" | "briefing" | "tickets" | "act";
 export type WatchScopeKind = "tickets" | "commits" | "transcripts" | "memory" | "inbox" | "runs";
 
 /** Model tier alias — resolution to a real model ID lives in watch-model.ts.
@@ -207,7 +207,7 @@ export const SCOPE_KINDS: WatchScopeKind[] = ["tickets", "commits", "transcripts
  * deltas are an explicit opt-in (@nightly watches), not ambient noise. */
 export const DEFAULT_SCOPE: WatchScopeKind[] = ["tickets", "commits", "transcripts", "memory", "inbox"];
 export const AUTONOMY_LEVELS: WatchAutonomy[] = ["observe", "propose", "act"];
-export const VENUES: WatchVenue[] = ["inbox", "briefing", "tickets", "dispatch"];
+export const VENUES: WatchVenue[] = ["inbox", "briefing", "tickets", "act"];
 export const TIERS: WatchTier[] = ["fast", "standard", "judgment"];
 
 export interface ParseWatchResult {
@@ -280,7 +280,13 @@ export function parseWatchFile(
   const rawVenue = attributes.venue?.trim().toLowerCase();
   let venue: WatchVenue = "inbox";
   if (rawVenue) {
-    if ((VENUES as string[]).includes(rawVenue)) {
+    if (rawVenue === "dispatch") {
+      // Compatibility for Act watches installed before the public dispatch
+      // subsystem was retired. Rewriting user-owned watch files is not the
+      // parser's job; newly scaffolded watches use `act`.
+      venue = "act";
+      warnings.push(`${label}: venue "dispatch" is deprecated — treating it as "act"`);
+    } else if ((VENUES as string[]).includes(rawVenue)) {
       venue = rawVenue as WatchVenue;
     } else {
       warnings.push(`${label}: unknown venue "${rawVenue}" — defaulting to inbox`);

@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 
 import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
+import { parseInbox } from "./inbox";
 import { listProjects } from "./paths";
 import {
   entryHash,
@@ -349,7 +350,7 @@ Template:
 ## Per project
 ### project-name
 - What shipped / decisions / open threads (≤5 bullets)
-- Heartbeat findings since last briefing (folded from inbox.md)
+- Watch and nightly findings since last briefing (folded from inbox.md)
 - Tickets that moved
 
 ## What needs your attention
@@ -385,7 +386,7 @@ Schema discipline: every C candidate listed in the inputs MUST appear in decisio
 /**
  * The briefer's system prompt, with the HIVE soul prepended as voice context.
  * SOUL.md is the single source of truth for HIVE voice across every surface
- * (CLI sessions, dispatch, briefing) — Pass V reads the same file rather than
+ * (CLI sessions, Watch Act, briefing) — Pass V reads the same file rather than
  * carrying its own duplicated voice instructions.
  *
  * If SOUL is empty or missing, the verifier instructions stand alone and
@@ -539,8 +540,8 @@ export function digestShardDecisions(
   });
 }
 
-/** The briefer prompt: what happened (conditioning report), what the heartbeats
- * found (inboxes), what became canon (digest), and the reflections still to
+/** The briefer prompt: what happened (conditioning report), what watches and
+ * nightly found (inboxes), what became canon (digest), and the reflections still to
  * decide. No canon — the briefer never cites a target_hash. */
 export function buildBriefingUserContent(input: {
   date: string;
@@ -570,7 +571,7 @@ ${fence({
       sessions: p.sessions,
       git: p.git,
       tickets: p.tickets,
-      heartbeat: p.heartbeat,
+      inbox: p.inbox,
     })),
   })}
 `);
@@ -581,7 +582,7 @@ ${input.principlesText.trim() || "(no principles file present)"}
 `);
 
   const withInbox = input.inboxes.filter((i) => i.inboxText.trim().length > 0);
-  sections.push(`## Heartbeat inboxes (${withInbox.length} with content)
+  sections.push(`## Project inboxes (${withInbox.length} with content)
 
 ${
     withInbox.length > 0
@@ -663,7 +664,8 @@ export async function loadVerifierBundle(
 
     const midSession = await readCandidates(paths, projectId);
     const inboxPath = join(paths.projectsDir, projectId, "inbox.md");
-    const inboxText = existsSync(inboxPath) ? readFileSync(inboxPath, "utf-8") : "";
+    const inboxRaw = existsSync(inboxPath) ? readFileSync(inboxPath, "utf-8") : "";
+    const inboxText = parseInbox(inboxRaw, projectId).body;
 
     // A project earns a place in the bundle if it has candidates to decide or an
     // inbox for the briefing to fold in. Canon presence used to qualify a

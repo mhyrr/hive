@@ -4,25 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  actionDispatch,
-  actionDispatchKill,
   actionIdentityPropose,
-  actionInboxAck,
   actionMemoryPromote,
-  actionOverrideStatus,
   actionReflectionDismiss,
   actionTicketClose,
   actionTicketCreate,
-  actionTicketDispatchRun,
   actionTicketNote,
   actionTicketReopen,
   actionTicketStart,
-  actionTicketTagDispatch,
   hashEntry,
 } from "../lib/dashboard/actions";
 import { ensureHiveScaffold, getHivePaths } from "../lib/paths";
-import { mkdir, writeFile } from "node:fs/promises";
-
 // ---------------------------------------------------------------------------
 // Pure argv builders
 // ---------------------------------------------------------------------------
@@ -82,31 +74,6 @@ describe("ticket lifecycle builders", () => {
     expect(() => actionTicketNote({ id: "TK-007", note: "   " })).toThrow(/note/);
   });
 
-  test("tag-dispatch vs dispatch-run go to different commands", () => {
-    // `hive ticket dispatch <id>` — tags the ticket
-    expect(actionTicketTagDispatch({ id: "TK-007" }).argv)
-      .toEqual(["ticket", "dispatch", "TK-007"]);
-    // `hive dispatch --ticket <id>` — actually dispatches a run
-    expect(actionTicketDispatchRun({ id: "TK-007" }).argv)
-      .toEqual(["dispatch", "--ticket", "TK-007"]);
-  });
-});
-
-describe("dispatch and kill", () => {
-  test("dispatch with just goal", () => {
-    expect(actionDispatch({ goal: "Fix it" }).argv).toEqual(["dispatch", "Fix it"]);
-  });
-  test("dispatch with project", () => {
-    expect(actionDispatch({ goal: "Fix it", project: "hive" }).argv)
-      .toEqual(["dispatch", "Fix it", "--project", "hive"]);
-  });
-  test("dispatch rejects empty goal", () => {
-    expect(() => actionDispatch({ goal: "" })).toThrow(/goal/);
-  });
-  test("kill validates run id", () => {
-    expect(actionDispatchKill({ runId: "RUN-009" }).argv).toEqual(["kill", "RUN-009"]);
-    expect(() => actionDispatchKill({ runId: "9" })).toThrow(/run id/);
-  });
 });
 
 describe("memory promote", () => {
@@ -127,75 +94,7 @@ describe("memory promote", () => {
 // Direct-file actions
 // ---------------------------------------------------------------------------
 
-describe("actionOverrideStatus", () => {
-  let home: string;
-  beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), "hive-action-"));
-    await ensureHiveScaffold(home);
-  });
-  afterEach(async () => {
-    await rm(home, { recursive: true, force: true });
-  });
-
-  test("writes a whitelisted status", async () => {
-    const paths = getHivePaths(home);
-    const runDir = join(paths.runsDir, "RUN-001");
-    await mkdir(runDir, { recursive: true });
-
-    const { path } = await actionOverrideStatus(paths, { runId: "RUN-001", status: "complete" });
-    const contents = await readFile(path, "utf-8");
-    expect(contents.trim()).toBe("complete");
-  });
-
-  test("rejects non-allowlisted status", async () => {
-    const paths = getHivePaths(home);
-    await expect(
-      actionOverrideStatus(paths, { runId: "RUN-001", status: "pwned" }),
-    ).rejects.toThrow(/invalid override status/);
-  });
-
-  test("rejects invalid run id", async () => {
-    const paths = getHivePaths(home);
-    await expect(
-      actionOverrideStatus(paths, { runId: "../../etc", status: "complete" }),
-    ).rejects.toThrow(/invalid run id/);
-  });
-
-  test("rejects run that does not exist", async () => {
-    const paths = getHivePaths(home);
-    await expect(
-      actionOverrideStatus(paths, { runId: "RUN-999", status: "complete" }),
-    ).rejects.toThrow(/run not found/);
-  });
-});
-
-describe("actionInboxAck", () => {
-  let home: string;
-  beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), "hive-ack-"));
-    await ensureHiveScaffold(home);
-    await mkdir(join(home, "projects", "hive"), { recursive: true });
-  });
-  afterEach(async () => {
-    await rm(home, { recursive: true, force: true });
-  });
-
-  test("writes entry hash to inbox-ack.json", async () => {
-    const paths = getHivePaths(home);
-    const { path, hash } = await actionInboxAck(paths, { project: "hive", entry: "some news" });
-    const parsed = JSON.parse(await readFile(path, "utf-8"));
-    expect(parsed).toEqual([hash]);
-    expect(hash).toHaveLength(16);
-  });
-
-  test("de-duplicates repeat acks", async () => {
-    const paths = getHivePaths(home);
-    const { path } = await actionInboxAck(paths, { project: "hive", entry: "same" });
-    await actionInboxAck(paths, { project: "hive", entry: "same" });
-    const parsed = JSON.parse(await readFile(path, "utf-8"));
-    expect(parsed).toHaveLength(1);
-  });
-
+describe("hashEntry", () => {
   test("hash uses trimmed input so whitespace doesn't split", () => {
     expect(hashEntry("foo")).toBe(hashEntry("  foo\n"));
   });

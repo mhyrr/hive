@@ -5,22 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 
-import { campaignCommand } from "./commands/campaign";
 import { contextCommand } from "./commands/context";
 import { councilCommand } from "./commands/council";
 import { dashboardCommand } from "./commands/dashboard";
-import { dispatchCommand } from "./commands/dispatch";
 import { doctorCommand } from "./commands/doctor";
 import { goalCommand } from "./commands/goal";
-import { heartbeatCommand } from "./commands/heartbeat";
 import { identityCommand } from "./commands/identity";
 import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
-import { killCommand } from "./commands/kill";
 import { memoryCommand } from "./commands/memory";
 import { tasteCommand } from "./commands/taste";
 import { projectCommand } from "./commands/project";
-import { psCommand } from "./commands/ps";
 import { stackCommand } from "./commands/stack";
 import { ticketCommand, ticketsCommand } from "./commands/ticket";
 import { watchCommand } from "./commands/watch";
@@ -37,22 +32,22 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   prompts: contextCommand,
   project: projectCommand,
   stack: stackCommand,
-  campaign: campaignCommand,
   council: councilCommand,
   memory: memoryCommand,
   taste: tasteCommand,
   ticket: ticketCommand,
   tickets: ticketsCommand,
   goal: goalCommand,
-  dispatch: dispatchCommand,
-  heartbeat: heartbeatCommand,
   identity: identityCommand,
   inbox: inboxCommand,
-  kill: killCommand,
-  ps: psCommand,
   dashboard: dashboardCommand,
   watch: watchCommand,
 };
+
+// Unknown words are valid interactive prompts, so retired command names need
+// an explicit tombstone. Otherwise `hive dispatch ...` would quietly launch an
+// agent conversation and look like a half-working command.
+const retiredCommands = new Set(["campaign", "dispatch", "heartbeat", "ps", "kill"]);
 
 function getUsage(): string {
   const name = getIdentityName();
@@ -74,14 +69,9 @@ HIVE Commands:
   tickets                    Open tickets for the project you're standing in
   ticket [create|list|...]   Project ticket tracker
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
-  campaign run|list|show     Long-horizon campaign orchestration
-  dispatch "<goal>" [opts]   Dispatch autonomous goal execution
-  heartbeat start|stop|...   Periodic project awareness
   watch list|status|run|...  Standing-question watches (ambient passes)
   identity emit              Print canonical identity prefix (used by SessionStart hook)
   inbox                      Show project inbox (clear with: inbox clear)
-  kill <run-id>              Kill a running dispatch
-  ps                         Show active and recent dispatch runs
   dashboard [build|open]     Build or open the Morning Edition dashboard
 
 ${name} (default: Claude Code with identity):
@@ -105,7 +95,7 @@ Alt harness:
   HIVE_HARNESS=codex hive    Same as -x, via env (use --claude to override)
 
 Persona (swappable register/voice, interactive only):
-  hive --persona <name>      Load ~/.hive/personas/<name>.md (default: greg-dry)
+  hive --persona <name>      Load ~/.hive/personas/<name>.md (default: dry)
   HIVE_PERSONA=<name> hive    Same, via env`;
 }
 
@@ -366,6 +356,11 @@ async function main(): Promise<void> {
       throw error;
     }
     return;
+  }
+
+  if (retiredCommands.has(command)) {
+    console.error(`hive: ${command} was retired. Use tickets and watches for ongoing work.`);
+    process.exit(1);
   }
 
   // Everything else → pass through to a harness with identity.

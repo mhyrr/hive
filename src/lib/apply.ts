@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 
 import type { HivePaths } from "./paths";
 import { listProjects } from "./paths";
+import { emptyInbox } from "./inbox";
 import {
   appendProjectMemory,
   drainCandidates,
@@ -443,7 +444,7 @@ async function landGaps(
 async function truncateInbox(paths: HivePaths, projectId: string): Promise<boolean> {
   const inboxPath = join(paths.projectsDir, projectId, "inbox.md");
   if (!existsSync(inboxPath)) return false;
-  await writeFile(inboxPath, `# Inbox: ${projectId}\n\n_Truncated by Pass F at ${new Date().toISOString()}_\n`);
+  await writeFile(inboxPath, emptyInbox(projectId));
   return true;
 }
 

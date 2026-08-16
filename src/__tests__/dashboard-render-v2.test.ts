@@ -7,8 +7,6 @@ import {
   selectTopThree,
   renderProjects,
   renderTickets,
-  renderInboxes,
-  renderRuns,
 } from "../lib/dashboard/render";
 import type { DashboardData } from "../lib/dashboard/collect";
 
@@ -22,25 +20,21 @@ function baseData(overrides: Partial<DashboardData> = {}): DashboardData {
       {
         id: "alpha",
         path: "/tmp/alpha",
-        lastHeartbeat: "2026-04-17T08:00:00Z",
-        tickCount: 10,
-        lastResult: "ACTION_TAKEN",
         ticketCounts: {
           open: 2, inProgress: 1, closed: 0,
           byPriority: { 0: 1, 1: 1, 2: 1, 3: 0 },
         },
+        ticketsTouched: 1,
         inboxMtime: "2026-04-17T08:00:00Z",
       },
       {
         id: "beta",
         path: null,
-        lastHeartbeat: null,
-        tickCount: 0,
-        lastResult: null,
         ticketCounts: {
           open: 0, inProgress: 0, closed: 0,
           byPriority: { 0: 0, 1: 0, 2: 0, 3: 0 },
         },
+        ticketsTouched: 0,
         inboxMtime: null,
       },
     ],
@@ -52,16 +46,7 @@ function baseData(overrides: Partial<DashboardData> = {}): DashboardData {
       inProgress: [{ id: "TK-002", title: "wip", projectId: "alpha", priority: 2, tags: [], depends: [], ageDays: 1 }],
       blocked: [{ id: "TK-003", title: "blocked", projectId: "beta", priority: 0, tags: [], depends: ["TK-001"], ageDays: 1 }],
     },
-    runs: [
-      {
-        id: "RUN-001", status: "running", durationMs: null, startedAt: "2026-04-17T09:00:00Z",
-        goalSnippet: "running one", projectId: "alpha", ticketId: "TK-002",
-      },
-      {
-        id: "RUN-002", status: "failed", durationMs: 1000, startedAt: "2026-04-17T08:00:00Z",
-        goalSnippet: "failed one", projectId: null, ticketId: null,
-      },
-    ],
+    actWork: [],
     briefings: [
       {
         date: "2026-04-17",
@@ -188,30 +173,6 @@ describe("Tickets — action buttons + data-project", () => {
     const html = renderTickets(baseData().tickets, { interactive: false });
     expect(html).not.toContain('data-action="ticket-start"');
     expect(html).not.toContain('<button');
-  });
-});
-
-describe("Inbox entries — data-project + actions", () => {
-  test("non-empty inbox entries offer controls that name what they do", () => {
-    const html = renderInboxes(baseData().inboxes, { interactive: true });
-    expect(html).toContain('data-action="inbox-promote"');
-    expect(html).toContain('data-action="inbox-ack"');
-    expect(html).toContain('data-project="alpha"');
-    // "promote" posts to ticket/create, so the control says so.
-    expect(html).toContain("[ make ticket ]");
-    expect(html).toContain("[ dismiss ]");
-    expect(html).not.toContain('data-action="inbox-dispatch"');
-  });
-});
-
-describe("Dispatch log — kill + override actions", () => {
-  test("running run has kill button; all runs have override", () => {
-    const html = renderRuns(baseData().runs, { interactive: true });
-    expect(html).toContain('data-action="dispatch-kill"');
-    expect(html).toContain('data-run-id="RUN-001"');
-    // failed run shouldn't have kill
-    expect(html).not.toMatch(/data-run-id="RUN-002"[^>]*>[\s\S]*?data-action="dispatch-kill"/);
-    expect(html).toContain('data-action="dispatch-override"');
   });
 });
 

@@ -185,6 +185,16 @@ describe("parseWatchFile", () => {
     expect(warnings).toEqual([expect.stringContaining("window is obsolete")]);
   });
 
+  test("legacy dispatch venue remains readable as Act", () => {
+    const { watch, warnings } = parseWatchFile(
+      "---\ncadence: 6h\nvenue: dispatch\nautonomy: act\n---\n\nQ.",
+      "/w/act.md",
+      null,
+    );
+    expect(watch?.venue).toBe("act");
+    expect(warnings).toEqual([expect.stringContaining('treating it as "act"')]);
+  });
+
   test("empty body → skipped with warning", () => {
     const { watch, warnings } = parseWatchFile("---\ncadence: 2h\n---\n\n", "/w/empty.md", null);
     expect(watch).toBeNull();
@@ -314,7 +324,7 @@ describe("shipped watch templates", () => {
     expect(watch?.question).toContain("NO_SIGNAL");
   });
 
-  test("act: every 6 hours, judgment, review dispatch", async () => {
+  test("act: every 6 hours, judgment, isolated review execution", async () => {
     const file = join(templatesDir, "act.md");
     const { watch, warnings } = parseWatchFile(await Bun.file(file).text(), file, null);
     expect(warnings).toEqual([]);
@@ -323,7 +333,7 @@ describe("shipped watch templates", () => {
       cadence: { type: "interval", ms: 6 * HOUR },
       scope: ["tickets", "commits", "transcripts"],
       model: "judgment",
-      venue: "dispatch",
+      venue: "act",
       autonomy: "act",
       enabled: true,
     });

@@ -42,7 +42,7 @@ export async function buildDashboard(
   await writeFile(outputPath, html, "utf-8");
 
   // Archive snapshot for the day. Overwrites same-day rebuilds — last
-  // write wins. The morning job runs once after the briefing so that's
+  // write wins. The nightly job runs once after the briefing so that's
   // the canonical snapshot.
   const archivePath = archivePathForDate(paths, todayDateString());
   await mkdir(dirname(archivePath), { recursive: true });

@@ -7,6 +7,12 @@ We are craftsmen — technology married with liberal arts, engineering married w
 ## Voice
 
 - **Intellectually sharp, genuinely warm.** Both at once.
+- **Simplified Technical English.** ASD-STE100 discipline: active voice, short sentences,
+  one instruction per sentence, and one term per concept — never a synonym for variety.
+  One reading per sentence, so nothing rests on the reader guessing right.
+- **Zinsser's four.** Simplicity, brevity, clarity, humanity. Strip every word doing no
+  work, then check that the humanity survived the stripping — the fourth is what keeps
+  the first three from producing a manual.
 - **Inquisitive.** Reach for the question before the answer. The right question is more useful than a confident wrong recommendation.
 - **Lead with the insight.** The first sentence is the answer, not the preamble.
 - **Match length to the question.** A three-sentence answer stays three sentences.

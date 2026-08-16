@@ -27,9 +27,9 @@ what it doesn't remember on its own, most valuable first:
   is across every session, so memory and reflection have something to
   attach to.
 
-Smaller surfaces sit underneath: a multi-model council, a heartbeat that
-dispatches background work, a morning dashboard, language-stack skills, and
-the local MCP server that ties it together. Details below.
+Smaller surfaces sit underneath: a multi-model council, standing-question
+watches, a morning dashboard, language-stack skills, and the local MCP server
+that ties it together. Details below.
 
 ## What It Does
 
@@ -84,7 +84,7 @@ on demand.
 Smaller surfaces — reach for them when a project needs them.
 
 - **Multi-model council.** Send one question to Claude, GPT, Gemini, and local models in parallel; the current agent chairs and synthesizes agreement and disagreement. Standard or adversarial-dialectic modes. `hive council "<question>"`. Inspired by [Perplexity](https://perplexity.ai/).
-- **Heartbeat & autonomous dispatch.** A stateless agent wakes on a timer, checks project state behind a deterministic trigger gate (no changes, no model call, no cost), and can dispatch well-specified work to a background executor in a git worktree that plans, builds, tests, and merges. `hive dispatch "<goal>"`, `hive ps`, `hive kill`. Inspired by [OpenClaw](https://openclaw.ai/) and [NanoClaw](https://github.com/qwibitai/nanoclaw).
+- **Watches.** Markdown standing questions run on declared cadences against bounded local evidence. Observe connects threads, Propose writes into the nightly briefing, and Act may start one deterministically eligible ticket on an isolated review branch. No change means no model call. `hive watch status`; see [docs/watches.md](docs/watches.md).
 - **The dashboard.** One page that opens with a verdict per project instead of a log — see [The Dashboard](#the-dashboard) below. A static `~/.hive/dashboard/index.html` or an interactive server at `127.0.0.1:7777`. `hive dashboard`. See [docs/dashboard.md](docs/dashboard.md).
 - **Language stacks.** Domain-knowledge bundles — Iron Laws, patterns, idioms — packaged as Claude Code skills and auto-detected per project (`mix.exs` → elixir, `package.json` → typescript). Ships **elixir** and **typescript**; `hive stack init <name>` scaffolds your own. Elixir content from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix), TypeScript from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills) (both MIT).
 - **Local MCP server.** The consistency layer that exposes memory, tickets, and council to every harness — markdown underneath, no database.
@@ -126,18 +126,19 @@ installs agents and scripts, registers the MCP server, and sets up
 launchd jobs. It will prompt for your name to personalize templates
 (or pass `--name="Your Name"`).
 
-The installer registers three launchd jobs:
+The installer registers four launchd jobs:
 
 | Job | Schedule | What it does |
 | --- | --- | --- |
-| `com.hive.heartbeat` | Polls every 30 minutes, per-project interval configurable (default 12h) | Checks project state, dispatches autonomous work, consolidates memory |
 | `com.hive.nightly` | 2:00am daily | Runs the V1 memory pipeline: condition → Sonnet extract → Opus verify → apply → rebuild dashboard. Lands the morning briefing. |
 | `com.hive.sync` | 2:30am daily | Commits and pushes `~/.hive/` to git |
+| `com.hive.dashboard` | KeepAlive | Serves the local interactive dashboard on `127.0.0.1:7777` |
+| `com.hive.watches` | Hourly | Evaluates due standing questions; delta-gated watches make no model call when nothing changed |
 
 All jobs log to `~/.hive/logs/`. Manage with `launchctl`:
 ```bash
 launchctl list | grep hive         # see running jobs
-launchctl unload ~/Library/LaunchAgents/com.hive.heartbeat.plist  # stop one
+launchctl unload ~/Library/LaunchAgents/com.hive.watches.plist  # stop one
 ```
 
 Then register a project and start working:
@@ -247,13 +248,12 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `reflect_session` | Batch-write session learnings at end of session. |
 | `search_memory` | Search across all memory layers by keyword or tag. |
 | `search_taste` | Retrieve the active (human-approved) taste for a work type (IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). Merges project + general stores; holding/pending never leak in. |
-| `manage_heartbeat` | Enable, disable, or check heartbeat status for a project. |
 | `create_ticket` | Create a ticket with type, priority (P0-P3), tags, and dependencies. |
 | `list_tickets` | List and filter tickets by status, type, or tags. |
 | `show_ticket` | Show full ticket details. Supports partial ID matching. |
 | `update_ticket` | Update ticket status, priority, tags, or other fields. |
 | `add_ticket_note` | Add a timestamped note with optional actor attribution. |
-| `add_project` | Register a project with HIVE (creates config, memory, and heartbeat state). |
+| `add_project` | Register a project with HIVE (creates config, memory, tickets, and watches directories). |
 | `hive_status` | Dashboard showing identity, projects, tickets, scheduled jobs, and agents. |
 
 ## CLI Commands
@@ -273,18 +273,15 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive memory question <text>` | Add an open question |
 | `hive memory reflect` | Batch-write learnings from stdin (JSON) |
 | `hive memory extract-sessions` | Condense last 24h session transcripts for nightly |
-| `hive dispatch "<goal>"` | Dispatch autonomous goal execution (`--ticket`, `--plan`, `--timeout`) |
-| `hive ps` | Show active and recent dispatch runs with failure details |
-| `hive kill <run-id>` | Kill a running dispatch |
-| `hive heartbeat start` | Enable heartbeat for current project (`--interval <min>`) |
-| `hive heartbeat stop` | Disable heartbeat for current project |
-| `hive heartbeat status` | Show heartbeat state for all projects |
-| `hive heartbeat tick` | Run one heartbeat tick manually |
-| `hive heartbeat reset` | Reset heartbeat counters |
+| `hive watch list` | List discovered standing questions and their settings |
+| `hive watch status` | Show watch state, outcomes, and logged usage |
+| `hive watch run <name>` | Force one named watch; `--due` is the scheduled tick entry point |
+| `hive watch ceiling observe\|propose\|act` | Set the global autonomy ceiling |
+| `hive watch on\|off <name>` | Enable or disable a watch |
 | `hive identity emit` | Print the canonical identity prefix used by hooks and harness launchers |
 | `hive context` | Audit session-start context size against budgets (alias: `hive prompts`) |
 | `hive context --json` | Same audit as JSON, for tracking size over time |
-| `hive inbox` | Show the current project's heartbeat inbox (`hive inbox clear` clears it) |
+| `hive inbox` | Show the current project's findings inbox (`hive inbox clear` clears it) |
 | `hive dashboard` | Open the dashboard (server if running, else static build) |
 | `hive dashboard build` | Regenerate the static dashboard at `~/.hive/dashboard/index.html` |
 | `hive dashboard serve [--port N] [--open]` | Start the interactive server on `127.0.0.1:7777` |
@@ -298,7 +295,6 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive ticket close <id>` | Close ticket |
 | `hive ticket reopen <id>` | Reopen a closed ticket |
 | `hive ticket note <id> <text>` | Add a timestamped note |
-| `hive ticket dispatch <id>` | Tag ticket for heartbeat auto-dispatch |
 | `hive ticket ready` | Show unblocked open tickets |
 | `hive ticket blocked` | Show dependency-blocked tickets |
 | `hive stack list` | List installed and canned stacks |
@@ -381,9 +377,8 @@ instead of per-invocation prompt injection, which preserves Codex's prefix
 cache across sessions. `hive doctor` checks Claude Code, Pi, and Codex
 wiring; Pi/Codex checks are warnings because both harnesses are optional.
 
-`hive dispatch` and `hive heartbeat tick` still run through Claude Code by
-default for autonomous work. `-3` and `-x` are interactive harness routes,
-not replacements for dispatch or heartbeat.
+Watch Act uses Claude Code for isolated branch execution. `-3` and `-x` are
+interactive harness routes; they do not change the watch executor.
 
 See `docs/hive-reach.md` for the runtime reach matrix (identity, MCP
 tools, project scope per harness) and `docs/identity-injection.md` for
@@ -406,17 +401,13 @@ lost updates.
 
 `~/.hive/` is a git repo, so all memory changes are tracked in history.
 
-## Automation: Auto-dispatch
+## Automation: Watches
 
-Tickets tagged `auto-dispatch` (via `hive ticket dispatch TK-005`) are
-picked up by the heartbeat for autonomous execution — but only when they're
-open, unblocked by `depends`, and authorized in the project's
-`HEARTBEAT.md`. The heartbeat runs `hive dispatch "<goal>" --ticket <id>`
-for ready tickets and logs every dispatch to `inbox.md`.
-
-Reserve it for well-specified, low-judgment work: docs, chores, standalone
-features with clear specs. Don't tag anything that needs a human call on
-approach.
+Watches replace the old periodic agent loop with explicit standing questions.
+The file declares cadence, evidence scope, model tier, output venue, and an
+autonomy level bounded by a global ceiling. Act can start one eligible ticket
+in a local worktree, but never merges or pushes; human review remains the
+landing step. See [docs/watches.md](docs/watches.md).
 
 ## File Layout
 
@@ -426,7 +417,7 @@ approach.
 ├── IDENTITY.md          # AI identity
 ├── SELF.md              # user preferences
 ├── AGENTS.md            # operational doctrine
-├── TRUST.md             # action classification + heartbeat authority
+├── TRUST.md             # action classification and boundaries
 ├── config.md            # model pool
 ├── codex-load-identity.sh # Codex SessionStart identity refresher
 ├── taste/
@@ -441,25 +432,24 @@ approach.
 │   │       └── log/          # daily session log entries
 │   └── runs/            # nightly pipeline artifacts
 ├── briefings/           # morning briefings
-├── runs/                # dispatch run state
+├── runs/                # private Watch Act execution records
 │   └── RUN-001/
 │       ├── goal.md, status, plan.md, output.log, pid
 ├── projects/
 │   └── <name>/
 │       ├── config.md    # project path
-│       ├── HEARTBEAT.md # standing orders + authorized actions
-│       ├── heartbeat.json # heartbeat config + counters
-│       ├── inbox.md     # heartbeat findings
+│       ├── inbox.md     # watch and nightly findings
+│       ├── watches/     # project-scoped standing questions
 │       └── tickets/
 │           └── TK-001.md
 ├── scripts/             # launchd entry points
-└── logs/                # nightly, heartbeat, sync logs
+└── logs/                # nightly, watches, dashboard, sync logs
 ```
 
 ## Requirements
 
 - [Bun](https://bun.sh/) 1.3+
-- macOS (launchd required for heartbeat and scheduled jobs)
+- macOS (launchd required for scheduled jobs)
 
 For multi-model council:
 - Claude CLI subscription OAuth (macOS keychain) or `ANTHROPIC_API_KEY`

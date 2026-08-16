@@ -73,7 +73,7 @@ const STEADY_MONTH_COMMITS = 5;
 /** Days without an admitted memory entry before the store reads as cold. */
 const STALE_MEMORY_DAYS = 30;
 
-/** Run statuses that mean the run is over and it did not go well. */
+/** Act outcomes that mean branch-only work needs a human. */
 const FAILED = new Set(["failed", "error", "timeout", "killed"]);
 /** Work finished but parked, waiting on a human to look. */
 const PARKED = new Set(["review_ready"]);
@@ -199,40 +199,33 @@ function decide(
     today: string;
   },
 ): { verdict: VerdictKind; reason: string; score: number } {
-  const runs = (data.runs ?? []).filter((r) => r.projectId === p.id);
-  const failed = runs.filter((r) => FAILED.has(r.status));
-  const parked = runs.filter((r) => PARKED.has(r.status));
+  const actWork = (data.actWork ?? []).filter((item) => item.projectId === p.id);
+  const failed = actWork.filter((item) => FAILED.has(item.status));
+  const parked = actWork.filter((item) => PARKED.has(item.status));
   const inbox = (data.inboxes ?? []).find((i) => i.projectId === p.id);
   const { score, parts, moving } = scoreOf(p, { blocked: ctx.blocked, activity: ctx.activity });
 
-  // 1. Needs you — something finished badly, or finished and is waiting.
-  // These bypass the score outright: no amount of quiet makes a failed run
+  // 1. Needs you — Act finished badly, or finished and is waiting.
+  // These bypass the score outright: no amount of quiet makes failed work
   // wait until tomorrow.
   if (failed.length > 0) {
-    return { verdict: "needs-you", reason: `${plural(failed.length, "run", "runs")} failed`, score };
+    return { verdict: "needs-you", reason: `${plural(failed.length, "Act branch", "Act branches")} failed`, score };
   }
   if (parked.length > 0) {
     return {
       verdict: "needs-you",
-      reason: `${plural(parked.length, "run", "runs")} waiting on review`,
+      reason: `${plural(parked.length, "Act branch", "Act branches")} waiting on review`,
       score,
     };
   }
-  // Inbox deliberately not consulted: Pass F leaves a tombstone in the file
-  // that reads as content, so every project looks unread. See TK-144. Wire it
-  // back in only once `isEmpty` tells the truth.
-  void inbox;
+  if (inbox && !inbox.isEmpty) {
+    return { verdict: "needs-you", reason: "inbox has findings", score };
+  }
 
   // 2. Queenless — the colony has no working head.
   if (!p.path) {
     return { verdict: "queenless", reason: "no path configured", score };
   }
-  // A missing heartbeat is not evidence: heartbeat is off by choice on this
-  // machine, so its absence says nothing about the colony.
-  if (p.lastResult && /error|fail/i.test(p.lastResult)) {
-    return { verdict: "queenless", reason: "last inspection errored", score };
-  }
-
   // 3. Everything else is the rubric. Above the line it earns paint; the
   // label separates a colony with momentum from one that is only accruing.
   if (score >= PAINT_THRESHOLD) {

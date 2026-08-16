@@ -151,7 +151,7 @@ describe("renderDashboard { interactive: false }", () => {
       projects: [],
       inboxes: [],
       tickets: { ready: [], inProgress: [], blocked: [] },
-      runs: [],
+      actWork: [],
       briefings: [],
       todayBriefing: null,
     } as any;

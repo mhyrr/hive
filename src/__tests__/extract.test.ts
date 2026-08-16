@@ -233,7 +233,7 @@ const fakeSignal: ProjectSignal = {
       { id: "TK-001", title: "Wire JWT", status: "closed", updated: "2026-04-26T10:00Z" },
     ],
   },
-  heartbeat: { inboxBytes: 0, findings: 0 },
+  inbox: { inboxBytes: 0, findings: 0 },
 };
 
 describe("buildProjectExtractionUserContent", () => {
@@ -288,7 +288,7 @@ describe("buildReflectionExtractionUserContent", () => {
           sessions: { sessionCount: 0, exchangeCount: 0, tokenEstimate: 0, topRanked: [] },
           git: { available: false, commits: 0, insertions: 0, deletions: 0, filesChanged: 0, subjects: [] },
           tickets: { moved: [] },
-          heartbeat: { inboxBytes: 0, findings: 0 },
+          inbox: { inboxBytes: 0, findings: 0 },
         },
       ],
       totals: {
