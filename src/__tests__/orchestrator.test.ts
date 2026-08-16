@@ -11,6 +11,7 @@ import type { ModelCaller } from "../lib/extract";
 import { parseTranscriptContent, type LoadedTranscript, type TranscriptEvent } from "../lib/transcript";
 import { loadUsageSummary } from "../lib/pricing";
 import { projectTasteDir, readTasteUnits } from "../lib/taste-store";
+import { now as hiveNow } from "../lib/time";
 
 // ---------------------------------------------------------------------------
 // Smart model stub — pattern-matches on the system prompt to choose what to
@@ -166,6 +167,7 @@ async function seedActivity(
   paths: HivePaths,
   projectId: string,
   date: string,
+  updatedAt = `${date}T12:00:00.000Z`,
 ): Promise<string> {
   // Drop a ticket update to tip Pass A out of trivial.
   //
@@ -179,10 +181,9 @@ async function seedActivity(
   // taste track. Noon on D is inside the window for any D.
   const ticketsDir = join(paths.projectsDir, projectId, "tickets");
   await mkdir(ticketsDir, { recursive: true });
-  const recentTs = `${date}T12:00:00.000Z`;
   await writeFile(
     join(ticketsDir, "TK-001.md"),
-    `---\nid: TK-001\ntitle: Activity ticket\nstatus: in_progress\ntype: task\npriority: 2\ntags: \ncreated: 2026-04-01T00:00:00Z\nupdated: ${recentTs}\nclosed: \nref: \ndepends: \n---\n\nBody\n`,
+    `---\nid: TK-001\ntitle: Activity ticket\nstatus: in_progress\ntype: task\npriority: 2\ntags: \ncreated: 2026-04-01T00:00:00Z\nupdated: ${updatedAt}\nclosed: \nref: \ndepends: \n---\n\nBody\n`,
   );
   // Pre-seed canon with one entry so verifier has hashes to reference.
   await appendProjectMemory(paths, projectId, "fact", "Existing baseline fact", ["seed"]);
@@ -196,8 +197,9 @@ async function seedActivity(
 describe("runNightly — @nightly watches (W pass)", () => {
   test("the Propose cycle fires after the tracks and lands its briefing artifact", async () => {
     const paths = await freshHomeWith(["alpha"]);
-    const date = new Date().toISOString().slice(0, 10);
-    await seedActivity(paths, "alpha", date);
+    const watchNow = hiveNow();
+    const date = watchNow.toISOString().slice(0, 10);
+    await seedActivity(paths, "alpha", date, watchNow.toISOString());
     await writeFile(
       join(paths.watchesDir, "propose.md"),
       "---\nname: propose\ncadence: @nightly\nscope: runs, tickets\nmodel: judgment\nvenue: briefing\nautonomy: propose\n---\n\nWhat should we propose?",
