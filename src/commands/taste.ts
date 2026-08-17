@@ -14,10 +14,12 @@ import {
   type TasteConsolidateResult,
 } from "../lib/taste-consolidate";
 import {
+  clearInvalidLadders,
   generalTasteDir,
   listPendingUnits,
   projectTasteDir,
   readNegatives,
+  readTasteUnits,
   recordNegative,
   removeUnit,
   setUnitStatus,
@@ -25,11 +27,24 @@ import {
   type TasteUnit,
 } from "../lib/taste-store";
 import type { TasteCandidate } from "../lib/taste-types";
+import { buildTasteLayer, parsePrincipleHeadings } from "../lib/taste";
 
 const USAGE = `Usage:
-  hive taste review [options]             Curate pending candidates: y/n keypress stepper
+  hive taste status [options]             Store tally — active / contradictions held / holding
+    --since <YYYY-MM-DD>                 Also list units admitted since that date
+    --json                               Machine-readable (used by the weekly reminder)
+
+  hive taste review [options]             Walk the contradiction queue: y/n keypress stepper
     --candidates <path...>               Import candidate JSON (from a run) as pending first
     --project <name>                     Review a project's store (default: cross-project)
+
+  hive taste reject <hash|dedupe_key>     Demote a unit and blacklist it from re-proposal
+
+  hive taste admit <hash|dedupe_key>      Promote a held unit to active
+    --all-pending [--apply]              Admit every held unit (dry run without --apply)
+
+  hive taste relink [--apply]             Clear ladder hints naming a principle that
+                                          doesn't exist. Run after editing principles.md.
 
   hive taste consolidate [options]        Pass TC — gate + cohere TB candidates into the store
     --candidates <path...>               Candidate JSON (TB output) to consolidate (required)
@@ -574,6 +589,183 @@ async function consolidateCommand(rest: string[]): Promise<void> {
   if (a.json) console.log(JSON.stringify(result, null, 2));
 }
 
+// ---------------------------------------------------------------------------
+// status / reject / admit — the operator surface for an auto-admitting store
+// ---------------------------------------------------------------------------
+
+interface StoreTally {
+  active: number;
+  pending: number;
+  holding: number;
+  /** Units admitted within the reporting window, newest first. */
+  recent: TasteUnit[];
+}
+
+/** Count the whole taste library, and collect units admitted since `since`. */
+export async function tallyTaste(
+  paths: HivePaths,
+  since?: string,
+): Promise<StoreTally> {
+  const tally: StoreTally = { active: 0, pending: 0, holding: 0, recent: [] };
+  for (const dir of await reviewStoreDirs(paths)) {
+    for (const u of await readTasteUnits(dir)) {
+      tally[u.status]++;
+      if (u.status === "active" && since && u.lastSeen >= since) tally.recent.push(u);
+    }
+  }
+  tally.recent.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+  return tally;
+}
+
+async function statusCommand(rest: string[]): Promise<void> {
+  const paths = await ensureHiveScaffold();
+  const json = rest.includes("--json");
+  const sinceIdx = rest.indexOf("--since");
+  const since = sinceIdx >= 0 ? rest[sinceIdx + 1] : undefined;
+
+  const t = await tallyTaste(paths, since);
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          active: t.active,
+          pending: t.pending,
+          holding: t.holding,
+          recent: t.recent.map((u) => ({
+            dedupe_key: u.dedupe_key,
+            category: u.category,
+            rule_statement: u.rule_statement,
+            lastSeen: u.lastSeen,
+          })),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  console.log(`taste store — ${t.active} active · ${t.pending} contradictions held · ${t.holding} holding`);
+  if (t.pending > 0) console.log(`  ${t.pending} need a call: hive taste review`);
+  if (since && t.recent.length > 0) {
+    console.log(`\nadmitted since ${since}:`);
+    for (const u of t.recent) console.log(`  · [${u.category}] ${u.rule_statement}`);
+  }
+}
+
+/** Resolve a unit by full hash, hash prefix, or exact dedupe_key. */
+async function findUnit(
+  paths: HivePaths,
+  ref: string,
+): Promise<{ unit: TasteUnit; storeDir: string }[]> {
+  const hits: { unit: TasteUnit; storeDir: string }[] = [];
+  for (const dir of await reviewStoreDirs(paths)) {
+    for (const u of await readTasteUnits(dir)) {
+      if (u.hash === ref || u.dedupe_key === ref || u.hash.startsWith(ref)) {
+        hits.push({ unit: u, storeDir: dir });
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * Demote and blacklist a unit. This is the reversibility that makes auto-admission
+ * safe to run — without it, a wrong instance retrieved into working context has no
+ * exit. Recording the negative stops TC re-proposing the same dedupe_key.
+ */
+async function rejectCommand(rest: string[]): Promise<void> {
+  const paths = await ensureHiveScaffold();
+  const ref = rest.find((r) => !r.startsWith("-"));
+  if (!ref) throw new UsageError("hive taste reject <hash|dedupe_key>");
+
+  const hits = await findUnit(paths, ref);
+  if (hits.length === 0) throw new UsageError(`No taste unit matches "${ref}".`);
+  if (hits.length > 1) {
+    throw new UsageError(
+      `"${ref}" matches ${hits.length} units — use a full hash:\n` +
+        hits.map((h) => `  ${h.unit.hash}  ${h.unit.dedupe_key}`).join("\n"),
+    );
+  }
+
+  const { unit, storeDir } = hits[0]!;
+  await removeUnit(storeDir, unit.hash);
+  await recordNegative(storeDir, unit.dedupe_key);
+  console.log(`rejected ${unit.dedupe_key} (${unit.hash}) — removed and blacklisted.`);
+}
+
+/**
+ * Promote held units to active. `--all-pending` is the slice-1 migration: units
+ * stranded at `pending` by the old human gate are not contradictions, and under
+ * the new gate they would never be revisited — TC only touches units it re-observes.
+ */
+async function admitCommand(rest: string[]): Promise<void> {
+  const paths = await ensureHiveScaffold();
+  const all = rest.includes("--all-pending");
+  const apply = rest.includes("--apply");
+  const ref = rest.find((r) => !r.startsWith("-"));
+
+  if (!all && !ref) throw new UsageError("hive taste admit <hash|dedupe_key> | --all-pending [--apply]");
+
+  const targets = all
+    ? (
+        await Promise.all(
+          (await reviewStoreDirs(paths)).map(async (dir) =>
+            (await listPendingUnits(dir)).map((unit) => ({ unit, storeDir: dir })),
+          ),
+        )
+      ).flat()
+    : await findUnit(paths, ref!);
+
+  if (targets.length === 0) {
+    console.log("Nothing to admit.");
+    return;
+  }
+  if (all && !apply) {
+    console.log(`${targets.length} unit(s) would be admitted (dry run — pass --apply):\n`);
+    for (const { unit } of targets) console.log(`  · [${unit.category}] ${unit.rule_statement}`);
+    return;
+  }
+  for (const { unit, storeDir } of targets) {
+    await setUnitStatus(storeDir, unit.hash, "active");
+  }
+  console.log(`admitted ${targets.length} unit(s) — retrievable via search_taste.`);
+}
+
+/**
+ * Clear ladder hints that don't name a real principle. Run after editing
+ * principles.md; the units re-ladder on the next TC pass.
+ */
+async function relinkCommand(rest: string[]): Promise<void> {
+  const paths = await ensureHiveScaffold();
+  const apply = rest.includes("--apply");
+  const headings = new Set(parsePrincipleHeadings(await buildTasteLayer()));
+  if (headings.size === 0) {
+    console.error("No principle headings found in principles.md — refusing to clear every ladder.");
+    return;
+  }
+
+  const cleared: { dedupe_key: string; wanted: string }[] = [];
+  for (const dir of await reviewStoreDirs(paths)) {
+    cleared.push(...(await clearInvalidLadders(dir, headings, { dryRun: !apply })));
+  }
+
+  if (cleared.length === 0) {
+    console.log(`All ladders valid against ${headings.size} principle heading(s).`);
+    return;
+  }
+  console.log(
+    `${cleared.length} unit(s) ladder to a principle that doesn't exist` +
+      (apply ? " — cleared:" : " (dry run — pass --apply):"),
+  );
+  const byWanted = new Map<string, number>();
+  for (const c of cleared) byWanted.set(c.wanted, (byWanted.get(c.wanted) ?? 0) + 1);
+  for (const [wanted, n] of [...byWanted].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${n}×  "${wanted}"`);
+  }
+  if (!apply) return;
+  console.log("\nThese are new-principle evidence — the model reached for a rung and found nothing.");
+}
+
 export async function tasteCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
   if (subcommand === "extract") {
@@ -584,6 +776,18 @@ export async function tasteCommand(args: string[]): Promise<void> {
   }
   if (subcommand === "review") {
     return reviewCommand(args.slice(1));
+  }
+  if (subcommand === "status") {
+    return statusCommand(args.slice(1));
+  }
+  if (subcommand === "reject") {
+    return rejectCommand(args.slice(1));
+  }
+  if (subcommand === "admit") {
+    return admitCommand(args.slice(1));
+  }
+  if (subcommand === "relink") {
+    return relinkCommand(args.slice(1));
   }
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
     console.log(USAGE);

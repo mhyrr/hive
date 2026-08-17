@@ -17,6 +17,7 @@ import {
   projectTasteDir,
   readTasteUnits,
   recordNegative,
+  searchTasteForWork,
   unitHash,
   writeTasteUnit,
 } from "./taste-store";
@@ -114,24 +115,80 @@ function opts(caller: ModelCaller, over: Record<string, unknown> = {}) {
 }
 
 describe("validateCoherenceDecision", () => {
+  const HEADS = new Set(["Solve the right problem", "As simple as possible"]);
+
   test("rejects unknown dedupe_keys and coerces fields", () => {
     const known = new Set(["a"]);
-    expect(validateCoherenceDecision({ dedupe_key: "ghost", coherence: "orthogonal" }, known)).toBeNull();
+    expect(validateCoherenceDecision({ dedupe_key: "ghost", coherence: "uncovered" }, known, HEADS)).toBeNull();
     const d = validateCoherenceDecision(
-      { dedupe_key: "a", coherence: "instantiates", ladders_up_to: "Solve the right problem", human_confirmed: true },
+      { dedupe_key: "a", coherence: "covered", ladders_up_to: "Solve the right problem", human_confirmed: true },
       known,
+      HEADS,
     );
-    expect(d?.coherence).toBe("instantiates");
+    expect(d?.coherence).toBe("covered");
     expect(d?.ladders_up_to).toBe("Solve the right problem");
+    expect(d?.wanted_principle).toBeNull();
     expect(d?.human_confirmed).toBe(true);
   });
 
-  test("strips ladders_up_to unless coherence is instantiates", () => {
+  test("strips ladders_up_to when coherence is uncovered", () => {
     const d = validateCoherenceDecision(
-      { dedupe_key: "a", coherence: "orthogonal", ladders_up_to: "Some principle" },
+      { dedupe_key: "a", coherence: "uncovered", ladders_up_to: "Solve the right problem" },
       new Set(["a"]),
+      HEADS,
     );
     expect(d?.ladders_up_to).toBeNull();
+  });
+
+  test("an INVENTED rung demotes to uncovered and is kept as wanted_principle", () => {
+    // The failure this closes: `ladders_up_to` was free text, so TC minted rungs
+    // ("Conservation of complexity", "Iterate") and reported `instantiates` for
+    // everything — which is why tension never fired across 90 candidates.
+    const d = validateCoherenceDecision(
+      { dedupe_key: "a", coherence: "covered", ladders_up_to: "Conservation of complexity" },
+      new Set(["a"]),
+      HEADS,
+    );
+    expect(d?.coherence).toBe("uncovered");
+    expect(d?.ladders_up_to).toBeNull();
+    expect(d?.wanted_principle).toBe("Conservation of complexity");
+  });
+
+  test("a claimed relation with no named principle also demotes to uncovered", () => {
+    const d = validateCoherenceDecision(
+      { dedupe_key: "a", coherence: "extends", ladders_up_to: null },
+      new Set(["a"]),
+      HEADS,
+    );
+    expect(d?.coherence).toBe("uncovered");
+    expect(d?.wanted_principle).toBeNull();
+  });
+
+  test("a contradiction must still name a real principle to count as one", () => {
+    const bogus = validateCoherenceDecision(
+      { dedupe_key: "a", coherence: "contradicts", ladders_up_to: "Ship it fast", tension_note: "principle-too-broad" },
+      new Set(["a"]),
+      HEADS,
+    );
+    expect(bogus?.coherence).toBe("uncovered");
+    expect(bogus?.tension_note).toBeNull();
+
+    const real = validateCoherenceDecision(
+      { dedupe_key: "a", coherence: "contradicts", ladders_up_to: "As simple as possible", tension_note: "principle-too-broad: not here" },
+      new Set(["a"]),
+      HEADS,
+    );
+    expect(real?.coherence).toBe("contradicts");
+    expect(real?.tension_note).toContain("principle-too-broad");
+  });
+
+  test("an unparseable coherence falls back to uncovered, never to a laddered class", () => {
+    const d = validateCoherenceDecision(
+      { dedupe_key: "a", coherence: "instantiates", ladders_up_to: "Solve the right problem" },
+      new Set(["a"]),
+      HEADS,
+    );
+    expect(d?.coherence).toBe("uncovered");
   });
 });
 
@@ -167,7 +224,7 @@ describe("deterministic partition", () => {
 
 describe("recurrence gate", () => {
   test("a single-session first-sighting lands in holding, not review", async () => {
-    const r = await runTasteConsolidate([candidate()], opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }])));
+    const r = await runTasteConsolidate([candidate()], opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered" }])));
     expect(r.holding).toBe(1);
     expect(r.reviewEligible).toBe(0);
     const u = (await readTasteUnits(projectTasteDir(paths, PROJECT), "DESIGN"))[0]!;
@@ -178,10 +235,11 @@ describe("recurrence gate", () => {
   test("recurring across two distinct sessions in one run is review-eligible", async () => {
     const a = candidate(); // session s1
     const b = candidate({ evidence: [{ anchor: { sessionFile: "s2.jsonl", id: "u9", ts: null }, quote: "again", confidence: 0.8 }] });
-    const r = await runTasteConsolidate([a, b], opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }])));
-    expect(r.reviewEligible).toBe(1);
+    const r = await runTasteConsolidate([a, b], opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered" }])));
+    expect(r.admitted).toBe(1);
+    expect(r.reviewEligible).toBe(0);
     const u = (await readTasteUnits(projectTasteDir(paths, PROJECT), "DESIGN"))[0]!;
-    expect(u.status).toBe("pending");
+    expect(u.status).toBe("active");
     expect(u.recurrence).toBe(2);
     // Evidence from both sessions merged onto the one unit.
     expect(u.evidence.map((e) => e.anchor.id).sort()).toEqual(["u1", "u9"]);
@@ -190,10 +248,10 @@ describe("recurrence gate", () => {
   test("explicit human confirmation bypasses the recurrence gate", async () => {
     const r = await runTasteConsolidate(
       [candidate()],
-      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal", human_confirmed: true }])),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered", human_confirmed: true }])),
     );
-    expect(r.reviewEligible).toBe(1);
-    expect((await readTasteUnits(projectTasteDir(paths, PROJECT), "DESIGN"))[0]!.status).toBe("pending");
+    expect(r.admitted).toBe(1);
+    expect((await readTasteUnits(projectTasteDir(paths, PROJECT), "DESIGN"))[0]!.status).toBe("active");
   });
 });
 
@@ -201,7 +259,7 @@ describe("coherence + conflict", () => {
   test("instantiates persists ladders_up_to onto the unit", async () => {
     const r = await runTasteConsolidate(
       [candidate()],
-      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "instantiates", ladders_up_to: "Solve the right problem" }])),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "covered", ladders_up_to: "Solve the right problem" }])),
     );
     expect(r.decisions[0]!.ladders_up_to).toBe("Solve the right problem");
     const u = (await readTasteUnits(projectTasteDir(paths, PROJECT), "DESIGN"))[0]!;
@@ -215,7 +273,7 @@ describe("coherence + conflict", () => {
 
     const r = await runTasteConsolidate(
       [candidate({ dedupe_key: "spread-dedupe", reasoning: "Spread dedupe across read paths." })],
-      opts(stubCaller([{ dedupe_key: "spread-dedupe", coherence: "orthogonal", conflict_with: "always-dedupe-in-one-place" }])),
+      opts(stubCaller([{ dedupe_key: "spread-dedupe", coherence: "uncovered", conflict_with: "always-dedupe-in-one-place" }])),
     );
     expect(r.conflicts).toHaveLength(1);
     expect(r.conflicts[0]!.conflict_with).toBe(unitHash(existing));
@@ -223,26 +281,62 @@ describe("coherence + conflict", () => {
 
   test("a re-observed unit never conflicts with its own prior version", async () => {
     // Run 1: seed the unit (holding).
-    await runTasteConsolidate([candidate()], opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }])));
+    await runTasteConsolidate([candidate()], opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered" }])));
     // Run 2: the model (mistakenly) points conflict_with at the same key.
     const r = await runTasteConsolidate(
       [candidate()],
-      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal", conflict_with: "trace-all-read-paths" }])),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered", conflict_with: "trace-all-read-paths" }])),
     );
     expect(r.conflicts).toHaveLength(0);
     expect(r.decisions[0]!.conflict_with).toBeNull();
-    // And the second observation still accrues recurrence → review-eligible.
-    expect(r.reviewEligible).toBe(1);
+    // And the second observation still accrues recurrence → auto-admitted.
+    expect(r.admitted).toBe(1);
     expect((await readTasteUnits(projectTasteDir(paths, PROJECT), "DESIGN"))[0]!.recurrence).toBe(2);
   });
 
   test("tensions are collected for human adjudication", async () => {
     const r = await runTasteConsolidate(
       [candidate()],
-      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "tension", tension_note: "scoped-exception: only for hot paths" }])),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "contradicts", ladders_up_to: "As simple as possible", tension_note: "scoped-exception: only for hot paths" }])),
     );
     expect(r.tensions).toHaveLength(1);
     expect(r.tensions[0]!.tension_note).toContain("scoped-exception");
+  });
+
+  test("a gate-clearing CONTRADICTION holds at pending instead of auto-admitting", async () => {
+    // Same recurrence as the auto-admit case above — only the coherence differs.
+    // A unit that fights an apex principle would be retrieved alongside that
+    // principle, which is injected into every session, so it waits for a human.
+    const r = await runTasteConsolidate(
+      recurringPair(),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "contradicts", ladders_up_to: "As simple as possible", tension_note: "principle-too-broad: the guard is not theatre here" }])),
+    );
+    expect(r.admitted).toBe(0);
+    expect(r.reviewEligible).toBe(1);
+    expect(r.decisions[0]!.status).toBe("pending");
+
+    const u = (await readTasteUnits(projectTasteDir(paths, PROJECT), "DESIGN"))[0]!;
+    expect(u.status).toBe("pending");
+    expect(u.recurrence).toBe(2);
+  });
+
+  test("a held contradiction is never retrievable", async () => {
+    await runTasteConsolidate(
+      recurringPair({ scope: { kind: "general-taste" } }),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "contradicts", ladders_up_to: "Solve the right problem", tension_note: "candidate-wrong" }])),
+    );
+    const hits = await searchTasteForWork(paths, PROJECT, "DESIGN");
+    expect(hits).toHaveLength(0);
+  });
+
+  test("an admitted unit IS retrievable in the same nightly", async () => {
+    await runTasteConsolidate(
+      recurringPair({ scope: { kind: "general-taste" } }),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "covered", ladders_up_to: "As simple as possible" }])),
+    );
+    const hits = await searchTasteForWork(paths, PROJECT, "DESIGN");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.unit.dedupe_key).toBe("trace-all-read-paths");
   });
 });
 
@@ -250,7 +344,7 @@ describe("scope routing + resilience", () => {
   test("general-taste units land in the cross-project store", async () => {
     await runTasteConsolidate(
       [candidate({ scope: { kind: "general-taste" }, dedupe_key: "cross", reasoning: "Read the actual thing before reasoning about it." })],
-      opts(stubCaller([{ dedupe_key: "cross", coherence: "orthogonal" }])),
+      opts(stubCaller([{ dedupe_key: "cross", coherence: "uncovered" }])),
     );
     expect(await readTasteUnits(generalTasteDir(paths))).toHaveLength(1);
     expect(await readTasteUnits(projectTasteDir(paths, PROJECT))).toHaveLength(0);
@@ -275,24 +369,24 @@ describe("scope routing + resilience", () => {
 });
 
 describe("replay gate (design §9)", () => {
-  test("a recurring FUZZY candidate that PASSES replay becomes review-eligible", async () => {
+  test("a recurring FUZZY candidate that PASSES replay is admitted", async () => {
     const r = await runTasteConsolidate(
       recurringPair(),
-      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }], { "trace-all-read-paths": ["w0", "w1"] }), {
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered" }], { "trace-all-read-paths": ["w0", "w1"] }), {
         replayCorpus: replayCorpus(),
         replayThresholds: REPLAY_T,
       }),
     );
-    expect(r.reviewEligible).toBe(1);
+    expect(r.admitted).toBe(1);
     expect(r.decisions[0]!.replay?.passed).toBe(true);
-    expect(r.decisions[0]!.status).toBe("pending");
+    expect(r.decisions[0]!.status).toBe("active");
     expect(r.replayUsage).not.toBeNull();
   });
 
   test("a recurring FUZZY candidate that FAILS replay stays in holding (recurrence alone is not enough)", async () => {
     const r = await runTasteConsolidate(
       recurringPair(),
-      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }], { "trace-all-read-paths": ["w3"] }), {
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered" }], { "trace-all-read-paths": ["w3"] }), {
         replayCorpus: replayCorpus(),
         replayThresholds: REPLAY_T,
       }),
@@ -307,12 +401,12 @@ describe("replay gate (design §9)", () => {
     const r = await runTasteConsolidate(
       recurringPair({ tier: "DETERMINISTIC", check_sketch: "grep for the thing" }),
       // A failing replay map is supplied; DETERMINISTIC must ignore it.
-      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }], { "trace-all-read-paths": ["w3"] }), {
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered" }], { "trace-all-read-paths": ["w3"] }), {
         replayCorpus: replayCorpus(),
         replayThresholds: REPLAY_T,
       }),
     );
-    expect(r.reviewEligible).toBe(1);
+    expect(r.admitted).toBe(1);
     expect(r.decisions[0]!.replay).toBeNull(); // never judged
     expect(r.replayUsage).toBeNull(); // no eligible FUZZY candidate → no judge call
   });
@@ -320,12 +414,12 @@ describe("replay gate (design §9)", () => {
   test("humanConfirmed bypasses replay entirely", async () => {
     const r = await runTasteConsolidate(
       [candidate()],
-      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal", human_confirmed: true }], { "trace-all-read-paths": ["w3"] }), {
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered", human_confirmed: true }], { "trace-all-read-paths": ["w3"] }), {
         replayCorpus: replayCorpus(),
         replayThresholds: REPLAY_T,
       }),
     );
-    expect(r.reviewEligible).toBe(1);
+    expect(r.admitted).toBe(1);
     expect(r.decisions[0]!.replay).toBeNull();
     expect(r.replayUsage).toBeNull();
   });
@@ -341,7 +435,7 @@ describe("replay gate (design §9)", () => {
     };
     const r = await runTasteConsolidate(
       recurringPair(),
-      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }], { "trace-all-read-paths": ["w0", "w1"] }), {
+      opts(dualCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered" }], { "trace-all-read-paths": ["w0", "w1"] }), {
         replayCorpus: thin,
         replayThresholds: REPLAY_T,
       }),
@@ -354,9 +448,9 @@ describe("replay gate (design §9)", () => {
   test("replay disabled (no corpus) gates on recurrence alone — backward compatible", async () => {
     const r = await runTasteConsolidate(
       recurringPair(),
-      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "orthogonal" }])),
+      opts(stubCaller([{ dedupe_key: "trace-all-read-paths", coherence: "uncovered" }])),
     );
-    expect(r.reviewEligible).toBe(1);
+    expect(r.admitted).toBe(1);
     expect(r.decisions[0]!.replay).toBeNull();
     expect(r.replayUsage).toBeNull();
   });
@@ -371,6 +465,7 @@ describe("mergeConsolidateResults", () => {
     return {
       decisions: [],
       written: 0,
+      admitted: 0,
       reviewEligible: 0,
       holding: 0,
       handoffsToFacts: [],
@@ -389,6 +484,7 @@ describe("mergeConsolidateResults", () => {
   test("sums counts, concatenates lists, and folds usage across projects", () => {
     const a = result({
       written: 2,
+      admitted: 1,
       reviewEligible: 1,
       holding: 1,
       droppedNoise: 1,
@@ -398,6 +494,7 @@ describe("mergeConsolidateResults", () => {
     });
     const b = result({
       written: 1,
+      admitted: 1,
       holding: 1,
       droppedNegative: 2,
       newPrincipleProposals: ["bravo proposal"],
@@ -406,6 +503,7 @@ describe("mergeConsolidateResults", () => {
 
     const merged = mergeConsolidateResults([a, b]);
     expect(merged.written).toBe(3);
+    expect(merged.admitted).toBe(2);
     expect(merged.reviewEligible).toBe(1);
     expect(merged.holding).toBe(2);
     expect(merged.droppedNoise).toBe(1);

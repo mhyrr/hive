@@ -11,20 +11,32 @@
  *      evidence and counting the number of DISTINCT sessions a judgment recurred
  *      across.
  *   2. One Opus coherence call over rationale: for each survivor, resolve it
- *      against the ~24 apex principles (instantiates / orthogonal / tension),
+ *      against the closed enum of apex principle headings
+ *      (covered / extends / contradicts / uncovered),
  *      detect conflicts with existing units, and judge whether the human
  *      explicitly endorsed the rule (the recurrence-gate bypass).
  *
  * Then it routes by tier and upserts each survivor into its category store —
- * `holding` below the recurrence gate, `pending` (review-eligible) above it.
+ * `holding` below the recurrence gate, `active` above it, `pending` only for
+ * contradictions.
  *
- * Write discipline (design §8 "nothing auto-admits"): TC writes only
- * non-active states. A unit becomes `active` canon ONLY when a human approves it
- * in `hive taste review`. The store-write here is the recurrence accumulator,
- * not admission — `holding` units are never retrieved into a session and never
- * surfaced to review until they cross the gate. This is how a judgment seen on
- * one night persists to be counted on the next without polluting working
- * context; decay sinks the ones that never recur (design §11).
+ * Write discipline (2026-08-16 context-layer design, superseding §8's "nothing
+ * auto-admits"): instances auto-admit once they clear the recurrence + replay
+ * gate. The original human gate produced 0 admitted units across 22 nights and
+ * 79 empty `search_taste` calls — 100% precision, 0% recall — so the gate moved
+ * to where the blast radius actually is. A wrong instance costs one retrieval
+ * slot it must still win on merit, and `hive taste reject` demotes it. Apex
+ * principles, which are injected into every session, keep their human gate.
+ *
+ * `pending` now means exactly one thing: the unit's coherence came back
+ * `contradicts`, so it disagrees with a principle that is already in the model's
+ * context. Admitting it would put two conflicting instructions in front of the
+ * model at once, so a human decides which side is wrong.
+ *
+ * `holding` units are never retrieved and never surfaced until they cross the
+ * gate. This is how a judgment seen on one night persists to be counted on the
+ * next without polluting working context; decay sinks the ones that never
+ * recur (design §11).
  */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -41,7 +53,7 @@ import {
   type ReplayThresholds,
   type ReplayUsage,
 } from "./taste-replay";
-import { buildTasteLayer } from "./taste";
+import { buildTasteLayer, parsePrincipleHeadings } from "./taste";
 import {
   readNegatives,
   readTasteUnits,
@@ -82,16 +94,34 @@ export function tasteConsolidatorModel(): { provider: string; modelId: string } 
 // Coherence — the one Opus call's output shape (design §8.4)
 // ---------------------------------------------------------------------------
 
-export type Coherence = "instantiates" | "orthogonal" | "tension";
-const COHERENCE_SET = new Set<string>(["instantiates", "orthogonal", "tension"]);
+/**
+ * How a candidate relates to the apex principle it names. The question is not
+ * "does this ladder up" — with 20 broad principles almost everything can — but
+ * "does this change what the principle would tell you to do".
+ *
+ *   covered      the principle already implies it; nothing to change (the common case)
+ *   extends      the principle is silent here; a genuine addition to its territory
+ *   contradicts  it fights the principle; a human decides which side is wrong
+ *   uncovered    no principle in the enum fits; new-principle evidence
+ */
+export type Coherence = "covered" | "extends" | "contradicts" | "uncovered";
+const COHERENCE_SET = new Set<string>(["covered", "extends", "contradicts", "uncovered"]);
+/** covered/extends/contradicts all name a real principle; uncovered names none. */
+const LADDERED = new Set<string>(["covered", "extends", "contradicts"]);
 
 export interface CoherenceDecision {
   dedupe_key: string;
   coherence: Coherence;
-  /** Apex principle (its heading) this instantiates, else null. */
+  /** Apex principle heading this relates to — always a real one, or null. */
   ladders_up_to: string | null;
-  /** If tension: which of the three is true, and why (design §8.4). */
+  /** If contradicts: which of the three is true, and why (design §8.4). */
   tension_note: string | null;
+  /**
+   * A principle the model named that is NOT in the enum. Kept rather than
+   * dropped: it is the model reaching for a rung that doesn't exist, which is
+   * the strongest single signal that a new principle wants writing.
+   */
+  wanted_principle: string | null;
   /** dedupe_key of an existing store unit this contradicts, else null. */
   conflict_with: string | null;
   /** The human explicitly endorsed this rule — the recurrence-gate bypass. */
@@ -102,26 +132,46 @@ export interface CoherenceDecision {
 const TC_SYSTEM_PROMPT = `You are the consolidation gate for a taste-memory system. You reason over the RATIONALE of candidate taste rules — never string-matching — and decide how each relates to a small set of apex PRINCIPLES and to the rules already stored.
 
 You are given:
-- PRINCIPLES: the ~two-dozen apex principles, verbatim. These are the canon a granular rule may ladder up to.
+- PRINCIPLE HEADINGS: the CLOSED list of apex principles. This is an enum.
+- PRINCIPLES: those principles in full, verbatim.
 - EXISTING UNITS: taste rules already in the store (for conflict detection).
 - CANDIDATES: new candidate rules to judge.
 
 For EACH candidate, output one object. Output ONLY a JSON array, no prose, no markdown fences:
 [{
   "dedupe_key": "<copied verbatim from the candidate>",
-  "coherence": "instantiates|orthogonal|tension",
-  "ladders_up_to": "<the exact PRINCIPLE heading it instantiates, or null>",
-  "tension_note": "<if coherence=tension: state which is true — 'candidate-wrong' | 'principle-too-broad' | 'scoped-exception' — and one sentence why; else null>",
+  "coherence": "covered|extends|contradicts|uncovered",
+  "ladders_up_to": "<a heading copied EXACTLY from PRINCIPLE HEADINGS, or null>",
+  "tension_note": "<if coherence=contradicts: state which is true — 'candidate-wrong' | 'principle-too-broad' | 'scoped-exception' — and one sentence why; else null>",
   "conflict_with": "<dedupe_key of an EXISTING UNIT this contradicts, or null>",
   "human_confirmed": <true only if the evidence shows the human EXPLICITLY endorsed this as a rule (e.g. 'yes, always do X', 'remember this'); a one-off correction is NOT an endorsement>,
   "note": "<one sentence of reasoning>"
 }]
 
-Rules:
-- coherence=instantiates ⇒ the candidate is a specific application of an apex principle; set ladders_up_to to that principle's heading.
-- coherence=orthogonal ⇒ stands on its own, no apex principle covers it.
-- coherence=tension ⇒ it appears to CONTRADICT an apex principle. Never resolve it yourself; just name which of the three explanations holds.
-- Be conservative on human_confirmed and on conflict_with. Default both to false/null unless the evidence is explicit.
+The question you are answering for each candidate is NOT "can this be filed under
+some principle" — with principles this broad, almost anything can. It is:
+
+  **Does this candidate change what the principle would tell you to do?**
+
+- coherence=covered ⇒ the principle ALREADY implies this. The candidate is a
+  specific application that adds nothing to the principle's territory. This is
+  the expected answer for most candidates and it is not a failure — say it freely.
+- coherence=extends ⇒ the principle is SILENT on this case and the candidate is a
+  genuine addition to what it covers. Use this only when you could name the
+  sentence the principle is missing.
+- coherence=contradicts ⇒ the candidate conflicts with the principle. Never
+  resolve it yourself; just name which of the three explanations holds.
+- coherence=uncovered ⇒ NO heading in the enum fits. Set ladders_up_to to null.
+
+CRITICAL: ladders_up_to must be a heading copied exactly from PRINCIPLE HEADINGS.
+Do NOT invent a principle, paraphrase a heading, or coin a plausible-sounding one.
+If nothing in the enum fits, the honest answer is coherence=uncovered — that is a
+useful signal (it is how a genuinely new principle gets discovered), not a
+failure to classify. covered/extends/contradicts all REQUIRE a real heading.
+
+Other rules:
+- Be conservative on human_confirmed and on conflict_with. Default both to
+  false/null unless the evidence is explicit.
 - dedupe_key must be copied verbatim so the decision can be matched back.`;
 
 export const __TC_PROMPT = TC_SYSTEM_PROMPT;
@@ -157,6 +207,11 @@ export function buildConsolidateUserContent(
   principles: string | null,
 ): string {
   const parts: string[] = [];
+  const headings = parsePrincipleHeadings(principles);
+  parts.push(
+    `PRINCIPLE HEADINGS (the closed enum — ladders_up_to must be one of these, verbatim):\n` +
+      (headings.length ? headings.map((h) => `- ${h}`).join("\n") : "(none configured)"),
+  );
   parts.push(`PRINCIPLES:\n${principles?.trim() || "(none configured)"}`);
   parts.push(
     `EXISTING UNITS:\n${existing.length ? existing.map(renderExistingUnit).join("\n") : "(none)"}`,
@@ -174,20 +229,39 @@ export function buildConsolidateUserContent(
 export function validateCoherenceDecision(
   obj: unknown,
   knownKeys: Set<string>,
+  headings: Set<string>,
 ): CoherenceDecision | null {
   if (!obj || typeof obj !== "object") return null;
   const o = obj as Record<string, unknown>;
   if (typeof o.dedupe_key !== "string" || !knownKeys.has(o.dedupe_key)) return null;
-  const coherence = typeof o.coherence === "string" && COHERENCE_SET.has(o.coherence)
+  let coherence = typeof o.coherence === "string" && COHERENCE_SET.has(o.coherence)
     ? (o.coherence as Coherence)
-    : "orthogonal";
+    : "uncovered";
   const str = (v: unknown): string | null =>
     typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "null" ? v.trim() : null;
+
+  // Enforce the closed enum HERE rather than trusting the prompt. A named rung
+  // that isn't a real heading is the model wanting a principle that doesn't
+  // exist — which is exactly the new-principle signal, so keep the string in
+  // `wanted_principle` instead of discarding it, and demote to uncovered.
+  const named = str(o.ladders_up_to);
+  let ladders: string | null = null;
+  let wanted: string | null = null;
+  if (LADDERED.has(coherence)) {
+    if (named && headings.has(named)) {
+      ladders = named;
+    } else {
+      wanted = named; // may be null — the model claimed a relation but named nothing
+      coherence = "uncovered";
+    }
+  }
+
   return {
     dedupe_key: o.dedupe_key,
     coherence,
-    ladders_up_to: coherence === "instantiates" ? str(o.ladders_up_to) : null,
-    tension_note: coherence === "tension" ? str(o.tension_note) : null,
+    ladders_up_to: ladders,
+    wanted_principle: wanted,
+    tension_note: coherence === "contradicts" ? str(o.tension_note) : null,
     conflict_with: str(o.conflict_with),
     human_confirmed: o.human_confirmed === true,
     note: typeof o.note === "string" ? o.note.trim() : "",
@@ -223,6 +297,8 @@ export interface TasteDecision {
   status: TasteUnitStatus | null;
   coherence: Coherence | null;
   ladders_up_to: string | null;
+  /** A rung the model reached for that isn't in the enum — new-principle evidence. */
+  wanted_principle: string | null;
   tension_note: string | null;
   /** Hash of the existing unit this conflicts with (resolved from dedupe_key). */
   conflict_with: string | null;
@@ -232,6 +308,9 @@ export interface TasteDecision {
 export interface TasteConsolidateResult {
   decisions: TasteDecision[];
   written: number;
+  /** Auto-admitted to `active` by the machine gate — retrievable immediately. */
+  admitted: number;
+  /** Held at `pending` for a human: contradictions only. */
   reviewEligible: number;
   holding: number;
   /** CONTEXTUAL candidates handed back to the fact pipeline. */
@@ -347,6 +426,7 @@ export async function runTasteConsolidate(
   const result: TasteConsolidateResult = {
     decisions: [],
     written: 0,
+    admitted: 0,
     reviewEligible: 0,
     holding: 0,
     handoffsToFacts: [],
@@ -442,8 +522,9 @@ export async function runTasteConsolidate(
       userContent: buildConsolidateUserContent(dedupeCandidates, existingForConflict, principles),
     });
     const knownKeys = new Set(dedupeCandidates.map((c) => c.dedupe_key));
+    const headingSet = new Set(parsePrincipleHeadings(principles));
     for (const item of parseExtractionJson(completion.text)) {
-      const d = validateCoherenceDecision(item, knownKeys);
+      const d = validateCoherenceDecision(item, knownKeys, headingSet);
       if (d) coherenceByKey.set(d.dedupe_key, d);
     }
     const usd = estimateCost({
@@ -518,6 +599,7 @@ export async function runTasteConsolidate(
 
   // --- Stage 3: route, gate, write -------------------------------------------
   let orthogonalEligible = 0;
+  const wantedPrinciples: string[] = [];
   for (const g of gate) {
     const { d, coh, prior, combined, humanConfirmed, recurrencePasses } = g;
     const c = d.candidate;
@@ -534,9 +616,27 @@ export async function runTasteConsolidate(
     }
     const reviewEligible = humanConfirmed || (recurrencePasses && replayPasses);
 
-    // Never demote an already-active unit; otherwise gate decides holding/pending.
+    // Instances auto-admit past the recurrence+replay gate. The human gate that
+    // used to sit here admitted nothing for months, so its realized precision /
+    // recall was 100% / 0% — every `search_taste` call returned empty. One wrong
+    // instance costs a single retrieval slot it still has to win on BM25 merit
+    // against better-matching neighbours; `hive taste reject` demotes and
+    // blacklists it. That blast radius earns a machine gate.
+    //
+    // Contradictions are the exception. A unit whose coherence is `tension`
+    // disagrees with an apex principle that is injected into EVERY session, so
+    // admitting it would put two conflicting instructions in front of the model
+    // at once. Those hold at `pending` until a human resolves which side is
+    // wrong — `pending` now means "contradiction queue", nothing else.
+    const contradicts = coh?.coherence === "contradicts";
     const target: TasteUnitStatus =
-      prior?.status === "active" ? "active" : reviewEligible ? "pending" : "holding";
+      prior?.status === "active"
+        ? "active"
+        : !reviewEligible
+          ? "holding"
+          : contradicts
+            ? "pending"
+            : "active";
 
     // Enrich with the laddered principle before persisting.
     const enriched: TasteCandidate = {
@@ -556,6 +656,7 @@ export async function runTasteConsolidate(
       // w.recurrence is authoritative (handles the active-no-demote merge path).
       finalRecurrence = w.recurrence;
       result.written++;
+      if (target === "active") result.admitted++;
       if (target === "pending") result.reviewEligible++;
       if (target === "holding") result.holding++;
     } catch (err) {
@@ -580,6 +681,7 @@ export async function runTasteConsolidate(
       replay,
       status,
       coherence: coh?.coherence ?? null,
+      wanted_principle: coh?.wanted_principle ?? null,
       ladders_up_to: coh?.ladders_up_to ?? null,
       tension_note: coh?.tension_note ?? null,
       conflict_with: conflictHash,
@@ -587,21 +689,32 @@ export async function runTasteConsolidate(
     };
     result.decisions.push(decision);
     if (conflictHash) result.conflicts.push(decision);
-    if (decision.coherence === "tension") result.tensions.push(decision);
-    if (decision.coherence === "orthogonal" && reviewEligible) orthogonalEligible++;
+    if (decision.coherence === "contradicts") result.tensions.push(decision);
+    if (decision.coherence === "uncovered" && reviewEligible) {
+      orthogonalEligible++;
+      if (decision.wanted_principle) wantedPrinciples.push(decision.wanted_principle);
+    }
   }
 
-  // Orphan-cluster signal (design §8.4): a band of review-eligible orphans hints
-  // a new apex principle may be emerging. Deterministic + deliberately gentle —
-  // a prompt to the curator, never a write.
+  // Orphan-cluster signal (design §8.4): a band of gate-clearing orphans hints a
+  // new apex principle may be emerging. Deterministic + deliberately gentle — a
+  // prompt to the curator, never a write.
+  //
+  // `wanted_principle` makes this far sharper than a bare count. A rung the model
+  // reached for and did not find is a drafted principle heading in all but name,
+  // so name them: that is what the weekly principle review is actually reading.
   if (orthogonalEligible >= 3) {
+    const wanted = [...new Set(wantedPrinciples)];
     result.newPrincipleProposals.push(
-      `${orthogonalEligible} review-eligible taste units laddered up to no apex principle — consider whether a new principle is emerging. Inspect the orthogonal decisions and draft one in principles.md if so.`,
+      `${orthogonalEligible} taste unit(s) cleared the gate but ladder to no apex principle — consider whether a new one is emerging.` +
+        (wanted.length
+          ? ` The model reached for these rungs and found nothing: ${wanted.map((w) => `"${w}"`).join(", ")}.`
+          : ""),
     );
   }
 
   log(
-    `wrote ${result.written} (${result.reviewEligible} review-eligible, ${result.holding} holding); ` +
+    `wrote ${result.written} (${result.admitted} admitted, ${result.reviewEligible} held-contradiction, ${result.holding} holding); ` +
       `${result.conflicts.length} conflicts, ${result.tensions.length} tensions, ${result.handoffsToFacts.length} fact-handoffs`,
   );
   return result;
@@ -623,6 +736,7 @@ function emptyDecision(c: TasteCandidate, routed: RouteTarget): TasteDecision {
     status: null,
     coherence: null,
     ladders_up_to: null,
+    wanted_principle: null,
     tension_note: null,
     conflict_with: null,
     note: "",
@@ -642,6 +756,7 @@ export function mergeConsolidateResults(
   const merged: TasteConsolidateResult = {
     decisions: [],
     written: 0,
+    admitted: 0,
     reviewEligible: 0,
     holding: 0,
     handoffsToFacts: [],
@@ -657,6 +772,7 @@ export function mergeConsolidateResults(
   for (const r of results) {
     merged.decisions.push(...r.decisions);
     merged.written += r.written;
+    merged.admitted += r.admitted;
     merged.reviewEligible += r.reviewEligible;
     merged.holding += r.holding;
     merged.handoffsToFacts.push(...r.handoffsToFacts);
@@ -729,16 +845,17 @@ export function renderDecisionsMarkdown(result: TasteConsolidateResult, date: st
   lines.push(`# Taste decisions — ${date}`);
   lines.push("");
   lines.push(
-    `Wrote ${result.written} units — ${result.reviewEligible} review-eligible (\`hive taste review\`), ` +
+    `Wrote ${result.written} units — ${result.admitted} admitted (retrievable now), ` +
+      `${result.reviewEligible} held as contradictions (\`hive taste review\`), ` +
       `${result.holding} holding. ${result.conflicts.length} conflicts, ${result.tensions.length} tensions, ` +
       `${result.handoffsToFacts.length} CONTEXTUAL handoffs, ${result.droppedNoise} noise / ${result.droppedNegative} negatives dropped.`,
   );
   lines.push("");
 
-  const eligible = result.decisions.filter((d) => d.reviewEligible && d.status);
-  if (eligible.length) {
-    lines.push("## Review-eligible");
-    for (const d of eligible) lines.push(renderDecisionLine(d));
+  const admitted = result.decisions.filter((d) => d.status === "active");
+  if (admitted.length) {
+    lines.push("## Admitted (auto — retrievable via `search_taste`)");
+    for (const d of admitted) lines.push(renderDecisionLine(d));
     lines.push("");
   }
   if (result.tensions.length) {
@@ -768,8 +885,15 @@ export function renderDecisionsMarkdown(result: TasteConsolidateResult, date: st
 }
 
 function renderDecisionLine(d: TasteDecision): string {
-  const ladder = d.ladders_up_to ? ` ↑ ${d.ladders_up_to}` : "";
-  return `- **${d.dedupe_key}** [${d.category}/${d.tier}] seen ${d.recurrence}× → ${d.status ?? d.routed}${ladder}`;
+  // `↑ X` is a real principle. `↗ X` is one the model wanted and didn't find —
+  // shown differently so a reader never mistakes an invented rung for canon.
+  const ladder = d.ladders_up_to
+    ? ` ↑ ${d.ladders_up_to}`
+    : d.wanted_principle
+      ? ` ↗ wanted: "${d.wanted_principle}"`
+      : "";
+  const rel = d.coherence && d.coherence !== "covered" ? ` (${d.coherence})` : "";
+  return `- **${d.dedupe_key}** [${d.category}/${d.tier}] seen ${d.recurrence}× → ${d.status ?? d.routed}${ladder}${rel}`;
 }
 
 // Re-export for callers that want to render category names.

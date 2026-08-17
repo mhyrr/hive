@@ -673,7 +673,7 @@ describe("runNightly — taste track", () => {
     expect(tcU?.model).toBe("claude-opus-4-6");
   });
 
-  test("replay (TR) runs hermetically: a recurring FUZZY candidate that passes replay → pending + a TR usage record", async () => {
+  test("replay (TR) runs hermetically: a recurring FUZZY candidate that passes replay → active + a TR usage record", async () => {
     const paths = await freshHomeWith(["alpha"]);
     const date = new Date().toISOString().slice(0, 10);
     await seedActivity(paths, "alpha", date);
@@ -692,10 +692,11 @@ describe("runNightly — taste track", () => {
 
     expect(result.passes.TC[0]?.status).toBe("complete");
 
-    // Recurrence 2 cleared the gate AND replay predicted the corrections → pending.
+    // Recurrence 2 cleared the gate AND replay predicted the corrections, and the
+    // stub returns no coherence verdict (so no tension) → auto-admitted to active.
     const units = await readTasteUnits(projectTasteDir(paths, "alpha"), "IMPLEMENTATION");
     expect(units).toHaveLength(1);
-    expect(units[0]?.status).toBe("pending");
+    expect(units[0]?.status).toBe("active");
     expect(units[0]?.recurrence).toBe(2);
 
     // A TR usage record landed, billed to the mid-tier judge model.
