@@ -340,12 +340,14 @@ export async function memoryCommand(args: string[]): Promise<void> {
     if (!query) {
       throw new UsageError("No search query provided.\n\nhive memory search <query>");
     }
-    const results = await searchMemory(paths, projectId, query, {
+    const { results, total } = await searchMemory(paths, projectId, query, {
       tag: flags.tag,
       section: flags.section as MemorySection | undefined,
       includeSuperseded: flags.noSuperseded !== "true",
+      topK: flags.topK ? Number(flags.topK) : undefined,
+      includeLogs: flags.logs === "true",
     });
-    console.log(formatSearchResults(results, query));
+    console.log(formatSearchResults(results, query, total));
     return;
   }
 

@@ -341,8 +341,13 @@ async function checkDuplicate(
   entryText: string,
 ): Promise<DuplicateCheckResult> {
   // Knowledge layer first — same as the prior behavior.
-  const results = await searchMemory(paths, projectId, entryText.slice(0, 150));
-  for (const r of results.slice(0, 3)) {
+  // noBump: a dedupe probe is not a recall — strengthening here would inflate
+  // entries nobody ever read. topK 3 matches what the loop below inspects.
+  const { results } = await searchMemory(paths, projectId, entryText.slice(0, 150), {
+    topK: 3,
+    noBump: true,
+  });
+  for (const r of results) {
     if (r.source !== "knowledge") continue;
     if (wordOverlap(entryText, r.entry) > OVERLAP_THRESHOLD) {
       return {

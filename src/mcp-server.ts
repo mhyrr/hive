@@ -319,19 +319,22 @@ server.registerTool("search_memory", {
     "Use BEFORE recommending in a domain you've worked in, BEFORE proposing a pattern, or " +
     "WHEN something feels familiar — a previous session probably learned it. The session-start " +
     "index is a summary, not the full library; search_memory is the actual library. " +
-    "Searches knowledge (compiled facts, conventions, decisions, questions) and session logs, " +
-    "ranked by BM25 × entry strength. Searching strengthens recalled entries, so the act of " +
-    "searching makes the memory smarter over time. Prefer this over read_hive_memory for " +
-    "anything specific.",
+    "Searches compiled knowledge — facts, conventions, decisions, questions — ranked by " +
+    "BM25 × entry strength, and returns the top few rather than everything that matched. " +
+    "Searching strengthens the entries it returns, so the act of searching makes the memory " +
+    "smarter over time. Prefer this over read_hive_memory for anything specific. Raw session " +
+    "logs are excluded by default; set include_logs for forensics like \"when did we change X\".",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     query: z.string().describe("Search query — matches against entry text and tags."),
     tag: z.string().optional().describe("Filter to entries with this tag."),
     section: z.enum(["fact", "convention", "decision", "question"]).optional().describe("Limit search to this section of knowledge."),
     include_superseded: z.boolean().optional().describe("Include superseded (replaced) entries. Default false."),
-    log_days: z.number().optional().describe("How many days of log history to search. Default 14."),
+    log_days: z.number().optional().describe("How many days of log history to search when include_logs is set. Default 14."),
+    top_k: z.number().optional().describe("Max results. Default 8. Raise only when the top few genuinely were not enough."),
+    include_logs: z.boolean().optional().describe("Blend raw session-log entries in. Default false — they are episodic and noisy. Use for forensics."),
   },
-}, async ({ project, query, tag, section, include_superseded, log_days }) => {
+}, async ({ project, query, tag, section, include_superseded, log_days, top_k, include_logs }) => {
   const paths = getHivePaths();
   const projectId = project ?? resolveProjectFromCwd();
 
@@ -342,14 +345,16 @@ server.registerTool("search_memory", {
     };
   }
 
-  const results = await searchMemory(paths, projectId, query, {
+  const { results, total } = await searchMemory(paths, projectId, query, {
     tag: tag ?? undefined,
     section: (section as MemorySection) ?? undefined,
     includeSuperseded: include_superseded ?? false,
     logDays: log_days ?? 14,
+    topK: top_k ?? undefined,
+    includeLogs: include_logs ?? false,
   });
 
-  const formatted = formatSearchResults(results, query);
+  const formatted = formatSearchResults(results, query, total);
   return { content: [{ type: "text" as const, text: formatted }] };
 });
 
@@ -380,12 +385,13 @@ function formatTasteResults(results: TasteSearchResult[], category: string, quer
 
 server.registerTool("search_taste", {
   description:
-    "Retrieve the ACTIVE taste for a kind of work — the human-approved judgments HIVE has " +
+    "Retrieve the ACTIVE taste for a kind of work — the judgments HIVE has " +
     "learned about how to do that work well. Reach for it when you START a type of work and " +
     "want the accumulated taste behind it: pick the category that matches what you're doing " +
     "(IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). Add a query to focus " +
-    "within the category, or omit it to browse everything active there. Only approved units " +
-    "come back — holding/pending never leak in. Searches the project store and the " +
+    "within the category, or omit it to browse everything active there. Only units that " +
+    "cleared the recurrence gate come back — units still accumulating, and contradictions " +
+    "awaiting a human call, never leak in. Searches the project store and the " +
     "cross-project general store together, so it's useful even outside a registered project.",
   inputSchema: {
     category: z

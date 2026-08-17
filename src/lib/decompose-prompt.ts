@@ -49,8 +49,8 @@ export async function gatherDecomposeContext(
 
   // BM25 against the goal text. logDays:0 keeps the corpus to compiled knowledge.
   const searchHits = (
-    await searchMemory(paths, projectId, goal, { logDays: 0 })
-  ).slice(0, SEARCH_HIT_CAP);
+    await searchMemory(paths, projectId, goal, { logDays: 0, topK: SEARCH_HIT_CAP })
+  ).results;
 
   // Open tickets — titles + tags only. No bodies.
   const open = await listTickets(paths, projectId, { status: "open" });
