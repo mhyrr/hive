@@ -8,6 +8,7 @@ import {
   appendProjectMemory,
   searchMemory,
   rebuildIndex,
+  type MemorySection,
 } from "./memory";
 
 // ---------------------------------------------------------------------------
@@ -325,7 +326,21 @@ export interface DuplicateCheckResult {
   duplicate: boolean;
   /** Which file + line covers it, when duplicate. */
   coveredBy?: { source: string; snippet: string };
+  /**
+   * Present only when the hit came from knowledge.md — lets a caller act on the
+   * entry it matched (TK-147 annotates a recurring question) rather than only
+   * citing it.
+   */
+  knowledgeHit?: { hash: string; section: MemorySection };
 }
+
+// searchMemory reports sections by their plural display name.
+const SECTION_BY_NAME: Record<string, MemorySection> = {
+  facts: "fact",
+  conventions: "convention",
+  decisions: "decision",
+  questions: "question",
+};
 
 /**
  * TK-057: extend duplicate detection from knowledge.md alone to the full
@@ -335,7 +350,7 @@ export interface DuplicateCheckResult {
  * Walks identity files paragraph-by-paragraph and runs the same word-overlap
  * heuristic the knowledge.md check uses. First hit wins; SOUL→TRUST order.
  */
-async function checkDuplicate(
+export async function checkDuplicate(
   paths: HivePaths,
   projectId: string,
   entryText: string,
@@ -350,9 +365,11 @@ async function checkDuplicate(
   for (const r of results) {
     if (r.source !== "knowledge") continue;
     if (wordOverlap(entryText, r.entry) > OVERLAP_THRESHOLD) {
+      const section = r.section ? SECTION_BY_NAME[r.section] : undefined;
       return {
         duplicate: true,
         coveredBy: { source: `knowledge:${projectId}`, snippet: truncate(r.entry, 100) },
+        knowledgeHit: r.hash && section ? { hash: r.hash, section } : undefined,
       };
     }
   }

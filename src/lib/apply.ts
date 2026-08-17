@@ -17,6 +17,7 @@ import { emptyInbox } from "./inbox";
 import {
   appendProjectMemory,
   drainCandidates,
+  markEntryRecurrence,
   mergeTagsIntoEntry,
   rebuildIndex,
   readCandidates,
@@ -26,6 +27,7 @@ import {
 } from "./memory";
 import {
   appendReflectionsToDay,
+  checkDuplicate,
   type ReflectionLanding,
 } from "./reflections";
 import type {
@@ -115,6 +117,8 @@ export interface ProjectApplyOutcome {
   rejected: number;
   directivesForceAdmitted: number;  // directives the verifier tried to reject but were kept (TK-123)
   gapsLanded: number;
+  gapsRecurring: number;            // re-observed gaps annotated on the existing question (TK-147)
+  gapsCovered: number;              // gaps already answered by canon or the identity stack
   drainedCandidates: number;
   drainPath: string | null;
   inboxTruncated: boolean;
@@ -131,6 +135,8 @@ export interface ApplyResult {
     rejected: number;
     directivesForceAdmitted: number;
     gapsLanded: number;
+    gapsRecurring: number;
+    gapsCovered: number;
     reflectionsLanded: number;
   };
   perProject: ProjectApplyOutcome[];
@@ -149,6 +155,8 @@ function emptyOutcome(projectId: string): ProjectApplyOutcome {
     rejected: 0,
     directivesForceAdmitted: 0,
     gapsLanded: 0,
+    gapsRecurring: 0,
+    gapsCovered: 0,
     drainedCandidates: 0,
     drainPath: null,
     inboxTruncated: false,
@@ -388,15 +396,37 @@ async function applyReflectionDecision(
 // Other gap subjects stay briefing-only.
 // ---------------------------------------------------------------------------
 
+interface GapDisposition {
+  subject: string;
+  disposition: "question" | "recurring" | "covered" | "reflection" | "orphan";
+  observation: string;
+  source: string;
+  /** What already covered it, for `covered` and `recurring`. */
+  coveredBy?: string;
+  /** New recurrence count, for `recurring`. */
+  count?: number;
+}
+
 async function landGaps(
   ctx: ApplyContext,
   gaps: VerifierGap[],
   outcomeByProject: Map<string, ProjectApplyOutcome>,
   reflectionLandings: ReflectionLanding[],
-): Promise<{ asQuestions: number; asReflections: number; orphans: number }> {
+): Promise<{
+  asQuestions: number;
+  asReflections: number;
+  recurring: number;
+  covered: number;
+  orphans: number;
+}> {
   let asQuestions = 0;
   let asReflections = 0;
+  let recurring = 0;
+  let covered = 0;
   let orphans = 0;
+  // A gate that drops input has to say what it dropped, or the next reader
+  // reads "3 gaps landed" as "3 gaps observed."
+  const dispositions: GapDisposition[] = [];
   for (const g of gaps) {
     const subject = g.subject.toLowerCase();
     if (subject === "greg" || subject === "maya" || subject === "system") {
@@ -406,14 +436,62 @@ async function landGaps(
         tags: ["gap"],
         provenance: g.source,
       });
+      dispositions.push({ subject, disposition: "reflection", observation: g.observation, source: g.source });
       asReflections++;
       continue;
     }
     if (ctx.projectIds.has(g.subject)) {
       const outcome = outcomeByProject.get(g.subject) ?? emptyOutcome(g.subject);
       outcomeByProject.set(g.subject, outcome);
-      if (!ctx.dryRun) {
-        try {
+      try {
+        // TK-147: gaps go through the same dedupe gate as reflections. Without
+        // it a gap the verifier re-observes lands as a fresh Open Question every
+        // night, so a standing question reads as N unrelated ones.
+        const dup = await checkDuplicate(ctx.paths, g.subject, g.observation);
+
+        if (dup.duplicate && dup.knowledgeHit?.section === "question") {
+          // Still open, seen again — one question getting louder.
+          let count = 0;
+          if (!ctx.dryRun) {
+            ({ count } = await markEntryRecurrence(
+              ctx.paths,
+              g.subject,
+              "question",
+              dup.knowledgeHit.hash,
+              ctx.date,
+            ));
+          }
+          dispositions.push({
+            subject: g.subject,
+            disposition: "recurring",
+            observation: g.observation,
+            source: g.source,
+            coveredBy: dup.coveredBy?.snippet,
+            count,
+          });
+          outcome.gapsRecurring++;
+          recurring++;
+          continue;
+        }
+
+        if (dup.duplicate) {
+          // Covered by a fact, convention, decision, or the identity stack —
+          // it is not an open gap, so it does not become a question.
+          dispositions.push({
+            subject: g.subject,
+            disposition: "covered",
+            observation: g.observation,
+            source: g.source,
+            coveredBy: dup.coveredBy
+              ? `${dup.coveredBy.source}: ${dup.coveredBy.snippet}`
+              : undefined,
+          });
+          outcome.gapsCovered++;
+          covered++;
+          continue;
+        }
+
+        if (!ctx.dryRun) {
           await appendProjectMemory(
             ctx.paths,
             g.subject,
@@ -421,20 +499,34 @@ async function landGaps(
             g.observation,
             ["gap"],
           );
-        } catch (err) {
-          outcome.errors.push(
-            `gap-as-question: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          continue;
         }
+      } catch (err) {
+        outcome.errors.push(
+          `gap-as-question: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        continue;
       }
+      dispositions.push({
+        subject: g.subject,
+        disposition: "question",
+        observation: g.observation,
+        source: g.source,
+      });
       outcome.gapsLanded++;
       asQuestions++;
       continue;
     }
+    dispositions.push({ subject: g.subject, disposition: "orphan", observation: g.observation, source: g.source });
     orphans++;
   }
-  return { asQuestions, asReflections, orphans };
+
+  if (dispositions.length > 0 && !ctx.dryRun) {
+    const logPath = join(ctx.paths.memoryRunsDir, ctx.date, "gaps.applied.log");
+    await mkdir(dirname(logPath), { recursive: true });
+    await appendFile(logPath, dispositions.map((d) => JSON.stringify(d)).join("\n") + "\n");
+  }
+
+  return { asQuestions, asReflections, recurring, covered, orphans };
 }
 
 // ---------------------------------------------------------------------------
@@ -533,13 +625,18 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
 
   // Land gaps — projects-as-questions, identity-as-reflections
   const gapStats = await landGaps(ctx, verifierExtras.gaps, outcomeByProject, reflectionLandings);
-  void gapStats; // captured indirectly via outcome.gapsLanded and reflectionLandings
+  void gapStats; // captured indirectly via the per-project gap counters and reflectionLandings
 
   // Drain candidates.md, rebuild index, truncate inbox — per project that touched.
   for (const projectId of projectIds) {
     const outcome = outcomeByProject.get(projectId);
     const midSession = ctx.sources.midSession.get(projectId) ?? [];
-    const touched = (outcome && (outcome.accepted + outcome.superseded + outcome.merged + outcome.gapsLanded > 0)) || midSession.length > 0;
+    // gapsRecurring counts too — a recurrence bump rewrites knowledge.md, so the
+    // index has to be rebuilt from it. gapsCovered writes nothing.
+    const touched =
+      (outcome &&
+        outcome.accepted + outcome.superseded + outcome.merged + outcome.gapsLanded + outcome.gapsRecurring > 0) ||
+      midSession.length > 0;
     if (!touched) continue;
     const o = ensureOutcome(projectId);
 
@@ -617,9 +714,21 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
       rejected: acc.rejected + o.rejected,
       directivesForceAdmitted: acc.directivesForceAdmitted + o.directivesForceAdmitted,
       gapsLanded: acc.gapsLanded + o.gapsLanded,
+      gapsRecurring: acc.gapsRecurring + o.gapsRecurring,
+      gapsCovered: acc.gapsCovered + o.gapsCovered,
       reflectionsLanded: acc.reflectionsLanded,
     }),
-    { accepted: 0, superseded: 0, merged: 0, rejected: 0, directivesForceAdmitted: 0, gapsLanded: 0, reflectionsLanded },
+    {
+      accepted: 0,
+      superseded: 0,
+      merged: 0,
+      rejected: 0,
+      directivesForceAdmitted: 0,
+      gapsLanded: 0,
+      gapsRecurring: 0,
+      gapsCovered: 0,
+      reflectionsLanded,
+    },
   );
   totals.reflectionsLanded = reflectionsLanded;
 

@@ -23,6 +23,9 @@ import {
   indexPath,
   metaPath,
   entryHash,
+  parseRecurrence,
+  formatRecurrence,
+  markEntryRecurrence,
   INDEX_SIZE_BUDGET_BYTES,
   type MetaSidecar,
 } from "../lib/memory";
@@ -320,6 +323,82 @@ describe("supersedeEntry", () => {
     expect(
       supersedeEntry(paths, "test-project", "fact", "nonexistent entry", "new entry")
     ).rejects.toThrow("Could not find active entry");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recurrence (TK-147)
+// ---------------------------------------------------------------------------
+
+describe("parseRecurrence / formatRecurrence", () => {
+  test("an unmarked entry has been seen once", () => {
+    const r = parseRecurrence("Is the heartbeat still earning its keep?");
+    expect(r.count).toBe(1);
+    expect(r.lastSeen).toBeNull();
+    expect(r.text).toBe("Is the heartbeat still earning its keep?");
+  });
+
+  test("round-trips a marker", () => {
+    const marked = `Still open?${formatRecurrence(4, "2026-08-17")}`;
+    expect(marked).toBe("Still open? _(seen 4×, last 2026-08-17)_");
+    const r = parseRecurrence(marked);
+    expect(r).toEqual({ text: "Still open?", count: 4, lastSeen: "2026-08-17" });
+  });
+
+  test("prose that merely looks like a marker is left alone", () => {
+    const text = "We render _(seen N×, last DATE)_ on recurring gaps";
+    expect(parseRecurrence(text).text).toBe(text);
+  });
+});
+
+describe("markEntryRecurrence", () => {
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    paths = await ensureHiveScaffold(await mkdtemp(join(tmpdir(), "hive-recur-")));
+  });
+
+  test("annotates the entry in place instead of adding one", async () => {
+    await appendProjectMemory(paths, "alpha", "question", "Is the heartbeat earning its keep?", ["gap"]);
+    const hash = entryHash("Is the heartbeat earning its keep?");
+
+    const r = await markEntryRecurrence(paths, "alpha", "question", hash, "2026-08-17");
+    expect(r.count).toBe(2);
+    expect(r.text).toBe("Is the heartbeat earning its keep?");
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    expect(snap.questions.length).toBe(1);
+    expect(snap.questions[0]!.text).toBe(
+      "Is the heartbeat earning its keep? _(seen 2×, last 2026-08-17)_",
+    );
+    expect(snap.questions[0]!.tags).toEqual(["gap"]);
+  });
+
+  test("increments across nights and keeps the entry's identity", async () => {
+    await appendProjectMemory(paths, "alpha", "question", "Still unanswered?", ["gap"]);
+    const hash = entryHash("Still unanswered?");
+
+    await markEntryRecurrence(paths, "alpha", "question", hash, "2026-08-16");
+    const third = await markEntryRecurrence(paths, "alpha", "question", hash, "2026-08-17");
+    expect(third.count).toBe(3);
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    expect(snap.questions.length).toBe(1);
+    expect(snap.questions[0]!.text).toContain("_(seen 3×, last 2026-08-17)_");
+    // The marker is metadata: hashing the rendered line still yields the
+    // original hash, so meta stays linked and the verifier can still target it.
+    expect(entryHash(snap.questions[0]!.text)).toBe(hash);
+
+    const meta = await readMeta(paths, "alpha");
+    expect(meta.entries[hash]).toBeTruthy();
+    expect(meta.entries[hash]!.recallCount).toBeGreaterThan(0);
+  });
+
+  test("throws when no active entry carries the hash", async () => {
+    await appendProjectMemory(paths, "alpha", "question", "Some question?");
+    expect(
+      markEntryRecurrence(paths, "alpha", "question", "deadbeef"),
+    ).rejects.toThrow("No active question entry");
   });
 });
 

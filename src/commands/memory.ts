@@ -245,10 +245,15 @@ export async function memoryCommand(args: string[]): Promise<void> {
       result.totals.directivesForceAdmitted > 0
         ? ` · ${result.totals.directivesForceAdmitted} directive(s) kept over verifier reject`
         : "";
+    const gapNote =
+      result.totals.gapsRecurring > 0 || result.totals.gapsCovered > 0
+        ? ` (${result.totals.gapsRecurring} recurring, ${result.totals.gapsCovered} already covered)`
+        : "";
     console.log(
       `Totals: ${result.totals.accepted} accept · ${result.totals.superseded} supersede · ` +
         `${result.totals.merged} merge · ${result.totals.rejected} reject · ` +
-        `${result.totals.gapsLanded} gap(s) landed · ${result.totals.reflectionsLanded} reflection(s)${forcedNote}`,
+        `${result.totals.gapsLanded} gap(s) landed${gapNote} · ` +
+        `${result.totals.reflectionsLanded} reflection(s)${forcedNote}`,
     );
     for (const o of result.perProject) {
       const drainNote = o.drainedCandidates > 0 ? ` · drained ${o.drainedCandidates}` : "";
