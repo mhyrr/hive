@@ -34,14 +34,21 @@ import { TASTE_CATEGORIES, type TasteCandidate, type TasteCategory } from "./tas
 // ---------------------------------------------------------------------------
 
 /**
- * Lifecycle, in order (design §8.2, §10):
+ * Lifecycle (design §8.2, §10, amended by the 2026-08-16 context-layer design):
  *   holding  — written, below the recurrence gate. Accumulates recurrence across
  *              nights; never retrieved into a session, never surfaced to review.
  *              This is the design's "first-sighting waits in a pending state."
- *   pending  — past the recurrence (+ replay) gate, awaiting human sign-off.
- *              `hive taste review` walks exactly these.
- *   active   — human-approved canon; retrievable into working sessions.
+ *   pending  — the CONTRADICTION QUEUE. A unit that cleared the gate but whose
+ *              coherence came back `tension`: it disagrees with an apex principle
+ *              that is injected into every session. Held for a human call, never
+ *              retrieved. `hive taste review` walks exactly these.
+ *   active   — retrievable canon. Reached automatically once a non-contradicting
+ *              unit clears the recurrence (+ replay) gate, or by human approval
+ *              of a contradiction. `hive taste reject` is the way back out.
  * A unit only ever moves forward (see maxStatus) — re-observation never demotes.
+ *
+ * Note `pending` is no longer on the path to `active` for ordinary units; the
+ * gate promotes straight to `active`. It is a side-branch for contradictions.
  */
 export type TasteUnitStatus = "holding" | "pending" | "active";
 
@@ -299,6 +306,40 @@ export async function setUnitStatus(
 }
 
 /** Drop a unit from its category file and its decay sidecar. */
+/**
+ * Drop `ladders_up_hint` from every unit whose rung is not a real principle
+ * heading, returning what was cleared.
+ *
+ * Two callers: the slice-2 migration (the store carries 10 units on rungs TC
+ * invented while `ladders_up_to` was free text), and any time a principle is
+ * renamed in principles.md — headings match verbatim, so a rename orphans its
+ * units and they should re-ladder on the next pass rather than keep pointing at
+ * a rung that moved.
+ */
+export async function clearInvalidLadders(
+  storeDir: string,
+  headings: Set<string>,
+  opts: { dryRun?: boolean } = {},
+): Promise<{ dedupe_key: string; wanted: string }[]> {
+  const cleared: { dedupe_key: string; wanted: string }[] = [];
+  for (const cat of TASTE_CATEGORIES) {
+    const units = await readTasteUnits(storeDir, cat);
+    let dirty = false;
+    const next = units.map((u) => {
+      const hint = u.ladders_up_hint;
+      if (!hint || headings.has(hint)) return u;
+      cleared.push({ dedupe_key: u.dedupe_key, wanted: hint });
+      dirty = true;
+      const { ladders_up_hint: _drop, ...rest } = u;
+      return rest as TasteUnit;
+    });
+    if (dirty && !opts.dryRun) {
+      await Bun.write(categoryFile(storeDir, cat), renderCategoryFile(cat, next));
+    }
+  }
+  return cleared;
+}
+
 export async function removeUnit(storeDir: string, hash: string): Promise<boolean> {
   for (const cat of TASTE_CATEGORIES) {
     const units = await readTasteUnits(storeDir, cat);
@@ -365,9 +406,10 @@ export async function searchTasteStore(
   const topK = opts.topK ?? 5;
   const floor = opts.floor ?? 0.25;
 
-  // Retrieval guard (design §7.2): only ACTIVE (human-approved) units may enter
-  // a working session. holding/pending are accumulating/awaiting-review — never
-  // retrieved, so an un-curated judgment can't leak into context as if it were canon.
+  // Retrieval guard (design §7.2): only ACTIVE units may enter a working
+  // session. holding is still accumulating recurrence; pending is a contradiction
+  // awaiting a human call. Neither is retrieved, so a judgment that hasn't earned
+  // its place — or that fights a principle already in context — can't leak in.
   const units = (await readTasteUnits(storeDir, opts.category)).filter((u) => u.status === "active");
   if (units.length === 0) return [];
 
@@ -409,7 +451,7 @@ export interface TasteWorkSearchOptions {
  * retrieval key: the model picks the kind of work it's doing (IDEAS, DESIGN,
  * IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS) and gets back the taste for
  * it. Merges the cross-project general store with the project's own store, and —
- * via searchTasteStore's guard — returns only ACTIVE (human-approved) units, so
+ * via searchTasteStore's guard — returns only ACTIVE units, so
  * a holding/pending judgment can never leak in as if it were canon.
  *
  * With a `query`, ranks BM25 × decay-strength within the category. Without one,

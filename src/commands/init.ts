@@ -357,6 +357,9 @@ export async function initCommand(args: string[]): Promise<void> {
   } else if (installLaunchAgent("com.hive.watches.plist")) {
     console.log("Installed watches tick (hourly via launchd)");
   }
+  if (installLaunchAgent("com.hive.taste-review.plist")) {
+    console.log("Installed weekly taste review reminder (Sunday 7pm via launchd)");
+  }
 
   // Symlink binaries to ~/.local/bin/
   const localBin = join(process.env.HOME || "", ".local", "bin");

@@ -14,6 +14,8 @@ import {
   appendToLog,
   readLog,
   searchMemory,
+  readMeta,
+  SEARCH_TOP_K,
   formatSearchResults,
   rebuildIndex,
   supersedeEntry,
@@ -21,6 +23,9 @@ import {
   indexPath,
   metaPath,
   entryHash,
+  parseRecurrence,
+  formatRecurrence,
+  markEntryRecurrence,
   INDEX_SIZE_BUDGET_BYTES,
   type MetaSidecar,
 } from "../lib/memory";
@@ -322,6 +327,82 @@ describe("supersedeEntry", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Recurrence (TK-147)
+// ---------------------------------------------------------------------------
+
+describe("parseRecurrence / formatRecurrence", () => {
+  test("an unmarked entry has been seen once", () => {
+    const r = parseRecurrence("Is the heartbeat still earning its keep?");
+    expect(r.count).toBe(1);
+    expect(r.lastSeen).toBeNull();
+    expect(r.text).toBe("Is the heartbeat still earning its keep?");
+  });
+
+  test("round-trips a marker", () => {
+    const marked = `Still open?${formatRecurrence(4, "2026-08-17")}`;
+    expect(marked).toBe("Still open? _(seen 4×, last 2026-08-17)_");
+    const r = parseRecurrence(marked);
+    expect(r).toEqual({ text: "Still open?", count: 4, lastSeen: "2026-08-17" });
+  });
+
+  test("prose that merely looks like a marker is left alone", () => {
+    const text = "We render _(seen N×, last DATE)_ on recurring gaps";
+    expect(parseRecurrence(text).text).toBe(text);
+  });
+});
+
+describe("markEntryRecurrence", () => {
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    paths = await ensureHiveScaffold(await mkdtemp(join(tmpdir(), "hive-recur-")));
+  });
+
+  test("annotates the entry in place instead of adding one", async () => {
+    await appendProjectMemory(paths, "alpha", "question", "Is the heartbeat earning its keep?", ["gap"]);
+    const hash = entryHash("Is the heartbeat earning its keep?");
+
+    const r = await markEntryRecurrence(paths, "alpha", "question", hash, "2026-08-17");
+    expect(r.count).toBe(2);
+    expect(r.text).toBe("Is the heartbeat earning its keep?");
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    expect(snap.questions.length).toBe(1);
+    expect(snap.questions[0]!.text).toBe(
+      "Is the heartbeat earning its keep? _(seen 2×, last 2026-08-17)_",
+    );
+    expect(snap.questions[0]!.tags).toEqual(["gap"]);
+  });
+
+  test("increments across nights and keeps the entry's identity", async () => {
+    await appendProjectMemory(paths, "alpha", "question", "Still unanswered?", ["gap"]);
+    const hash = entryHash("Still unanswered?");
+
+    await markEntryRecurrence(paths, "alpha", "question", hash, "2026-08-16");
+    const third = await markEntryRecurrence(paths, "alpha", "question", hash, "2026-08-17");
+    expect(third.count).toBe(3);
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    expect(snap.questions.length).toBe(1);
+    expect(snap.questions[0]!.text).toContain("_(seen 3×, last 2026-08-17)_");
+    // The marker is metadata: hashing the rendered line still yields the
+    // original hash, so meta stays linked and the verifier can still target it.
+    expect(entryHash(snap.questions[0]!.text)).toBe(hash);
+
+    const meta = await readMeta(paths, "alpha");
+    expect(meta.entries[hash]).toBeTruthy();
+    expect(meta.entries[hash]!.recallCount).toBeGreaterThan(0);
+  });
+
+  test("throws when no active entry carries the hash", async () => {
+    await appendProjectMemory(paths, "alpha", "question", "Some question?");
+    expect(
+      markEntryRecurrence(paths, "alpha", "question", "deadbeef"),
+    ).rejects.toThrow("No active question entry");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Session Log
 // ---------------------------------------------------------------------------
 
@@ -380,7 +461,7 @@ describe("searchMemory", () => {
   test("finds entries in knowledge by text", async () => {
     await appendProjectMemory(paths, "test-project", "fact", "Auth uses JWT tokens", ["auth"]);
     await appendProjectMemory(paths, "test-project", "fact", "Database is Postgres", ["database"]);
-    const results = await searchMemory(paths, "test-project", "auth");
+    const { results } = await searchMemory(paths, "test-project", "auth");
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results.some((r) => r.entry.includes("JWT"))).toBe(true);
   });
@@ -388,29 +469,84 @@ describe("searchMemory", () => {
   test("finds entries by tag", async () => {
     await appendProjectMemory(paths, "test-project", "fact", "some auth fact", ["auth"]);
     await appendProjectMemory(paths, "test-project", "fact", "some db fact", ["database"]);
-    const results = await searchMemory(paths, "test-project", "fact", { tag: "auth" });
+    const { results } = await searchMemory(paths, "test-project", "fact", { tag: "auth" });
     expect(results.every((r) => r.tags.includes("auth") || r.source !== "knowledge")).toBe(true);
   });
 
   test("finds entries in log", async () => {
     await appendToLog(paths, "test-project", [{ type: "fact", content: "discovered JWT issue" }]);
-    const results = await searchMemory(paths, "test-project", "JWT");
+    // Logs are opt-in now — excluded by default, returned when asked.
+    const off = await searchMemory(paths, "test-project", "JWT");
+    expect(off.results.some((r) => r.source === "log")).toBe(false);
+    const { results } = await searchMemory(paths, "test-project", "JWT", { includeLogs: true });
     expect(results.some((r) => r.source === "log")).toBe(true);
   });
 
   test("excludes superseded entries by default", async () => {
     await appendProjectMemory(paths, "test-project", "fact", "Uses express-session", ["auth"]);
     await supersedeEntry(paths, "test-project", "fact", "Uses express-session", "Uses JWT", ["auth"]);
-    const results = await searchMemory(paths, "test-project", "auth");
+    const { results } = await searchMemory(paths, "test-project", "auth");
     const knowledgeResults = results.filter((r) => r.source === "knowledge");
     // Should only find the active entry
     expect(knowledgeResults.some((r) => r.entry.includes("JWT"))).toBe(true);
     expect(knowledgeResults.some((r) => r.entry.includes("express-session"))).toBe(false);
   });
 
+  test("caps results at topK and reports what it dropped", async () => {
+    // 20 entries that all match "auth" — the shape that produced 162-result
+    // responses before the cap existed.
+    for (let i = 0; i < 20; i++) {
+      await appendProjectMemory(paths, "test-project", "fact", `Auth detail number ${i} about tokens`, ["auth"]);
+    }
+    const { results, total } = await searchMemory(paths, "test-project", "auth tokens");
+    expect(results.length).toBe(SEARCH_TOP_K);
+    expect(total).toBeGreaterThan(SEARCH_TOP_K);
+
+    const output = formatSearchResults(results, "auth tokens", total);
+    expect(output).toContain(`Showing top ${SEARCH_TOP_K} of ${total}`);
+  });
+
+  test("topK is overridable", async () => {
+    for (let i = 0; i < 20; i++) {
+      await appendProjectMemory(paths, "test-project", "fact", `Auth detail number ${i} about tokens`, ["auth"]);
+    }
+    const { results } = await searchMemory(paths, "test-project", "auth tokens", { topK: 3 });
+    expect(results.length).toBe(3);
+  });
+
+  test("the relevance floor drops weak matches below a dominant hit", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "Postgres connection pooling uses PgBouncer in transaction mode", ["db"]);
+    for (let i = 0; i < 5; i++) {
+      await appendProjectMemory(paths, "test-project", "fact", `Unrelated note ${i} mentioning mode once`, ["misc"]);
+    }
+    // A sharp query: one entry carries every term, the others share one weak term.
+    const { results } = await searchMemory(paths, "test-project", "PgBouncer transaction pooling");
+    expect(results.length).toBeLessThan(6);
+    expect(results[0]!.entry).toContain("PgBouncer");
+  });
+
+  test("retrieval strengthening bumps only what was returned", async () => {
+    for (let i = 0; i < 20; i++) {
+      await appendProjectMemory(paths, "test-project", "fact", `Auth detail number ${i} about tokens`, ["auth"]);
+    }
+    await searchMemory(paths, "test-project", "auth tokens");
+    const meta = await readMeta(paths, "test-project");
+    const bumped = Object.values(meta.entries).filter((m) => m.recallCount > 0);
+    // Previously every entry scoring above zero was strengthened, which flattens
+    // decay: if everything is recalled, nothing ever ranks lower.
+    expect(bumped.length).toBe(SEARCH_TOP_K);
+  });
+
+  test("a dedupe probe does not strengthen anything", async () => {
+    await appendProjectMemory(paths, "test-project", "fact", "Auth uses JWT tokens", ["auth"]);
+    await searchMemory(paths, "test-project", "auth tokens", { noBump: true });
+    const meta = await readMeta(paths, "test-project");
+    expect(Object.values(meta.entries).every((m) => m.recallCount === 0)).toBe(true);
+  });
+
   test("formatSearchResults produces readable output", async () => {
     await appendProjectMemory(paths, "test-project", "fact", "Uses Bun runtime", ["runtime"]);
-    const results = await searchMemory(paths, "test-project", "Bun");
+    const { results } = await searchMemory(paths, "test-project", "Bun");
     const output = formatSearchResults(results, "Bun");
     expect(output).toContain("Knowledge (compiled)");
     expect(output).toContain("Bun runtime");

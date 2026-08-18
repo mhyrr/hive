@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hive.taste-review</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>$HOME/.hive/scripts/taste-review.sh &gt;&gt; $HOME/.hive/logs/taste-review.log 2&gt;&amp;1</string>
+    </array>
+    <!-- Sunday 19:00. Weekday 0 is Sunday. The script is exception-only, so a
+         firing with nothing held writes a log line and exits without notifying.
+         RunAtLoad is off deliberately: loading the agent should not fire a
+         reminder mid-week. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>19</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardErrorPath</key>
+    <string>/tmp/hive-taste-review-err.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

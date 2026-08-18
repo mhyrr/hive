@@ -41,6 +41,8 @@ export type LogEntry = {
 
 export type SearchResult = {
   source: "knowledge" | "index" | "log";
+  /** Stable entry hash for knowledge hits — lets the caller bump only what it returned. */
+  hash?: string;
   file: string;
   section?: string;
   entry: string;
@@ -129,12 +131,49 @@ const MAX_HALF_LIFE = 90; // cap
 // Tokenization
 // ---------------------------------------------------------------------------
 
+/**
+ * Conservative suffix stripping, so a query and the entry that answers it don't
+ * miss each other on inflection alone.
+ *
+ * The bug this fixes: "what model does the verifier use" scored ZERO against the
+ * entry containing "Pass V (Opus: verifies candidates)... Models: Sonnet B/C,
+ * Opus V". Every query term missed — `model` ≠ `models`, `verifier` ≠ `verifies`
+ * — so BM25 gave it 0 and the entry was invisible rather than merely low-ranked.
+ * Silent zero-recall is the worst failure a search can have: indistinguishable
+ * from never having learned the thing.
+ *
+ * Deliberately lighter than Porter. Rules are ordered longest-first, first match
+ * wins, and a rule is REJECTED if it would leave a stem under MIN_STEM. That
+ * guard is what keeps over-merging in check: "notes" declines the `es` rule
+ * (would give "not") and falls through to `s` → "note".
+ *
+ * Correctness here is convergence, not linguistics. Both the query and the
+ * document run through the same function, so a stem only has to be consistent —
+ * verify/verifies/verifier/verified all landing on "verif" is the whole job.
+ */
+const MIN_STEM = 4;
+const SUFFIX_RULES = ["ies", "ied", "ier", "ing", "age", "ment", "ness", "es", "ed", "s", "y", "e"];
+
+export function stem(token: string): string {
+  if (token.length <= MIN_STEM) return token;
+  for (const suffix of SUFFIX_RULES) {
+    if (!token.endsWith(suffix)) continue;
+    // Never strip the second `s` of a double — "class" is not a plural.
+    if (suffix === "s" && token.endsWith("ss")) continue;
+    const stemmed = token.slice(0, -suffix.length);
+    if (stemmed.length >= MIN_STEM) return stemmed;
+    // Too short: try a shorter suffix rather than mangling the word.
+  }
+  return token;
+}
+
 export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^\w\s-]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length > 0);
+    .filter((t) => t.length > 0)
+    .map(stem);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,8 +245,11 @@ export function bm25Score(query: string, document: string, corpus: BM25Corpus): 
 // Entry Hashing — stable identity for metadata linkage
 // ---------------------------------------------------------------------------
 
+// Identity is the prose. Tags and the recurrence marker are metadata riding on
+// the same line — neither changes which entry this is, so both come off before
+// hashing. Entries carrying no marker hash exactly as they did before it existed.
 export function entryHash(text: string): string {
-  const cleaned = parseTags(text).text;
+  const cleaned = parseRecurrence(parseTags(text).text).text;
   return createHash("sha256").update(cleaned).digest("hex").slice(0, 8);
 }
 
@@ -390,6 +432,35 @@ export function parseTags(text: string): { text: string; tags: string[] } {
 export function formatTags(tags: string[]): string {
   if (tags.length === 0) return "";
   return ` [${tags.join(", ")}]`;
+}
+
+// ---------------------------------------------------------------------------
+// Recurrence — one entry observed N times, not N entries
+// ---------------------------------------------------------------------------
+
+// TK-147: a gap the verifier re-observes night after night is the same question
+// getting louder. The count is rendered into the entry line so it is visible
+// where the entry is read, and sits between the prose and the tags:
+//   - Is the heartbeat still earning its keep? _(seen 3×, last 2026-08-17)_ [gap]
+const RECURRENCE_PATTERN = /\s*_\(seen (\d+)×, last (\d{4}-\d{2}-\d{2})\)_$/;
+
+/** Split a marker off entry text. An unmarked entry has been seen once. */
+export function parseRecurrence(text: string): {
+  text: string;
+  count: number;
+  lastSeen: string | null;
+} {
+  const match = text.match(RECURRENCE_PATTERN);
+  if (!match) return { text: text.trim(), count: 1, lastSeen: null };
+  return {
+    text: text.slice(0, match.index).trim(),
+    count: Number(match[1]),
+    lastSeen: match[2]!,
+  };
+}
+
+export function formatRecurrence(count: number, date: string = toDateLabel()): string {
+  return ` _(seen ${count}×, last ${date})_`;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +822,65 @@ export async function supersedeEntryByHash(
   return { supersededText, newHash };
 }
 
+/**
+ * TK-147: record that an existing entry was observed again. Rewrites the line
+ * in place with an incremented recurrence marker — no new entry, no new hash.
+ *
+ * Idempotence is per call, not per day: two calls on the same date leave
+ * "seen 3×" then "seen 4×". Callers are nightly passes that see a given gap
+ * once per run, so the count tracks nights observed.
+ */
+export async function markEntryRecurrence(
+  paths: HivePaths,
+  projectId: string,
+  section: MemorySection,
+  targetHash: string,
+  date: string = toDateLabel(),
+): Promise<{ count: number; text: string }> {
+  await ensureProjectMemoryDir(paths, projectId);
+  const filePath = knowledgePath(paths, projectId);
+  const header = sectionToHeader[section];
+
+  let count = 0;
+  let coreText = "";
+
+  await enqueue(filePath, async () => {
+    let content = await Bun.file(filePath).text();
+    const hit = findActiveEntryLineByHash(content, header, targetHash);
+    if (!hit) {
+      throw new Error(`No active ${section} entry with hash ${targetHash} in ${projectId}`);
+    }
+
+    const prior = parseRecurrence(hit.coreText);
+    count = prior.count + 1;
+    coreText = prior.text;
+
+    const lines = content.split("\n");
+    const tsPart = hit.ts ? `[${hit.ts}] ` : "";
+    lines[hit.lineIndex] =
+      `- ${tsPart}${coreText}${formatRecurrence(count, date)}${formatTags(hit.tags)}`;
+    content = lines.join("\n");
+
+    const check = validateMemoryStructure(content);
+    if (!check.valid) {
+      throw new Error(`Memory write would corrupt file: ${check.error}`);
+    }
+    await Bun.write(filePath, content);
+
+    // The damped bump, not the full one: a re-observation is the machine
+    // noticing again, not a human recalling. Enough to keep a still-open
+    // question from decaying out of the index while it keeps recurring.
+    const meta = await readMeta(paths, projectId);
+    const existing = meta.entries[targetHash];
+    if (existing) {
+      meta.entries[targetHash] = bumpRecallDamped(existing);
+      await writeMeta(paths, projectId, meta);
+    }
+  });
+
+  return { count, text: coreText };
+}
+
 export async function mergeTagsIntoEntry(
   paths: HivePaths,
   projectId: string,
@@ -1110,14 +1240,55 @@ export async function rebuildIndex(
 // Search — grep across all layers with ranked results
 // ---------------------------------------------------------------------------
 
+/** Results plus how many cleared the relevance floor, so callers can say what they dropped. */
+export interface SearchOutcome {
+  results: SearchResult[];
+  /** Matches above the floor, before topK. `results.length` when nothing was cut. */
+  total: number;
+}
+
+/**
+ * Default result cap. Measured median before this existed: 24 results, ~2,800 tokens.
+ *
+ * 10 rather than 8 because the floor already trims sharp queries on its own — a
+ * well-aimed query comes back with three or six results and never reaches the cap.
+ * The cap only binds on VAGUE queries, which are precisely the ones that need more
+ * recall, not less. Measured against known-answer queries, truth landed at rank 9
+ * and 10 for two reasonable phrasings; 10 costs ~250 tokens over 8 and converts
+ * both from misses to hits.
+ */
+export const SEARCH_TOP_K = 10;
+/** Keep only results scoring at least this fraction of the best hit (taste uses the same). */
+export const SEARCH_FLOOR = 0.25;
+
 export async function searchMemory(
   paths: HivePaths,
   projectId: string,
   query: string,
-  options: { tag?: string; section?: MemorySection; includeSuperseded?: boolean; logDays?: number } = {},
-): Promise<SearchResult[]> {
+  options: {
+    tag?: string;
+    section?: MemorySection;
+    includeSuperseded?: boolean;
+    logDays?: number;
+    /** Hard cap on returned results. Default SEARCH_TOP_K. */
+    topK?: number;
+    /** Relative relevance floor as a fraction of the top score. Default SEARCH_FLOOR. */
+    floor?: number;
+    /**
+     * Blend raw session-log entries into the results. Default FALSE — logs are
+     * episodic and were the bulk of the volume that made search unreadable.
+     * Turn on deliberately when doing forensics ("when did we change X").
+     */
+    includeLogs?: boolean;
+    /** Skip retrieval strengthening. For internal probes (dedupe checks) that no human reads. */
+    noBump?: boolean;
+  } = {},
+): Promise<SearchOutcome> {
   const results: SearchResult[] = [];
   const tagFilter = options.tag?.toLowerCase();
+  const topK = options.topK ?? SEARCH_TOP_K;
+  const floor = options.floor ?? SEARCH_FLOOR;
+  const includeLogs = options.includeLogs ?? false;
 
   // Load knowledge + metadata
   const snapshot = await readProjectMemorySnapshot(paths, projectId);
@@ -1156,8 +1327,10 @@ export async function searchMemory(
   collectSection(snapshot.decisions, "decisions", "decision");
   collectSection(snapshot.questions, "questions", "question");
 
-  // Collect log entries
-  const logEntries = await readLog(paths, projectId, options.logDays ?? 14);
+  // Collect log entries only when explicitly asked. Keeping them out of the
+  // corpus as well as the results matters: they dominated the document count,
+  // which skewed IDF against the compiled knowledge we actually want ranked.
+  const logEntries = includeLogs ? await readLog(paths, projectId, options.logDays ?? 14) : [];
   const logTexts = logEntries.map((e) => e.text);
 
   // Build BM25 corpus from all searchable documents
@@ -1165,16 +1338,15 @@ export async function searchMemory(
   const corpus = buildCorpus(allDocs);
 
   // Score knowledge entries
-  const recalledHashes: string[] = [];
   for (const item of allEntries) {
     const score = bm25Score(query, item.text, corpus);
     if (score > 0) {
       const hash = entryHash(item.entry.text);
       const strength = entryStrength(meta.entries[hash]);
-      recalledHashes.push(hash);
 
       results.push({
         source: "knowledge",
+        hash,
         file: "knowledge.md",
         section: item.section,
         entry: item.fullText,
@@ -1205,39 +1377,55 @@ export async function searchMemory(
     }
   }
 
-  // Sort by score descending
+  // Sort, then cut twice. The relative floor does the real work — a sharp query
+  // has one dominant hit and returns two or three results, while a vague one gets
+  // truncated instead of dumping half the store. topK is the backstop for the
+  // case where twenty entries genuinely score alike.
   results.sort((a, b) => b.score - a.score);
+  const top = results[0]?.score ?? 0;
+  const relevant = top > 0 ? results.filter((r) => r.score >= floor * top) : results;
+  const kept = relevant.slice(0, topK);
 
-  // Retrieval strengthening — bump metadata for recalled knowledge entries
-  if (recalledHashes.length > 0) {
+  // Retrieval strengthening — bump ONLY what was returned. Bumping every entry
+  // that scored above zero (the prior behavior) strengthened up to 162 entries
+  // on a single search, which flattens the decay signal it is meant to sharpen:
+  // if everything gets recalled, nothing ever ranks lower. Mirrors the same fix
+  // made for the auto-loaded index in TK-133.
+  if (!options.noBump) {
     let changed = false;
-    for (const hash of recalledHashes) {
-      if (meta.entries[hash]) {
-        meta.entries[hash] = bumpRecall(meta.entries[hash]!);
-        changed = true;
-      }
+    for (const r of kept) {
+      const hash = r.hash;
+      if (!hash || !meta.entries[hash]) continue;
+      meta.entries[hash] = bumpRecall(meta.entries[hash]!);
+      changed = true;
     }
     if (changed) {
       await writeMeta(paths, projectId, meta);
     }
   }
 
-  return results;
+  return { results: kept, total: relevant.length };
 }
 
 // ---------------------------------------------------------------------------
 // Format search results for LLM consumption
 // ---------------------------------------------------------------------------
 
-export function formatSearchResults(results: SearchResult[], query: string): string {
+export function formatSearchResults(
+  results: SearchResult[],
+  query: string,
+  total = results.length,
+): string {
   if (results.length === 0) {
     return `No memory entries found matching "${query}".`;
   }
 
-  const lines: string[] = [
-    `Found ${results.length} result(s) for "${query}" (ranked by relevance):`,
-    ``,
-  ];
+  // Say what was dropped. A cap that hides its own truncation reads as coverage
+  // it doesn't have — the caller should know to narrow or raise the limit.
+  const shown = total > results.length
+    ? `Showing top ${results.length} of ${total} matches for "${query}" (ranked by relevance; narrow the query or pass top_k for more):`
+    : `Found ${results.length} result(s) for "${query}" (ranked by relevance):`;
+  const lines: string[] = [shown, ``];
 
   // Results are already sorted by score — present in order
   const knowledge = results.filter((r) => r.source === "knowledge");

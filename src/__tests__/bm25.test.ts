@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 
 import {
+  stem,
   tokenize,
   buildCorpus,
   bm25Score,
@@ -31,11 +32,35 @@ describe("tokenize", () => {
   });
 
   test("preserves hyphens in words", () => {
-    expect(tokenize("pre-commit hooks")).toEqual(["pre-commit", "hooks"]);
+    expect(tokenize("pre-commit hooks")).toEqual(["pre-commit", "hook"]);
   });
 
   test("collapses multiple spaces", () => {
-    expect(tokenize("spread   out   words")).toEqual(["spread", "out", "words"]);
+    expect(tokenize("spread   out   words")).toEqual(["spread", "out", "word"]);
+  });
+
+  test("stems inflections so a query and its answer can meet", () => {
+    // The zero-recall bug: "what model does the verifier use" scored 0 against an
+    // entry saying "verifies ... Models" because no term matched exactly.
+    expect(stem("models")).toBe(stem("model"));
+    for (const v of ["verifies", "verifier", "verified"]) {
+      expect(stem(v)).toBe(stem("verify"));
+    }
+    for (const v of ["stores", "stored", "storing", "storage"]) {
+      expect(stem(v)).toBe(stem("store"));
+    }
+  });
+
+  test("refuses a rule that would leave too short a stem", () => {
+    // "notes" declines the `es` rule (would give "not") and falls through to `s`.
+    expect(stem("notes")).toBe("note");
+    expect(stem("notes")).not.toBe(stem("not"));
+    // Short words are left alone entirely.
+    expect(stem("use")).toBe("use");
+    expect(stem("is")).toBe("is");
+    // A double-s is not a plural.
+    expect(stem("class")).toBe("class");
+    expect(stem("classes")).toBe("class");
   });
 });
 
@@ -49,7 +74,9 @@ describe("buildCorpus", () => {
     expect(corpus.docCount).toBe(3);
     expect(corpus.df.get("auth")).toBe(2); // appears in 2 docs
     expect(corpus.df.get("jwt")).toBe(1);
-    expect(corpus.df.get("database")).toBe(1);
+    // Keyed by stem, so look it up the same way a query would arrive.
+    expect(corpus.df.get(stem("database"))).toBe(1);
+    expect(corpus.df.get(stem("token"))).toBe(1); // "tokens" in the source doc
   });
 
   test("handles empty corpus", () => {

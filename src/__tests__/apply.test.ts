@@ -476,3 +476,127 @@ describe("applyDecisions — directive guard (TK-123)", () => {
     expect(landed).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gap dedupe (TK-147)
+// ---------------------------------------------------------------------------
+
+const STANDING_QUESTION =
+  "Is the heartbeat still earning its keep now that campaigns cover long-horizon work?";
+const KNOWN_FACT =
+  "The dashboard collects run artifacts from the nightly runs directory.";
+
+async function buildGapFixture(
+  observations: string[],
+): Promise<{ paths: HivePaths; date: string }> {
+  const home = await mkdtemp(join(tmpdir(), "hive-apply-gaps-"));
+  const paths = await ensureHiveScaffold(home);
+  const date = new Date().toISOString().slice(0, 10);
+  const runDir = join(paths.memoryRunsDir, date);
+  await mkdir(runDir, { recursive: true });
+
+  await mkdir(join(home, "projects", "alpha"), { recursive: true });
+  await writeFile(
+    join(home, "projects", "alpha", "config.md"),
+    `---\nname: alpha\npath: /tmp/nope/alpha\n---\n`,
+  );
+
+  // Canon already holds one open question and one settled fact.
+  await appendProjectMemory(paths, "alpha", "question", STANDING_QUESTION, ["gap"]);
+  await appendProjectMemory(paths, "alpha", "fact", KNOWN_FACT, ["dashboard"]);
+
+  await writeFile(
+    join(runDir, "verifier-output.json"),
+    JSON.stringify({
+      decisions: [],
+      gaps: observations.map((observation, i) => ({
+        subject: "alpha",
+        observation,
+        source: `topRanked[${i}]`,
+      })),
+      briefing_markdown: "# HIVE\n",
+    }),
+  );
+  await writeFile(join(runDir, "decisions.json"), JSON.stringify({ decisions: [] }));
+  await writeFile(join(runDir, "briefing.md"), `# HIVE — ${date}\n`);
+
+  return { paths, date };
+}
+
+describe("landGaps — dedupe before landing (TK-147)", () => {
+  test("a re-observed gap annotates its question instead of adding another", async () => {
+    const { paths, date } = await buildGapFixture([STANDING_QUESTION]);
+    const result = await applyDecisions({ paths, date });
+
+    expect(result.totals.gapsRecurring).toBe(1);
+    expect(result.totals.gapsLanded).toBe(0);
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    expect(snap.questions.length).toBe(1);
+    expect(snap.questions[0]!.text).toBe(`${STANDING_QUESTION} _(seen 2×, last ${date})_`);
+    expect(snap.questions[0]!.tags).toEqual(["gap"]);
+
+    // A recurrence rewrites knowledge.md, so the index has to follow it.
+    const alpha = result.perProject.find((p) => p.projectId === "alpha")!;
+    expect(alpha.rebuiltIndex).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  test("the count climbs on the next night rather than the question list", async () => {
+    const { paths, date } = await buildGapFixture([STANDING_QUESTION]);
+    await applyDecisions({ paths, date });
+    await applyDecisions({ paths, date });
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    expect(snap.questions.length).toBe(1);
+    expect(snap.questions[0]!.text).toContain("_(seen 3×,");
+  });
+
+  test("a gap already answered by canon lands nowhere", async () => {
+    const { paths, date } = await buildGapFixture([KNOWN_FACT]);
+    const result = await applyDecisions({ paths, date });
+
+    expect(result.totals.gapsCovered).toBe(1);
+    expect(result.totals.gapsLanded).toBe(0);
+    expect(result.totals.gapsRecurring).toBe(0);
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    expect(snap.questions.length).toBe(1); // just the seeded one
+  });
+
+  test("a genuinely new gap still lands as a question", async () => {
+    const fresh = "Nobody has checked whether watches fire while the machine is asleep.";
+    const { paths, date } = await buildGapFixture([fresh]);
+    const result = await applyDecisions({ paths, date });
+
+    expect(result.totals.gapsLanded).toBe(1);
+    expect(result.totals.gapsRecurring).toBe(0);
+    expect(result.totals.gapsCovered).toBe(0);
+
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    const landed = snap.questions.find((q) => q.text === fresh);
+    expect(landed).toBeTruthy();
+    expect(landed?.tags).toContain("gap");
+  });
+
+  test("every gap's disposition is logged, including the dropped one", async () => {
+    const fresh = "Nobody has checked whether watches fire while the machine is asleep.";
+    const { paths, date } = await buildGapFixture([STANDING_QUESTION, KNOWN_FACT, fresh]);
+    await applyDecisions({ paths, date });
+
+    const logPath = join(paths.memoryRunsDir, date, "gaps.applied.log");
+    const lines = (await Bun.file(logPath).text()).trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines.map((l) => l.disposition)).toEqual(["recurring", "covered", "question"]);
+    expect(lines[0]!.count).toBe(2);
+    expect(lines[1]!.coveredBy).toContain("knowledge:alpha");
+  });
+
+  test("dry-run tallies the recurrence without touching canon", async () => {
+    const { paths, date } = await buildGapFixture([STANDING_QUESTION]);
+    const result = await applyDecisions({ paths, date, dryRun: true });
+
+    expect(result.totals.gapsRecurring).toBe(1);
+    const snap = await readProjectMemorySnapshot(paths, "alpha");
+    expect(snap.questions[0]!.text).toBe(STANDING_QUESTION);
+  });
+});

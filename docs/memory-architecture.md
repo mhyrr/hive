@@ -35,7 +35,12 @@ the implicit ranking signal.
 **Knowledge** — Compiled project intelligence. A single `knowledge.md`
 with four sections: Durable Facts, Conventions, Decisions, Open
 Questions. Written deliberately by agents via `write_hive_memory`.
-Entries can be superseded (struck through with a date). This is the
+Entries can be superseded (struck through with a date). An open question
+the nightly verifier keeps re-observing carries a recurrence marker —
+`_(seen 3×, last 2026-08-17)_` — so a standing gap reads as one question
+getting louder rather than three unrelated ones. Tags and that marker are
+metadata on the line: `entryHash` strips both, so an entry's identity is
+its prose and a recurrence bump never orphans its metadata. This is the
 system of record.
 
 **Index** — Auto-generated summary loaded at session start. Built
@@ -315,6 +320,9 @@ Pass F — Apply (mechanical)
   ↓ truncate inbox.md to its canonical header-only empty form,
   ↓ rebuild _index.md per project touched
   ↓ land accepted reflections + project-scoped gaps as questions
+  ↓   (gaps pass the same dedupe gate as reflections: a gap already
+  ↓    covered by canon is dropped, and one re-observed on an open
+  ↓    question bumps that question's recurrence marker instead)
   ↓ copy briefing.md → ~/.hive/briefings/{DATE}.md
 ```
 
