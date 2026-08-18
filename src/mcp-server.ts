@@ -331,7 +331,7 @@ server.registerTool("search_memory", {
     section: z.enum(["fact", "convention", "decision", "question"]).optional().describe("Limit search to this section of knowledge."),
     include_superseded: z.boolean().optional().describe("Include superseded (replaced) entries. Default false."),
     log_days: z.number().optional().describe("How many days of log history to search when include_logs is set. Default 14."),
-    top_k: z.number().optional().describe("Max results. Default 8. Raise only when the top few genuinely were not enough."),
+    top_k: z.number().optional().describe("Max results. Default 10. Raise only when the top few genuinely were not enough."),
     include_logs: z.boolean().optional().describe("Blend raw session-log entries in. Default false — they are episodic and noisy. Use for forensics."),
   },
 }, async ({ project, query, tag, section, include_superseded, log_days, top_k, include_logs }) => {
