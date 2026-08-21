@@ -205,18 +205,30 @@ const fakeSignal: ProjectSignal = {
       {
         role: "user",
         preview: "Greg: should we use Joken or Guardian?",
+        timestamp: "2026-04-26T10:00:00.000Z",
+        source: "claude",
+        sessionId: "session-alpha",
+        signalRank: 1,
         score: 12,
         tokenCount: 30,
+        excerptTokenCount: 10,
         novelty: 0.8,
         alwaysInclude: false,
+        truncated: false,
       },
       {
         role: "assistant",
         preview: "Maya: Joken — API-only app, no controller-level needs.",
+        timestamp: "2026-04-26T10:01:00.000Z",
+        source: "claude",
+        sessionId: "session-alpha",
+        signalRank: 0,
         score: 11,
         tokenCount: 28,
+        excerptTokenCount: 14,
         novelty: 0.7,
         alwaysInclude: false,
+        truncated: true,
       },
     ],
   },
@@ -251,6 +263,11 @@ describe("buildProjectExtractionUserContent", () => {
     expect(out).toContain("TK-001");
     expect(out).toContain("topRanked[0]");
     expect(out).toContain("Joken or Guardian");
+    expect(out).toContain("2026-04-26T10:00:00.000Z");
+    expect(out).toContain("claude:session-alpha");
+    expect(out).toContain("head+tail excerpt");
+    expect(out).toContain("Later corrections and resolutions override earlier questions");
+    expect(out).not.toContain("low-novelty");
   });
 
   test("renders gracefully when project has no activity", () => {
@@ -278,6 +295,9 @@ describe("buildReflectionExtractionUserContent", () => {
       date: "2026-04-26",
       generatedAt: "2026-04-26T00:00:00Z",
       hoursWindow: 24,
+      windowStart: "2026-04-25T00:00:00.000Z",
+      windowEnd: "2026-04-26T00:00:00.000Z",
+      windowMode: "rolling",
       trivial: false,
       trivialReason: null,
       projects: [
