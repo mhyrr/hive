@@ -295,7 +295,7 @@ export async function initCommand(args: string[]): Promise<void> {
 
   // Install HIVE agents and skills to ~/.claude/
   const claudeAgentsDir = join(process.env.HOME || "", ".claude", "agents");
-  for (const retiredAgent of ["maya-executor.md", "maya-heartbeat.md"]) {
+  for (const retiredAgent of ["maya-executor.md", "maya-heartbeat.md", "maya-coder.md"]) {
     const retired = await preserveRetiredFile(join(claudeAgentsDir, retiredAgent));
     if (retired) console.log(`Retired obsolete Claude agent (${retired})`);
   }

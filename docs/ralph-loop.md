@@ -405,8 +405,9 @@ Drive the loop from HIVE tickets instead of a standalone PRD:
 # The planner creates tickets
 claude --agent maya-planner "Design the auth system for TK-015"
 
-# The Ralph loop works through them
-claude --agent maya-coder "Work on TK-016 (JWT middleware). Read the ticket for requirements."
+# The Ralph loop works through them (identity + memory load via the
+# SessionStart hook; the prompt only needs the ticket pointer)
+claude "Work on TK-016 (JWT middleware). Read the ticket for requirements."
 ```
 
 Tickets persist across sessions, carry notes and status, and show up in

@@ -230,7 +230,7 @@ describe("stack filesystem operations", () => {
     expect(existsSync(readme)).toBe(true);
     expect(existsSync(skillsDir)).toBe(true);
 
-    // All seven skill topics should land in source tree (pre-sync).
+    // All eight skill topics should land in source tree (pre-sync).
     const topics = (await listSourceSkills("elixir")).sort();
     expect(topics).toEqual([
       "ecto-patterns",
@@ -238,6 +238,7 @@ describe("stack filesystem operations", () => {
       "liveview-patterns",
       "oban",
       "phoenix-contexts",
+      "reach",
       "security",
       "testing",
     ]);

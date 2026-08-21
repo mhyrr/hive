@@ -173,13 +173,18 @@ names are derived from your IDENTITY.md name:
 | Agent | Role | Key Tools |
 |-------|------|-----------|
 | `maya-planner` | Architecture and planning | `read_hive_memory`, `convene_council`, `create_ticket` |
-| `maya-coder` | Implementation in isolated worktrees | `read_hive_memory`, `write_hive_memory` |
 | `maya-reviewer` | Code review against project conventions | `read_hive_memory` |
 
 Each agent receives the identity stack and project memory from the same
 canonical identity path as interactive sessions. The planner reads memory
-and tickets before architecting. The coder reads conventions before writing
-code. The reviewer checks work against accumulated standards.
+and tickets before architecting. The reviewer checks work against
+accumulated standards.
+
+Implementation has no bespoke agent — dispatches ride Claude Code's
+native subagents. The dispatch prompt carries the HIVE briefing:
+`show_ticket` for the spec, `read_hive_memory` and `search_taste`
+before coding, `write_hive_memory` for discovered conventions. The
+doctrine lives in AGENTS.md under Model Economy.
 
 Nightly memory extraction is no longer agent-driven — it runs as a
 deterministic five-pass pipeline (see `hive memory nightly` and the
@@ -240,7 +245,7 @@ This builds the binaries and creates:
 - `~/.hive/` with identity templates (SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md)
 - `~/.hive/config.md` with model pool configuration
 - `~/.hive/scripts/` with nightly, heartbeat, and sync scripts
-- `~/.claude/agents/` with HIVE agent definitions (maya-planner, maya-coder, maya-reviewer)
+- `~/.claude/agents/` with HIVE agent definitions (maya-planner, maya-reviewer)
 - Launchd jobs for heartbeat, nightly extraction, dashboard, and state sync
 - MCP server registration in `~/.claude.json`
 - Pi MCP registration in `~/.pi/agent/mcp.json` when Pi is installed
@@ -342,15 +347,16 @@ Use Claude Code's worktree isolation with HIVE's memory:
 # The planner reads memory + tickets, creates a plan
 claude --agent maya-planner "Design the authentication system"
 
-# Multiple coders work in parallel, each in isolated worktrees
-# Each reads HIVE conventions before coding
-claude --agent maya-coder "Implement JWT middleware (TK-005)"
-claude --agent maya-coder "Implement user registration (TK-006)"
+# In a session, dispatch parallel implementation subagents.
+# Each dispatch names its ticket and carries the HIVE briefing.
+"Dispatch two worktree-isolated subagents: TK-005 (JWT middleware)
+and TK-006 (user registration). Each reads its ticket via show_ticket
+and conventions via read_hive_memory before coding."
 ```
 
-Each coder agent gets its own git worktree (via `isolation: worktree`
-in the agent definition). They can't step on each other's files. They
-all read the same HIVE memory for conventions. When they finish, their
+Each coder gets its own git worktree (request `isolation: worktree`
+on the dispatch). They can't step on each other's files. They all
+read the same HIVE memory for conventions. When they finish, their
 worktrees are returned for review and merge.
 
 ### Council for Architecture Decisions
@@ -391,8 +397,8 @@ The AI manages its own work queue:
 maya-planner → creates TK-012, TK-013, TK-014 with dependencies
 
 # Execution sessions work through them
-maya-coder → starts TK-012, adds notes with findings, closes when done
-maya-coder → starts TK-013 (was blocked on TK-012, now unblocked)
+coder dispatch → starts TK-012, adds notes with findings, closes when done
+coder dispatch → starts TK-013 (was blocked on TK-012, now unblocked)
 
 # Review what's left
 hive ticket ready    # shows unblocked open tickets
@@ -489,7 +495,6 @@ second orchestration stacks.
 ~/.claude/
 ├── agents/
 │   ├── maya-planner.md  # Architecture and planning agent
-│   ├── maya-coder.md    # Implementation agent (worktree-isolated)
 │   └── maya-reviewer.md # Code review agent
 ```
 
@@ -513,5 +518,5 @@ second orchestration stacks.
 | Start Pi session | `hive -3` |
 | Start Codex session | `hive -x` |
 | Run planner agent | `claude --agent maya-planner "Design X"` |
-| Run coder agent | `claude --agent maya-coder "Implement TK-005"` |
+| Dispatch a coder | In session: "Implement TK-005 in a worktree-isolated subagent" |
 | Run reviewer agent | `claude --agent maya-reviewer "Review recent changes"` |
