@@ -134,6 +134,28 @@ describe("assembleIdentity", () => {
     const out = await assembleIdentity({ includePersona: true, persona: "does-not-exist" });
     expect(out).toContain("persona-dry-marker");
   });
+
+  test("cursor harness uses the Claude-style stack hint", async () => {
+    const cursor = await assembleIdentity({ harness: "cursor" });
+    const claude = await assembleIdentity({ harness: "claude" });
+    expect(cursor).toBe(claude);
+  });
+
+  test("identity emit accepts --harness cursor", () => {
+    const repoRoot = join(import.meta.dir, "..", "..");
+    const result = spawnSync(
+      "bun",
+      [join(repoRoot, "src", "cli.ts"), "identity", "emit", "--harness", "cursor"],
+      {
+        cwd: tempCwd,
+        env: { ...process.env, HIVE_HOME: tempHive },
+        encoding: "utf-8",
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("identity-marker");
+    expect(result.stderr).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------

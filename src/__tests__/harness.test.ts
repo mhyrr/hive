@@ -49,6 +49,18 @@ describe("resolveHarness", () => {
     expect(r.remainingArgs).toEqual(["think this through"]);
   });
 
+  test("-a selects cursor", () => {
+    const r = resolveHarness(["-a", "inspect the auth flow"]);
+    expect(r.harness).toBe("cursor");
+    expect(r.remainingArgs).toEqual(["inspect the auth flow"]);
+  });
+
+  test("--cursor selects cursor", () => {
+    const r = resolveHarness(["--cursor", "inspect the auth flow"]);
+    expect(r.harness).toBe("cursor");
+    expect(r.remainingArgs).toEqual(["inspect the auth flow"]);
+  });
+
   test("HIVE_HARNESS=codex sets codex as default", () => {
     process.env.HIVE_HARNESS = "codex";
     const r = resolveHarness(["hello"]);
@@ -63,8 +75,22 @@ describe("resolveHarness", () => {
     expect(r.remainingArgs).toEqual(["hello"]);
   });
 
+  test("HIVE_HARNESS=cursor sets cursor as default", () => {
+    process.env.HIVE_HARNESS = "cursor";
+    const r = resolveHarness(["hello"]);
+    expect(r.harness).toBe("cursor");
+    expect(r.remainingArgs).toEqual(["hello"]);
+  });
+
   test("--claude overrides HIVE_HARNESS=codex", () => {
     process.env.HIVE_HARNESS = "codex";
+    const r = resolveHarness(["--claude", "hello"]);
+    expect(r.harness).toBe("claude-code");
+    expect(r.remainingArgs).toEqual(["hello"]);
+  });
+
+  test("--claude overrides HIVE_HARNESS=cursor", () => {
+    process.env.HIVE_HARNESS = "cursor";
     const r = resolveHarness(["--claude", "hello"]);
     expect(r.harness).toBe("claude-code");
     expect(r.remainingArgs).toEqual(["hello"]);
@@ -83,6 +109,12 @@ describe("resolveHarness", () => {
     expect(r.remainingArgs).toEqual(["--agent", "maya-coder", "do thing"]);
   });
 
+  test("--agent remains a Claude passthrough and never selects cursor", () => {
+    const r = resolveHarness(["--agent", "maya-coder", "do thing"]);
+    expect(r.harness).toBe("claude-code");
+    expect(r.remainingArgs).toEqual(["--agent", "maya-coder", "do thing"]);
+  });
+
   test("-x position-independent (last wins for harness)", () => {
     const r = resolveHarness(["a", "-x", "b", "--claude", "c"]);
     expect(r.harness).toBe("claude-code");
@@ -92,6 +124,12 @@ describe("resolveHarness", () => {
   test("-3 position-independent (last wins for harness)", () => {
     const r = resolveHarness(["a", "-3", "b", "-x", "c"]);
     expect(r.harness).toBe("codex");
+    expect(r.remainingArgs).toEqual(["a", "b", "c"]);
+  });
+
+  test("-a position-independent (last harness flag wins)", () => {
+    const r = resolveHarness(["a", "-x", "b", "-a", "c"]);
+    expect(r.harness).toBe("cursor");
     expect(r.remainingArgs).toEqual(["a", "b", "c"]);
   });
 
@@ -155,6 +193,13 @@ describe("resolveHarness", () => {
       const r = resolveHarness(["--bare", "-3", "hello"]);
       expect(r.harness).toBe("pi");
       expect(r.claudeMode).toBe("bare");
+      expect(r.remainingArgs).toEqual(["hello"]);
+    });
+
+    test("--owned with -a still routes cursor (mode flagged but ignored downstream)", () => {
+      const r = resolveHarness(["--owned", "-a", "hello"]);
+      expect(r.harness).toBe("cursor");
+      expect(r.claudeMode).toBe("owned");
       expect(r.remainingArgs).toEqual(["hello"]);
     });
   });

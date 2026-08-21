@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { execSync } from "node:child_process";
 
 import { wireCodex } from "../lib/codex-wire";
+import { wireCursor } from "../lib/cursor-wire";
 import { assembleIdentity } from "../lib/identity";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
 import { wirePi } from "../lib/pi-wire";
@@ -414,20 +415,21 @@ export async function initCommand(args: string[]): Promise<void> {
       servers.hive = {
         command: mcpBin,
         args: [],
-        alwaysLoad: true,
       };
       mcpConfig.mcpServers = servers;
       mcpChanged = true;
       console.log();
       console.log(`Registered HIVE MCP server in ${mcpConfigPath}`);
     } else {
-      // Ensure alwaysLoad is set on existing entries (idempotent upgrade)
+      // HIVE tools defer behind ToolSearch: AGENTS.md names each tool and its
+      // trigger, so eager schemas (~17KB) would only add session-start weight.
+      // Strip alwaysLoad from entries written by earlier versions.
       const hiveEntry = servers.hive as Record<string, unknown>;
-      if (!hiveEntry.alwaysLoad) {
-        hiveEntry.alwaysLoad = true;
+      if (hiveEntry.alwaysLoad) {
+        delete hiveEntry.alwaysLoad;
         mcpChanged = true;
         console.log();
-        console.log(`Added alwaysLoad: true to HIVE MCP server in ${mcpConfigPath}`);
+        console.log(`Removed alwaysLoad from HIVE MCP server in ${mcpConfigPath} (tools defer behind ToolSearch)`);
       }
     }
     if (mcpChanged) {
@@ -485,5 +487,27 @@ export async function initCommand(args: string[]): Promise<void> {
     }
   } catch {
     // intentional: Pi integration is optional — skip on failure
+  }
+
+  // Cursor CLI integration: register HIVE MCP at user scope. Cursor stores
+  // approval per project directory, so wireCursor also approves this cwd as a
+  // convenience; every `hive -a` launch repeats that best-effort approval.
+  try {
+    const cursorMcpBin = join(localBin, "hive-mcp");
+    const cursor = await wireCursor({ mcpBinPath: cursorMcpBin });
+
+    if (cursor.detected) {
+      console.log();
+      if (cursor.mcpAdded) {
+        console.log("Registered HIVE MCP server in ~/.cursor/mcp.json");
+      } else if (cursor.mcpAlreadyRegistered) {
+        console.log("HIVE MCP already registered in ~/.cursor/mcp.json");
+      }
+      if (cursor.mcpApproved) {
+        console.log("Approved HIVE MCP server for this Cursor workspace");
+      }
+    }
+  } catch {
+    // intentional: Cursor integration is optional — skip on failure
   }
 }

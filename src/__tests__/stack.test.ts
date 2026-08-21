@@ -447,7 +447,7 @@ describe("buildStackHint", () => {
     // The anti-pattern sentence was a rite, not information: it carried
     // nothing the named surfaces don't already carry, and it's the
     // always-do-X-before-Y shape that reads as ritual on newer models.
-    for (const harness of ["claude", "codex", "pi"] as const) {
+    for (const harness of ["claude", "codex", "pi", "cursor"] as const) {
       for (const stack of ["elixir", "typescript", "rust"]) {
         const hint = buildStackHint(stack, harness);
         expect(hint).not.toContain("anti-pattern");
@@ -503,6 +503,14 @@ describe("buildStackHint", () => {
   test("TK-114: pi harness uses claude-style wording (Pi runs Claude inside)", () => {
     // Pi is a Claude-flavored harness; identity should match the claude default.
     expect(buildStackHint("typescript", "pi")).toBe(buildStackHint("typescript", "claude"));
+  });
+
+  test("cursor harness uses claude-style skill wording", () => {
+    // Cursor reads ~/.claude/skills and exposes skill loading, so its stack
+    // hint should match the Claude/Pi variant rather than Codex's direct-read
+    // fallback.
+    expect(buildStackHint("typescript", "cursor")).toBe(buildStackHint("typescript", "claude"));
+    expect(buildStackHint("elixir", "cursor")).toBe(buildStackHint("elixir", "claude"));
   });
 });
 

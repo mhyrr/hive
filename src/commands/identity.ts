@@ -2,11 +2,11 @@ import { UsageError } from "../lib/errors";
 import { assembleIdentity } from "../lib/identity";
 import type { Harness } from "../lib/stack";
 
-const VALID_HARNESSES: ReadonlySet<Harness> = new Set(["claude", "codex", "pi"]);
+const VALID_HARNESSES: ReadonlySet<Harness> = new Set(["claude", "codex", "pi", "cursor"]);
 
 export async function identityCommand(args: string[]): Promise<void> {
   const usage = `Usage:
-  hive identity emit [--harness claude|codex|pi] [--persona <name>]
+  hive identity emit [--harness claude|codex|pi|cursor] [--persona <name>]
       Print the canonical identity prefix to stdout. Used by the SessionStart
       hook so every interactive harness shares one source
       of truth. --harness only affects stack-hint wording (Codex has no Skill
@@ -33,7 +33,7 @@ export async function identityCommand(args: string[]): Promise<void> {
     if (arg === "--harness" && rest[i + 1]) {
       const value = rest[++i]!;
       if (!VALID_HARNESSES.has(value as Harness)) {
-        throw new UsageError(`Unknown harness '${value}'. Valid: claude, codex, pi.`);
+        throw new UsageError(`Unknown harness '${value}'. Valid: claude, codex, pi, cursor.`);
       }
       harness = value as Harness;
     } else if (arg === "--persona" && rest[i + 1]) {
