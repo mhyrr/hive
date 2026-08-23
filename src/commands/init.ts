@@ -119,6 +119,22 @@ export async function migrateLegacyWatches(paths: Awaited<ReturnType<typeof ensu
   return migrated;
 }
 
+// Skills may carry subdirectories (references/, scripts/), so install by
+// recursive copy rather than a flat file loop.
+async function copyDirRecursive(srcDir: string, destDir: string): Promise<void> {
+  await ensureDirectory(destDir);
+  const entries = await readdir(srcDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const src = join(srcDir, entry.name);
+    const dest = join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      await copyDirRecursive(src, dest);
+    } else {
+      await Bun.write(dest, await Bun.file(src).text());
+    }
+  }
+}
+
 async function installSkillDirs(destDir: string): Promise<number> {
   await ensureDirectory(destDir);
   const templatesDir = join(dirname(import.meta.dir), "..", "templates", "skills");
@@ -130,12 +146,7 @@ async function installSkillDirs(destDir: string): Promise<number> {
     const destSkillDir = join(destDir, entry.name);
     if (existsSync(destSkillDir)) continue;
 
-    await ensureDirectory(destSkillDir);
-    const skillFiles = await readdir(join(templatesDir, entry.name));
-    for (const file of skillFiles) {
-      const content = await Bun.file(join(templatesDir, entry.name, file)).text();
-      await Bun.write(join(destSkillDir, file), content);
-    }
+    await copyDirRecursive(join(templatesDir, entry.name), destSkillDir);
     installed++;
   }
 
