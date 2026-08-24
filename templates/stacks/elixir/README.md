@@ -12,6 +12,7 @@ Covers Iron Laws, framework patterns, and common pitfalls.
 - `phoenix-contexts` — context design, scopes/auth, plugs, routing, JSON APIs
 - `security` — auth, authorization, input validation, rate limiting, headers
 - `testing` — ExUnit, factory patterns, LiveView testing, Mox
+- `reach` — dependence-graph analysis: impact, taint, architecture policy, OTP maps
 
 Each skill's `SKILL.md` is the quick reference; `references/*.md` hold deep dives,
 loaded on demand.
@@ -38,6 +39,9 @@ Changes take effect on the next Claude Code session.
 
 Content lifted from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix)
 under the MIT License. See `LICENSE` for the full text.
+
+`skills/reach/` is first-party HIVE content, not vendored. It documents
+[elixir-vibe/reach](https://github.com/elixir-vibe/reach) (MIT).
 
 Skills imported: `elixir-idioms`, `ecto-patterns`, `liveview-patterns`, `oban`,
 `phoenix-contexts`, `security`, `testing`. Workflow skills (`plan`, `work`,

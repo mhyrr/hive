@@ -22,6 +22,7 @@ import { watchCommand } from "./commands/watch";
 import { UsageError } from "./lib/errors";
 import { resolveHarness, type ClaudeMode, type Harness } from "./lib/harness";
 import { writeCodexAgentsMd } from "./lib/codex-wire";
+import { approveCursorHiveMcp, buildCursorLaunchArgs, findCursorBin } from "./lib/cursor-wire";
 import { getIdentityName, assembleIdentity } from "./lib/identity";
 import { findPiBin } from "./lib/pi-wire";
 
@@ -77,7 +78,7 @@ HIVE Commands:
 ${name} (default: Claude Code with identity):
   hive                       Interactive ${name} session
   hive "fix the auth bug"    ${name} with a prompt
-  hive --agent maya-coder    ${name} with a specific agent
+  hive --agent maya-reviewer ${name} with a specific agent
   hive [any claude flags]    Passed through to claude with identity
 
 Claude Code identity modes:
@@ -91,8 +92,10 @@ Claude Code identity modes:
 Alt harness:
   hive -3 [prompt]          Route through Pi CLI (Pi owns provider/model selection)
   hive -x [prompt]           Route through Codex CLI (ChatGPT subscription)
+  hive -a [prompt]           Route through Cursor CLI (Cursor subscription)
   HIVE_HARNESS=pi hive       Same as -3, via env
   HIVE_HARNESS=codex hive    Same as -x, via env (use --claude to override)
+  HIVE_HARNESS=cursor hive   Same as -a, via env (use --claude to override)
 
 Persona (swappable register/voice, interactive only):
   hive --persona <name>      Load ~/.hive/personas/<name>.md (default: dry)
@@ -126,6 +129,12 @@ function findPi(): string {
   const pi = findPiBin();
   if (pi) return pi;
   throw new Error("Could not find pi CLI. Install Pi or set HIVE_PI_BIN.");
+}
+
+function findCursor(): string {
+  const cursor = findCursorBin();
+  if (cursor) return cursor;
+  throw new Error("Could not find Cursor CLI. Install cursor-agent or set HIVE_CURSOR_BIN.");
 }
 
 async function writePiIdentityExtensionTempFile(persona?: string): Promise<{ path: string; dir: string }> {
@@ -264,7 +273,7 @@ async function launchCodex(args: string[], persona?: string): Promise<void> {
   // Codex auto-loads ~/.codex/AGENTS.md natively. Refresh it from the current
   // cwd before spawning so project memory/stack context cannot lag behind the
   // last direct Codex session.
-  const identity = await assembleIdentity({ includePersona: true, persona });
+  const identity = await assembleIdentity({ harness: "codex", includePersona: true, persona });
   const agents = await writeCodexAgentsMd(identity);
   if (!agents.written && agents.reason !== "unchanged") {
     console.error(`hive: could not refresh Codex AGENTS.md (${agents.reason})`);
@@ -277,6 +286,33 @@ async function launchCodex(args: string[], persona?: string): Promise<void> {
     env: {
       ...process.env,
       OPENAI_API_KEY: undefined, // force ChatGPT subscription
+      HIVE_PERSONA: persona ?? process.env.HIVE_PERSONA,
+    },
+  });
+
+  process.exit(result.exitCode ?? 0);
+}
+
+async function launchCursor(args: string[], persona?: string): Promise<void> {
+  const cursor = findCursor();
+  const identity = await assembleIdentity({ harness: "cursor", includePersona: true, persona });
+
+  // Cursor stores MCP approval per project directory, so `hive init` cannot
+  // approve once for every repo. Best-effort here keeps the local HIVE server
+  // ready without blanket-approving unrelated third-party servers.
+  approveCursorHiveMcp(cursor, process.cwd());
+
+  const result = Bun.spawnSync([
+    cursor,
+    "--trust",
+    "--add-dir", join(process.env.HOME || "", ".hive"),
+    ...buildCursorLaunchArgs(identity, args),
+  ], {
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    env: {
+      ...process.env,
       HIVE_PERSONA: persona ?? process.env.HIVE_PERSONA,
     },
   });
@@ -321,6 +357,13 @@ async function launchAgent(harness: Harness, claudeMode: ClaudeMode, args: strin
       console.error("hive: --owned/--bare only apply to Claude Code; ignored for Codex.");
     }
     await launchCodex(args, persona);
+    return;
+  }
+  if (harness === "cursor") {
+    if (claudeMode !== "append") {
+      console.error("hive: --owned/--bare only apply to Claude Code; ignored for Cursor.");
+    }
+    await launchCursor(args, persona);
     return;
   }
   await launchClaude(claudeMode, args, persona);

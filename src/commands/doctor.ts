@@ -1,5 +1,5 @@
 import { existsSync, statSync, readdirSync, readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 import {
@@ -9,6 +9,13 @@ import {
   getRegisteredCodexHiveMcp,
   isCodexInstalled,
 } from "../lib/codex-wire";
+import {
+  findCursorBin,
+  getCursorHiveMcpStatus,
+  getCursorMcpConfigPath,
+  getRegisteredCursorHiveMcp,
+  isCursorInstalled,
+} from "../lib/cursor-wire";
 import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
 import { assembleIdentity } from "../lib/identity";
 import { INDEX_SIZE_BUDGET_BYTES, validateMemoryStructure } from "../lib/memory";
@@ -206,6 +213,81 @@ async function checkCodex(): Promise<Check[]> {
       // intentional: malformed hooks.json — report as failure
       checks.push({ status: "fail", label: "~/.codex/hooks.json is malformed" });
     }
+  }
+
+  return checks;
+}
+
+async function checkCursor(): Promise<Check[]> {
+  const checks: Check[] = [];
+
+  if (!isCursorInstalled()) {
+    checks.push({
+      status: "pass",
+      label: "Cursor CLI not installed (skipping)",
+      detail: "Optional alt harness; install cursor-agent to use `hive -a`.",
+    });
+    return checks;
+  }
+
+  const cursor = findCursorBin();
+  if (!cursor) {
+    checks.push({ status: "warn", label: "Cursor CLI was detected but its binary cannot be resolved" });
+    return checks;
+  }
+
+  const version = spawnSync(cursor, ["--version"], { encoding: "utf-8", timeout: 5000 });
+  checks.push(version.status === 0
+    ? { status: "pass", label: `cursor-agent ${(version.stdout ?? "").trim().split("\n")[0] || "found"}` }
+    : { status: "warn", label: "Cursor CLI version check failed" });
+
+  try {
+    const registered = await getRegisteredCursorHiveMcp();
+    if (registered) {
+      const cmdExists = existsSync(registered.command) || Bun.which(registered.command) !== null;
+      checks.push(cmdExists
+        ? { status: "pass", label: "hive registered in ~/.cursor/mcp.json" }
+        : { status: "fail", label: `Cursor MCP command missing: ${registered.command}` });
+    } else {
+      checks.push({
+        status: "warn",
+        label: "hive not registered in ~/.cursor/mcp.json",
+        detail: `Run: hive init. Config path: ${getCursorMcpConfigPath()}`,
+      });
+    }
+  } catch {
+    checks.push({
+      status: "fail",
+      label: "~/.cursor/mcp.json is malformed",
+      detail: `Repair ${getCursorMcpConfigPath()}, then run: hive init`,
+    });
+  }
+
+  const mcpStatus = getCursorHiveMcpStatus(cursor, process.cwd());
+  if (mcpStatus === "ready") {
+    checks.push({ status: "pass", label: "Cursor HIVE MCP ready for this workspace" });
+  } else if (mcpStatus === "needs-approval") {
+    checks.push({
+      status: "warn",
+      label: "Cursor HIVE MCP needs approval for this workspace",
+      detail: "Run: cursor-agent mcp enable hive (or launch hive -a once here)",
+    });
+  } else if (mcpStatus === "absent") {
+    checks.push({ status: "warn", label: "Cursor HIVE MCP absent", detail: "Run: hive init" });
+  } else {
+    checks.push({ status: "warn", label: "Could not read Cursor HIVE MCP status" });
+  }
+
+  const auth = spawnSync(cursor, ["status"], { encoding: "utf-8", timeout: 5000 });
+  if (auth.status === 0) {
+    checks.push({ status: "pass", label: "Cursor authentication ready" });
+  } else {
+    const detail = `${auth.stderr ?? ""}\n${auth.stdout ?? ""}`.trim().split("\n")[0];
+    checks.push({
+      status: "warn",
+      label: "Cursor authentication unavailable",
+      detail: detail ? `${detail}. Run: cursor-agent login` : "Run: cursor-agent login",
+    });
   }
 
   return checks;
@@ -433,18 +515,19 @@ function checkMcp(): Check[] {
 
     checks.push({ status: "pass", label: "hive registered in ~/.claude.json" });
 
-    // Check alwaysLoad is set (skips ToolSearch deferral)
+    // HIVE tools defer behind ToolSearch by design — AGENTS.md carries the
+    // usage policy, so eager schemas would only add session-start weight.
     if (servers.hive.alwaysLoad === true) {
-      checks.push({ status: "pass", label: "alwaysLoad: true (tools skip ToolSearch deferral)" });
-    } else {
       checks.push({
         status: "warn",
-        label: "alwaysLoad not set — HIVE tools require ToolSearch pre-fetch",
-        detail: "Run: hive init (adds alwaysLoad: true to existing config)",
+        label: "alwaysLoad: true — HIVE tool schemas load eagerly at session start",
+        detail: "Run: hive init (removes alwaysLoad; tools defer behind ToolSearch)",
       });
+    } else {
+      checks.push({ status: "pass", label: "tools defer behind ToolSearch (lean session start)" });
     }
 
-    // Duplicate registrations shadow the user-scope entry (and its alwaysLoad).
+    // Duplicate registrations shadow the user-scope entry.
     // Project-local scope: ~/.claude.json projects.<path>.mcpServers.hive
     const projectEntries = (config.projects ?? {}) as Record<string, { mcpServers?: Record<string, unknown> }>;
     const shadowing = Object.entries(projectEntries)
@@ -466,7 +549,7 @@ function checkMcp(): Check[] {
       checks.push({
         status: "warn",
         label: `duplicate hive registration(s) shadow user scope: ${shadowing.join(", ")}`,
-        detail: "These override the user-scope entry and drop alwaysLoad — remove them; user scope is canonical",
+        detail: "These override the user-scope entry — remove them; user scope is canonical",
       });
     }
 
@@ -764,6 +847,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
     { heading: "MCP", checks: checkMcp() },
     { heading: "Codex", checks: await checkCodex() },
     { heading: "Pi", checks: await checkPi() },
+    { heading: "Cursor", checks: await checkCursor() },
     { heading: "Models", checks: checkModels() },
     { heading: "Scheduler", checks: checkScheduler() },
     { heading: "Memory schema", checks: await checkMemorySchema() },

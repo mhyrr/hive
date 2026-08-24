@@ -9,15 +9,25 @@ import {
   type Dirent,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { basename, join, resolve as resolvePath } from "node:path";
 
 import { getHivePaths, listProjects } from "./paths";
 import { parseFrontmatter } from "./frontmatter";
 import { buildCorpus, bm25Score, tokenize } from "./memory";
 
+export type SessionSource = "claude" | "codex";
+
+export interface ExchangeWindow {
+  start: Date;
+  end: Date;
+}
+
 export interface ExtractedExchange {
   role: "user" | "assistant";
   text: string;
+  timestamp: string;
+  source: SessionSource;
+  sessionId: string;
 }
 
 export interface RankedExchange {
@@ -27,8 +37,6 @@ export interface RankedExchange {
   novelty: number;
   alwaysInclude: boolean;
 }
-
-export type SessionSource = "claude" | "codex";
 
 export interface RecentSessionBundle {
   source: SessionSource;
@@ -75,13 +83,14 @@ function isWithinPath(candidate: string, root: string): boolean {
 }
 
 /**
- * Find Claude Code session transcripts modified in the last N hours.
+ * Find Claude Code transcript files that may contain records in the window.
+ * Record timestamps, not file mtimes, make the final inclusion decision.
  */
-function findRecentClaudeSessions(hoursAgo: number = 24, now: Date = new Date()): RecentSessionBundle[] {
+function findClaudeSessionsInWindow(window: ExchangeWindow): RecentSessionBundle[] {
   const claudeDir = join(userHome(), ".claude", "projects");
   if (!existsSync(claudeDir)) return [];
 
-  const cutoff = now.getTime() - hoursAgo * 60 * 60 * 1000;
+  const cutoff = window.start.getTime();
   const result: RecentSessionBundle[] = [];
 
   const projectDirs = readdirSync(claudeDir, { withFileTypes: true })
@@ -94,7 +103,10 @@ function findRecentClaudeSessions(hoursAgo: number = 24, now: Date = new Date())
       .map((f) => join(projectDir, f))
       .filter((f) => {
         try {
-          return statSync(f).mtimeMs > cutoff;
+          // mtime is only a safe lower-bound prune. A long-lived file modified
+          // after the window may still contain exchanges inside it, so the
+          // upper bound is enforced per record in extractExchanges().
+          return statSync(f).mtimeMs >= cutoff;
         } catch {
           return false; // intentional: stat failure — exclude file
         }
@@ -108,7 +120,7 @@ function findRecentClaudeSessions(hoursAgo: number = 24, now: Date = new Date())
   return result;
 }
 
-function collectRecentJsonlFiles(root: string, cutoffMs: number): string[] {
+function collectJsonlFilesSince(root: string, cutoffMs: number): string[] {
   if (!existsSync(root)) return [];
 
   const result: string[] = [];
@@ -133,7 +145,7 @@ function collectRecentJsonlFiles(root: string, cutoffMs: number): string[] {
       }
       if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
       try {
-        if (statSync(path).mtimeMs > cutoffMs) result.push(path);
+        if (statSync(path).mtimeMs >= cutoffMs) result.push(path);
       } catch {
         // intentional: skip unreadable file during walk
       }
@@ -194,19 +206,15 @@ export function readCodexCwd(jsonlPath: string): string | null {
 }
 
 /**
- * Find Codex session transcripts modified in the last N hours.
+ * Find Codex transcript files that may contain records in the window.
  *
  * Codex stores sessions globally under ~/.codex/sessions/YYYY/MM/DD rather
  * than under per-project directories. The session_meta record carries cwd,
  * so we group by cwd and resolve that back to a HIVE project later.
  */
-function findRecentCodexSessions(
-  hoursAgo: number = 24,
-  now: Date = new Date(),
-): RecentSessionBundle[] {
+function findCodexSessionsInWindow(window: ExchangeWindow): RecentSessionBundle[] {
   const codexDir = join(userHome(), ".codex", "sessions");
-  const cutoff = now.getTime() - hoursAgo * 60 * 60 * 1000;
-  const files = collectRecentJsonlFiles(codexDir, cutoff);
+  const files = collectJsonlFilesSince(codexDir, window.start.getTime());
   const byCwd = new Map<string, string[]>();
 
   for (const file of files) {
@@ -224,14 +232,22 @@ function findRecentCodexSessions(
   }));
 }
 
-/**
- * Find all supported session transcripts modified in the last N hours.
- */
-export function findRecentSessions(hoursAgo: number = 24, now: Date = new Date()): RecentSessionBundle[] {
+/** Find all supported transcript files that may overlap the window. */
+export function findSessionsInWindow(window: ExchangeWindow): RecentSessionBundle[] {
   return [
-    ...findRecentClaudeSessions(hoursAgo, now),
-    ...findRecentCodexSessions(hoursAgo, now),
+    ...findClaudeSessionsInWindow(window),
+    ...findCodexSessionsInWindow(window),
   ];
+}
+
+export function findRecentSessions(
+  hoursAgo: number = 24,
+  now: Date = new Date(),
+): RecentSessionBundle[] {
+  return findSessionsInWindow({
+    start: new Date(now.getTime() - hoursAgo * 60 * 60 * 1000),
+    end: now,
+  });
 }
 
 /**
@@ -331,8 +347,26 @@ export function shouldSkipUserText(text: string): boolean {
  * Extract user and assistant text from a session JSONL file.
  * Skips: tool_use, tool_result, thinking, system, file-history-snapshot, progress, queue-operation
  */
-export function extractExchanges(jsonlPath: string): ExtractedExchange[] {
+export interface ExtractExchangeOptions {
+  source?: SessionSource;
+  sessionId?: string;
+  window?: ExchangeWindow;
+}
+
+function timestampInWindow(timestamp: string, window?: ExchangeWindow): boolean {
+  const value = Date.parse(timestamp);
+  if (!Number.isFinite(value)) return false;
+  if (!window) return true;
+  return value >= window.start.getTime() && value < window.end.getTime();
+}
+
+export function extractExchanges(
+  jsonlPath: string,
+  options: ExtractExchangeOptions = {},
+): ExtractedExchange[] {
   const exchanges: ExtractedExchange[] = [];
+  const source = options.source ?? "claude";
+  const sessionId = options.sessionId ?? basename(jsonlPath, ".jsonl");
 
   let content: string;
   try {
@@ -351,6 +385,9 @@ export function extractExchanges(jsonlPath: string): ExtractedExchange[] {
     } catch {
       continue; // intentional: skip malformed JSONL lines
     }
+
+    const timestamp = typeof obj.timestamp === "string" ? obj.timestamp : "";
+    if (!timestampInWindow(timestamp, options.window)) continue;
 
     let role: "user" | "assistant" | undefined;
     let msgContent: unknown;
@@ -382,7 +419,13 @@ export function extractExchanges(jsonlPath: string): ExtractedExchange[] {
       if (!text) continue;
     }
 
-    exchanges.push({ role, text: redact(text.trim()) });
+    exchanges.push({
+      role,
+      text: redact(text.trim()),
+      timestamp: new Date(timestamp).toISOString(),
+      source,
+      sessionId,
+    });
   }
 
   return exchanges;
@@ -477,37 +520,54 @@ export interface ProjectExchanges {
 }
 
 /**
- * Find recent sessions and extract every exchange, grouped by HIVE project.
- * Used by Pass A conditioning. No 50KB cap — selection happens via
- * rankExchanges + budget at the consumer.
+ * Extract only records inside the window, grouped by HIVE project.
+ * Used by Pass A conditioning. No file-level text cap applies here; the
+ * consumer ranks full exchanges and enforces a project excerpt budget.
  */
-export async function extractAllRecentExchanges(
-  hoursAgo: number = 24,
-  now: Date = new Date(),
+export async function extractAllExchangesInWindow(
+  window: ExchangeWindow,
 ): Promise<ProjectExchanges[]> {
-  const recentBundles = findRecentSessions(hoursAgo, now);
+  const recentBundles = findSessionsInWindow(window);
   const result = new Map<string, ProjectExchanges>();
 
   for (const bundle of recentBundles) {
     const projectName = await resolveProjectName(bundle);
     const allExchanges: ExtractedExchange[] = [];
+    let sessionCount = 0;
     for (const file of bundle.files) {
-      allExchanges.push(...extractExchanges(file));
+      const fileExchanges = extractExchanges(file, {
+        source: bundle.source,
+        sessionId: basename(file, ".jsonl"),
+        window,
+      });
+      if (fileExchanges.length === 0) continue;
+      allExchanges.push(...fileExchanges);
+      sessionCount++;
     }
     if (allExchanges.length === 0) continue;
 
     const existing = result.get(projectName);
     if (existing) {
       existing.exchanges.push(...allExchanges);
-      existing.sessionCount += bundle.files.length;
+      existing.sessionCount += sessionCount;
     } else {
       result.set(projectName, {
         projectName,
         exchanges: allExchanges,
-        sessionCount: bundle.files.length,
+        sessionCount,
       });
     }
   }
 
   return Array.from(result.values());
+}
+
+export async function extractAllRecentExchanges(
+  hoursAgo: number = 24,
+  now: Date = new Date(),
+): Promise<ProjectExchanges[]> {
+  return extractAllExchangesInWindow({
+    start: new Date(now.getTime() - hoursAgo * 60 * 60 * 1000),
+    end: now,
+  });
 }

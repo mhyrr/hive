@@ -3,8 +3,14 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildConditionReport, writeConditionReport } from "../lib/condition";
+import {
+  buildConditionReport,
+  buildExchangeExcerpt,
+  selectExchangeExcerpts,
+  writeConditionReport,
+} from "../lib/condition";
 import { ensureHiveScaffold } from "../lib/paths";
+import type { ExtractedExchange } from "../lib/sessions";
 
 const ONE_HOUR = 1000 * 60 * 60;
 
@@ -141,6 +147,9 @@ describe("buildConditionReport — shape + persistence", () => {
     expect(report.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(report.generatedAt).toMatch(/T/);
     expect(report.hoursWindow).toBe(24);
+    expect(report.windowMode).toBe("rolling");
+    expect(report.windowStart).toMatch(/T/);
+    expect(report.windowEnd).toBe(report.generatedAt);
     expect(report.totals.projectCount).toBe(2);
     expect(report.projects.map((p) => p.projectName).sort()).toEqual(["alpha", "bravo"]);
     for (const p of report.projects) {
@@ -149,6 +158,34 @@ describe("buildConditionReport — shape + persistence", () => {
       expect(p.git.available).toBe(false);
       expect(p.tickets.moved).toEqual([]);
     }
+  });
+
+  test("live reports use a rolling window ending at the real run clock", async () => {
+    const home = await emptyHome();
+    const paths = await ensureHiveScaffold(home);
+    const now = new Date("2026-08-20T06:00:00.000Z");
+    const report = await buildConditionReport(paths, { now });
+
+    expect(report.date).toBe("2026-08-20");
+    expect(report.generatedAt).toBe("2026-08-20T06:00:00.000Z");
+    expect(report.windowStart).toBe("2026-08-19T06:00:00.000Z");
+    expect(report.windowEnd).toBe("2026-08-20T06:00:00.000Z");
+    expect(report.windowMode).toBe("rolling");
+  });
+
+  test("explicit dates scan one exact UTC calendar day", async () => {
+    const home = await emptyHome();
+    const paths = await ensureHiveScaffold(home);
+    const report = await buildConditionReport(paths, {
+      date: "2026-08-19",
+      now: new Date("2026-08-20T06:00:00.000Z"),
+    });
+
+    expect(report.date).toBe("2026-08-19");
+    expect(report.generatedAt).toBe("2026-08-20T06:00:00.000Z");
+    expect(report.windowStart).toBe("2026-08-19T00:00:00.000Z");
+    expect(report.windowEnd).toBe("2026-08-20T00:00:00.000Z");
+    expect(report.windowMode).toBe("calendar-day");
   });
 
   test("writeConditionReport persists JSON at runs/{DATE}/condition.json", async () => {
@@ -163,5 +200,51 @@ describe("buildConditionReport — shape + persistence", () => {
     expect(persisted.date).toBe(report.date);
     expect(persisted.totals.projectCount).toBe(report.totals.projectCount);
     expect(persisted.trivial).toBe(report.trivial);
+  });
+});
+
+describe("Pass A exchange excerpts", () => {
+  const item = (
+    text: string,
+    timestamp: string,
+    role: ExtractedExchange["role"] = "assistant",
+  ): ExtractedExchange => ({
+    role,
+    text,
+    timestamp,
+    source: "claude",
+    sessionId: "session-1",
+  });
+
+  test("long excerpts preserve the opening and conclusion", () => {
+    const text = `OPENING DECISION\n${"middle detail ".repeat(200)}\nFINAL RESOLUTION`;
+    const excerpt = buildExchangeExcerpt(text, 80);
+
+    expect(excerpt.truncated).toBe(true);
+    expect(excerpt.text).toStartWith("OPENING DECISION");
+    expect(excerpt.text).toContain("… [middle omitted] …");
+    expect(excerpt.text).toEndWith("FINAL RESOLUTION");
+    expect(excerpt.tokenCount).toBeLessThanOrEqual(80);
+  });
+
+  test("ranking selects the material and output restores chronology", () => {
+    const exchanges = [
+      item("Earlier context with enough detail to keep.", "2026-08-20T10:00:00.000Z"),
+      item("save this: final decision and rationale", "2026-08-20T12:00:00.000Z", "user"),
+      item("Middle correction with useful detail.", "2026-08-20T11:00:00.000Z"),
+    ];
+
+    const { topRanked } = selectExchangeExcerpts(exchanges, [], {
+      budgetTokens: 1_000,
+      maxExcerptTokens: 100,
+    });
+
+    expect(topRanked.map((entry) => entry.timestamp)).toEqual([
+      "2026-08-20T10:00:00.000Z",
+      "2026-08-20T11:00:00.000Z",
+      "2026-08-20T12:00:00.000Z",
+    ]);
+    expect(topRanked[2]?.signalRank).toBe(0);
+    expect(topRanked[2]?.alwaysInclude).toBe(true);
   });
 });

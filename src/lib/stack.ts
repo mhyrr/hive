@@ -295,7 +295,7 @@ export const STACK_TRIGGERS: Record<string, string> = {
 };
 
 /** Harness emitting the stack hint. Affects wording, not content. */
-export type Harness = "claude" | "codex" | "pi";
+export type Harness = "claude" | "codex" | "pi" | "cursor";
 
 /**
  * Build the session-start hint line for a detected stack.

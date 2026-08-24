@@ -1,8 +1,8 @@
 # HIVE Identity Injection
 
-How HIVE gets its persistent identity into Claude Code, Pi, and Codex
-sessions. Claude Code remains the default harness; Pi and Codex are opt-in
-through `hive -3` and `hive -x`.
+How HIVE gets its persistent identity into Claude Code, Pi, Codex, and Cursor
+CLI sessions. Claude Code remains the default harness; Pi, Codex, and Cursor
+are opt-in through `hive -3`, `hive -x`, and `hive -a`.
 
 ## The Stack
 
@@ -83,12 +83,15 @@ assembles the identity prefix. All consumers route through it:
 | Claude Code via `hive` | temp `--append-system-prompt-file` -> `assembleIdentity()` |
 | Pi via `hive -3` | generated `pi -e <tempfile>` extension -> `assembleIdentity()` |
 | Codex via `hive -x` | `~/.codex/AGENTS.md`, refreshed before launch and by `~/.hive/codex-load-identity.sh` -> `hive identity emit` |
+| Cursor CLI via `hive -a` | canonical identity prepended to the positional initial prompt -> `assembleIdentity()` |
 | Watch Act branch executor | `--append-system-prompt-file` -> `assembleIdentity()` |
 
 The Claude Code SessionStart hook and Codex's direct-session hook are thin
-shell wrappers that delegate to `hive identity emit`. Pi gets a runtime-generated extension
-because its launch API supports prompt mutation directly. Drift is
-structurally limited: there is only one program that builds the prefix.
+shell wrappers that delegate to `hive identity emit`. Pi gets a
+runtime-generated extension because its launch API supports prompt mutation
+directly. Cursor receives the same identity in its initial positional prompt.
+Drift is structurally limited: there is only one program that builds the
+prefix.
 
 ## Wiring
 
@@ -186,6 +189,43 @@ Use `--claude` or `--claude-code` to override the env var.
 it checks whether AGENTS.md matches the current HIVE identity rather than only
 checking that the file exists.
 
+### Cursor CLI
+
+`hive -a` and `hive --cursor` route an interactive session through
+`cursor-agent`. `HIVE_HARNESS=cursor hive` selects the same route. Use
+`--claude` or `--claude-code` to override the environment setting.
+
+Cursor CLI has no verified system-prompt flag. HIVE therefore preserves the
+documented Cursor options and builds one positional argument containing the
+identity, a boundary instruction, and the user request. A live 2026-08-19 run
+showed that separate identity and request arguments were accepted but only the
+first reached the model. If the user runs bare `hive -a`, the combined argument
+becomes a synthetic first turn that carries identity and tells Cursor to wait.
+Cursor then remains interactive. The extra visible startup turn is the cost
+of this mechanism.
+
+The combined prompt was also verified against the live model on 2026-08-19.
+Cursor's local transcript contains the full 30,435-byte combined user turn and
+the requested answer, `Maya` and `🐝🍯`. The CLI lost its server connection
+after inference and ended with `WritableIterable is closed`, so that answer did
+not reach stdout. Identity and request transport are verified; Cursor's output
+stream at this prompt size remains a runtime caveat.
+
+A 2026-08-19 canary rejected the planned plugin route. On
+`cursor-agent 2026.08.11-e8db854`, Cursor accepted a 30,513-byte rule carrying
+a 30,367-byte identity and exited 0. The model still said it lacked the canary,
+and the marker did not match. HIVE does not use `--plugin-dir` for identity.
+
+`hive init` merges HIVE MCP into `~/.cursor/mcp.json`. Registration does not
+grant approval. Cursor persists approval per project directory, so the
+launcher runs `cursor-agent mcp enable hive` from the current directory on
+each launch as a best-effort self-heal. `hive doctor` checks the binary, auth,
+MCP registration, and current-project approval. It does not check plugins.
+
+The verified Cursor version reads `~/.claude/skills/`, so existing HIVE stack
+skills can be visible without a second copy. This is Cursor compatibility
+behavior, not a promise that every Claude Code skill works unchanged.
+
 ## Adding a New Identity Section
 
 The full add-checklist when introducing a new section to the prefix:
@@ -243,7 +283,10 @@ everything is green and Maya still feels off:
    wiring. In Pi, launch with `hive -3` and verify the generated extension
    loaded before the model starts. In Codex, inspect `~/.codex/AGENTS.md`;
    if it is stale, run `hive -x` from the target project or `hive init`, then
-   check `~/.codex/hooks.json`.
+   check `~/.codex/hooks.json`. In Cursor, launch with `hive -a`; a bare
+   launch consumes a synthetic startup turn before it waits for your request.
+   If HIVE tools are absent, run `cursor-agent mcp enable hive` from the
+   project and check `hive doctor --verbose`.
 
 ## Related
 

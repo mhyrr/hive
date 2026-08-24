@@ -1,4 +1,4 @@
-export type Harness = "claude-code" | "codex" | "pi";
+export type Harness = "claude-code" | "codex" | "pi" | "cursor" | "identity-shell";
 
 /**
  * Claude Code prompt-injection mode.
@@ -30,6 +30,7 @@ export function resolveHarness(args: string[]): HarnessSelection {
   let persona: string | undefined;
   if (process.env.HIVE_HARNESS === "codex") harness = "codex";
   if (process.env.HIVE_HARNESS === "pi") harness = "pi";
+  if (process.env.HIVE_HARNESS === "cursor") harness = "cursor";
   if (process.env.HIVE_CLAUDE_MODE === "owned") claudeMode = "owned";
   if (process.env.HIVE_CLAUDE_MODE === "bare") claudeMode = "bare";
 
@@ -41,6 +42,10 @@ export function resolveHarness(args: string[]): HarnessSelection {
     }
     if (arg === "-3" || arg === "--pi") {
       harness = "pi";
+      continue;
+    }
+    if (arg === "-a" || arg === "--cursor") {
+      harness = "cursor";
       continue;
     }
     if (arg === "--claude" || arg === "--claude-code") {
