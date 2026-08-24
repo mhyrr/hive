@@ -114,14 +114,17 @@ describe("assembleIdentity", () => {
     expect(out).not.toContain("persona-dry-marker");
   });
 
-  test("includePersona inserts the default register between IDENTITY and SELF", async () => {
+  test("includePersona appends the register last — the loudest slot", async () => {
     const out = await assembleIdentity({ includePersona: true });
     expect(out).toContain("persona-dry-marker");
-    const idIdx = out.indexOf("identity-marker");
     const personaIdx = out.indexOf("persona-dry-marker");
     const selfIdx = out.indexOf("self-marker");
-    expect(personaIdx).toBeGreaterThan(idIdx);
-    expect(selfIdx).toBeGreaterThan(personaIdx);
+    const tasteIdx = out.indexOf("taste-principles-marker");
+    expect(personaIdx).toBeGreaterThan(selfIdx);
+    expect(personaIdx).toBeGreaterThan(tasteIdx);
+    // Nothing of substance after the register — only trailing whitespace.
+    const tail = out.slice(personaIdx + "persona-dry-marker".length);
+    expect(tail.trim()).toBe("");
   });
 
   test("explicit persona name overrides the default", async () => {

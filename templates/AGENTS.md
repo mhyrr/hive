@@ -1,17 +1,19 @@
 # HIVE Agent Operations
 
-HIVE is an identity, memory, and council layer for Claude Code. Claude Code
+HIVE is an identity and project-memory layer for Claude Code. Claude Code
 is the runtime — orchestration, file editing, shell, tool mechanics. HIVE
-gives you persistent identity, accumulated project intelligence, and
-multi-model deliberation. This file is the operating policy for that
-infrastructure; the harness owns tool mechanics.
+gives you persistent identity and accumulated project intelligence. This
+file is the operating policy for that infrastructure; the harness owns tool
+mechanics.
 
 ## Findings Inbox
 
 Watches and nightly jobs may drop notes into
 `~/.hive/projects/<project>/inbox.md`. At the start of an interactive
 session, if the project's inbox has content, summarize the key points —
-it's context {{userName}} may not have seen.
+it's context {{userName}} may not have seen. The nightly briefer clears the
+content after it lands the briefing. A note added during the run survives for
+the next briefing.
 
 ## Modes of Work
 
@@ -43,8 +45,19 @@ chat become plan-reading illusions.
 
 ## Browser
 
-Headless browser via Playwright MCP tools, for seeing what a user would see.
-If you start a dev server or browser, close both when done.
+Use the Codex in-app browser through the `browser-use:browser` skill for seeing
+what a user would see. Never launch the Google Chrome binary in headless mode
+from the shell. If the in-app browser runtime is unavailable, report the UI as
+unverified instead of falling back to a shell-launched browser. If you start a
+dev server or browser, close both when done.
+
+## Mix
+
+Invoke Mix directly as `mix <task>`. The shell policy already sets
+`MIX_OS_CONCURRENCY_LOCK=0`, and the command policy allows every Mix task.
+Run Mix outside the sandbox with the existing `["mix"]` approval; do not first
+probe it inside the sandbox. Never add the variable inline and never wrap Mix
+in `/bin/zsh -lc`.
 
 ## Model Economy
 
@@ -57,7 +70,7 @@ context, you get the verdict).
 Two things stay inline regardless. Correctness-critical subsystems the
 project's CLAUDE.md flags (money math, multi-tenancy boundaries, auth) —
 knock out a partition and you repaint; knock out a beam and the floor
-comes down. And visual design calls — drive Playwright yourself so the
+comes down. And visual design calls — drive the in-app browser yourself so the
 screenshot lands in your own context.
 
 For self-checks on long builds, a fresh-context verifier subagent beats
@@ -65,26 +78,16 @@ critiquing your own work.
 
 ## MCP Tool Policy
 
-The harness handles tool discovery and invocation; what follows is policy
-the tools can't tell you themselves.
+Cross-tool policy only — each tool's description says when to use it.
 
-- Before recommending in a worked domain, `search_memory` — prior decisions
-  and conventions live there, and the session-start index is only a summary.
-- Before a distinct piece of work, `search_taste` with the matching category
-  (`IDEAS`, `DESIGN`, `IMPLEMENTATION`, `TEST_EVAL`, `COMMUNICATION`,
-  `PROCESS`). Only approved units come back; treat a hit as canon.
-- When you learn something durable mid-session, `write_hive_memory` then —
-  writes queue as candidates and the nightly verifier gates admission, so
-  write freely. Don't save what the code or git history already records.
-  End of a substantive session: `reflect_session` for what's left. "Save a
-  memory" always means `write_hive_memory`, never Claude Code auto-memory.
-- `list_tickets` / `show_ticket` when work spans sessions or {{userName}}
-  references tracked work; `create_ticket` for work that should outlive the
-  session.
-- `convene_council` is the one expensive op. Surface the intent and get an
-  explicit green light first; default off.
-- Announce the expensive and the external (council, Watch Act) in one
-  sentence before running them; let cheap reads run silent.
+- `convene_council` is opt-in. Use or suggest it only when {{userName}}'s
+  current request explicitly mentions convening or using a council.
+  Otherwise, do not mention or call it. Before a call, surface the intent
+  and get an explicit green light if the request did not already give one.
+- Announce external Watch Act runs in one sentence before starting them;
+  let cheap reads run silent.
+- "Save a memory" always means `write_hive_memory`, never Claude Code
+  auto-memory. A taste hit is canon.
 
 ## Cross-Project
 

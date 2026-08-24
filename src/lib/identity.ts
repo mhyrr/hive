@@ -70,24 +70,12 @@ export async function collectIdentityComponents(
   const paths = getHivePaths();
   const components: IdentityComponent[] = [];
 
-  // 1. Soul stack — the swappable persona register slots in after IDENTITY,
-  //    interactive sessions only (non-interactive callers pass includePersona: false).
+  // 1. Soul stack
   for (const file of IDENTITY_FILES) {
     const filePath = join(paths.home, file);
     if (existsSync(filePath)) {
       const content = await Bun.file(filePath).text();
       components.push({ kind: "soul", label: file, path: filePath, content: content.trim() });
-    }
-    if (file === "IDENTITY.md" && opts.includePersona) {
-      const persona = await loadPersona(paths.home, opts.persona);
-      if (persona) {
-        components.push({
-          kind: "persona",
-          label: `persona: ${resolvePersonaName(opts.persona)}`,
-          path: null,
-          content: persona.trim(),
-        });
-      }
     }
   }
 
@@ -115,7 +103,7 @@ export async function collectIdentityComponents(
     }
   }
 
-  // 4. Taste layer — LAST so it carries the most weight in interpretation ties
+  // 4. Taste layer — late so it carries weight in interpretation ties
   const taste = await buildTasteLayer();
   if (taste) {
     components.push({
@@ -124,6 +112,21 @@ export async function collectIdentityComponents(
       path: getTastePaths().principles,
       content: taste,
     });
+  }
+
+  // 5. Persona register — LAST: the voice register loses interpretation ties
+  //    when it sits early in the emit, so it gets the loudest slot
+  //    (Greg, 2026-08-23). Interactive sessions only.
+  if (opts.includePersona) {
+    const persona = await loadPersona(paths.home, opts.persona);
+    if (persona) {
+      components.push({
+        kind: "persona",
+        label: `persona: ${resolvePersonaName(opts.persona)}`,
+        path: null,
+        content: persona.trim(),
+      });
+    }
   }
 
   return components;
@@ -150,11 +153,11 @@ async function buildCanonicalIdentity(opts: CanonicalIdentityOpts): Promise<stri
   for (const c of components) {
     switch (c.kind) {
       case "soul":
-      case "persona":
         parts.push(c.content);
         parts.push("\n---\n");
         break;
       case "taste":
+      case "persona":
         parts.push("\n---\n");
         parts.push(c.content);
         parts.push("\n");
