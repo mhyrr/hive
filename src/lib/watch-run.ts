@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { completeClaudeTextBounded, type ClaudeTextCompletion } from "./claude";
 import { extractConfigValue } from "./config";
 import { getProjectPaths, type HivePaths } from "./paths";
+import { writeNextSelection } from "./next";
 import { now as hiveNow, toIsoTimestamp } from "./time";
 import { writeInvocationLog } from "./watch-log";
 import {
@@ -164,6 +165,18 @@ function isQuotaError(err: unknown): boolean {
 }
 
 const ACT_SELECTION = /^ACT\s+([a-zA-Z0-9_-]+)\/(TK-\d+)\s*$/gm;
+
+function actRationale(output: string, project: string, ticketId: string): string {
+  const candidate = `[A:${project}/${ticketId}]`;
+  const command = `ACT ${project}/${ticketId}`;
+  return output
+    .split("\n")
+    .filter((line) => line.trim() !== command)
+    .map((line) => line.replace(candidate, "").trimStart())
+    .filter((line) => line.trim().length > 0)
+    .join("\n")
+    .trim() || `Selected by the Act watch from ${candidate}.`;
+}
 
 async function appendInbox(inboxPath: string, header: string, body: string): Promise<void> {
   const existing = existsSync(inboxPath) ? readFileSync(inboxPath, "utf-8") : `${header}\n\n`;
@@ -351,54 +364,72 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
         outcome = "quiet";
         detail = "output dropped — no evidence anchor cited";
       } else if (watch.venue === "act") {
-        if (effective !== "act") {
-          const heading = `## ${toIsoTimestamp(now)} — watch:${watch.qualifiedName}\n\n`;
-          artifactPath = watch.project ? getProjectPaths(paths, watch.project).inbox : join(paths.home, "inbox.md");
-          await appendInbox(artifactPath, watch.project ? `# Inbox: ${watch.project}` : "# Inbox", `${heading}${output}\n\n`);
-          outcome = "surfaced";
-          detail = `act clamped to ${effective}; proposal surfaced without execution`;
+        const selections = [...output.matchAll(ACT_SELECTION)];
+        if (selections.length !== 1) {
+          outcome = "quiet";
+          detail = "act output dropped — expected exactly one `ACT project/TK-NNN`";
         } else {
-          const selections = [...output.matchAll(ACT_SELECTION)];
-          if (selections.length !== 1) {
+          const selected = selections[0]!;
+          const project = selected[1]!;
+          const ticketId = selected[2]!;
+          const candidateTag = `[A:${project}/${ticketId}]`;
+          if (!digest.provenance.includes(candidateTag) || !output.includes(candidateTag)) {
             outcome = "quiet";
-            detail = "act output dropped — expected exactly one `ACT project/TK-NNN`";
+            detail = "act selection dropped — ticket was not in the eligible shortlist";
+          } else if (effective !== "act") {
+            await writeNextSelection(paths, {
+              version: 1,
+              disposition: "recommended",
+              selectedAt: toIsoTimestamp(now),
+              sourceWatch: watch.qualifiedName,
+              projectId: project,
+              ticketId,
+              rationale: actRationale(output, project, ticketId),
+            });
+            artifactPath = paths.next;
+            outcome = "surfaced";
+            detail = `act clamped to ${effective}; recommendation replaced in next.json`;
           } else {
-            const selected = selections[0]!;
-            const project = selected[1]!;
-            const ticketId = selected[2]!;
-            const candidateTag = `[A:${project}/${ticketId}]`;
-            if (!digest.provenance.includes(candidateTag) || !output.includes(candidateTag)) {
-              outcome = "quiet";
-              detail = "act selection dropped — ticket was not in the eligible shortlist";
-            } else {
-              let started: WatchActResult;
+            let started: WatchActResult;
+            try {
+              started = await actRunner({ project, ticketId, watch: watch.qualifiedName });
+            } catch (actError) {
+              const message = actError instanceof Error ? actError.message : String(actError);
+              entry.lastOutcome = "error";
+              entry.lastError = message;
+              await saveWatchState(paths, state);
               try {
-                started = await actRunner({ project, ticketId, watch: watch.qualifiedName });
-              } catch (actError) {
-                const message = actError instanceof Error ? actError.message : String(actError);
-                entry.lastOutcome = "error";
-                entry.lastError = message;
-                await saveWatchState(paths, state);
-                try {
-                  await writeInvocationLog({
-                    paths, watch, now, modelId, autonomy: effective, reasons: delta.reasons,
-                    systemPrompt, userContent, output: null, outcome: "error",
-                    error: `Act execution failed: ${message}\n\nModel output:\n${output}`,
-                    durationMs: completion.durationMs,
-                  });
-                } catch (logErr) {
-                  warnings.push(`${watch.qualifiedName}: invocation log write failed (${logErr instanceof Error ? logErr.message : String(logErr)})`);
-                }
-                report({ outcome: "error", error: message, reasons: delta.reasons, durationMs: Date.now() - startMs });
-                continue;
+                await writeInvocationLog({
+                  paths, watch, now, modelId, autonomy: effective, reasons: delta.reasons,
+                  systemPrompt, userContent, output: null, outcome: "error",
+                  error: `Act execution failed: ${message}\n\nModel output:\n${output}`,
+                  durationMs: completion.durationMs,
+                });
+              } catch (logErr) {
+                warnings.push(`${watch.qualifiedName}: invocation log write failed (${logErr instanceof Error ? logErr.message : String(logErr)})`);
               }
-              const heading = `## ${toIsoTimestamp(now)} — watch:${watch.qualifiedName}\n\n`;
-              const body = `${heading}${candidateTag} started ${started.runId} on an isolated review branch. It will not merge or push.\n\n`;
-              artifactPath = watch.project ? getProjectPaths(paths, watch.project).inbox : join(paths.home, "inbox.md");
-              await appendInbox(artifactPath, watch.project ? `# Inbox: ${watch.project}` : "# Inbox", body);
-              outcome = "surfaced";
-              detail = `${started.runId} started for human review`;
+              report({ outcome: "error", error: message, reasons: delta.reasons, durationMs: Date.now() - startMs });
+              continue;
             }
+            try {
+              await writeNextSelection(paths, {
+                version: 1,
+                disposition: "started",
+                selectedAt: toIsoTimestamp(now),
+                sourceWatch: watch.qualifiedName,
+                projectId: project,
+                ticketId,
+                rationale: actRationale(output, project, ticketId),
+                runId: started.runId,
+              });
+              artifactPath = paths.next;
+            } catch (nextError) {
+              // Execution already started. Settle the watch so a failed status
+              // write cannot launch the same ticket again on the next tick.
+              warnings.push(`${watch.qualifiedName}: next.json write failed after ${started.runId} started (${nextError instanceof Error ? nextError.message : String(nextError)})`);
+            }
+            outcome = "surfaced";
+            detail = `${started.runId} started for human review`;
           }
         }
       } else if (watch.venue === "inbox") {
@@ -408,8 +439,11 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
           await appendInbox(getProjectPaths(paths, watch.project).inbox, `# Inbox: ${watch.project}`, body);
           artifactPath = getProjectPaths(paths, watch.project).inbox;
         } else {
-          artifactPath = join(paths.home, "inbox.md");
-          await appendInbox(artifactPath, "# Inbox", body);
+          const runDir = join(paths.memoryRunsDir, date);
+          await mkdir(runDir, { recursive: true });
+          artifactPath = join(runDir, `${watch.name}.md`);
+          await Bun.write(artifactPath, `# Watch: ${watch.qualifiedName} — ${date}\n\n${output}\n`);
+          detail = "cross-project inbox retired; wrote dated briefing artifact";
         }
         outcome = "surfaced";
       } else if (watch.venue === "briefing") {

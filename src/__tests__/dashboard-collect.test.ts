@@ -69,6 +69,12 @@ async function buildFixture(): Promise<string> {
     join(briefingsDir, "2026-04-16.md"),
     "# Morning Briefing — 2026-04-16\n\nYesterday was fine.\n",
   );
+  const observeDir = join(paths.memoryRunsDir, "2026-04-17");
+  await mkdir(observeDir, { recursive: true });
+  await writeFile(
+    join(observeDir, "observe.md"),
+    "# Watch: observe — 2026-04-17\n\nTwo threads now connect.\n",
+  );
 
   // --- runs ---
   const runsDir = join(home, "runs");
@@ -213,6 +219,8 @@ describe("dashboard collectors", () => {
     expect(briefings[0]!.date).toBe("2026-04-17");
     expect(briefings[1]!.date).toBe("2026-04-16");
     expect(briefings[0]!.headline).toMatch(/Morning Briefing/);
+    expect(briefings[0]!.observe).toBe("Two threads now connect.");
+    expect(briefings[1]!.observe).toBeNull();
   });
 
   test("collectHealth produces entries per log file", async () => {

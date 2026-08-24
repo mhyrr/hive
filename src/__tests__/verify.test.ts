@@ -725,8 +725,9 @@ describe("loadVerifierBundle", () => {
 
 describe("runVerifier (end-to-end with synthetic home)", () => {
   test("shards per project with candidates, then briefs", async () => {
-    const { paths } = await syntheticHome("hive-verify-e2e-");
+    const { home, paths } = await syntheticHome("hive-verify-e2e-");
     await appendCandidate(paths, "alpha", { type: "fact", content: "a pending fact" });
+    await writeFile(join(home, "projects", "alpha", "inbox.md"), "# Inbox: alpha\n\nA captured finding.\n");
 
     const { caller, calls } = scriptedCaller([
       JSON.stringify(shardOutput),
@@ -756,6 +757,10 @@ describe("runVerifier (end-to-end with synthetic home)", () => {
     expect(decisions.decisions.length).toBe(2);
     const briefing = await Bun.file(result.artifacts.briefingPath).text();
     expect(briefing).toContain("HIVE");
+    const inboxes = JSON.parse(await Bun.file(result.artifacts.inboxSnapshotPath).text());
+    expect(inboxes.inboxes).toEqual([
+      { projectId: "alpha", bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    ]);
 
     // One usage row for the pass, summed across both calls.
     const usage = await loadUsageSummary(paths, today);

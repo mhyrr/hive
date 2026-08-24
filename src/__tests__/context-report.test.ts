@@ -85,12 +85,12 @@ describe("buildContextReport — components", () => {
     expect(labels).toEqual([
       "SOUL.md",
       "IDENTITY.md",
-      "persona: dry",
       "SELF.md",
       "AGENTS.md",
       "TRUST.md",
       "_index.md",
       "taste layer",
+      "persona: dry",
     ]);
     for (const c of report.components) {
       expect(c.bytes).toBeGreaterThan(0);

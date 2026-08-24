@@ -3,7 +3,7 @@ name: observe
 cadence: 3d
 scope: transcripts, memory
 model: judgment
-venue: inbox
+venue: briefing
 autonomy: observe
 enabled: true
 ---

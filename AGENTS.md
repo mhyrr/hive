@@ -13,7 +13,7 @@ Cursor CLI is optional via `hive -a` / `hive --cursor`. HIVE prepends the
 canonical identity to Cursor's positional initial prompt. `hive init`
 registers HIVE in `~/.cursor/mcp.json`; Cursor approval remains per project.
 
-HIVE MCP tools (loaded eagerly via `alwaysLoad: true` on the MCP registration):
+HIVE MCP tools (deferred in Claude Code — schemas load via ToolSearch on first use):
 - `convene_council` — Multi-model deliberation. Standard, analyst, or dialectic modes.
 - `read_hive_memory` — Read project intelligence (full knowledge or lightweight index).
 - `write_hive_memory` — Queue a fact/convention/decision/question as a candidate. Mid-session writes go to `candidates.md`; the nightly verifier (Pass V) admits them to canon.

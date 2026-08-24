@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,7 @@ import {
   supersedeEntryByHash,
 } from "../lib/memory";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
+import { inboxBodyHash } from "../lib/inbox";
 
 // ---------------------------------------------------------------------------
 // parseCandidateId
@@ -283,6 +284,13 @@ async function buildApplyFixture(): Promise<FixtureContext> {
 
   // Briefing artifact for landing
   await writeFile(join(runDir, "briefing.md"), `# HIVE — ${date}\n\n## Headline\nQuiet day.\n`);
+  await Bun.write(join(runDir, "inboxes.json"), JSON.stringify({
+    version: 1,
+    inboxes: ["alpha", "bravo"].map((projectId) => ({
+      projectId,
+      bodyHash: inboxBodyHash("- earlier finding"),
+    })),
+  }));
 
   return { paths, date, runDir };
 }
@@ -375,6 +383,46 @@ describe("applyDecisions — end to end", () => {
 
     // briefingPath returned but file not written (it already exists from the fixture though)
     // The test mostly cares that canon wasn't mutated.
+  });
+
+  test("clears an inbox-only project after its briefing lands", async () => {
+    const { paths, date, runDir } = await buildApplyFixture();
+    await mkdir(join(paths.projectsDir, "charlie"), { recursive: true });
+    await writeFile(join(paths.projectsDir, "charlie", "config.md"), "---\nname: charlie\npath: /tmp/nope/charlie\n---\n");
+    await writeFile(join(paths.projectsDir, "charlie", "inbox.md"), "# Inbox: charlie\n\nObserve found one thread.\n");
+    const snapshots = JSON.parse(await Bun.file(join(runDir, "inboxes.json")).text()) as {
+      version: number;
+      inboxes: Array<{ projectId: string; bodyHash: string }>;
+    };
+    snapshots.inboxes.push({
+      projectId: "charlie",
+      bodyHash: inboxBodyHash("Observe found one thread."),
+    });
+    await Bun.write(join(runDir, "inboxes.json"), JSON.stringify(snapshots));
+
+    const result = await applyDecisions({ paths, date });
+    expect(result.perProject.find((item) => item.projectId === "charlie")?.inboxTruncated).toBe(true);
+    expect(await Bun.file(join(paths.projectsDir, "charlie", "inbox.md")).text()).toBe("# Inbox: charlie\n\n");
+  });
+
+  test("preserves an inbox changed after verification", async () => {
+    const { paths, date } = await buildApplyFixture();
+    const inboxPath = join(paths.projectsDir, "alpha", "inbox.md");
+    await writeFile(inboxPath, "# Inbox: alpha\n\n- earlier finding\n- note added after Pass V\n");
+
+    const result = await applyDecisions({ paths, date });
+    expect(result.perProject.find((item) => item.projectId === "alpha")?.inboxTruncated).toBe(false);
+    expect(await Bun.file(inboxPath).text()).toContain("note added after Pass V");
+  });
+
+  test("preserves captured inboxes when no briefing lands", async () => {
+    const { paths, date, runDir } = await buildApplyFixture();
+    await rm(join(runDir, "briefing.md"));
+
+    const result = await applyDecisions({ paths, date });
+    expect(result.briefingPath).toBeNull();
+    expect(await Bun.file(join(paths.projectsDir, "alpha", "inbox.md")).text()).toContain("earlier finding");
+    expect(result.perProject.find((item) => item.projectId === "alpha")?.inboxTruncated).toBe(false);
   });
 
   test("missing decisions.json throws clearly", async () => {

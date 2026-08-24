@@ -14,8 +14,6 @@
 set -uo pipefail
 
 HIVE_BIN="${HIVE_BIN:-$HOME/.local/bin/hive}"
-INBOX="$HOME/.hive/inbox.md"
-STAMP="$(date +%Y-%m-%d)"
 WEEK_AGO="$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d)"
 
 if [ ! -x "$HIVE_BIN" ]; then
@@ -43,19 +41,6 @@ if [ "${PENDING:-0}" -eq 0 ]; then
   exit 0
 fi
 
-{
-  printf '\n## %s — weekly taste review\n\n' "$STAMP"
-  printf '%s contradiction(s) held for your call. %s active, %s still accumulating.\n' \
-    "$PENDING" "$ACTIVE" "$HOLDING"
-  printf '%s unit(s) admitted themselves this week.\n\n' "$ADMITTED"
-  printf 'A held unit disagrees with an apex principle that is injected into every\n'
-  printf 'session. Until you decide which side is wrong, it stays out of retrieval.\n\n'
-  printf -- '- `hive taste review` — walk the queue (y/n keypress)\n'
-  printf -- '- `hive taste status --since %s` — what landed this week\n' "$WEEK_AGO"
-  printf -- '- dashboard → /taste for the whole library\n\n'
-  printf -- '---\n'
-} >> "$INBOX"
-
 osascript -e "display notification \"${PENDING} contradiction(s) need a call — hive taste review\" with title \"HIVE · weekly taste review\" sound name \"Submarine\"" 2>/dev/null || true
 
-echo "$(date -u +%FT%TZ) taste-review: surfaced ${PENDING} held unit(s) to inbox" >&2
+echo "$(date -u +%FT%TZ) taste-review: notified for ${PENDING} held unit(s); ${ACTIVE} active, ${HOLDING} accumulating, ${ADMITTED} admitted this week" >&2

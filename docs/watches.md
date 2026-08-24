@@ -51,6 +51,12 @@ can release only the claim owned by that run.
 Act is enabled in its file but requires the explicit global ceiling
 `watches.max_autonomy: act`. The default ceiling is `propose`.
 
+When that ceiling clamps Act to Propose, the selected ticket replaces
+`~/.hive/next.json`. `hive next` shows the one recommendation and checks the
+live ticket again before it calls the work ready. `hive ticket ready` remains
+the full inventory. An executing Act records that it started the selection in
+the same file; its private run is the full audit record.
+
 ### Propose — nightly
 
 Propose runs inside the nightly orchestrator after that night's evidence has
@@ -69,7 +75,8 @@ what Greg may not see and which threads connect across sessions or projects.
 It may surface one, several, or no connections. It stays abstract: it
 interprets and opens questions without turning them into proposed work.
 
-Its output goes to `~/.hive/inbox.md`.
+Its output is `runs/{DATE}/observe.md`. The dashboard folds it into the
+briefing for that date, including archived briefings.
 
 ## Tick-correlated evidence
 
@@ -109,6 +116,10 @@ citable:
 The digest is the model's entire evidence base. Every material conclusion
 must cite a tag. Output with no valid tag is dropped. `NO_SIGNAL` is a normal,
 logged answer and writes nothing to a venue.
+
+`inbox` is a project-scoped venue. A legacy cross-project watch that still
+names it writes a dated briefing artifact instead. HIVE no longer writes a
+global `~/.hive/inbox.md`.
 
 Only one watch cycle may run at a time. The lease prevents hourly, nightly,
 and manual invocations from overwriting one another's state.

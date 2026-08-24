@@ -6,6 +6,8 @@
  * each consumer from inventing its own definition of "empty".
  */
 
+import { createHash } from "node:crypto";
+
 export type InboxContent =
   | { kind: "empty"; body: ""; byteLength: 0 }
   | { kind: "content"; body: string; byteLength: number };
@@ -41,4 +43,9 @@ export function parseInbox(raw: string, projectId: string): InboxContent {
     body,
     byteLength: new TextEncoder().encode(body).byteLength,
   };
+}
+
+/** Hash the semantic body, not its markdown header or retired tombstone. */
+export function inboxBodyHash(body: string): string {
+  return createHash("sha256").update(body).digest("hex");
 }

@@ -469,11 +469,14 @@ export function renderBriefingBand(data: DashboardData): string {
     .trim();
   const projectIds = data.projects.map((p) => p.id);
   const html = tagProjectBullets(tagProjectSections(md(body), projectIds), projectIds);
+  const observe = b.observe
+    ? `<aside class="briefing-observe"><h3>Observe</h3>${md(b.observe)}</aside>`
+    : "";
   return band(
     "briefing",
     "Briefing",
     escapeHtml(longDate(b.date)),
-    `<div class="briefing-body">${html}</div>`,
+    `<div class="briefing-body">${html}${observe}</div>`,
   );
 }
 
@@ -761,8 +764,11 @@ export function renderBriefings(data: DashboardData): string {
   const articles = data.briefings
     .map((b: BriefingEntry) => {
       const isActive = b.date === data.today;
+      const observe = b.observe
+        ? `<aside class="briefing-observe"><h2>Observe</h2>${md(b.observe)}</aside>`
+        : "";
       return `<article class="briefing-article ${isActive ? "active" : ""}" data-briefing-date="${escapeHtml(b.date)}">
-  <div class="briefing">${tagProjectSections(md(b.body), projectIds)}</div>
+  <div class="briefing">${tagProjectSections(md(b.body), projectIds)}${observe}</div>
 </article>`;
     })
     .join("\n");

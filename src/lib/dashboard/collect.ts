@@ -135,6 +135,8 @@ export type BriefingEntry = {
   date: string;             // YYYY-MM-DD
   body: string;             // raw markdown
   headline: string;         // first H1/H2 or first meaningful line
+  /** Observe output produced on this date, folded into the briefing view. */
+  observe?: string | null;
 };
 
 export type PromotionCandidate = {
@@ -609,6 +611,8 @@ export async function collectBriefings(paths: HivePaths): Promise<BriefingEntry[
   for (const file of files) {
     const body = (await safeReadFile(join(dir, file))) ?? "";
     const date = file.replace(/\.md$/, "");
+    const observeRaw = await safeReadFile(join(paths.memoryRunsDir, date, "observe.md"));
+    const observe = observeRaw?.trim().replace(/^# .*\n+/, "") || null;
 
     // Headline: first non-empty, non-"---" line that isn't a horizontal rule.
     let headline = "";
@@ -622,7 +626,7 @@ export async function collectBriefings(paths: HivePaths): Promise<BriefingEntry[
     }
     if (!headline) headline = `Briefing — ${date}`;
 
-    out.push({ date, body, headline });
+    out.push({ date, body, headline, observe });
   }
 
   return out;

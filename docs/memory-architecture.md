@@ -321,13 +321,13 @@ Pass F — Apply (mechanical)
   ↓                 mergeTagsIntoEntry / drop rejected
   ↓                 (directives marked reject are force-admitted, not dropped)
   ↓ drain candidates.md → runs/{DATE}/candidates.consumed.{name}.md
-  ↓ truncate inbox.md to its canonical header-only empty form,
   ↓ rebuild _index.md per project touched
   ↓ land accepted reflections + project-scoped gaps as questions
   ↓   (gaps pass the same dedupe gate as reflections: a gap already
   ↓    covered by canon is dropped, and one re-observed on an open
   ↓    question bumps that question's recurrence marker instead)
   ↓ copy briefing.md → ~/.hive/briefings/{DATE}.md
+  ↓ clear each captured project inbox when its body still matches Pass V
 ```
 
 **Provenance discipline.** Every candidate carries a provenance string the

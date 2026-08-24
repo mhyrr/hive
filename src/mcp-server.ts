@@ -47,18 +47,17 @@ import {
 const server = new McpServer(
   { name: "hive", version: "2.0.0" },
   {
-    instructions: "HIVE provides persistent identity, project memory, multi-model council, and per-project ticket tracking. Use convene_council for important decisions. Use read/write_hive_memory to accumulate project intelligence. Use create_ticket/list_tickets/show_ticket/update_ticket/add_ticket_note for task tracking.",
+    instructions: "HIVE provides persistent identity, project memory, and per-project ticket tracking. Each tool's description says when to use it.",
   },
 );
 
 // Tool 1: Multi-model council
 server.registerTool("convene_council", {
   description:
-    "Use when a judgment call has multiple valid approaches and reasonable people would diverge — " +
-    "architecture decisions, tradeoff analysis, risk assessment before consequential changes. " +
+    "Opt-in multi-model deliberation. Use or suggest this tool only when the current user request " +
+    "explicitly mentions convening or using a council; otherwise do not mention or call it. " +
     "Sends the question to multiple models in parallel; each returns an independent position. " +
-    "You act as chair and synthesize. Mode 'dialectic' assigns camps across multiple rounds. " +
-    "Don't use for questions with obvious answers.",
+    "You act as chair and synthesize. Mode 'dialectic' assigns camps across multiple rounds.",
   inputSchema: {
     question: z.string().describe("The question to ask all council members. Be specific and give enough context."),
     models: z.array(z.string()).optional().describe("Model pool names to consult (e.g. ['opus', 'sonnet', 'gpt54']). Defaults to all configured models."),
@@ -178,14 +177,13 @@ server.registerTool("read_hive_memory", {
 // Tool 3: Queue a memory candidate for verifier admission
 server.registerTool("write_hive_memory", {
   description:
-    "Use immediately when you learn something durable in this session — a convention discovered, " +
-    "a decision made with rationale, a constraint or gotcha worth remembering, or an open " +
-    "question. Don't batch to end-of-session. Mid-session writes queue to a candidates file; " +
-    "the nightly verifier admits them to canon. Reach for it freely — the night is the gatekeeper. " +
-    "Tags help with search; use them to categorize. Provenance is auto-attached; use " +
-    "provenance_note to add context the verifier should weigh (e.g. 'Greg said X in design walk'). " +
-    "Set directive=true ONLY when the user explicitly told you to save this — a directive still " +
-    "flows through the nightly verifier for wording and placement, but it cannot be rejected.",
+    "Queue a fact, convention, decision, or open question as a memory candidate. Use for " +
+    "durable learnings the code and git history will not record. Writes land in a candidates " +
+    "file; the nightly verifier admits, merges, or rejects them — nothing enters canon " +
+    "directly, so writes are cheap and safe. Provenance is auto-attached; provenance_note " +
+    "adds context the verifier weighs. Set directive=true only when the user explicitly told " +
+    "you to save this — a directive still flows through the verifier for wording and " +
+    "placement, but it cannot be rejected.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     type: z.enum(["fact", "convention", "decision", "question"]).describe("What kind of memory to record."),
@@ -316,14 +314,13 @@ server.registerTool("reflect_session", {
 // Tool 5: Search project memory
 server.registerTool("search_memory", {
   description:
-    "Use BEFORE recommending in a domain you've worked in, BEFORE proposing a pattern, or " +
-    "WHEN something feels familiar — a previous session probably learned it. The session-start " +
-    "index is a summary, not the full library; search_memory is the actual library. " +
-    "Searches compiled knowledge — facts, conventions, decisions, questions — ranked by " +
-    "BM25 × entry strength, and returns the top few rather than everything that matched. " +
-    "Searching strengthens the entries it returns, so the act of searching makes the memory " +
-    "smarter over time. Prefer this over read_hive_memory for anything specific. Raw session " +
-    "logs are excluded by default; set include_logs for forensics like \"when did we change X\".",
+    "Search compiled project knowledge — facts, conventions, decisions, questions — " +
+    "ranked by BM25 × entry strength. Returns the top_k best matches (default 10), not " +
+    "everything that matched, and bumps recall strength on what it returns. The " +
+    "session-start index is a truncated summary of this store; search when the index is " +
+    "not enough. For a specific question, prefer this over read_hive_memory's full dump. " +
+    "Raw session logs are excluded by default; set include_logs for forensics like " +
+    "\"when did we change X\". Does not search code, tickets, or git history.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     query: z.string().describe("Search query — matches against entry text and tags."),
@@ -385,14 +382,13 @@ function formatTasteResults(results: TasteSearchResult[], category: string, quer
 
 server.registerTool("search_taste", {
   description:
-    "Retrieve the ACTIVE taste for a kind of work — the judgments HIVE has " +
-    "learned about how to do that work well. Reach for it when you START a type of work and " +
-    "want the accumulated taste behind it: pick the category that matches what you're doing " +
-    "(IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). Add a query to focus " +
-    "within the category, or omit it to browse everything active there. Only units that " +
-    "cleared the recurrence gate come back — units still accumulating, and contradictions " +
-    "awaiting a human call, never leak in. Searches the project store and the " +
-    "cross-project general store together, so it's useful even outside a registered project.",
+    "Retrieve ACTIVE taste units for a work-type category (IDEAS, DESIGN, IMPLEMENTATION, " +
+    "TEST_EVAL, COMMUNICATION, PROCESS) — the approved judgments about how to do that kind " +
+    "of work well. Use when starting that kind of work. Searches the project store and the " +
+    "cross-project general store together, so it works outside a registered project. Add a " +
+    "query to focus within the category (BM25); omit it to browse everything active there. " +
+    "Only units approved via `hive taste review` return — pending and contradicted units " +
+    "never do, so empty results are normal while a store fills.",
   inputSchema: {
     category: z
       .enum(TASTE_CATEGORIES)

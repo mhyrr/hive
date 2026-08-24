@@ -140,6 +140,15 @@ describe("renderDashboard", () => {
     expect(html).not.toContain('data-briefing-date="2026-04-16"');
   });
 
+  test("folds the dated Observe artifact into the same briefing", () => {
+    const data = baseData();
+    data.briefings[0]!.observe = "A connection across [two projects](#).";
+    data.todayBriefing!.observe = data.briefings[0]!.observe;
+    const html = renderDashboard(data);
+    expect(html).toContain("<h3>Observe</h3>");
+    expect(html).toContain("A connection across");
+  });
+
   test("renders every project as a colony in the yard", () => {
     const html = renderDashboard(baseData());
     expect(html).toContain('<section class="yard"');

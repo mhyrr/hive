@@ -15,7 +15,6 @@ registers HIVE in `~/.cursor/mcp.json`; Cursor approval remains per project.
 
 HIVE MCP tools (deferred behind ToolSearch in Claude Code — AGENTS.md carries
 the usage policy, so schemas load on demand instead of at session start):
-- `convene_council` — Multi-model deliberation. Standard, analyst, or dialectic modes.
 - `read_hive_memory` — Read project intelligence (full knowledge or lightweight index).
 - `write_hive_memory` — Queue a fact/convention/decision/question as a candidate. Mid-session writes go to `candidates.md`; the nightly verifier (Pass V) admits them to canon.
 - `search_memory` — BM25 search across knowledge and session logs. Bumps recall metadata for retrieval strengthening.
@@ -27,6 +26,7 @@ the usage policy, so schemas load on demand instead of at session start):
 - `update_ticket` — Update ticket status, priority, tags, or other fields.
 - `add_ticket_note` — Add a timestamped note to a ticket.
 - `add_project` — Register a new project with HIVE.
+- `convene_council` — Multi-model deliberation. Standard, analyst, or dialectic modes.
 - `hive_status` — Full system dashboard (identity, projects, tickets, runs, agents).
 
 ## Auth
