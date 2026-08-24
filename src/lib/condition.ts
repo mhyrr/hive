@@ -15,20 +15,28 @@ import { readProjectMemorySnapshot } from "./memory";
 import { parseInbox } from "./inbox";
 import { listTickets } from "./ticket";
 import {
-  extractAllRecentExchanges,
+  extractAllExchangesInWindow,
   rankExchanges,
   estimateTokens,
   type ExtractedExchange,
+  type ExchangeWindow,
 } from "./sessions";
 import { spawnSync } from "node:child_process";
 
 export interface RankedExchangePreview {
   role: "user" | "assistant";
+  /** Legacy field name. Contains a bounded head+tail excerpt, not a prefix. */
   preview: string;
+  timestamp: string;
+  source: "claude" | "codex";
+  sessionId: string;
+  signalRank: number;
   score: number;
   tokenCount: number;
+  excerptTokenCount: number;
   novelty: number;
   alwaysInclude: boolean;
+  truncated: boolean;
 }
 
 export interface SessionSignal {
@@ -73,6 +81,9 @@ export interface ConditionReport {
   date: string;
   generatedAt: string;
   hoursWindow: number;
+  windowStart: string;
+  windowEnd: string;
+  windowMode: "rolling" | "calendar-day";
   trivial: boolean;
   trivialReason: string | null;
   projects: ProjectSignal[];
@@ -85,13 +96,57 @@ export interface ConditionReport {
   };
 }
 
-const PREVIEW_CHARS = 200;
-const DEFAULT_TOP_K = 30;
+export const DEFAULT_EXCERPT_BUDGET_TOKENS = 16_000;
+export const DEFAULT_MAX_EXCERPT_TOKENS = 1_200;
+const EXCERPT_OMISSION = "\n\n… [middle omitted] …\n\n";
 
-function previewText(text: string): string {
-  const cleaned = text.replace(/\s+/g, " ").trim();
-  if (cleaned.length <= PREVIEW_CHARS) return cleaned;
-  return cleaned.slice(0, PREVIEW_CHARS) + "…";
+export interface ExchangeExcerpt {
+  text: string;
+  tokenCount: number;
+  truncated: boolean;
+}
+
+function normalizeExcerptText(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+function trimHeadAtBoundary(text: string, maxChars: number): string {
+  const slice = text.slice(0, maxChars);
+  const boundary = Math.max(slice.lastIndexOf(" "), slice.lastIndexOf("\n"));
+  return boundary >= maxChars * 0.8 ? slice.slice(0, boundary) : slice;
+}
+
+function trimTailAtBoundary(text: string, maxChars: number): string {
+  const slice = text.slice(-maxChars);
+  const space = slice.indexOf(" ");
+  const newline = slice.indexOf("\n");
+  const candidates = [space, newline].filter((n) => n >= 0 && n <= maxChars * 0.2);
+  const boundary = candidates.length > 0 ? Math.min(...candidates) : -1;
+  return boundary >= 0 ? slice.slice(boundary + 1) : slice;
+}
+
+/** Keep both the setup and the conclusion of a long exchange. */
+export function buildExchangeExcerpt(
+  text: string,
+  maxTokens = DEFAULT_MAX_EXCERPT_TOKENS,
+): ExchangeExcerpt {
+  const cleaned = normalizeExcerptText(text);
+  const maxChars = Math.max(1, maxTokens) * 4;
+  if (cleaned.length <= maxChars) {
+    return { text: cleaned, tokenCount: estimateTokens(cleaned), truncated: false };
+  }
+
+  const contentBudget = Math.max(2, maxChars - EXCERPT_OMISSION.length);
+  const headBudget = Math.ceil(contentBudget * 0.6);
+  const tailBudget = contentBudget - headBudget;
+  const excerpt =
+    trimHeadAtBoundary(cleaned, headBudget).trimEnd() +
+    EXCERPT_OMISSION +
+    trimTailAtBoundary(cleaned, tailBudget).trimStart();
+  return { text: excerpt, tokenCount: estimateTokens(excerpt), truncated: true };
 }
 
 function readProjectRepoPath(paths: HivePaths, projectId: string): string | null {
@@ -108,7 +163,11 @@ function readProjectRepoPath(paths: HivePaths, projectId: string): string | null
   }
 }
 
-export function gitSignal(repoPath: string | null, sinceIso: string): GitSignal {
+export function gitSignal(
+  repoPath: string | null,
+  sinceIso: string,
+  untilIso?: string,
+): GitSignal {
   const empty: GitSignal = {
     available: false,
     commits: 0,
@@ -121,7 +180,14 @@ export function gitSignal(repoPath: string | null, sinceIso: string): GitSignal 
 
   const subjectsRes = spawnSync(
     "git",
-    ["-C", repoPath, "log", `--since=${sinceIso}`, "--pretty=%s"],
+    [
+      "-C",
+      repoPath,
+      "log",
+      `--since=${sinceIso}`,
+      ...(untilIso ? [`--until=${untilIso}`] : []),
+      "--pretty=%s",
+    ],
     { encoding: "utf-8" },
   );
   if (subjectsRes.status !== 0) return empty;
@@ -129,7 +195,15 @@ export function gitSignal(repoPath: string | null, sinceIso: string): GitSignal 
 
   const numstatRes = spawnSync(
     "git",
-    ["-C", repoPath, "log", `--since=${sinceIso}`, "--numstat", "--pretty=format:"],
+    [
+      "-C",
+      repoPath,
+      "log",
+      `--since=${sinceIso}`,
+      ...(untilIso ? [`--until=${untilIso}`] : []),
+      "--numstat",
+      "--pretty=format:",
+    ],
     { encoding: "utf-8" },
   );
   let insertions = 0;
@@ -160,12 +234,13 @@ async function ticketMovement(
   paths: HivePaths,
   projectId: string,
   sinceMs: number,
+  untilMs: number,
 ): Promise<TicketMovement[]> {
   const tickets = await listTickets(paths, projectId).catch(() => []);
   const moved: TicketMovement[] = [];
   for (const t of tickets) {
     const updatedMs = Date.parse(t.updated);
-    if (Number.isFinite(updatedMs) && updatedMs >= sinceMs) {
+    if (Number.isFinite(updatedMs) && updatedMs >= sinceMs && updatedMs < untilMs) {
       moved.push({
         id: t.id,
         title: t.title,
@@ -213,52 +288,119 @@ async function projectKnowledgeCorpus(
   }
 }
 
-function rankedToPreview(
+export interface SelectExchangeOptions {
+  budgetTokens?: number;
+  maxExcerptTokens?: number;
+  maxExcerpts?: number;
+}
+
+export function selectExchangeExcerpts(
   exchanges: ExtractedExchange[],
   knowledge: string[],
-  topK: number,
+  options: SelectExchangeOptions = {},
 ): { topRanked: RankedExchangePreview[]; tokenEstimate: number } {
   let tokenEstimate = 0;
   for (const ex of exchanges) tokenEstimate += estimateTokens(ex.text);
 
   const ranked = rankExchanges(exchanges, knowledge);
-  const topRanked = ranked.slice(0, topK).map((r) => ({
-    role: r.exchange.role,
-    preview: previewText(r.exchange.text),
-    score: Number(r.score.toFixed(3)),
-    tokenCount: r.tokenCount,
-    novelty: Number(r.novelty.toFixed(4)),
-    alwaysInclude: r.alwaysInclude,
-  }));
+  const budgetTokens = options.budgetTokens ?? DEFAULT_EXCERPT_BUDGET_TOKENS;
+  const maxExcerptTokens = options.maxExcerptTokens ?? DEFAULT_MAX_EXCERPT_TOKENS;
+  const maxExcerpts = options.maxExcerpts ?? Number.POSITIVE_INFINITY;
+  let remainingTokens = budgetTokens;
+  const selected: RankedExchangePreview[] = [];
+
+  ranked.forEach((r, signalRank) => {
+    const excerpt = buildExchangeExcerpt(r.exchange.text, maxExcerptTokens);
+    const overCount = selected.length >= maxExcerpts;
+    const overBudget = excerpt.tokenCount > remainingTokens;
+    if (!r.alwaysInclude && (overCount || overBudget)) return;
+
+    selected.push({
+      role: r.exchange.role,
+      preview: excerpt.text,
+      timestamp: r.exchange.timestamp,
+      source: r.exchange.source,
+      sessionId: r.exchange.sessionId,
+      signalRank,
+      score: Number(r.score.toFixed(3)),
+      tokenCount: r.tokenCount,
+      excerptTokenCount: excerpt.tokenCount,
+      novelty: Number(r.novelty.toFixed(4)),
+      alwaysInclude: r.alwaysInclude,
+      truncated: excerpt.truncated,
+    });
+    remainingTokens = Math.max(0, remainingTokens - excerpt.tokenCount);
+  });
+
+  // Ranking chooses the material. Chronology tells Pass B which statements
+  // were questions, which were corrections, and where the session landed.
+  const topRanked = selected.sort((a, b) => {
+    const byTime = Date.parse(a.timestamp) - Date.parse(b.timestamp);
+    return byTime !== 0 ? byTime : a.signalRank - b.signalRank;
+  });
   return { topRanked, tokenEstimate };
 }
 
 export interface BuildConditionOptions {
   hoursWindow?: number;
+  excerptBudgetTokens?: number;
+  maxExcerptTokens?: number;
   topK?: number;
-  now?: Date; // testing seam — overrides everything
+  now?: Date; // generation clock and rolling-window end; testing seam
   /**
-   * Target date in YYYY-MM-DD. When set, anchors `now` to end-of-day UTC for
-   * that date so the 24h window covers the named day and report.date matches.
-   * Used by `hive memory nightly --date X` for retroactive runs.
+   * Target date in YYYY-MM-DD. When set, scan that exact UTC calendar day.
+   * Live nightly runs omit it and use a rolling window ending at `now`.
    */
   date?: string;
+}
+
+function conditionWindow(options: BuildConditionOptions): {
+  date: string;
+  generatedAt: Date;
+  window: ExchangeWindow;
+  mode: ConditionReport["windowMode"];
+  hoursWindow: number;
+} {
+  const generatedAt = options.now ?? new Date();
+  if (options.date) {
+    const start = new Date(`${options.date}T00:00:00.000Z`);
+    if (!Number.isFinite(start.getTime()) || start.toISOString().slice(0, 10) !== options.date) {
+      throw new Error(`Invalid condition date: ${options.date}`);
+    }
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    return {
+      date: options.date,
+      generatedAt,
+      window: { start, end },
+      mode: "calendar-day",
+      hoursWindow: 24,
+    };
+  }
+
+  const hoursWindow = options.hoursWindow ?? 24;
+  return {
+    date: generatedAt.toISOString().slice(0, 10),
+    generatedAt,
+    window: {
+      start: new Date(generatedAt.getTime() - hoursWindow * 60 * 60 * 1000),
+      end: generatedAt,
+    },
+    mode: "rolling",
+    hoursWindow,
+  };
 }
 
 export async function buildConditionReport(
   paths: HivePaths,
   options: BuildConditionOptions = {},
 ): Promise<ConditionReport> {
-  const hoursWindow = options.hoursWindow ?? 24;
-  // `now` precedence: explicit Date > derived from `date` > wall clock.
-  const now = options.now
-    ?? (options.date ? new Date(`${options.date}T23:59:59.999Z`) : new Date());
-  const sinceMs = now.getTime() - hoursWindow * 3600 * 1000;
-  const sinceIso = new Date(sinceMs).toISOString();
-  const date = options.date ?? now.toISOString().slice(0, 10);
-  const topK = options.topK ?? DEFAULT_TOP_K;
+  const { date, generatedAt, window, mode, hoursWindow } = conditionWindow(options);
+  const sinceMs = window.start.getTime();
+  const untilMs = window.end.getTime();
+  const sinceIso = window.start.toISOString();
+  const untilIso = window.end.toISOString();
 
-  const allExchanges = await extractAllRecentExchanges(hoursWindow, now);
+  const allExchanges = await extractAllExchangesInWindow(window);
   const exchangesByProject = new Map(
     allExchanges.map((p) => [p.projectName, p] as const),
   );
@@ -272,7 +414,19 @@ export async function buildConditionReport(
 
     const knowledge = await projectKnowledgeCorpus(paths, projectId);
     const exchanges = exchangeBundle?.exchanges ?? [];
-    const { topRanked, tokenEstimate } = rankedToPreview(exchanges, knowledge, topK);
+    const excerptOptions: SelectExchangeOptions = {};
+    if (options.excerptBudgetTokens !== undefined) {
+      excerptOptions.budgetTokens = options.excerptBudgetTokens;
+    }
+    if (options.maxExcerptTokens !== undefined) {
+      excerptOptions.maxExcerptTokens = options.maxExcerptTokens;
+    }
+    if (options.topK !== undefined) excerptOptions.maxExcerpts = options.topK;
+    const { topRanked, tokenEstimate } = selectExchangeExcerpts(
+      exchanges,
+      knowledge,
+      excerptOptions,
+    );
 
     const sessions: SessionSignal = {
       sessionCount: exchangeBundle?.sessionCount ?? 0,
@@ -281,8 +435,8 @@ export async function buildConditionReport(
       topRanked,
     };
 
-    const git = gitSignal(projectPath, sinceIso);
-    const moved = await ticketMovement(paths, projectId, sinceMs);
+    const git = gitSignal(projectPath, sinceIso, untilIso);
+    const moved = await ticketMovement(paths, projectId, sinceMs, untilMs);
     const inbox = inboxSignal(paths, projectId);
 
     projects.push({
@@ -315,8 +469,11 @@ export async function buildConditionReport(
 
   return {
     date,
-    generatedAt: now.toISOString(),
+    generatedAt: generatedAt.toISOString(),
     hoursWindow,
+    windowStart: sinceIso,
+    windowEnd: untilIso,
+    windowMode: mode,
     trivial,
     trivialReason,
     projects,

@@ -171,6 +171,8 @@ export type ProgressEvent =
 export interface RunNightlyOptions {
   paths: HivePaths;
   date?: string;
+  /** Run clock captured once for rolling-window correctness; testing seam. */
+  now?: Date;
   dryRun?: boolean;
   caller?: ModelCaller;
   /** Run the taste track (TA→TB→TC). Default true; `--no-taste` sets false. */
@@ -182,11 +184,12 @@ export interface RunNightlyOptions {
 
 export async function runNightly(options: RunNightlyOptions): Promise<NightlyResult> {
   const { paths } = options;
-  const date = options.date ?? new Date().toISOString().slice(0, 10);
+  const runClock = options.now ?? new Date();
+  const date = options.date ?? runClock.toISOString().slice(0, 10);
   const dryRun = options.dryRun ?? false;
   const caller = options.caller;
   const emit = options.onProgress ?? (() => {});
-  const startedAt = new Date().toISOString();
+  const startedAt = runClock.toISOString();
   const startMs = nowMs();
 
   const result: NightlyResult = {
@@ -222,7 +225,10 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   let condition: ConditionReport;
   try {
     const { value, durationMs } = await timed(async () => {
-      const report = await buildConditionReport(paths, { date });
+      const report = await buildConditionReport(
+        paths,
+        options.date ? { date, now: runClock } : { now: runClock },
+      );
       await writeConditionReport(paths, report);
       return report;
     });

@@ -14,6 +14,14 @@ import {
 } from "../lib/sessions";
 import { ensureHiveScaffold } from "../lib/paths";
 
+function exchange(
+  role: ExtractedExchange["role"],
+  text: string,
+  timestamp = "2026-05-05T14:00:00.000Z",
+): ExtractedExchange {
+  return { role, text, timestamp, source: "claude", sessionId: "test-session" };
+}
+
 // ---------------------------------------------------------------------------
 // estimateTokens
 // ---------------------------------------------------------------------------
@@ -100,42 +108,39 @@ describe("rankExchanges", () => {
   ];
 
   test("novel exchange ranks above echoed exchange of similar length", () => {
-    const echoed: ExtractedExchange = {
-      role: "assistant",
-      text: "Joken handles JWT auth here, not Guardian, since this is API-only.",
-    };
-    const novel: ExtractedExchange = {
-      role: "assistant",
-      text: "We're considering moving the analytics pipeline off the kafka cluster entirely.",
-    };
+    const echoed = exchange(
+      "assistant",
+      "Joken handles JWT auth here, not Guardian, since this is API-only.",
+    );
+    const novel = exchange(
+      "assistant",
+      "We're considering moving the analytics pipeline off the kafka cluster entirely.",
+    );
     const [first, second] = rankExchanges([echoed, novel], knowledge);
     expect(first?.exchange).toBe(novel);
     expect(second?.exchange).toBe(echoed);
   });
 
   test("longer beats shorter when novelty is roughly equal", () => {
-    const short: ExtractedExchange = { role: "user", text: "What about kafka?" };
-    const long: ExtractedExchange = {
-      role: "user",
-      text: "What about the kafka cluster — is it still streaming events into the analytics pipeline, or did we move that off entirely after the cost incident last month?",
-    };
+    const short = exchange("user", "What about kafka?");
+    const long = exchange(
+      "user",
+      "What about the kafka cluster — is it still streaming events into the analytics pipeline, or did we move that off entirely after the cost incident last month?",
+    );
     const [first] = rankExchanges([short, long], knowledge);
     expect(first?.exchange).toBe(long);
   });
 
   test("always-include marker forces top placement regardless of length", () => {
-    const tiny: ExtractedExchange = { role: "user", text: "save this: tip jar." };
-    const huge: ExtractedExchange = {
-      role: "assistant",
-      text: "Massive treatise about an unrelated thing. ".repeat(50),
-    };
+    const tiny = exchange("user", "save this: tip jar.");
+    const huge = exchange("assistant", "Massive treatise about an unrelated thing. ".repeat(50));
     const [first] = rankExchanges([tiny, huge], knowledge);
     expect(first?.exchange).toBe(tiny);
     expect(first?.alwaysInclude).toBe(true);
   });
 
   test("attaches diagnostic fields", () => {
-    const ex: ExtractedExchange = { role: "user", text: "hello world" };
+    const ex = exchange("user", "hello world");
     const [r] = rankExchanges([ex], knowledge);
     expect(r?.tokenCount).toBe(estimateTokens(ex.text));
     expect(r?.novelty).toBeGreaterThan(0);
@@ -144,16 +149,16 @@ describe("rankExchanges", () => {
   });
 
   test("filters empty / whitespace-only exchanges", () => {
-    const empty: ExtractedExchange = { role: "user", text: "   " };
-    const real: ExtractedExchange = { role: "user", text: "actual content" };
+    const empty = exchange("user", "   ");
+    const real = exchange("user", "actual content");
     const ranked = rankExchanges([empty, real], knowledge);
     expect(ranked.length).toBe(1);
     expect(ranked[0]?.exchange).toBe(real);
   });
 
   test("empty corpus — pure tokenCount ranking", () => {
-    const a: ExtractedExchange = { role: "user", text: "short" };
-    const b: ExtractedExchange = { role: "user", text: "this is a longer message" };
+    const a = exchange("user", "short");
+    const b = exchange("user", "this is a longer message");
     const [first] = rankExchanges([a, b], []);
     expect(first?.exchange).toBe(b);
   });
@@ -216,12 +221,56 @@ describe("Codex session extraction", () => {
       ].join("\n") + "\n",
     );
 
-    const exchanges = extractExchanges(file);
+    const exchanges = extractExchanges(file, { source: "codex", sessionId: "codex" });
     expect(exchanges).toEqual([
-      { role: "user", text: "remember this: Codex sessions feed nightly memory" },
-      { role: "assistant", text: "Codex transcript extraction is wired." },
+      {
+        role: "user",
+        text: "remember this: Codex sessions feed nightly memory",
+        timestamp: "2026-05-05T14:00:02.000Z",
+        source: "codex",
+        sessionId: "codex",
+      },
+      {
+        role: "assistant",
+        text: "Codex transcript extraction is wired.",
+        timestamp: "2026-05-05T14:00:03.000Z",
+        source: "codex",
+        sessionId: "codex",
+      },
     ]);
 
+    await rm(home, { recursive: true, force: true });
+  });
+
+  test("filters exchanges by record timestamp with inclusive start and exclusive end", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-sessions-window-"));
+    const file = join(home, "claude.jsonl");
+    const message = (timestamp: string, text: string) => JSON.stringify({
+      timestamp,
+      type: "user",
+      message: { role: "user", content: text },
+    });
+
+    await writeFile(
+      file,
+      [
+        message("2026-05-04T23:59:59.999Z", "before"),
+        message("2026-05-05T00:00:00.000Z", "at start"),
+        message("2026-05-05T23:59:59.999Z", "before end"),
+        message("2026-05-06T00:00:00.000Z", "at end"),
+      ].join("\n") + "\n",
+    );
+
+    const exchanges = extractExchanges(file, {
+      source: "claude",
+      sessionId: "window-test",
+      window: {
+        start: new Date("2026-05-05T00:00:00.000Z"),
+        end: new Date("2026-05-06T00:00:00.000Z"),
+      },
+    });
+
+    expect(exchanges.map((item) => item.text)).toEqual(["at start", "before end"]);
     await rm(home, { recursive: true, force: true });
   });
 
@@ -257,6 +306,15 @@ describe("Codex session extraction", () => {
             payload: { cwd: subdir },
           }),
           JSON.stringify({
+            timestamp: "2026-05-04T14:00:00.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Old exchange must not replay." }],
+            },
+          }),
+          JSON.stringify({
             timestamp: "2026-05-05T14:00:01.000Z",
             type: "response_item",
             payload: {
@@ -284,7 +342,10 @@ describe("Codex session extraction", () => {
         ].join("\n") + "\n",
       );
 
-      const projects = await extractAllRecentExchanges(24, new Date());
+      const projects = await extractAllRecentExchanges(
+        24,
+        new Date("2026-05-05T15:00:00.000Z"),
+      );
       expect(projects).toHaveLength(1);
       expect(projects[0]?.projectName).toBe("hive");
       expect(projects[0]?.sessionCount).toBe(1);

@@ -170,15 +170,7 @@ async function seedActivity(
   updatedAt = `${date}T12:00:00.000Z`,
 ): Promise<string> {
   // Drop a ticket update to tip Pass A out of trivial.
-  //
-  // Stamp it at noon UTC on the date under test — NOT wall-clock-relative.
-  // buildConditionReport anchors its window to `{date}T23:59:59.999Z` and looks
-  // back hoursWindow (24), so the window for date D is
-  // [D-1 23:59:59.999Z, D 23:59:59.999Z]. The old `Date.now() - 1h` stamp only
-  // landed inside that window once the wall clock passed 00:59:59.999Z, so every
-  // test using this fixture failed between 00:00 and 01:00 UTC and passed the
-  // other 23 hours — a trivial-day short-circuit that skipped B/C/V and the
-  // taste track. Noon on D is inside the window for any D.
+  // Explicit-date tests scan [D 00:00Z, D+1 00:00Z), so noon is deterministic.
   const ticketsDir = join(paths.projectsDir, projectId, "tickets");
   await mkdir(ticketsDir, { recursive: true });
   await writeFile(
@@ -277,6 +269,32 @@ describe("runNightly — explicit --date threads through every pass", () => {
     if (today !== date) {
       expect(existsSync(join(paths.memoryRunsDir, today, "condition.json"))).toBe(false);
     }
+  });
+});
+
+describe("runNightly — live rolling window", () => {
+  test("keeps activity from the prior local workday that the old UTC anchor dropped", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const now = new Date("2026-08-20T06:00:00.000Z"); // 02:00 ET
+    await seedActivity(paths, "alpha", "2026-08-19", "2026-08-19T22:03:00.000Z");
+
+    const result = await runNightly({
+      paths,
+      now,
+      dryRun: true,
+      taste: false,
+      caller: makeStub({}),
+    });
+
+    expect(result.date).toBe("2026-08-20");
+    expect(result.trivial).toBe(false);
+    expect(result.passes.B[0]?.pass).toBe("B.alpha");
+    const condition = JSON.parse(
+      await Bun.file(join(paths.memoryRunsDir, result.date, "condition.json")).text(),
+    );
+    expect(condition.windowMode).toBe("rolling");
+    expect(condition.windowStart).toBe("2026-08-19T06:00:00.000Z");
+    expect(condition.projects[0].tickets.moved).toHaveLength(1);
   });
 });
 

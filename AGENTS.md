@@ -9,6 +9,9 @@ Claude Code is the default interactive harness. Pi is optional via `hive -3`
 Pi owns provider/model selection. Codex is optional via `hive -x` /
 `hive --codex`; `hive init` wires `~/.codex/AGENTS.md`,
 `[mcp_servers.hive]`, and a Codex SessionStart hook when Codex is installed.
+Cursor CLI is optional via `hive -a` / `hive --cursor`. HIVE prepends the
+canonical identity to Cursor's positional initial prompt. `hive init`
+registers HIVE in `~/.cursor/mcp.json`; Cursor approval remains per project.
 
 HIVE MCP tools (deferred in Claude Code — schemas load via ToolSearch on first use):
 - `convene_council` — Multi-model deliberation. Standard, analyst, or dialectic modes.
@@ -56,12 +59,12 @@ their native authentication behavior.
 ## Architecture
 
 Two entry points:
-- `src/cli.ts` — CLI (init, doctor, context, identity, project, stack, council, memory, ticket, watch, inbox, taste, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
+- `src/cli.ts` — CLI (init, doctor, context, identity, project, stack, council, memory, ticket, watch, inbox, taste, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex, `hive -a` -> Cursor). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
 - `src/mcp-server.ts` — MCP server (same tools as the bullet list above).
 
 Crown-jewel modules:
 - `src/lib/council.ts` — parallel multi-model deliberation
-- `src/lib/harness.ts` / `src/lib/pi-wire.ts` / `src/lib/codex-wire.ts` — interactive harness selection and optional runtime wiring
+- `src/lib/harness.ts` / `src/lib/pi-wire.ts` / `src/lib/codex-wire.ts` / `src/lib/cursor-wire.ts` — interactive harness selection and optional runtime wiring
 - `src/lib/watch.ts` / `src/lib/watch-run.ts` — standing-question schedules, evidence gates, and bounded action
 - `src/lib/orchestrator.ts` — nightly pipeline (Pass A → B → C → V → F → P)
 - `src/lib/verify.ts` — Opus verifier; the only path into `knowledge.md`

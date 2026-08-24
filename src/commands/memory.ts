@@ -76,18 +76,19 @@ export async function memoryCommand(args: string[]): Promise<void> {
 
   // Cross-project subcommands — don't require a project context.
   if (subcommand === "nightly") {
-    let date = new Date().toISOString().slice(0, 10);
+    let requestedDate: string | undefined;
     let dryRun = false;
     let taste = true;
     const rest = positional.slice(1);
     for (let i = 0; i < rest.length; i++) {
-      if (rest[i] === "--date") date = rest[++i] ?? date;
+      if (rest[i] === "--date") requestedDate = rest[++i];
       else if (rest[i] === "--dry-run") dryRun = true;
       else if (rest[i] === "--no-taste") taste = false;
     }
+    const displayDate = requestedDate ?? new Date().toISOString().slice(0, 10);
 
     console.error(
-      `=== HIVE memory nightly · ${date}${dryRun ? " · DRY RUN" : ""}${taste ? "" : " · NO TASTE"} ===`,
+      `=== HIVE memory nightly · ${displayDate}${dryRun ? " · DRY RUN" : ""}${taste ? "" : " · NO TASTE"} ===`,
     );
 
     const fmt = (p: PassReport): string => {
@@ -98,7 +99,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
 
     const result = await runNightly({
       paths,
-      date,
+      ...(requestedDate ? { date: requestedDate } : {}),
       dryRun,
       taste,
       onProgress: (event) => {
@@ -112,7 +113,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
     });
 
     // Cost summary
-    const usage = await loadUsageSummary(paths, date);
+    const usage = await loadUsageSummary(paths, result.date);
     if (usage.records.length > 0) {
       console.log(
         `Cost: ${usage.totals.inputTokens.toLocaleString()} in / ` +
@@ -141,18 +142,18 @@ export async function memoryCommand(args: string[]): Promise<void> {
   if (subcommand === "condition") {
     const rest = positional.slice(1);
     let hours = 24;
-    let topK = 30;
+    let topK: number | undefined;
     let dryRun = false;
     for (let i = 0; i < rest.length; i++) {
       const a = rest[i]!;
       if (a === "--hours") hours = Number(rest[++i]) || 24;
-      else if (a === "--top-k") topK = Number(rest[++i]) || 30;
+      else if (a === "--top-k") topK = Number(rest[++i]) || undefined;
       else if (a === "--dry-run") dryRun = true;
     }
 
     const report = await buildConditionReport(paths, {
       hoursWindow: hours,
-      topK,
+      ...(topK ? { topK } : {}),
     });
 
     if (dryRun) {

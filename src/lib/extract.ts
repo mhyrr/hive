@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
 import { readProjectMemorySnapshot } from "./memory";
+import { buildExchangeExcerpt } from "./condition";
 import type { ConditionReport, ProjectSignal } from "./condition";
 import { estimateCost, appendUsageRecord } from "./pricing";
 
@@ -178,6 +179,10 @@ Type discipline:
 
 If the day yielded no durable learnings for this project, return [].`;
 
+function blockquote(text: string): string {
+  return text.split("\n").map((line) => `> ${line}`).join("\n");
+}
+
 interface BuildProjectUserContentOpts {
   projectId: string;
   signal: ProjectSignal;
@@ -221,12 +226,17 @@ ${signal.tickets.moved.map((t) => `- ${t.id} [${t.status}] ${t.title}`).join("\n
       .map((r, i) => {
         const tags: string[] = [];
         if (r.alwaysInclude) tags.push("always-include");
-        if (r.novelty < 0.3) tags.push("low-novelty");
+        if (r.truncated) tags.push("head+tail excerpt");
         const tagStr = tags.length > 0 ? ` (${tags.join(", ")})` : "";
-        return `### topRanked[${i}] — ${r.role}${tagStr}\n> ${r.preview}`;
+        const timestamp = r.timestamp ? ` · ${r.timestamp}` : "";
+        const session = r.source && r.sessionId ? ` · ${r.source}:${r.sessionId}` : "";
+        const rank = Number.isFinite(r.signalRank) ? ` · signal-rank ${r.signalRank}` : "";
+        return `### topRanked[${i}] — ${r.role}${timestamp}${session}${rank}${tagStr}\n${blockquote(r.preview)}`;
       })
       .join("\n\n");
-    sections.push(`## Top-ranked exchanges (${signal.sessions.exchangeCount} total in window)
+    sections.push(`## Selected exchanges (${signal.sessions.exchangeCount} total in window)
+
+The excerpts below are in chronological order. Later corrections and resolutions override earlier questions or plans. A "middle omitted" marker preserves the opening and conclusion of one long exchange.
 
 ${previews}
 `);
@@ -239,7 +249,7 @@ ${previews}
 
   sections.push(`## Output
 
-Return a JSON array of candidates per the system prompt. Be conservative — three excellent candidates beat ten mediocre ones.`);
+Return a JSON array of candidates per the system prompt. Look for reusable conventions and decision rationale across exchanges, not only local artifact facts. Be conservative — three excellent candidates beat ten mediocre ones.`);
 
   return sections.join("\n");
 }
@@ -297,9 +307,24 @@ ${identityText.trim() || "(empty)"}
 
   for (const project of report.projects) {
     if (project.sessions.topRanked.length === 0 && project.git.commits === 0) continue;
-    const previews = project.sessions.topRanked
+    const previews = [...project.sessions.topRanked]
+      .sort((a, b) => {
+        const aRank = Number.isFinite(a.signalRank) ? a.signalRank : Number.POSITIVE_INFINITY;
+        const bRank = Number.isFinite(b.signalRank) ? b.signalRank : Number.POSITIVE_INFINITY;
+        return aRank - bRank;
+      })
       .slice(0, 10) // cap per-project to keep input bounded
-      .map((r, i) => `- [${i}] ${r.role}: "${r.preview}"`)
+      .sort((a, b) => {
+        const aTime = Date.parse(a.timestamp ?? "");
+        const bTime = Date.parse(b.timestamp ?? "");
+        if (!Number.isFinite(aTime) || !Number.isFinite(bTime)) return 0;
+        return aTime - bTime;
+      })
+      .map((r, i) => {
+        const excerpt = buildExchangeExcerpt(r.preview, 300);
+        const timestamp = r.timestamp ? `${r.timestamp} ` : "";
+        return `- [${i}] ${timestamp}${r.role}: "${excerpt.text}"`;
+      })
       .join("\n");
     sections.push(`### Project: ${project.projectName}
 

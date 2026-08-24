@@ -1,9 +1,9 @@
 # <img src="img/logo.svg" alt="" width="32" height="32"> Hive
 
-HIVE wraps the subscription coding CLI you already run — Claude Code by
-default, Codex (`hive -x`) or Pi (`hive -3`) on opt-in — and gives the
+HIVE wraps the subscription coding CLI you already run — Claude Code by default, Codex
+(`hive -x`), Pi (`hive -3`), or Cursor CLI (`hive -a`) on opt-in — and gives the
 agent a memory, a ticket queue, and a nightly reflection loop. Identity is
-the substrate that carries all three across sessions.
+the substrate that carries all three across sessions and harnesses.
 
 The AI agent ecosystem has claws, hippos, and filing cabinets. They want to own your stack with databases and local embedding servers. HIVE takes the best ideas from all of them
 and re-implements them in a lightweight shell around subscription CLIs. No
@@ -15,7 +15,8 @@ The coding harness handles the conversation, tools, and file I/O. HIVE adds
 what it doesn't remember on its own, most valuable first:
 
 - **Wraps your CLI** — `hive` launches Claude Code (or Codex with `-x`, Pi
-  with `-3`) already carrying identity, project memory, and MCP reach.
+  with `-3`, Cursor with `-a`) already carrying identity, project memory,
+  and MCP reach.
 - **Project memory** — three layers (log, knowledge, index) with BM25
   search and decay, so knowledge compounds instead of resetting.
 - **Tickets** — per-project bugs, features, tasks, epics, and chores as
@@ -39,10 +40,11 @@ Sections run most valuable first — the top group is why HIVE exists.
 
 - `hive` launches the coding CLI you already run with HIVE identity,
   project memory, and MCP reach already wired in. Claude Code is the
-  default; `hive -x` launches Codex and `hive -3` launches Pi. Each harness
-  receives the same identity through its native integration point — a
-  SessionStart hook for Claude Code, `~/.codex/AGENTS.md` for Codex, a
-  generated `-e` extension for Pi. See [Interactive
+  default; `hive -x` launches Codex, `hive -3` launches Pi, and `hive -a`
+  launches Cursor CLI. Each harness receives the same canonical identity —
+  a SessionStart hook for Claude Code, `~/.codex/AGENTS.md` for Codex, a
+  generated `-e` extension for Pi, and the initial positional prompt for
+  Cursor. See [Interactive
   Harnesses](#interactive-harnesses) for the full routing matrix.
 - The harness still owns the conversation, tools, and file I/O. HIVE adds
   only what it doesn't remember on its own.
@@ -76,7 +78,7 @@ on demand.
 
 **Identity — the substrate.**
 
-- SOUL.md, IDENTITY.md, and SELF.md in `~/.hive/` define who the agent is, what it values, and how it works with you. This is the infrastructure the rest sits on — it scopes memory and reflection to a project and carries them across sessions. Claude Code loads it through the user-level SessionStart hook; Codex through `~/.codex/AGENTS.md`, refreshed by `hive -x` and its own SessionStart hook; Pi through a generated extension.
+- SOUL.md, IDENTITY.md, and SELF.md in `~/.hive/` define who the agent is, what it values, and how it works with you. This is the infrastructure the rest sits on — it scopes memory and reflection to a project and carries them across sessions. Claude Code loads it through the user-level SessionStart hook; Codex through `~/.codex/AGENTS.md`, refreshed by `hive -x` and its own SessionStart hook; Pi through a generated extension; Cursor through the initial positional prompt.
 - Inspired by [OpenClaw](https://openclaw.ai/).
 
 ### Also included
@@ -86,7 +88,7 @@ Smaller surfaces — reach for them when a project needs them.
 - **Multi-model council.** Send one question to Claude, GPT, Gemini, and local models in parallel; the current agent chairs and synthesizes agreement and disagreement. Standard or adversarial-dialectic modes. `hive council "<question>"`. Inspired by [Perplexity](https://perplexity.ai/).
 - **Watches.** Markdown standing questions run on declared cadences against bounded local evidence. Observe connects threads, Propose writes into the nightly briefing, and Act may start one deterministically eligible ticket on an isolated review branch. No change means no model call. `hive watch status`; see [docs/watches.md](docs/watches.md).
 - **The dashboard.** One page that opens with a verdict per project instead of a log — see [The Dashboard](#the-dashboard) below. A static `~/.hive/dashboard/index.html` or an interactive server at `127.0.0.1:7777`. `hive dashboard`. See [docs/dashboard.md](docs/dashboard.md).
-- **Language stacks.** Domain-knowledge bundles — Iron Laws, patterns, idioms — packaged as Claude Code skills and auto-detected per project (`mix.exs` → elixir, `package.json` → typescript). Ships **elixir** and **typescript**; `hive stack init <name>` scaffolds your own. Elixir content from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix), TypeScript from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills) (both MIT).
+- **Language stacks.** Domain-knowledge bundles — Iron Laws, patterns, idioms — packaged as Claude Code skills and auto-detected per project (`mix.exs` → elixir, `package.json` → typescript). The verified Cursor CLI also reads `~/.claude/skills/`, but that compatibility does not guarantee every skill is portable. Ships **elixir** and **typescript**; `hive stack init <name>` scaffolds your own. Elixir content from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix), TypeScript from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills) (both MIT).
 - **Local MCP server.** The consistency layer that exposes memory, tickets, and council to every harness — markdown underneath, no database.
 
 ## The Dashboard
@@ -149,8 +151,8 @@ cd ~/work/myapp
 hive
 ```
 
-`hive` launches Claude Code with HIVE identity. `hive -3` launches Pi and
-`hive -x` launches Codex instead. Direct `claude` sessions still receive
+`hive` launches Claude Code with HIVE identity. `hive -3` launches Pi,
+`hive -x` launches Codex, and `hive -a` launches Cursor CLI instead. Direct `claude` sessions still receive
 HIVE identity through the Claude Code SessionStart hook after `hive init`.
 
 ## Interactive Harnesses
@@ -164,8 +166,10 @@ inside HIVE itself.
 | `hive` / `hive "<prompt>"` | Claude Code | Per-invocation `--append-system-prompt` plus `~/.claude` SessionStart hook |
 | `hive -3 "<prompt>"` / `hive --pi "<prompt>"` | Pi CLI | Runtime-generated `-e` identity extension; Pi owns provider/model selection |
 | `hive -x "<prompt>"` / `hive --codex "<prompt>"` | Codex CLI | `~/.codex/AGENTS.md`, refreshed before launch and by `~/.hive/codex-load-identity.sh` |
+| `hive -a "<prompt>"` / `hive --cursor "<prompt>"` | Cursor CLI | Canonical identity prepended to the positional initial prompt; bare interactive consumes a synthetic first turn |
 | `HIVE_HARNESS=pi hive "<prompt>"` | Pi CLI | Same as `-3`; override with `--claude` or `--claude-code` |
 | `HIVE_HARNESS=codex hive "<prompt>"` | Codex CLI | Same as `-x`; override with `--claude` or `--claude-code` |
+| `HIVE_HARNESS=cursor hive "<prompt>"` | Cursor CLI | Same as `-a`; override with `--claude` or `--claude-code` |
 
 `-3` / Pi is an opt-in research lane while the subscription-OAuth policy
 question remains open. Claude Code stays the default.
@@ -233,7 +237,9 @@ memory index (if registered), stack hint, and optional taste layer at every
 session start. Pi gets the same prefix through a generated launch extension;
 Codex gets it through `~/.codex/AGENTS.md`, refreshed before every `hive -x`
 launch and by the Codex SessionStart hook when Codex is installed and
-`hive init` has wired it. No per-project `CLAUDE.md` block required.
+`hive init` has wired it. Cursor gets it in the positional initial prompt;
+a bare `hive -a` consumes a synthetic startup turn. No per-project
+`CLAUDE.md` block required.
 
 Register the project so its memory and tickets work:
 
@@ -314,15 +320,16 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive stack bind <project> <stack>` | Bind project to a stack (name, `auto`, or `none`) |
 | `hive -3 "<prompt>"` | Launch Pi CLI with HIVE identity; Pi chooses provider/model |
 | `hive -x "<prompt>"` | Launch Codex CLI with HIVE identity |
-| `hive --claude "<prompt>"` | Force Claude Code when `HIVE_HARNESS=pi` or `HIVE_HARNESS=codex` is set |
+| `hive -a "<prompt>"` | Launch Cursor CLI with HIVE identity prepended to the initial prompt |
+| `hive --claude "<prompt>"` | Force Claude Code when another `HIVE_HARNESS` runtime is set |
 | `hive --owned "<prompt>"` | Launch Claude Code with HIVE identity as the whole system prompt (keeps hooks/skills/MCP/OAuth) |
 | `hive --bare "<prompt>"` | Launch Claude Code in `--bare` mode (no hooks/skills/CLAUDE.md; requires `ANTHROPIC_API_KEY`) |
 
 ## How Identity Works
 
 Identity lives in `~/.hive/` and is emitted by one program:
-`hive identity emit`. Claude Code, Pi, and Codex consume that same canonical
-prefix through different native integration points.
+`hive identity emit`. Claude Code, Pi, Codex, and Cursor consume that same
+canonical prefix through different integration points.
 
 Claude Code loads the prefix through the user-level SessionStart hook at
 `~/.claude/hooks/load-identity.sh`, wired into `~/.claude/settings.json`.
@@ -341,6 +348,14 @@ SessionStart hook at `~/.hive/codex-load-identity.sh` to refresh
 `AGENTS.md` from `hive identity emit`. The `hive -x` launcher also refreshes
 AGENTS before spawning Codex, which keeps project-sensitive memory and stack
 context current even if the last direct Codex session was in another project.
+
+Cursor receives the prefix in its positional initial prompt. `hive init`
+merges HIVE MCP into `~/.cursor/mcp.json`, but Cursor also requires approval
+per project. The `hive -a` launcher runs `cursor-agent mcp enable hive` from
+the current project as a best-effort self-heal. A bare interactive launch uses
+a synthetic first turn to deliver identity, then waits for the user's request.
+HIVE does not use Cursor plugins for identity; a 2026-08-19 canary exited 0
+without exposing its marker to the model.
 
 Every session picks up the same stack in deliberate emit order (later
 sections carry more weight in system-prompt interpretation):
@@ -384,11 +399,16 @@ system prompt directly while still letting Pi choose the model. Codex has a
 different loading surface: persistent `AGENTS.md`, MCP servers in
 `config.toml`, and hooks in `hooks.json`. HIVE uses those native files
 instead of per-invocation prompt injection, which preserves Codex's prefix
-cache across sessions. `hive doctor` checks Claude Code, Pi, and Codex
-wiring; Pi/Codex checks are warnings because both harnesses are optional.
+cache across sessions. Cursor has no verified system-prompt surface, so HIVE
+uses its positional initial prompt. The verified Cursor version reads
+`~/.claude/skills/`; this is compatibility behavior, not a guarantee that
+every Claude Code skill is portable. `hive doctor` checks Claude Code, Pi,
+Codex, and Cursor wiring; optional-harness checks are warnings.
 
-Watch Act uses Claude Code for isolated branch execution. `-3` and `-x` are
-interactive harness routes; they do not change the watch executor.
+Watch Act uses Claude Code for isolated branch execution. `-3`, `-x`, and
+`-a` are interactive harness routes; they do not change the watch executor.
+The nightly pipeline ingests Claude Code and Codex transcripts. It does not
+ingest Pi or Cursor transcripts.
 
 See `docs/hive-reach.md` for the runtime reach matrix (identity, MCP
 tools, project scope per harness) and `docs/identity-injection.md` for

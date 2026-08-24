@@ -67,6 +67,16 @@ your judgment about what counts as mechanical. Available specialists:
 `browser-verifier` (load/flow/console checks; snapshots die with its
 context, you get the verdict).
 
+Implementation dispatches ride the native subagents (general-purpose,
+Explore); there is no bespoke coder agent. Subagents skip the SessionStart
+hook and start HIVE-blind, but the hive MCP tools are reachable via
+ToolSearch — the dispatch prompt closes the gap. Every substantive
+dispatch carries the briefing: `show_ticket` for the spec;
+`read_hive_memory` and `search_taste(IMPLEMENTATION)` before coding, hits
+are canon; `write_hive_memory` for conventions discovered on the way.
+Request worktree isolation per call, and only when parallel edits would
+collide.
+
 Two things stay inline regardless. Correctness-critical subsystems the
 project's CLAUDE.md flags (money math, multi-tenancy boundaries, auth) —
 knock out a partition and you repaint; knock out a beam and the floor

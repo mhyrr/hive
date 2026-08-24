@@ -295,11 +295,15 @@ The nightly pipeline at 2am is the only path into `knowledge.md`:
 Pass A — Conditioning (mechanical, no LLM)
   ↓ read Claude Code transcripts from ~/.claude/projects and Codex transcripts from ~/.codex/sessions
   ↓ resolve each transcript to a registered HIVE project by project path / cwd
-  ↓ rank session exchanges by tokenCount × novelty + always-include markers
+  ↓ live runs scan the rolling 24 hours ending at the run clock; explicit --date runs scan that exact UTC day
+  ↓ filter each exchange by its record timestamp, so touched long-lived transcripts cannot replay old work
+  ↓ rank full exchanges by tokenCount × novelty + always-include markers
+  ↓ select within a 16k-token project budget, excerpt long exchanges as 60% head + 40% tail, then restore chronology
+  ↓ preserve timestamp, source, and session ID so Pass B can follow corrections and final decisions
   ↓ skip-if-trivial early exit emits a stub briefing
 
 Pass B — Sonnet, per project with signal (parallel)
-  ↓ extract decisions, conventions, durable facts, open questions
+  ↓ extract decisions, conventions, durable facts, open questions from the selected exchanges and project artifacts
   ↓ each candidate carries a free-text provenance string
 
 Pass C — Sonnet, cross-project (single call)

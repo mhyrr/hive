@@ -23,24 +23,24 @@ True parity isn't the goal. Reach is.
 
 ## Reach Matrix
 
-| | Claude Code (`hive`) | Pi (`hive -3`) | Codex (`hive -x`) |
-| --- | --- | --- | --- |
-| **Identity** | ✓ SessionStart + PostCompact hook (`~/.claude/hooks/load-identity.sh`) | ✓ Generated `pi -e` extension per launch | ✓ `~/.codex/AGENTS.md`, refreshed pre-launch and by Codex SessionStart hook |
-| **MCP tools** | ✓ Native (`hive` MCP server) | ~ Via `pi-mcp-adapter` (install once, register in `~/.pi/agent/mcp.json`); names appear prefixed (`hive_hive_status` etc.) | ✓ Native via `[mcp_servers.hive]` in `~/.codex/config.toml` |
-| **Project scope** | ✓ Resolved from `$PWD` against registered project paths | ✓ Same | ✓ Same — `hive -x` re-resolves before each launch so AGENTS.md reflects current cwd |
-| **Council (`convene_council`)** | ✓ via MCP | ✓ via adapter | ✓ via MCP |
-| **Doctor coverage** | ✓ `Identity`, `Hooks`, `MCP` groups | ✓ Pi group (warnings; Pi is optional) | ✓ Codex group (warnings; AGENTS freshness vs. `hive identity emit`) |
-| **Nightly transcript ingestion** | ✓ `~/.claude/projects/*/sessions` | n/a — Pi sessions not currently extracted | ✓ `~/.codex/sessions/YYYY/MM/DD` |
+| | Claude Code (`hive`) | Pi (`hive -3`) | Codex (`hive -x`) | Cursor CLI (`hive -a`) |
+| --- | --- | --- | --- | --- |
+| **Identity** | ✓ SessionStart + PostCompact hook (`~/.claude/hooks/load-identity.sh`) | ✓ Generated `pi -e` extension per launch | ✓ `~/.codex/AGENTS.md`, refreshed pre-launch and by Codex SessionStart hook | ✓ Canonical identity prepended to the positional initial prompt; bare interactive consumes a synthetic first turn |
+| **MCP tools** | ✓ Native (`hive` MCP server) | ~ Via `pi-mcp-adapter` (install once, register in `~/.pi/agent/mcp.json`); names appear prefixed (`hive_hive_status` etc.) | ✓ Native via `[mcp_servers.hive]` in `~/.codex/config.toml` | ✓ Native via `~/.cursor/mcp.json`; approval persists per project after `cursor-agent mcp enable hive` |
+| **Project scope** | ✓ Resolved from `$PWD` against registered project paths | ✓ Same | ✓ Same — `hive -x` re-resolves before each launch so AGENTS.md reflects current cwd | ✓ Same — identity and MCP approval resolve from the launch `$PWD` |
+| **Council (`convene_council`)** | ✓ via MCP | ✓ via adapter | ✓ via MCP | ✓ via MCP |
+| **Doctor coverage** | ✓ `Identity`, `Hooks`, `MCP` groups | ✓ Pi group (warnings; Pi is optional) | ✓ Codex group (warnings; AGENTS freshness vs. `hive identity emit`) | ✓ Cursor group (warnings; binary, auth, MCP registration and approval) |
+| **Nightly transcript ingestion** | ✓ `~/.claude/projects/*/sessions` | n/a — Pi sessions not currently extracted | ✓ `~/.codex/sessions/YYYY/MM/DD` | n/a — Cursor sessions are not extracted |
 
 Cells marked `~` are partial: functional but with friction worth
 naming. Cells marked `n/a` are intentional non-goals (see below).
 
 ## What `hive init` wires
 
-| Artifact | Claude Code | Pi | Codex |
-| --- | --- | --- | --- |
-| Identity hook / file | `~/.claude/hooks/load-identity.sh` + `~/.claude/settings.json` | (generated per-launch) | `~/.codex/AGENTS.md` + `~/.hive/codex-load-identity.sh` + `~/.codex/hooks.json` |
-| MCP registration | (built-in to Claude Code) | `~/.pi/agent/mcp.json` | `[mcp_servers.hive]` in `~/.codex/config.toml` |
+| Artifact | Claude Code | Pi | Codex | Cursor CLI |
+| --- | --- | --- | --- | --- |
+| Identity hook / file | `~/.claude/hooks/load-identity.sh` + `~/.claude/settings.json` | (generated per-launch) | `~/.codex/AGENTS.md` + `~/.hive/codex-load-identity.sh` + `~/.codex/hooks.json` | (prepended per launch; no installed identity file) |
+| MCP registration | (built-in to Claude Code) | `~/.pi/agent/mcp.json` | `[mcp_servers.hive]` in `~/.codex/config.toml` | `~/.cursor/mcp.json`; each project also needs approval |
 
 All entries are best-effort and idempotent: missing runtimes are
 skipped silently, existing entries are preserved. `hive doctor`
@@ -51,16 +51,16 @@ verifies each.
 These are intentional. They are not on a roadmap.
 
 - **Watch Act stays Claude-Code-only.** Act leans on worktrees + Claude
-  Code's branch-executor session shape. Re-implementing it for Pi or Codex
-  would duplicate the executor without adding interactive reach.
-- **Pi nightly transcript ingestion is not on the roadmap.** Pi
-  sessions don't write a stable per-session transcript file the way
-  Claude Code and Codex do. If they start to, this becomes trivial.
-- **Skills don't transfer between harnesses.** Claude Code skills,
-  Codex's skill-equivalent, and Pi's extension surface are different
-  loading mechanisms. HIVE doesn't try to abstract them; the stack
-  hint in identity is the shared substitute and points each runtime
-  at the right loading mechanism.
+  Code's branch-executor session shape. Re-implementing it for Pi, Codex,
+  or Cursor would duplicate the executor without adding interactive reach.
+- **Pi and Cursor nightly transcript ingestion are not on the roadmap.**
+  The nightly pipeline currently reads Claude Code and Codex sessions.
+  Pi and Cursor do not expose a stable transcript path that HIVE ingests.
+- **Skill portability is limited.** Cursor currently reads
+  `~/.claude/skills/`, so HIVE's installed stack skills are visible there.
+  That Cursor compatibility behavior does not make every Claude Code skill
+  portable. Codex and Pi use different loading surfaces. HIVE keeps the
+  stack hint as the common pointer instead of copying skills per harness.
 
 ## Open Question (Pi)
 
