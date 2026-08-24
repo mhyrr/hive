@@ -25,7 +25,7 @@ import { dirname, join } from "node:path";
 
 import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
-import { parseInbox } from "./inbox";
+import { inboxBodyHash, parseInbox } from "./inbox";
 import { listProjects } from "./paths";
 import {
   entryHash,
@@ -752,6 +752,7 @@ export interface RunVerifierResult {
     gapsPath: string;
     briefingPath: string;
     verifierOutputPath: string;
+    inboxSnapshotPath: string;
     usagePath: string;
   };
   usage: PassUsageRecord;
@@ -858,11 +859,12 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   const gapsPath = join(runDir, "gaps.md");
   const briefingPath = join(runDir, "briefing.md");
   const fullOutputPath = join(runDir, "verifier-output.json");
+  const inboxSnapshotPath = join(runDir, "inboxes.json");
 
   // Clear any stale artifacts from a prior run on this date before the LLM
   // call. If Opus fails, downstream sees absence (correct) rather than
   // yesterday's success masquerading as today's.
-  for (const p of [decisionsPath, gapsPath, briefingPath, fullOutputPath]) {
+  for (const p of [decisionsPath, gapsPath, briefingPath, fullOutputPath, inboxSnapshotPath]) {
     await rm(p, { force: true });
   }
 
@@ -945,6 +947,15 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   // Full structured output — Pass F (Apply) consumes this for gap-landing
   // and taste-readout. Markdown files above are for humans.
   await Bun.write(fullOutputPath, JSON.stringify(output, null, 2));
+  await Bun.write(inboxSnapshotPath, JSON.stringify({
+    version: 1,
+    inboxes: bundle.perProject
+      .filter((block) => block.inboxText.trim().length > 0)
+      .map((block) => ({
+        projectId: block.projectId,
+        bodyHash: inboxBodyHash(block.inboxText),
+      })),
+  }, null, 2));
 
   // One usage record for the pass, summed across its calls. Same model
   // throughout, so the cost math holds — and usage.json keeps exactly one V row
@@ -975,6 +986,7 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
       gapsPath,
       briefingPath,
       verifierOutputPath: fullOutputPath,
+      inboxSnapshotPath,
       usagePath: usagePath(opts.paths, opts.date),
     },
     usage: summary.records[summary.records.length - 1]!,

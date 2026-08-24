@@ -10,6 +10,8 @@ export type HivePaths = {
   agents: string;
   trust: string;
   config: string;
+  /** One replaceable Watch Act selection. Read by `hive next`. */
+  next: string;
   memoryDir: string;
   memoryProjectsDir: string;
   memoryDailyDir: string;
@@ -41,6 +43,7 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     agents: join(home, "AGENTS.md"),
     trust: join(home, "TRUST.md"),
     config: join(home, "config.md"),
+    next: join(home, "next.json"),
     memoryDir: join(home, "memory"),
     memoryProjectsDir: join(home, "memory", "projects"),
     memoryDailyDir: join(home, "memory", "daily"),

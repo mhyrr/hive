@@ -308,7 +308,7 @@ describe("shipped watch templates", () => {
     });
   });
 
-  test("observe: every 3 days, judgment, inbox, transcripts+memory", async () => {
+  test("observe: every 3 days, judgment, briefing, transcripts+memory", async () => {
     const file = join(templatesDir, "observe.md");
     const { watch, warnings } = parseWatchFile(await Bun.file(file).text(), file, null);
     expect(warnings).toEqual([]);
@@ -317,7 +317,7 @@ describe("shipped watch templates", () => {
       cadence: { type: "interval", ms: 3 * DAY },
       scope: ["transcripts", "memory"],
       model: "judgment",
-      venue: "inbox",
+      venue: "briefing",
       autonomy: "observe",
       enabled: true,
     });

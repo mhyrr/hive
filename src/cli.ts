@@ -14,6 +14,7 @@ import { identityCommand } from "./commands/identity";
 import { inboxCommand } from "./commands/inbox";
 import { initCommand } from "./commands/init";
 import { memoryCommand } from "./commands/memory";
+import { nextCommand } from "./commands/next";
 import { tasteCommand } from "./commands/taste";
 import { projectCommand } from "./commands/project";
 import { stackCommand } from "./commands/stack";
@@ -34,6 +35,7 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   stack: stackCommand,
   council: councilCommand,
   memory: memoryCommand,
+  next: nextCommand,
   taste: tasteCommand,
   ticket: ticketCommand,
   tickets: ticketsCommand,
@@ -65,6 +67,7 @@ HIVE Commands:
   stack list|install|sync    Manage language/framework skill stacks
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
+  next                       Show the current Act recommendation
   taste extract [opts]       Mine taste candidates from transcripts (phase 1)
   tickets                    Open tickets for the project you're standing in
   ticket [create|list|...]   Project ticket tracker

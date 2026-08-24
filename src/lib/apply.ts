@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 
 import type { HivePaths } from "./paths";
 import { listProjects } from "./paths";
-import { emptyInbox } from "./inbox";
+import { emptyInbox, inboxBodyHash, parseInbox } from "./inbox";
 import {
   appendProjectMemory,
   drainCandidates,
@@ -192,6 +192,28 @@ async function loadVerifierOutputArtifacts(
   } catch {
     // intentional: corrupted verifier output — return empty defaults
     return { gaps: [] };
+  }
+}
+
+type CapturedInbox = { projectId: string; bodyHash: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function loadCapturedInboxes(paths: HivePaths, date: string): Promise<CapturedInbox[]> {
+  const file = join(paths.memoryRunsDir, date, "inboxes.json");
+  if (!existsSync(file)) return [];
+  try {
+    const parsed: unknown = JSON.parse(await Bun.file(file).text());
+    if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.inboxes)) return [];
+    return parsed.inboxes.flatMap((value): CapturedInbox[] => {
+      if (!isRecord(value)) return [];
+      if (typeof value.projectId !== "string" || typeof value.bodyHash !== "string") return [];
+      return [{ projectId: value.projectId, bodyHash: value.bodyHash }];
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -533,9 +555,15 @@ async function landGaps(
 // Inbox truncation
 // ---------------------------------------------------------------------------
 
-async function truncateInbox(paths: HivePaths, projectId: string): Promise<boolean> {
+async function truncateCapturedInbox(
+  paths: HivePaths,
+  projectId: string,
+  expectedBodyHash: string,
+): Promise<boolean> {
   const inboxPath = join(paths.projectsDir, projectId, "inbox.md");
   if (!existsSync(inboxPath)) return false;
+  const current = parseInbox(await Bun.file(inboxPath).text(), projectId);
+  if (inboxBodyHash(current.body) !== expectedBodyHash) return false;
   await writeFile(inboxPath, emptyInbox(projectId));
   return true;
 }
@@ -577,6 +605,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
 
   const { decisions } = await loadDecisionsArtifact(paths, date);
   const verifierExtras = await loadVerifierOutputArtifacts(paths, date);
+  const capturedInboxes = await loadCapturedInboxes(paths, date);
 
   const outcomeByProject = new Map<string, ProjectApplyOutcome>();
   const ensureOutcome = (id: string): ProjectApplyOutcome => {
@@ -627,7 +656,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
   const gapStats = await landGaps(ctx, verifierExtras.gaps, outcomeByProject, reflectionLandings);
   void gapStats; // captured indirectly via the per-project gap counters and reflectionLandings
 
-  // Drain candidates.md, rebuild index, truncate inbox — per project that touched.
+  // Drain candidates.md and rebuild the index for projects whose canon changed.
   for (const projectId of projectIds) {
     const outcome = outcomeByProject.get(projectId);
     const midSession = ctx.sources.midSession.get(projectId) ?? [];
@@ -657,11 +686,6 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
     }
 
     if (!dryRun) {
-      try {
-        o.inboxTruncated = await truncateInbox(paths, projectId);
-      } catch (err) {
-        o.errors.push(`inbox-truncate: ${err instanceof Error ? err.message : String(err)}`);
-      }
       try {
         await rebuildIndex(paths, projectId);
         o.rebuiltIndex = true;
@@ -695,6 +719,24 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
   } else {
     const src = join(paths.memoryRunsDir, date, "briefing.md");
     if (existsSync(src)) briefingPath = join(paths.home, "briefings", `${date}.md`);
+  }
+
+  // The briefing is the acknowledgement for inbox consumption. Clear every
+  // captured inbox, including inbox-only projects, only after that copy lands.
+  // An inbox changed since Pass V is left intact so a concurrent note survives.
+  if (!dryRun && briefingPath) {
+    for (const captured of capturedInboxes) {
+      const outcome = ensureOutcome(captured.projectId);
+      try {
+        outcome.inboxTruncated = await truncateCapturedInbox(
+          paths,
+          captured.projectId,
+          captured.bodyHash,
+        );
+      } catch (err) {
+        outcome.errors.push(`inbox-truncate: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   // Persist a rejection log for auditability

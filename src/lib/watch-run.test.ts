@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { runWatches, type WatchCaller } from "./watch-run";
 import { loadWatchState } from "./watch-state";
 import type { DeltaSeams } from "./watch-delta";
-import { createTicket } from "./ticket";
+import { createTicket, updateTicket } from "./ticket";
+import { readNextSelection } from "./next";
 import { ensureHiveScaffold, getProjectPaths, type HivePaths } from "./paths";
 import type { ClaudeTextCompletion } from "./claude";
 
@@ -218,6 +219,53 @@ describe("runWatches", () => {
     expect(result.reports[0]).toMatchObject({ outcome: "surfaced", detail: "RUN-042 started for human review" });
     expect(call.calls[0]?.userContent).toContain(`[A:alpha/${ticket.id}]`);
     expect((await loadWatchState(paths)).watches.act?.lastRun).toBe("2026-08-12T10:00:00Z");
+    expect(await readNextSelection(paths)).toMatchObject({
+      disposition: "started",
+      projectId: "alpha",
+      ticketId: ticket.id,
+      runId: "RUN-042",
+    });
+  });
+
+  test("a clamped Act watch replaces the one next recommendation", async () => {
+    await makeActProject();
+    await writeFile(paths.config, "# Hive Config\n\nwatches.max_autonomy: propose\n");
+    const first = await createTicket(paths, "alpha", {
+      title: "First follow-on",
+      body: "Implement the first complete follow-on.",
+    });
+    const second = await createTicket(paths, "alpha", {
+      title: "Second follow-on",
+      body: "Implement the second complete follow-on.",
+    });
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: act\nautonomy: act");
+
+    const one = stubCaller(`[A:alpha/${first.id}] Compounds the current work.\nACT alpha/${first.id}`);
+    await runWatches({ paths, mode: "named", names: ["act"], now: ANCHOR, caller: one.caller, seams: NO_SESSIONS });
+    expect(await readNextSelection(paths)).toMatchObject({
+      disposition: "recommended",
+      ticketId: first.id,
+      rationale: "Compounds the current work.",
+    });
+
+    process.env.HIVE_FIXED_NOW = new Date(ANCHOR.getTime() + 30 * 60_000).toISOString();
+    await updateTicket(paths, "alpha", second.id, { title: second.title });
+    const two = stubCaller(`[A:alpha/${second.id}] Removes the next bottleneck.\nACT alpha/${second.id}`);
+    const secondResult = await runWatches({
+      paths,
+      mode: "named",
+      names: ["act"],
+      now: new Date(ANCHOR.getTime() + HOUR),
+      caller: two.caller,
+      seams: NO_SESSIONS,
+    });
+    expect(secondResult.reports[0]).toMatchObject({ outcome: "surfaced" });
+    expect(await readNextSelection(paths)).toMatchObject({
+      disposition: "recommended",
+      ticketId: second.id,
+      rationale: "Removes the next bottleneck.",
+    });
+    expect(existsSync(join(paths.home, "inbox.md"))).toBe(false);
   });
 
   test("act rejects multiple selections and does not start work", async () => {
@@ -331,7 +379,7 @@ describe("runWatches", () => {
     expect(calls[0]?.userContent).toContain("24 hours");
   });
 
-  test("cross-project inbox venue writes the global ~/.hive/inbox.md", async () => {
+  test("a legacy cross-project inbox venue falls forward to a dated briefing artifact", async () => {
     const ticket = await createTicket(paths, "alpha", { title: "Ship it" });
     await writeWatch("observe", "cadence: 2h\nscope: tickets\nvenue: inbox\nautonomy: observe", "What threads?");
 
@@ -340,9 +388,10 @@ describe("runWatches", () => {
 
     expect(reports.find((r) => r.watch === "observe")?.outcome).toBe("surfaced");
     const globalInbox = join(paths.home, "inbox.md");
-    expect(existsSync(globalInbox)).toBe(true);
-    const content = await Bun.file(globalInbox).text();
-    expect(content).toContain("watch:observe");
+    expect(existsSync(globalInbox)).toBe(false);
+    const artifact = join(paths.memoryRunsDir, "2026-08-12", "observe.md");
+    expect(existsSync(artifact)).toBe(true);
+    const content = await Bun.file(artifact).text();
     expect(content).toContain(ticket.id);
     // The project inbox stays untouched — this is a cross-project surface.
     expect(existsSync(getProjectPaths(paths, "alpha").inbox)).toBe(false);
