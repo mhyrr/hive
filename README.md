@@ -189,6 +189,16 @@ keychain (Claude Code's design), so it requires `ANTHROPIC_API_KEY` and
 wires HIVE MCP explicitly via `--mcp-config`. Set the mode with the flag or
 `HIVE_CLAUDE_MODE=owned|bare`.
 
+### Plugin hook control
+
+Claude Code plugins can bundle skills, agents, MCP servers, and hooks. Claude
+can disable a whole plugin, but it cannot disable one hook inside an enabled
+plugin. Use a HIVE-local marketplace when you want a plugin's components under
+an explicit hook allowlist. See
+[docs/local-plugin-marketplace.md](docs/local-plugin-marketplace.md) for the
+layout, Superpowers example, verification, and update process. `hive init`
+does not automate this flow today.
+
 After init, customize these files:
 
 | File | What to put there |

@@ -248,5 +248,7 @@ everything is green and Maya still feels off:
 ## Related
 
 - `docs/hive-reach.md` — reach matrix across runtimes (identity is one row)
+- `docs/local-plugin-marketplace.md` — control third-party Claude plugin hooks
+  without editing Claude's plugin cache
 - Tickets TK-047 through TK-053 (the identity-reconsolidation epic)
 - `docs/memory-architecture.md` — how project memory works
