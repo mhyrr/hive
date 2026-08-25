@@ -1,119 +1,144 @@
 # <img src="img/logo.svg" alt="" width="32" height="32"> Hive
 
-HIVE wraps the subscription coding CLI you already run — Claude Code by default, Codex
-(`hive -x`), Pi (`hive -3`), or Cursor CLI (`hive -a`) on opt-in — and gives the
-agent a memory, a ticket queue, and a nightly reflection loop. Identity is
-the substrate that carries all three across sessions and harnesses.
+HIVE gives Claude Code, Codex, Pi, and Cursor CLI the same identity, project
+memory, ticket queue, and nightly reflection.
 
-The AI agent ecosystem has claws, hippos, and filing cabinets. They want to own your stack with databases and local embedding servers. HIVE takes the best ideas from all of them
-and re-implements them in a lightweight shell around subscription CLIs. No
-databases. No vector stores. No dependencies worth mentioning.
-Everything is markdown files in `~/.hive/`, tracked by git,
-readable by humans.
+| Command | Coding CLI |
+| --- | --- |
+| `hive` | Claude Code |
+| `hive -x` | Codex |
+| `hive -3` | Pi |
+| `hive -a` | Cursor CLI |
 
-The coding harness handles the conversation, tools, and file I/O. HIVE adds
-what it doesn't remember on its own, most valuable first:
+The AI agent ecosystem has claws, hippos, and filing cabinets. Most systems
+bring a database or a local embedding server. HIVE takes their best ideas but
+stays a thin shell around subscription CLIs. Its durable state lives as readable
+Markdown in `~/.hive/`, tracked by Git. It needs no database, vector store, or
+dependency worth mentioning.
 
-- **Wraps your CLI** — `hive` launches Claude Code (or Codex with `-x`, Pi
-  with `-3`, Cursor with `-a`) already carrying identity, project memory,
-  and MCP reach.
-- **Project memory** — three layers (log, knowledge, index) with BM25
-  search and decay, so knowledge compounds instead of resetting.
-- **Tickets** — per-project bugs, features, tasks, epics, and chores as
-  markdown the agent can plan against.
-- **Reflection & taste** — a nightly pass distills your sessions into
-  verified canon and an optional taste layer. Tell the agent once, it
-  sticks.
-- **Identity (the substrate)** — SOUL / IDENTITY / SELF carry who the agent
-  is across every session, so memory and reflection have something to
-  attach to.
+The coding CLI still handles the conversation, tools, and files. HIVE supplies
+the context that must survive the session.
 
-Smaller surfaces sit underneath: a multi-model council, standing-question
-watches, a morning dashboard, language-stack skills, and the local MCP server
-that ties it together. Details below.
+## What HIVE Adds
 
-## What It Does
+### One wrapper for four CLIs
 
-Sections run most valuable first — the top group is why HIVE exists.
+Each command launches its CLI with HIVE identity, project memory, and MCP access.
+HIVE uses a SessionStart hook for Claude Code, `~/.codex/AGENTS.md` for Codex, a
+generated `-e` extension for Pi, and the initial positional prompt for Cursor.
+See [Interactive Harnesses](#interactive-harnesses) for the routing matrix.
 
-**Wraps your CLI.**
+### Project memory
 
-- `hive` launches the coding CLI you already run with HIVE identity,
-  project memory, and MCP reach already wired in. Claude Code is the
-  default; `hive -x` launches Codex, `hive -3` launches Pi, and `hive -a`
-  launches Cursor CLI. Each harness receives the same canonical identity —
-  a SessionStart hook for Claude Code, `~/.codex/AGENTS.md` for Codex, a
-  generated `-e` extension for Pi, and the initial positional prompt for
-  Cursor. See [Interactive
-  Harnesses](#interactive-harnesses) for the full routing matrix.
-- The harness still owns the conversation, tools, and file I/O. HIVE adds
-  only what it doesn't remember on its own.
+Facts, conventions, decisions, and open questions accumulate in
+`~/.hive/memory/projects/<name>/`. Agents read and write them through MCP tools,
+so each session can start with what earlier sessions learned.
 
-**Project memory.**
+`hive project bootstrap [--infer]` scans a registered repository and proposes
+facts about its stack, build, tests, CI, conventions, and architecture. The
+nightly verifier decides which candidates enter canon. See
+`docs/memory-architecture.md` for the candidate paths.
 
-- Facts, conventions, decisions, and open questions accumulate in `~/.hive/memory/projects/<name>/`. Agents read and write this through MCP tools. Knowledge compounds over time instead of starting fresh every session.
-- New projects skip the cold start: `hive project bootstrap [--infer]` scans a registered repo and seeds candidate facts (stack, build/test/CI, conventions, architecture summary). The nightly verifier admits what's canon-worthy. See `docs/memory-architecture.md` for the candidate-writer paths.
-- Inspired by [Hippo](https://github.com/kitfunso/hippo-memory): memory
-decay and retrieval strengthening — entries you actually use get
-stronger, everything else fades. Biological memory dynamics without
-the SQLite.
-- Inspired by [ClawMem](https://github.com/yoloshii/ClawMem): BM25 ranked
-search as the base retrieval layer. No embeddings needed at this scale.
-- Inspired by [claude-mem](https://github.com/thedotmack/claude-mem):
-progressive disclosure — lightweight index at session start, details
-on demand.
+Three projects shaped the memory system:
 
-**Tickets.**
+- [Hippo](https://github.com/kitfunso/hippo-memory) inspired memory decay and
+  retrieval strengthening. Entries grow stronger when agents use them and fade
+  when they do not. Biological memory dynamics without SQLite.
+- [ClawMem](https://github.com/yoloshii/ClawMem) inspired BM25 ranked search.
+  HIVE needs no embeddings at this scale.
+- [claude-mem](https://github.com/thedotmack/claude-mem) inspired progressive
+  disclosure: a small index loads at session start, with details available on
+  demand.
 
-- Per-project tickets stored as markdown files with YAML frontmatter at `~/.hive/projects/<name>/tickets/`. Bugs, features, tasks, epics, and chores with priorities, tags, dependencies, and timestamped notes. 
-- Tickets live under `~/.hive/`, not in the repo — they're a personal working surface for one developer's human+agent loop, not a team coordination layer. Each dev on a project opts into HIVE independently; team-wide work still belongs in GitHub Issues, Linear, or whatever your team already uses.
-- Inspired by [Beads](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a): per-project ticket tracking with dependencies, priorities, and agent-readable markdown — work graphs the AI can plan against.
+### Tickets
 
-**Reflection & taste.**
+HIVE stores per-project tickets as Markdown with YAML frontmatter in
+`~/.hive/projects/<name>/tickets/`. Tickets support bugs, features, tasks, epics,
+chores, priorities, tags, dependencies, and timestamped notes. Agents can plan
+against them.
 
-- The reason memory compounds without you curating it. A launchd job runs at 2am and walks a five-pass pipeline over the last 24 hours: condition (rank Claude Code + Codex session exchanges by signal × novelty), Sonnet extracts per-project candidates, Sonnet extracts cross-project reflections, Opus verifies and writes the morning briefing, then a mechanical pass lands accepted decisions to canon. Cost is typically $1–3/night; every run is auditable in `~/.hive/memory/runs/{DATE}/`.
-- Corrections and preferences you give in any session — "don't mock the database," "use Joken not Guardian," "stop summarizing at the end of every response" — flow as candidates to the night, get verified, and apply in every future session. Tell the agent once, it sticks forever.
-- Taste is a durable, human-gated layer, not just facts. The nightly pass also extracts **taste units** — judgments about how to do a kind of work well — and files them by work type (IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). A recurrence gate moves a unit from `holding` to `pending`; you approve the ones worth keeping into `active`. Agents pull the active set mid-session with `search_taste`, and the `/taste` dashboard page is the readable library.
-- The most durable principles get promoted to `~/.hive/taste/principles.md` — the apex layer that loads last and loudest in every session, the agent's accumulated judgment across all work.
+These tickets form a personal work surface for one developer and their agent.
+Each developer opts in separately. Team work still belongs in GitHub Issues,
+Linear, or the team's existing tracker.
 
-**Identity — the substrate.**
+[Beads](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a)
+inspired the dependency graph, priorities, and agent-readable format.
 
-- SOUL.md, IDENTITY.md, and SELF.md in `~/.hive/` define who the agent is, what it values, and how it works with you. This is the infrastructure the rest sits on — it scopes memory and reflection to a project and carries them across sessions. Claude Code loads it through the user-level SessionStart hook; Codex through `~/.codex/AGENTS.md`, refreshed by `hive -x` and its own SessionStart hook; Pi through a generated extension; Cursor through the initial positional prompt.
-- Inspired by [OpenClaw](https://openclaw.ai/).
+### Reflection and taste
 
-### Also included
+A launchd job runs at 2am and processes the last 24 hours in five passes. It
+ranks Claude Code and Codex exchanges by signal × novelty. Sonnet extracts
+project candidates and cross-project reflections. Opus verifies them and writes
+the morning briefing. A mechanical pass then moves accepted decisions into
+canon. A run typically costs $1–3 and remains auditable in
+`~/.hive/memory/runs/{DATE}/`.
 
-Smaller surfaces — reach for them when a project needs them.
+Corrections and preferences such as "don't mock the database," "use Joken not
+Guardian," and "stop summarizing at the end of every response" become
+candidates. After verification, they apply to future sessions.
 
-- **Multi-model council.** Send one question to Claude, GPT, Gemini, and local models in parallel; the current agent chairs and synthesizes agreement and disagreement. Standard or adversarial-dialectic modes. `hive council "<question>"`. Inspired by [Perplexity](https://perplexity.ai/).
-- **Watches.** Markdown standing questions run on declared cadences against bounded local evidence. Observe connects threads, Propose writes into the nightly briefing, and Act may start one deterministically eligible ticket on an isolated review branch. No change means no model call. `hive watch status`; see [docs/watches.md](docs/watches.md).
-- **The dashboard.** One page that opens with a verdict per project instead of a log — see [The Dashboard](#the-dashboard) below. A static `~/.hive/dashboard/index.html` or an interactive server at `127.0.0.1:7777`. `hive dashboard`. See [docs/dashboard.md](docs/dashboard.md).
-- **Language stacks.** Domain-knowledge bundles — Iron Laws, patterns, idioms — packaged as Claude Code skills and auto-detected per project (`mix.exs` → elixir, `package.json` → typescript). The verified Cursor CLI also reads `~/.claude/skills/`, but that compatibility does not guarantee every skill is portable. Ships **elixir** and **typescript**; `hive stack init <name>` scaffolds your own. Elixir content from [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix), TypeScript from [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills) (both MIT).
-- **Local MCP server.** The consistency layer that exposes memory, tickets, and council to every harness — markdown underneath, no database.
+The nightly run also extracts **taste units**: judgments about how to do a type
+of work well. It files them under IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL,
+COMMUNICATION, or PROCESS. Recurring units move from `holding` to `pending`.
+You choose which units become `active`. Agents retrieve the active set with
+`search_taste`, and the `/taste` dashboard page shows the library.
+
+The strongest principles move to `~/.hive/taste/principles.md`. This file loads
+last in every session and carries the most weight.
+
+### Identity
+
+`SOUL.md`, `IDENTITY.md`, and `SELF.md` define who the agent is, what it values,
+and how it works with you. HIVE carries those files across projects and CLIs.
+Claude Code loads them through a user-level SessionStart hook. Codex loads them
+through `~/.codex/AGENTS.md`, which `hive -x` and its SessionStart hook refresh.
+Pi uses a generated extension. Cursor uses the initial positional prompt.
+
+[OpenClaw](https://openclaw.ai/) inspired this identity model.
+
+### Other tools
+
+- **Multi-model council.** `hive council "<question>"` sends one question to
+  Claude, GPT, Gemini, and local models. The current agent synthesizes their
+  agreement and disagreement. It supports standard and adversarial-dialectic
+  modes. [Perplexity](https://perplexity.ai/) inspired it.
+- **Watches.** Markdown files declare standing questions, schedules, evidence,
+  model tiers, output locations, and autonomy. Observe connects findings.
+  Propose writes to the nightly briefing. Act can start one eligible ticket on
+  an isolated review branch. Unchanged evidence causes no model call. Run
+  `hive watch status`; see [docs/watches.md](docs/watches.md).
+- **Dashboard.** `hive dashboard` opens a verdict for each project. HIVE can
+  serve it at `127.0.0.1:7777` or build `~/.hive/dashboard/index.html`. See
+  [The Dashboard](#the-dashboard) and [docs/dashboard.md](docs/dashboard.md).
+- **Language stacks.** HIVE packages framework rules and idioms as Claude Code
+  skills. It detects `mix.exs` as Elixir and `package.json` as TypeScript. The
+  verified Cursor CLI also reads `~/.claude/skills/`, though some skills may
+  depend on Claude Code. HIVE ships **elixir** and **typescript** stacks;
+  `hive stack init <name>` starts another. The Elixir stack comes from
+  [oliver-kriska/claude-elixir-phoenix](https://github.com/oliver-kriska/claude-elixir-phoenix),
+  and the TypeScript stack comes from
+  [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills). Both use
+  the MIT license.
+- **Local MCP server.** The server exposes memory, tickets, and council to every
+  harness. The state remains in Markdown.
 
 ## The Dashboard
 
-Every night HIVE inspects the projects it tracks. The dashboard is the
-inspection report, and it opens with the answer: which projects want you
-today, and why.
+Every night HIVE inspects its projects. The dashboard opens with the result:
+which projects need you today, and why. The first screen shows only that result.
 
 <img src="img/dashboard.png" alt="The HIVE dashboard: the wordmark, then in large type '9 of 14 colonies need you today', then a yard of painted hive boxes standing at different heights on a shared baseline — each labelled with a verdict (NEEDS YOU, QUEENLESS, ACTIVE, WAITING, QUIET), a one-line reason, and its ticket and memory counts" width="900">
 
-The whole first screen is that answer and nothing else. Each project is a
-colony: it stands as tall as its accumulated memory, its entrance at the
-base is as wide as its ticket traffic, and the plate underneath carries
-the verdict the night reached with the reason it reached it. Painted means
-look at me; unpainted pine means fine. Height and width are data, not
-decoration, so the yard reads as magnitude before it reads as text.
+Each project appears as a colony. Its height shows accumulated memory, and its
+entrance width shows ticket traffic. The plate below gives the nightly verdict
+and its reason. Painted boxes need attention. Unpainted pine boxes do not.
 
-Below the yard: what actually landed (commit subjects as people wrote
-them), the morning briefing set in columns, whatever the watches said
-overnight, a five-per-project ticket shortlist, the memory store, and 30
-days of past briefings. Click any colony to narrow the whole page to that
-project. `/tickets`, `/taste` and `/watches` are their own pages.
+Below the yard, the dashboard shows commit subjects as their authors wrote them,
+the morning briefing, overnight watch results, five tickets per project, the
+memory store, and 30 days of briefings. Select a colony to filter the page to
+that project. `/tickets`, `/taste`, and `/watches` have their own pages.
 
-The design system it was built against is recorded in
-[DESIGN.md](DESIGN.md).
+[DESIGN.md](DESIGN.md) records the design system.
 
 ## Quick Start
 
@@ -123,10 +148,10 @@ cd ~/work/hive
 ./install.sh
 ```
 
-This builds the binaries, creates `~/.hive/` with identity templates,
-installs agents and scripts, registers the MCP server, and sets up
-launchd jobs. It will prompt for your name to personalize templates
-(or pass `--name="Your Name"`).
+The installer builds the binaries, creates `~/.hive/` with identity templates,
+installs agents and scripts, registers the MCP server, and sets up launchd jobs.
+It asks for your name to personalize the templates. You can also pass
+`--name="Your Name"`.
 
 The installer registers four launchd jobs:
 
@@ -137,7 +162,8 @@ The installer registers four launchd jobs:
 | `com.hive.dashboard` | KeepAlive | Serves the local interactive dashboard on `127.0.0.1:7777` |
 | `com.hive.watches` | Hourly | Evaluates due standing questions; delta-gated watches make no model call when nothing changed |
 
-All jobs log to `~/.hive/logs/`. Manage with `launchctl`:
+All jobs log to `~/.hive/logs/`. Manage them with `launchctl`:
+
 ```bash
 launchctl list | grep hive         # see running jobs
 launchctl unload ~/Library/LaunchAgents/com.hive.watches.plist  # stop one
@@ -151,24 +177,24 @@ cd ~/work/myapp
 hive
 ```
 
-`hive` launches Claude Code with HIVE identity. `hive -3` launches Pi,
-`hive -x` launches Codex, and `hive -a` launches Cursor CLI instead. Direct `claude` sessions still receive
-HIVE identity through the Claude Code SessionStart hook after `hive init`.
+`hive` launches Claude Code with HIVE identity. Use `hive -x` for Codex,
+`hive -3` for Pi, or `hive -a` for Cursor CLI. After `hive init`, direct
+`claude` sessions also receive HIVE identity through the Claude Code
+SessionStart hook.
 
 ## Interactive Harnesses
 
-Harness flags apply only when `hive` is launching an agent session. Local
-commands such as `hive doctor`, `hive ticket list`, and `hive memory` run
-inside HIVE itself.
+Harness flags apply only when `hive` launches an agent session. Commands such as
+`hive doctor`, `hive ticket list`, and `hive memory` run inside HIVE.
 
 | Invocation | Runtime | Identity path |
 | --- | --- | --- |
 | `hive` / `hive "<prompt>"` | Claude Code | Per-invocation `--append-system-prompt` plus `~/.claude` SessionStart hook |
-| `hive -3 "<prompt>"` / `hive --pi "<prompt>"` | Pi CLI | Runtime-generated `-e` identity extension; Pi owns provider/model selection |
 | `hive -x "<prompt>"` / `hive --codex "<prompt>"` | Codex CLI | `~/.codex/AGENTS.md`, refreshed before launch and by `~/.hive/codex-load-identity.sh` |
+| `hive -3 "<prompt>"` / `hive --pi "<prompt>"` | Pi CLI | Runtime-generated `-e` identity extension; Pi owns provider/model selection |
 | `hive -a "<prompt>"` / `hive --cursor "<prompt>"` | Cursor CLI | Canonical identity prepended to the positional initial prompt; bare interactive consumes a synthetic first turn |
-| `HIVE_HARNESS=pi hive "<prompt>"` | Pi CLI | Same as `-3`; override with `--claude` or `--claude-code` |
 | `HIVE_HARNESS=codex hive "<prompt>"` | Codex CLI | Same as `-x`; override with `--claude` or `--claude-code` |
+| `HIVE_HARNESS=pi hive "<prompt>"` | Pi CLI | Same as `-3`; override with `--claude` or `--claude-code` |
 | `HIVE_HARNESS=cursor hive "<prompt>"` | Cursor CLI | Same as `-a`; override with `--claude` or `--claude-code` |
 
 `-3` / Pi is an opt-in research lane while the subscription-OAuth policy
@@ -176,8 +202,7 @@ question remains open. Claude Code stays the default.
 
 ### Claude Code modes
 
-When `hive` launches Claude Code, a flag controls how the HIVE identity
-relates to Claude Code's own default system prompt:
+When `hive` launches Claude Code, a flag controls how it applies HIVE identity:
 
 | Flag | Default prompt | Hooks / skills / MCP | Auth | Claude arg |
 | --- | --- | --- | --- | --- |
@@ -185,25 +210,23 @@ relates to Claude Code's own default system prompt:
 | `--owned` | **replaced** by HIVE identity | kept | subscription OAuth | `--system-prompt` |
 | `--bare` | **replaced** by HIVE identity | dropped | requires `ANTHROPIC_API_KEY` | `--bare --system-prompt` |
 
-Default `append` sits the HIVE identity after Anthropic's base prompt.
-`--owned` makes the HIVE identity the entire system prompt while keeping
-hooks, skills, MCP, and OAuth. `--bare` goes further — it skips hook,
-plugin, and `CLAUDE.md` auto-discovery entirely and never reads OAuth or
-keychain (Claude Code's design), so it requires `ANTHROPIC_API_KEY` and
-wires HIVE MCP explicitly via `--mcp-config`. Set the mode with the flag or
-`HIVE_CLAUDE_MODE=owned|bare`.
+The default `append` mode puts HIVE identity after Anthropic's base prompt.
+`--owned` replaces the base prompt with HIVE identity but keeps hooks, skills,
+MCP, and OAuth. `--bare` skips hook, plugin, and `CLAUDE.md` discovery. Claude
+Code does not read OAuth or Keychain in this mode, so `--bare` requires
+`ANTHROPIC_API_KEY`. HIVE registers its MCP server with `--mcp-config`. Set the
+mode with a flag or with `HIVE_CLAUDE_MODE=owned|bare`.
 
 ### Plugin hook control
 
 Claude Code plugins can bundle skills, agents, MCP servers, and hooks. Claude
 can disable a whole plugin, but it cannot disable one hook inside an enabled
-plugin. Use a HIVE-local marketplace when you want a plugin's components under
-an explicit hook allowlist. See
-[docs/local-plugin-marketplace.md](docs/local-plugin-marketplace.md) for the
-layout, Superpowers example, verification, and update process. `hive init`
-does not automate this flow today.
+plugin. A HIVE-local marketplace lets you keep selected components under a hook
+allowlist. [The local plugin marketplace guide](docs/local-plugin-marketplace.md)
+covers the layout, Superpowers example, verification, and updates. `hive init`
+does not automate this process.
 
-After init, customize these files:
+After initialization, edit these files:
 
 | File | What to put there |
 | --- | --- |
@@ -212,8 +235,8 @@ After init, customize these files:
 | `~/.hive/SOUL.md` | Shared values and craft standards |
 | `~/.hive/config.md` | Model pool and runtime defaults for council/steward lanes |
 
-`SELF.md` is the most important one. The more the AI knows about how
-you work, the less you repeat yourself.
+Start with `SELF.md`. Give the agent enough context about your work to avoid
+repeating it in each session.
 
 ### Configure models (optional)
 
@@ -230,27 +253,18 @@ Edit `~/.hive/config.md` to set up the council:
 
 ## Add Hive to an Existing Project
 
-After `hive init`, identity injection is automatic for every project.
-The user-level SessionStart hook (`~/.claude/hooks/load-identity.sh`,
-wired in `~/.claude/settings.json`) loads the soul stack, the project's
-memory index (if registered), stack hint, and optional taste layer at every
-session start. Pi gets the same prefix through a generated launch extension;
-Codex gets it through `~/.codex/AGENTS.md`, refreshed before every `hive -x`
-launch and by the Codex SessionStart hook when Codex is installed and
-`hive init` has wired it. Cursor gets it in the positional initial prompt;
-a bare `hive -a` consumes a synthetic startup turn. No per-project
-`CLAUDE.md` block required.
-
-Register the project so its memory and tickets work:
+Run `hive init` once to connect each installed harness: Claude Code, Codex, Pi,
+and Cursor CLI. Then register a project to enable its memory and tickets:
 
 ```bash
 hive project add yourproject ~/work/yourproject
 ```
 
-That's it. The hook matches `$PWD` against registered project paths
-and loads the right memory automatically. Keep `CLAUDE.md` in the
-project repo for project-specific guidelines only (framework conventions,
-domain constraints) — identity loads independently.
+HIVE matches `$PWD` against registered project paths and loads the correct
+memory. Keep `CLAUDE.md` for project rules such as framework conventions and
+domain constraints. You do not need a per-project identity block because HIVE
+loads identity separately. See
+[How Identity Works](#how-identity-works) for each harness's integration.
 
 ## MCP Tools
 
@@ -260,7 +274,7 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | --- | --- |
 | `convene_council` | Send a question to multiple models in parallel. Supports `persona: "analyst"` for structured analytical framing. |
 | `read_hive_memory` | Read project intelligence: facts, conventions, decisions, open questions. |
-| `write_hive_memory` | Record a new fact, convention, decision, or question. Validated on write. |
+| `write_hive_memory` | Queue a fact, convention, decision, or question for nightly verification. Validated on write. |
 | `reflect_session` | Batch-write session learnings at end of session. |
 | `search_memory` | Search across all memory layers by keyword or tag. |
 | `search_taste` | Retrieve the active (human-approved) taste for a work type (IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). Merges project + general stores; holding/pending never leak in. |
@@ -327,38 +341,37 @@ Available to supported harnesses when the HIVE MCP server is registered:
 
 ## How Identity Works
 
-Identity lives in `~/.hive/` and is emitted by one program:
-`hive identity emit`. Claude Code, Pi, Codex, and Cursor consume that same
-canonical prefix through different integration points.
+Identity lives in `~/.hive/`. One command, `hive identity emit`, produces the
+canonical prefix for Claude Code, Codex, Pi, and Cursor.
 
 Claude Code loads the prefix through the user-level SessionStart hook at
 `~/.claude/hooks/load-identity.sh`, wired into `~/.claude/settings.json`.
 The `hive` wrapper also passes the identity inline with
 `--append-system-prompt` when it launches Claude Code directly.
 
-Pi gets a generated identity extension at launch time via `pi -e <tempfile>`;
-all remaining args pass through unchanged so Pi owns provider/model choice.
-`hive init` also registers HIVE MCP in `~/.pi/agent/mcp.json` for
-`pi-mcp-adapter` when Pi is installed. Fresh Pi setup is documented in
-`docs/identity-injection.md`.
-
 Codex loads the prefix from `~/.codex/AGENTS.md`. `hive init` writes that
 file, registers HIVE MCP in `~/.codex/config.toml`, and wires a Codex
 SessionStart hook at `~/.hive/codex-load-identity.sh` to refresh
-`AGENTS.md` from `hive identity emit`. The `hive -x` launcher also refreshes
-AGENTS before spawning Codex, which keeps project-sensitive memory and stack
-context current even if the last direct Codex session was in another project.
+`AGENTS.md` from `hive identity emit`. The `hive -x` launcher refreshes the file
+again before it starts Codex. This keeps project memory and stack context
+current when the previous Codex session used another project.
 
-Cursor receives the prefix in its positional initial prompt. `hive init`
-merges HIVE MCP into `~/.cursor/mcp.json`, but Cursor also requires approval
-per project. The `hive -a` launcher runs `cursor-agent mcp enable hive` from
-the current project as a best-effort self-heal. A bare interactive launch uses
-a synthetic first turn to deliver identity, then waits for the user's request.
-HIVE does not use Cursor plugins for identity; a 2026-08-19 canary exited 0
-without exposing its marker to the model.
+Pi gets a generated identity extension at launch time through
+`pi -e <tempfile>`. HIVE passes the remaining arguments unchanged, so Pi owns
+provider and model selection. When Pi is installed, `hive init` also registers
+HIVE MCP in `~/.pi/agent/mcp.json` for `pi-mcp-adapter`. See
+`docs/identity-injection.md` for initial setup.
 
-Every session picks up the same stack in deliberate emit order (later
-sections carry more weight in system-prompt interpretation):
+Cursor receives the prefix in its positional initial prompt. `hive init` merges
+HIVE MCP into `~/.cursor/mcp.json`. Cursor also requires approval for each
+project, so `hive -a` runs `cursor-agent mcp enable hive` from the current
+project as a best-effort repair. A bare interactive launch uses a synthetic
+first turn to deliver identity, then waits for the user's request. HIVE does not
+use Cursor plugins for identity. A 2026-08-19 canary exited 0 without exposing
+its marker to the model.
+
+Every session receives the same stack in this order. Later sections carry more
+weight during system-prompt interpretation.
 
 1. **Soul stack** — `SOUL.md`, `IDENTITY.md`, `SELF.md`, `AGENTS.md`, `TRUST.md`
 2. **Project memory** — the matched project's `_index.md` (or full
@@ -371,73 +384,70 @@ sections carry more weight in system-prompt interpretation):
 4. **Taste layer** — `~/.hive/taste/principles.md` when present; this is
    the last and loudest layer
 
-Reflection discipline and first-turn MCP pre-fetch live in `AGENTS.md`, not
-in a separate generated block. `OVERRIDES.md` was retired from the canonical
-stack; `hive doctor` warns if a live copy is still sitting around.
+`AGENTS.md` contains the reflection rules and first-turn MCP pre-fetch.
+`OVERRIDES.md` no longer belongs to the canonical stack; `hive doctor` warns if
+one remains.
 
-That stack costs the same tokens in every session, so `hive context` measures
-it against the budgets set at the 2026-07 slim-down — soul stack, persona,
-project memory index, stack hint, taste layer, plus each registered project's
-`CLAUDE.md`:
+The stack costs the same tokens in every session. `hive context` measures it
+against the budgets set at the 2026-07 slim-down. The report covers the soul
+stack, persona, project memory index, stack hint, taste layer, and each
+registered project's `CLAUDE.md`.
 
 <img src="img/hive-context.png" alt="hive context output: a block grid showing the identity injection at 30.1KB of a 40KB window, with per-layer and per-project budget bars" width="820">
 
-It exits 1 when anything is over budget, so it can gate CI or a pre-push hook.
-`--json` emits the same report for tracking size over time. See
-`docs/identity-injection.md` for what each budget is calibrated against.
+The command exits 1 when any item exceeds its budget, so it can gate CI or a
+pre-push hook. `--json` emits the same report for tracking size over time. See
+`docs/identity-injection.md` for each budget's basis.
 
-### Tuned for Current Harnesses
+### Harness-specific details
 
 Claude Code 2.1.x introduced deferred tool schemas and stronger base-prompt
-pressure toward terse responses. HIVE answers that in `AGENTS.md`: MCP tools
-are named as first reach, first-turn schema pre-fetch is explicit, and voice
-is treated as part of the task rather than decoration. SOUL.md and
-IDENTITY.md templates lead with positive voice examples.
+pressure toward terse responses. `AGENTS.md` names MCP tools as the first reach,
+requires a first-turn schema pre-fetch, and treats voice as part of the task.
+The `SOUL.md` and `IDENTITY.md` templates give positive voice examples.
 
-Pi uses an ephemeral extension because its runtime lets HIVE prepend the
-system prompt directly while still letting Pi choose the model. Codex has a
-different loading surface: persistent `AGENTS.md`, MCP servers in
-`config.toml`, and hooks in `hooks.json`. HIVE uses those native files
-instead of per-invocation prompt injection, which preserves Codex's prefix
-cache across sessions. Cursor has no verified system-prompt surface, so HIVE
-uses its positional initial prompt. The verified Cursor version reads
-`~/.claude/skills/`; this is compatibility behavior, not a guarantee that
-every Claude Code skill is portable. `hive doctor` checks Claude Code, Pi,
-Codex, and Cursor wiring; optional-harness checks are warnings.
+Pi accepts the system prompt through an ephemeral extension and retains control
+of its provider and model. Codex reads persistent `AGENTS.md`, `config.toml`, and
+`hooks.json` files. These native files preserve Codex's prefix cache across
+sessions. Cursor has no verified system-prompt interface, so HIVE uses its
+positional initial prompt. The verified Cursor version reads
+`~/.claude/skills/`, but some Claude Code skills may not work there.
+`hive doctor` checks all four harnesses and reports optional-harness failures as
+warnings.
 
-Watch Act uses Claude Code for isolated branch execution. `-3`, `-x`, and
-`-a` are interactive harness routes; they do not change the watch executor.
-The nightly pipeline ingests Claude Code and Codex transcripts. It does not
-ingest Pi or Cursor transcripts.
+Watch Act always uses Claude Code for isolated branch execution. The `-x`, `-3`,
+and `-a` flags affect interactive sessions only. The nightly pipeline ingests
+Claude Code and Codex transcripts. It does not ingest Pi or Cursor transcripts.
 
-See `docs/hive-reach.md` for the runtime reach matrix (identity, MCP
-tools, project scope per harness) and `docs/identity-injection.md` for
-the identity architecture deep dive — emit order, cache stability
-guarantees, the "Maya feels cold" debug runbook, and how to add a new
-file to the stack.
+See `docs/hive-reach.md` for the identity, MCP, and project-scope matrix. See
+`docs/identity-injection.md` for emit order, cache stability, the "Maya feels
+cold" debug runbook, and instructions for adding a file to the stack.
 
 ## Memory
 
-Three layers, from raw to refined:
+Memory moves through three layers:
 
-- **Log** (`memory/projects/<name>/log/`): Daily session entries. Append-only. Written by `reflect_session`.
-- **Knowledge** (`memory/projects/<name>/knowledge.md`): Compiled facts, conventions, decisions, open questions. Written by `write_hive_memory`. Supports tags and superseding.
-- **Index** (`memory/projects/<name>/_index.md`): Auto-generated summary loaded at session start. Rebuilt when knowledge changes.
+- **Log** (`memory/projects/<name>/log/`): append-only daily session entries
+  written by `reflect_session`.
+- **Knowledge** (`memory/projects/<name>/knowledge.md`): facts, conventions,
+  decisions, and open questions admitted by the nightly verifier. It supports
+  tags and superseding.
+- **Index** (`memory/projects/<name>/_index.md`): a summary loaded at session
+  start and rebuilt when knowledge changes.
 
-Every write is validated: rejects empty entries, section header injection,
-over-length content. Structural validation ensures all sections exist in
-correct order. A write queue serializes concurrent MCP calls to prevent
-lost updates.
+HIVE rejects empty entries, injected section headings, and excessive length. It
+also checks section order. A write queue serializes concurrent MCP calls to
+prevent lost updates.
 
-`~/.hive/` is a git repo, so all memory changes are tracked in history.
+The `~/.hive/` Git repository records every memory change.
 
 ## Automation: Watches
 
-Watches replace the old periodic agent loop with explicit standing questions.
-The file declares cadence, evidence scope, model tier, output venue, and an
-autonomy level bounded by a global ceiling. Act can start one eligible ticket
-in a local worktree, but never merges or pushes; human review remains the
-landing step. See [docs/watches.md](docs/watches.md).
+Watches replace the former periodic agent loop with standing questions stored in
+Markdown. Each file sets the cadence, evidence scope, model tier, output
+location, and autonomy level. A global ceiling limits autonomy. Act can start
+one eligible ticket in a local worktree. A human must review and land the work;
+Act does not merge or push. See [docs/watches.md](docs/watches.md).
 
 ## File Layout
 
@@ -482,6 +492,7 @@ landing step. See [docs/watches.md](docs/watches.md).
 - macOS (launchd required for scheduled jobs)
 
 For multi-model council:
+
 - Claude CLI subscription OAuth (macOS keychain) or `ANTHROPIC_API_KEY`
 - Codex CLI subscription OAuth or `OPENAI_API_KEY` for GPT models
 - Gemini CLI OAuth for Google models
@@ -497,12 +508,11 @@ bun test
 
 ## Design Values
 
-**Memory over infrastructure.** The interesting part of AI coordination is
-what the agent remembers and how it sharpens over time — not the plumbing
-underneath. Keep the plumbing thin.
+**Memory over infrastructure.** HIVE focuses on what the agent remembers and how
+its judgment improves. It keeps the plumbing thin.
 
-**Files over databases.** `cat ~/.hive/SOUL.md` tells you who your AI
-is. No dashboard required.
+**Files over databases.** `cat ~/.hive/SOUL.md` tells you who your AI is. You do
+not need a dashboard to read it.
 
-**Ride the platform.** Claude Code does orchestration. Don't rebuild it.
-Add what it doesn't ship with.
+**Ride the platform.** Claude Code handles orchestration. HIVE adds the parts it
+does not provide.
