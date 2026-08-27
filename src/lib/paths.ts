@@ -10,7 +10,7 @@ export type HivePaths = {
   agents: string;
   trust: string;
   config: string;
-  /** One replaceable Watch Act selection. Read by `hive next`. */
+  /** Watch Act board (one slot per project). Read by `hive next`. */
   next: string;
   memoryDir: string;
   memoryProjectsDir: string;

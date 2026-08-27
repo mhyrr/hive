@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,14 +7,19 @@ import { join } from "node:path";
 import {
   discoverWatches,
   findWatch,
+  findWatches,
   formatCadence,
   formatWatchDuration,
   isDue,
+  isSafeWatchName,
+  mutateWatches,
+  overrideDestPath,
   parseCadence,
   parseWatchFile,
   renderWatchQuestion,
   rewriteWatchFrontmatter,
   watchInterval,
+  writeWatchOverride,
 } from "./watch";
 import {
   loadWatchState,
@@ -223,6 +229,22 @@ describe("parseWatchFile", () => {
     const { watch } = parseWatchFile("---\ncadence: 2h\nenabled: false\n---\n\nQ.", "/w/x.md", null);
     expect(watch?.enabled).toBe(false);
   });
+
+  test("path-escaping names are skipped", () => {
+    for (const name of ["../escaped", "foo/../escaped", "foo/bar", "..", ".", "foo\\bar"]) {
+      const { watch, warnings } = parseWatchFile(
+        `---\nname: ${name}\ncadence: 2h\n---\n\nQ.`,
+        "/w/x.md",
+        null,
+      );
+      expect(watch).toBeNull();
+      expect(warnings[0]).toContain("unsafe watch name");
+    }
+    expect(isSafeWatchName("act")).toBe(true);
+    expect(isSafeWatchName("private-review")).toBe(true);
+    expect(isSafeWatchName("act.override")).toBe(true);
+    expect(isSafeWatchName("foo/../escaped")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -270,6 +292,181 @@ describe("discoverWatches", () => {
     expect(findWatch(watches, "harvest")?.qualifiedName).toBe("alpha/harvest");
     expect(findWatch(watches, "alpha/harvest")?.qualifiedName).toBe("alpha/harvest");
     expect(findWatch(watches, "nope")).toBeNull();
+  });
+
+  test("fleet Act and Propose fan out to every registered project; Observe does not", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await mkdir(join(paths.projectsDir, "beta"), { recursive: true });
+    await writeFile(join(paths.watchesDir, "act.md"), "---\ncadence: 6h\nautonomy: act\nvenue: act\n---\n\nAct?");
+    await writeFile(join(paths.watchesDir, "propose.md"), "---\ncadence: @nightly\nautonomy: propose\nvenue: briefing\n---\n\nPropose?");
+    await writeFile(join(paths.watchesDir, "observe.md"), "---\ncadence: 3d\nautonomy: observe\n---\n\nObserve?");
+
+    const { watches } = await discoverWatches(paths);
+    expect(watches.map((w) => w.qualifiedName).sort()).toEqual([
+      "alpha/act",
+      "alpha/propose",
+      "beta/act",
+      "beta/propose",
+      "observe",
+    ]);
+    expect(watches.find((w) => w.qualifiedName === "alpha/act")?.filePath).toBe(join(paths.watchesDir, "act.md"));
+    expect(watches.find((w) => w.qualifiedName === "alpha/act")?.fanned).toBe(true);
+    expect(watches.find((w) => w.qualifiedName === "observe")?.project).toBeNull();
+    expect(watches.find((w) => w.qualifiedName === "observe")?.fanned).toBe(false);
+    expect(findWatch(watches, "act")).toBeNull();
+    expect(findWatches(watches, "act").map((w) => w.qualifiedName).sort()).toEqual(["alpha/act", "beta/act"]);
+  });
+
+  test("a project-local Act spec wins over the fleet fan-out for that project", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await mkdir(join(paths.projectsDir, "beta"), { recursive: true });
+    await writeFile(join(paths.watchesDir, "act.md"), "---\ncadence: 6h\nautonomy: act\nvenue: act\n---\n\nFleet act.");
+    const local = join(paths.projectsDir, "alpha", "watches");
+    await mkdir(local, { recursive: true });
+    await writeFile(join(local, "act.md"), "---\ncadence: 6h\nautonomy: act\nvenue: act\n---\n\nLocal act.");
+
+    const { watches, warnings } = await discoverWatches(paths);
+    expect(watches.find((w) => w.qualifiedName === "alpha/act")?.question).toBe("Local act.");
+    expect(watches.find((w) => w.qualifiedName === "beta/act")?.question).toBe("Fleet act.");
+    expect(warnings.some((w) => w.includes("not fanning alpha/act"))).toBe(true);
+  });
+
+  test("qualified mutation of a fanned Act writes a project override and leaves the fleet spec on", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await mkdir(join(paths.projectsDir, "beta"), { recursive: true });
+    const fleet = join(paths.watchesDir, "act.md");
+    await writeFile(fleet, "---\ncadence: 6h\nautonomy: act\nvenue: act\nenabled: true\n---\n\nFleet act.");
+
+    const { watches } = await discoverWatches(paths);
+    const result = await mutateWatches(paths, "alpha/act", watches, { enabled: "false" });
+    expect(result.createdOverride).toBe(true);
+
+    const after = await discoverWatches(paths);
+    expect(after.watches.find((w) => w.qualifiedName === "alpha/act")).toMatchObject({
+      enabled: false,
+      fanned: false,
+      question: "Fleet act.",
+    });
+    expect(after.watches.find((w) => w.qualifiedName === "beta/act")).toMatchObject({
+      enabled: true,
+      fanned: true,
+    });
+    const { watch: fleetWatch } = parseWatchFile(await Bun.file(fleet).text(), fleet, null);
+    expect(fleetWatch?.enabled).toBe(true);
+  });
+
+  test("override uses the watch name, not the fleet basename, and will not overwrite", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    const fleet = join(paths.watchesDir, "fleet-file.md");
+    await writeFile(fleet, "---\nname: act\ncadence: 6h\nautonomy: act\nvenue: act\n---\n\nFleet act.");
+    const localDir = join(paths.projectsDir, "alpha", "watches");
+    await mkdir(localDir, { recursive: true });
+    const privateFile = join(localDir, "fleet-file.md");
+    await writeFile(privateFile, "---\nname: private-review\ncadence: 2h\n---\n\nKeep me.");
+
+    const { watches } = await discoverWatches(paths);
+    const result = await mutateWatches(paths, "alpha/act", watches, { enabled: "false" });
+    expect(result.createdOverride).toBe(true);
+    expect(result.files[0]).toBe(join(localDir, "act.md"));
+    expect(await Bun.file(privateFile).text()).toContain("Keep me.");
+    expect(parseWatchFile(await Bun.file(fleet).text(), fleet, null).watch?.enabled).toBe(true);
+  });
+
+  test("override falls back to name.override.md when name.md is already a different watch", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await writeFile(
+      join(paths.watchesDir, "act.md"),
+      "---\nname: act\ncadence: 6h\nautonomy: act\nvenue: act\n---\n\nFleet act.",
+    );
+    const localDir = join(paths.projectsDir, "alpha", "watches");
+    await mkdir(localDir, { recursive: true });
+    await writeFile(join(localDir, "act.md"), "---\nname: private-review\ncadence: 2h\n---\n\nKeep me.");
+
+    const { watches } = await discoverWatches(paths);
+    const result = await mutateWatches(paths, "alpha/act", watches, { enabled: "false" });
+    expect(result.files[0]).toBe(join(localDir, "act.override.md"));
+    expect(await Bun.file(join(localDir, "act.md")).text()).toContain("Keep me.");
+    expect(parseWatchFile(await Bun.file(result.files[0]!).text(), result.files[0]!, "alpha").watch).toMatchObject({
+      name: "act",
+      enabled: false,
+      fanned: false,
+    });
+  });
+
+  test("override refuses when both collision-safe filenames already exist", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await writeFile(
+      join(paths.watchesDir, "fleet-file.md"),
+      "---\nname: act\ncadence: 6h\nautonomy: act\nvenue: act\n---\n\nFleet act.",
+    );
+    const localDir = join(paths.projectsDir, "alpha", "watches");
+    await mkdir(localDir, { recursive: true });
+    await writeFile(join(localDir, "act.md"), "---\nname: private-review\ncadence: 2h\n---\n\nKeep me.");
+    await writeFile(join(localDir, "act.override.md"), "---\nname: other\ncadence: 2h\n---\n\nTaken.");
+
+    const { watches } = await discoverWatches(paths);
+    await expect(mutateWatches(paths, "alpha/act", watches, { enabled: "false" }))
+      .rejects.toThrow(/refusing to overwrite/);
+    expect(await Bun.file(join(localDir, "act.md")).text()).toContain("Keep me.");
+    expect(await Bun.file(join(localDir, "act.override.md")).text()).toContain("Taken.");
+  });
+
+  test("bare-name mutation of a fanned watch refuses instead of rewriting the fleet spec", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await mkdir(join(paths.projectsDir, "beta"), { recursive: true });
+    const fleet = join(paths.watchesDir, "act.md");
+    await writeFile(fleet, "---\ncadence: 6h\nautonomy: act\nvenue: act\nenabled: true\n---\n\nFleet act.");
+
+    const { watches } = await discoverWatches(paths);
+    await expect(mutateWatches(paths, "act", findWatches(watches, "act"), { enabled: "false" }))
+      .rejects.toThrow(/qualified name/);
+    const { watch: fleetWatch } = parseWatchFile(await Bun.file(fleet).text(), fleet, null);
+    expect(fleetWatch?.enabled).toBe(true);
+    expect(existsSync(join(paths.projectsDir, "alpha", "watches", "act.md"))).toBe(false);
+  });
+
+  test("overrideDestPath rejects a name that would leave watches/", () => {
+    const destDir = join(paths.projectsDir, "alpha", "watches");
+    expect(() => overrideDestPath(destDir, "../escaped")).toThrow(/unsafe watch name/);
+    expect(() => overrideDestPath(destDir, "foo/../escaped")).toThrow(/unsafe watch name/);
+    expect(() => overrideDestPath(destDir, "foo/bar")).toThrow(/unsafe watch name/);
+    expect(overrideDestPath(destDir, "act")).toBe(join(destDir, "act.md"));
+  });
+
+  test("writeWatchOverride will not follow foo/../escaped out of watches/", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    const fleet = join(paths.watchesDir, "act.md");
+    await writeFile(fleet, "---\ncadence: 6h\nautonomy: act\nvenue: act\n---\n\nFleet act.");
+    const { watches } = await discoverWatches(paths);
+    const fanned = watches.find((w) => w.qualifiedName === "alpha/act");
+    expect(fanned).toBeDefined();
+    await expect(
+      writeWatchOverride(paths, { ...fanned!, name: "foo/../escaped" }, { enabled: "false" }),
+    ).rejects.toThrow(/unsafe watch name/);
+    expect(existsSync(join(paths.projectsDir, "alpha", "escaped.md"))).toBe(false);
+    expect(existsSync(join(paths.projectsDir, "alpha", "watches", "escaped.md"))).toBe(false);
+  });
+
+  test("bare-name mutation of a non-fanned watch still rewrites its file", async () => {
+    const file = join(paths.watchesDir, "observe.md");
+    await writeFile(file, "---\ncadence: 3d\nenabled: true\n---\n\nObserve?");
+    const { watches } = await discoverWatches(paths);
+    const result = await mutateWatches(paths, "observe", findWatches(watches, "observe"), { enabled: "false" });
+    expect(result.createdOverride).toBe(false);
+    expect(parseWatchFile(await Bun.file(file).text(), file, null).watch?.enabled).toBe(false);
+  });
+
+  test("a path-escaping fleet name is not discovered and cannot write outside watches/", async () => {
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await writeFile(
+      join(paths.watchesDir, "act.md"),
+      "---\nname: ../escaped\ncadence: 6h\nautonomy: act\nvenue: act\n---\n\nFleet act.",
+    );
+
+    const { watches, warnings } = await discoverWatches(paths);
+    expect(watches.some((w) => w.filePath === join(paths.watchesDir, "act.md"))).toBe(false);
+    expect(warnings.some((w) => w.includes("unsafe watch name"))).toBe(true);
+    expect(existsSync(join(paths.projectsDir, "alpha", "escaped.md"))).toBe(false);
   });
 
   test("rewriteWatchFrontmatter updates keys, preserves body and other keys", async () => {

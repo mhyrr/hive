@@ -241,6 +241,19 @@ describe("assembleWatchDigest", () => {
     expect(digest.provenance).toContain("[C:alpha/abc123]");
   });
 
+  test("fleet Observe expands every warm project, not a top-N slice", async () => {
+    const names = ["p1", "p2", "p3", "p4", "p5", "p6"];
+    for (const p of names) {
+      await mkdir(join(paths.projectsDir, p), { recursive: true });
+      await createTicket(paths, p, { title: `${p} work` });
+    }
+    const watch = makeWatch({ scope: ["tickets"], project: null, autonomy: "observe" });
+    const digest = await assembleWatchDigest({ paths, watch, since: SINCE, now: ANCHOR, seams: seams({}) });
+    for (const p of names) {
+      expect(digest.text).toContain(`## Project: ${p}`);
+    }
+  });
+
   test("nothing in scope → empty digest", async () => {
     const watch = makeWatch({ scope: ["tickets", "commits"], project: "gamma" });
     const digest = await assembleWatchDigest({ paths, watch, since: SINCE, now: ANCHOR, seams: seams({}) });

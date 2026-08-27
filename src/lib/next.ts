@@ -6,7 +6,6 @@ import { listTickets, readTicket, type TicketWithBody } from "./ticket";
 export type NextDisposition = "recommended" | "started";
 
 export type NextSelection = {
-  version: 1;
   disposition: NextDisposition;
   selectedAt: string;
   sourceWatch: string;
@@ -14,6 +13,11 @@ export type NextSelection = {
   ticketId: string;
   rationale: string;
   runId?: string;
+};
+
+export type NextBoard = {
+  version: 2;
+  selections: NextSelection[];
 };
 
 export type NextAvailability =
@@ -24,9 +28,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function sortSelections(selections: NextSelection[]): NextSelection[] {
+  return [...selections].sort((a, b) => a.projectId.localeCompare(b.projectId) || a.ticketId.localeCompare(b.ticketId));
+}
+
 export function parseNextSelection(value: unknown): NextSelection | null {
   if (!isRecord(value)) return null;
-  if (value.version !== 1) return null;
   if (value.disposition !== "recommended" && value.disposition !== "started") return null;
   if (typeof value.selectedAt !== "string" || !value.selectedAt) return null;
   if (typeof value.sourceWatch !== "string" || !value.sourceWatch) return null;
@@ -37,7 +44,6 @@ export function parseNextSelection(value: unknown): NextSelection | null {
   if (value.disposition === "started" && !value.runId) return null;
 
   return {
-    version: 1,
     disposition: value.disposition,
     selectedAt: value.selectedAt,
     sourceWatch: value.sourceWatch,
@@ -48,21 +54,43 @@ export function parseNextSelection(value: unknown): NextSelection | null {
   };
 }
 
-export async function readNextSelection(paths: HivePaths): Promise<NextSelection | null> {
+export function parseNextBoard(value: unknown): NextBoard {
+  if (!isRecord(value)) return { version: 2, selections: [] };
+
+  if (value.version === 2 && Array.isArray(value.selections)) {
+    const byProject = new Map<string, NextSelection>();
+    for (const item of value.selections) {
+      const parsed = parseNextSelection(item);
+      if (parsed) byProject.set(parsed.projectId, parsed);
+    }
+    return { version: 2, selections: sortSelections([...byProject.values()]) };
+  }
+
+  const singleton = parseNextSelection(value);
+  return { version: 2, selections: singleton ? [singleton] : [] };
+}
+
+export async function readNextBoard(paths: HivePaths): Promise<NextBoard> {
   try {
     const parsed: unknown = JSON.parse(await readFile(paths.next, "utf-8"));
-    return parseNextSelection(parsed);
+    return parseNextBoard(parsed);
   } catch {
-    return null;
+    return { version: 2, selections: [] };
   }
 }
 
-/** Replace the current selection atomically. Watch execution already holds the
- * global watch lock, but the rename also keeps readers from seeing partial JSON. */
-export async function writeNextSelection(paths: HivePaths, selection: NextSelection): Promise<void> {
+async function writeNextBoard(paths: HivePaths, board: NextBoard): Promise<void> {
   const temporary = `${paths.next}.tmp-${process.pid}`;
-  await writeFile(temporary, `${JSON.stringify(selection, null, 2)}\n`, "utf-8");
+  await writeFile(temporary, `${JSON.stringify(board, null, 2)}\n`, "utf-8");
   await rename(temporary, paths.next);
+}
+
+/** Upsert one project's slot. Other projects stay. NO_SIGNAL does not call this. */
+export async function writeNextSelection(paths: HivePaths, selection: NextSelection): Promise<void> {
+  const board = await readNextBoard(paths);
+  const selections = board.selections.filter((item) => item.projectId !== selection.projectId);
+  selections.push(selection);
+  await writeNextBoard(paths, { version: 2, selections: sortSelections(selections) });
 }
 
 export async function checkNextAvailability(

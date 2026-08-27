@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 import { completeClaudeTextBounded, type ClaudeTextCompletion } from "./claude";
 import { extractConfigValue } from "./config";
-import { getProjectPaths, type HivePaths } from "./paths";
+import { getProjectPaths, listProjects, type HivePaths } from "./paths";
 import { writeNextSelection } from "./next";
 import { now as hiveNow, toIsoTimestamp } from "./time";
 import { writeInvocationLog } from "./watch-log";
@@ -154,9 +154,52 @@ export interface RunWatchesResult {
   warnings: string[];
 }
 
-function callCapPerTick(): number {
+function callCapPerTick(projectCount: number): number {
   const raw = Number(process.env.HIVE_WATCH_MAX_CALLS_PER_TICK);
-  return Number.isFinite(raw) && raw > 0 ? raw : 4;
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  // One Act (or Propose) call per registered project, plus Observe and slack.
+  return Math.max(8, projectCount + 4);
+}
+
+const PROJECT_SECTION_OPEN = (project: string) => `<!-- hive:watch-project:${project} -->`;
+const PROJECT_SECTION_CLOSE = (project: string) => `<!-- /hive:watch-project:${project} -->`;
+const PROJECT_MARKER = /<!--\s*\/?hive:watch-project:[^>]*-->/g;
+
+/** Replace or append one project's briefing section. Boundaries are HTML
+ * comments, not markdown headings — a model's `##` must not split the slot. */
+export function upsertBriefingSection(doc: string, project: string, body: string): string {
+  const open = PROJECT_SECTION_OPEN(project);
+  const close = PROJECT_SECTION_CLOSE(project);
+  const cleaned = body.replace(PROJECT_MARKER, "").trim();
+  const section = `${open}\n## ${project}\n\n${cleaned}\n${close}\n`;
+  const start = doc.indexOf(open);
+  if (start < 0) {
+    return `${doc.replace(/\s+$/, "")}\n\n${section}`;
+  }
+  const end = doc.indexOf(close, start);
+  const head = start === 0 ? "" : doc.slice(0, start).replace(/\s+$/, "");
+  if (end < 0) {
+    return head ? `${head}\n\n${section}` : section;
+  }
+  const rest = doc.slice(end + close.length).replace(/^\n*/, "");
+  const prefix = head ? `${head}\n\n` : "";
+  return rest ? `${prefix}${section}\n${rest}` : `${prefix}${section}`;
+}
+
+async function writeBriefingArtifact(
+  artifactPath: string,
+  watch: { name: string; qualifiedName: string; project: string | null },
+  date: string,
+  output: string,
+): Promise<void> {
+  const title = `# Watch: ${watch.name} — ${date}`;
+  if (!watch.project) {
+    await Bun.write(artifactPath, `${title}\n\n${output}\n`);
+    return;
+  }
+  let existing = existsSync(artifactPath) ? readFileSync(artifactPath, "utf-8") : `${title}\n`;
+  if (!existing.startsWith("#")) existing = `${title}\n\n${existing}`;
+  await Bun.write(artifactPath, upsertBriefingSection(existing, watch.project, output));
 }
 
 function isQuotaError(err: unknown): boolean {
@@ -231,6 +274,8 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
   const state = await loadWatchState(paths);
   const reports: WatchRunReport[] = [];
   let callsThisTick = 0;
+  const projectCount = (await listProjects(paths.projectsDir)).length;
+  const callCap = callCapPerTick(projectCount);
 
   // Liveness stamp: every hourly tick records itself, even when nothing is
   // due — the dashboard's "is the ambient agent breathing" signal.
@@ -284,12 +329,12 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
         continue;
       }
 
-      if (callsThisTick >= callCapPerTick()) {
+      if (callsThisTick >= callCap) {
         // Backstop, not budget: state untouched so the same delta re-fires
         // next tick. Reported so the cap is never a silent drop.
         entry.lastOutcome = "deferred:cap";
         await saveWatchState(paths, state);
-        report({ outcome: "deferred:cap", detail: `per-tick call cap (${callCapPerTick()}) reached` });
+        report({ outcome: "deferred:cap", detail: `per-tick call cap (${callCap}) reached` });
         continue;
       }
 
@@ -376,9 +421,11 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
           if (!digest.provenance.includes(candidateTag) || !output.includes(candidateTag)) {
             outcome = "quiet";
             detail = "act selection dropped — ticket was not in the eligible shortlist";
+          } else if (watch.project && project !== watch.project) {
+            outcome = "quiet";
+            detail = "act selection dropped — ticket is not this project's";
           } else if (effective !== "act") {
             await writeNextSelection(paths, {
-              version: 1,
               disposition: "recommended",
               selectedAt: toIsoTimestamp(now),
               sourceWatch: watch.qualifiedName,
@@ -388,7 +435,7 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
             });
             artifactPath = paths.next;
             outcome = "surfaced";
-            detail = `act clamped to ${effective}; recommendation replaced in next.json`;
+            detail = `act clamped to ${effective}; recommendation upserted in next.json`;
           } else {
             let started: WatchActResult;
             try {
@@ -413,7 +460,6 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
             }
             try {
               await writeNextSelection(paths, {
-                version: 1,
                 disposition: "started",
                 selectedAt: toIsoTimestamp(now),
                 sourceWatch: watch.qualifiedName,
@@ -442,7 +488,7 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
           const runDir = join(paths.memoryRunsDir, date);
           await mkdir(runDir, { recursive: true });
           artifactPath = join(runDir, `${watch.name}.md`);
-          await Bun.write(artifactPath, `# Watch: ${watch.qualifiedName} — ${date}\n\n${output}\n`);
+          await writeBriefingArtifact(artifactPath, watch, date, output);
           detail = "cross-project inbox retired; wrote dated briefing artifact";
         }
         outcome = "surfaced";
@@ -450,7 +496,7 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
         const runDir = join(paths.memoryRunsDir, date);
         await mkdir(runDir, { recursive: true });
         artifactPath = join(runDir, `${watch.name}.md`);
-        await Bun.write(artifactPath, `# Watch: ${watch.qualifiedName} — ${date}\n\n${output}\n`);
+        await writeBriefingArtifact(artifactPath, watch, date, output);
         outcome = "surfaced";
       } else {
         // Ticket creation remains a future venue; Act executes existing work.

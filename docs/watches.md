@@ -10,8 +10,14 @@ A watch is a Markdown file. Its body is the standing question; frontmatter
 declares when it runs, what evidence it reads, where its result goes, and what
 it may do.
 
-- `~/.hive/watches/*.md` — cross-project watches
-- `~/.hive/projects/<project>/watches/*.md` — project-scoped watches
+- `~/.hive/watches/*.md` — fleet specs. Act and Propose fan out to every
+  registered project at discovery (one evaluation per colony, same file).
+  Observe stays one cross-project watch. `hive watch off alpha/act` (or `set`
+  on a qualified fanned name) writes a project override; it does not rewrite
+  the shared spec. Bare `hive watch off act` / `set act` refuse — they would
+  rewrite the fleet file for every project.
+- `~/.hive/projects/<project>/watches/*.md` — project-scoped watches. A
+  same-name file wins over the fanned fleet spec.
 
 ```markdown
 ---
@@ -35,11 +41,13 @@ tick. A malformed file produces a warning without stopping the fleet.
 
 ### Act — every 6 hours
 
-Act asks whether one eligible ticket is a clear, valuable follow-on to recent
-work. Deterministic code first excludes closed or in-progress tickets, P0s,
-epics, bodyless tickets, `needs-greg`, unresolved dependencies, projects with
-no valid repository/main ref, and tickets owned by another run. The judgment
-model may select at most one shortlisted ticket.
+Act asks, per registered project, whether one eligible ticket is a clear,
+valuable follow-on to recent work. One spec file (`~/.hive/watches/act.md`)
+fans out at discovery to `revrec/act`, `dobby/act`, and so on. Deterministic
+code first excludes closed or in-progress tickets, P0s, epics, bodyless
+tickets, `needs-greg`, unresolved dependencies, projects with no valid
+repository/main ref, and tickets owned by another run. The judgment model may
+select at most one shortlisted ticket in that project.
 
 A selected ticket is revalidated under an Act lock, claimed with the run
 ID, and opened in an explicit feature branch based on `main`. The executor
@@ -51,22 +59,28 @@ can release only the claim owned by that run.
 Act is enabled in its file but requires the explicit global ceiling
 `watches.max_autonomy: act`. The default ceiling is `propose`.
 
-When that ceiling clamps Act to Propose, the selected ticket replaces
-`~/.hive/next.json`. `hive next` shows the one recommendation and checks the
-live ticket again before it calls the work ready. `hive ticket ready` remains
-the full inventory. An executing Act records that it started the selection in
-the same file; its private run is the full audit record.
+When that ceiling clamps Act to Propose, the selected ticket upserts that
+project's slot in `~/.hive/next.json`. `hive next` lists every project's
+recommendation and checks each live ticket again before it calls the work
+ready. `hive ticket ready` remains the full inventory. `NO_SIGNAL` and no-delta
+do not clear a slot — the previous ticket stays until a later Act selects a
+different one. An executing Act records that it started the selection in the
+same file; its private run is the full audit record.
 
 ### Propose — nightly
 
-Propose runs inside the nightly orchestrator after that night's evidence has
-landed. It asks for the smartest, most radically innovative, accretive,
-useful, and compelling additions suggested by the work. It may return one,
-several, or none; there is no quota. Each proposal cites its signal, explains
-what it compounds and what it costs, and names the first concrete step.
+Propose runs once per registered project inside the nightly orchestrator after
+that night's evidence has landed. One spec file (`~/.hive/watches/propose.md`)
+fans out the same way Act does. It asks for the smartest, most radically
+innovative, accretive, useful, and compelling additions suggested by the work.
+It may return one, several, or none; there is no quota. Each proposal cites its
+signal, explains what it compounds and what it costs, and names the first
+concrete step.
 
-Its artifact is `runs/{DATE}/propose.md`, rendered beside the morning
-briefing when non-empty.
+Its artifact is still `runs/{DATE}/propose.md`. Each project upserts a
+section wrapped in `<!-- hive:watch-project:<name> -->` markers so a model's
+own headings cannot split the slot. The briefing renders that file when
+non-empty.
 
 ### Observe — every 3 days
 
@@ -103,9 +117,10 @@ transcripts, and nightly runs use monotonic watermarks. With no delta, the
 cycle spends no tokens.
 
 The digest then assembles only evidence inside the tick interval. Cross-project
-watches rank projects by commits + 2×sessions + tickets moved, expanding the
-five warmest. Act considers warm projects only. Source tags are qualified and
-citable:
+watches (Observe) rank projects by commits + 2×sessions + tickets moved and
+expand every warm project. Cold projects are named in one line so nothing is
+silently dropped. Act and Propose are already per-project, so each evaluation
+sees that colony only. Source tags are qualified and citable:
 
 - `[T:project/TK-001]` — ticket activity
 - `[A:project/TK-001]` — Act-eligible ticket
@@ -148,8 +163,9 @@ Watch files use tier aliases resolved by `src/lib/watch-model.ts`:
 | `judgment` | `claude-opus-4-8` | `HIVE_WATCH_MODEL_JUDGMENT` |
 
 `HIVE_WATCH_MODEL_<NAME>` overrides one named watch. Each evaluation makes at
-most one model call. `HIVE_WATCH_MAX_CALLS_PER_TICK` defaults to four and is a
-backstop, not a token budget. Rate-limit errors settle nothing and are retried
+most one model call. `HIVE_WATCH_MAX_CALLS_PER_TICK` defaults to
+`max(8, projectCount + 4)` so one full Act fan-out fits, and is a backstop,
+not a token budget. Rate-limit errors settle nothing and are retried
 on the next tick without an immediate retry storm.
 
 ## Files and control surface

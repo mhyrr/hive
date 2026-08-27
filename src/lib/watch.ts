@@ -3,18 +3,23 @@
 // A watch is a markdown file: frontmatter declares scheduling, scope, and
 // autonomy; the body IS the standing question, passed verbatim as the prompt
 // core. Locations:
-//   ~/.hive/watches/*.md               — cross-project
-//   ~/.hive/projects/<p>/watches/*.md  — project-scoped
+//   ~/.hive/watches/*.md               — cross-project (Observe stays here;
+//                                        Act/Propose fan out to every registered
+//                                        project at discovery, same spec file)
+//   ~/.hive/projects/<p>/watches/*.md  — project-scoped; a same-name file wins
+//                                        over the fanned fleet spec
 //
 // This module owns parsing, discovery, and due-ness. The delta gate lives in
 // watch-delta.ts; execution in watch-run.ts. A malformed watch file degrades
 // to a warning, never a throw — one bad file must not kill the tick.
 
-import { readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, readdir } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { parseFrontmatter, stringifyFrontmatter } from "./frontmatter";
-import { listProjects, type HivePaths } from "./paths";
+import { UsageError } from "./errors";
+import { getProjectPaths, listProjects, type HivePaths } from "./paths";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,6 +57,9 @@ export interface WatchDef {
   /** The standing question — the markdown body, verbatim. */
   question: string;
   filePath: string;
+  /** True when this instance was synthesized from a fleet Act/Propose spec.
+   * Mutations of a fanned instance must not rewrite that shared file. */
+  fanned: boolean;
 }
 
 export interface WatchDiscovery {
@@ -215,6 +223,14 @@ export interface ParseWatchResult {
   warnings: string[];
 }
 
+/** A watch name must be a single path component so override dest stays in watches/. */
+export function isSafeWatchName(name: string): boolean {
+  if (!name || name.includes("\0")) return false;
+  if (name !== basename(name)) return false;
+  const segments = name.split(/[/\\]/);
+  return segments.length === 1 && segments[0] !== "." && segments[0] !== "..";
+}
+
 export function parseWatchFile(
   content: string,
   filePath: string,
@@ -238,6 +254,9 @@ export function parseWatchFile(
   }
 
   const name = attributes.name?.trim() || basename(filePath).replace(/\.md$/, "");
+  if (!isSafeWatchName(name)) {
+    return { watch: null, warnings: [`${label}: unsafe watch name "${name}" — skipped`] };
+  }
 
   let scope: WatchScopeKind[];
   if (attributes.scope?.trim()) {
@@ -308,6 +327,7 @@ export function parseWatchFile(
       project,
       question: body.trim(),
       filePath,
+      fanned: false,
     },
     warnings,
   };
@@ -325,8 +345,13 @@ async function listWatchFiles(dir: string): Promise<string[]> {
     .sort();
 }
 
+/** Fleet Act/Propose specs (no project) become one evaluation per registered project. */
+export function isFleetCycleWatch(watch: WatchDef): boolean {
+  return watch.project === null && (watch.autonomy === "act" || watch.autonomy === "propose");
+}
+
 export async function discoverWatches(paths: HivePaths): Promise<WatchDiscovery> {
-  const watches: WatchDef[] = [];
+  const collected: WatchDef[] = [];
   const warnings: string[] = [];
   const seen = new Set<string>();
 
@@ -347,24 +372,46 @@ export async function discoverWatches(paths: HivePaths): Promise<WatchDiscovery>
         continue;
       }
       seen.add(watch.qualifiedName);
-      watches.push(watch);
+      collected.push(watch);
     }
   };
 
   await collect(paths.watchesDir, null);
-  for (const project of await listProjects(paths.projectsDir)) {
+  const projects = await listProjects(paths.projectsDir);
+  for (const project of projects) {
     await collect(join(paths.projectsDir, project, "watches"), project);
+  }
+
+  const watches: WatchDef[] = [];
+  for (const watch of collected) {
+    if (!isFleetCycleWatch(watch) || projects.length === 0) {
+      watches.push(watch);
+      continue;
+    }
+    for (const project of projects) {
+      const qualifiedName = `${project}/${watch.name}`;
+      if (seen.has(qualifiedName) && collected.some((item) => item.qualifiedName === qualifiedName)) {
+        warnings.push(`${watch.filePath}: not fanning ${qualifiedName} — project already has that watch`);
+        continue;
+      }
+      watches.push({ ...watch, project, qualifiedName, fanned: true });
+    }
   }
 
   return { watches, warnings };
 }
 
+/** All watches matching a qualified name, or every instance of a bare name (fan-out). */
+export function findWatches(watches: WatchDef[], ref: string): WatchDef[] {
+  const exact = watches.filter((w) => w.qualifiedName === ref);
+  if (exact.length > 0) return exact;
+  return watches.filter((w) => w.name === ref);
+}
+
 /** Find a watch by qualified name, or by bare name when unambiguous. */
 export function findWatch(watches: WatchDef[], ref: string): WatchDef | null {
-  const exact = watches.find((w) => w.qualifiedName === ref);
-  if (exact) return exact;
-  const byName = watches.filter((w) => w.name === ref);
-  return byName.length === 1 ? byName[0] : null;
+  const found = findWatches(watches, ref);
+  return found.length === 1 ? found[0] : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -380,4 +427,69 @@ export async function rewriteWatchFrontmatter(
   const content = await Bun.file(filePath).text();
   const { attributes, body } = parseFrontmatter(content);
   await Bun.write(filePath, stringifyFrontmatter({ ...attributes, ...updates }, body));
+}
+
+/** Copy a fleet spec into a project's watches dir and apply updates.
+ * Filename is `${name}.md` (not the fleet basename) so a coincidentally-named
+ * local file is left alone. Never overwrites; if `${name}.md` is taken, try
+ * `${name}.override.md`, then refuse. */
+export async function writeWatchOverride(
+  paths: HivePaths,
+  watch: WatchDef,
+  updates: Record<string, string>,
+): Promise<string> {
+  if (!watch.project) {
+    throw new Error(`cannot override ${watch.qualifiedName}: not project-scoped`);
+  }
+  const destDir = getProjectPaths(paths, watch.project).watchesDir;
+  await mkdir(destDir, { recursive: true });
+  const dest = overrideDestPath(destDir, watch.name);
+  await Bun.write(dest, await Bun.file(watch.filePath).text());
+  await rewriteWatchFrontmatter(dest, updates);
+  return dest;
+}
+
+export function overrideDestPath(destDir: string, watchName: string): string {
+  if (!isSafeWatchName(watchName)) {
+    throw new UsageError(`unsafe watch name "${watchName}" — must be a single path component`);
+  }
+  const destRoot = resolve(destDir);
+  const candidates = [`${watchName}.md`, `${watchName}.override.md`];
+  for (const name of candidates) {
+    const dest = join(destDir, name);
+    const rel = relative(destRoot, resolve(dest));
+    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+      throw new UsageError(`unsafe watch name "${watchName}" — must be a single path component`);
+    }
+    if (!existsSync(dest)) return dest;
+  }
+  throw new UsageError(
+    `refusing to overwrite existing project watch files (${candidates.join(", ")}) in ${destDir}`,
+  );
+}
+
+/** Apply on/off/set. A qualified fanned instance becomes a project override.
+ * Bare names that match any fanned instance refuse — they would rewrite the
+ * shared fleet spec for every project. Local (non-fanned) files rewrite in place. */
+export async function mutateWatches(
+  paths: HivePaths,
+  ref: string,
+  matches: WatchDef[],
+  updates: Record<string, string>,
+): Promise<{ files: string[]; createdOverride: boolean }> {
+  const exact = matches.find((w) => w.qualifiedName === ref);
+  if (exact?.fanned) {
+    const dest = await writeWatchOverride(paths, exact, updates);
+    return { files: [dest], createdOverride: true };
+  }
+  const fanned = matches.filter((w) => w.fanned);
+  if (fanned.length > 0) {
+    const known = [...new Set(fanned.map((w) => w.qualifiedName))].sort().join(", ");
+    throw new UsageError(
+      `"${ref}" is a fanned fleet watch — use a qualified name (e.g. ${fanned[0]!.qualifiedName}) so the shared spec is not rewritten. Known: ${known}`,
+    );
+  }
+  const files = [...new Set(matches.map((w) => w.filePath))];
+  for (const file of files) await rewriteWatchFrontmatter(file, updates);
+  return { files, createdOverride: false };
 }

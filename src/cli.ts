@@ -68,7 +68,7 @@ HIVE Commands:
   stack list|install|sync    Manage language/framework skill stacks
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
-  next                       Show the current Act recommendation
+  next                       Show Act recommendations (one per project)
   taste extract [opts]       Mine taste candidates from transcripts (phase 1)
   tickets                    Open tickets for the project you're standing in
   ticket [create|list|...]   Project ticket tracker

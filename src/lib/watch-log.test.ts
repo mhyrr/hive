@@ -26,6 +26,7 @@ function watchDef(qualifiedName: string): WatchDef {
     project: b ? a! : null,
     question: "What should we propose?",
     filePath: `/tmp/${qualifiedName}.md`,
+    fanned: false,
   };
 }
 

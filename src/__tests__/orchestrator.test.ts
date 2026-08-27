@@ -209,7 +209,7 @@ describe("runNightly — @nightly watches (W pass)", () => {
     const result = await runNightly({ paths, date, caller: stub });
 
     expect(result.passes.W.length).toBe(1);
-    expect(result.passes.W[0]?.pass).toBe("W.propose");
+    expect(result.passes.W[0]?.pass).toBe("W.alpha/propose");
     expect(result.passes.W[0]?.status).toBe("complete");
     expect(result.passes.W[0]?.detail).toContain("surfaced");
 

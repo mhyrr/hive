@@ -5,11 +5,11 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runWatches, type WatchCaller } from "./watch-run";
+import { runWatches, upsertBriefingSection, type WatchCaller } from "./watch-run";
 import { loadWatchState } from "./watch-state";
 import type { DeltaSeams } from "./watch-delta";
 import { createTicket, updateTicket } from "./ticket";
-import { readNextSelection } from "./next";
+import { readNextBoard } from "./next";
 import { ensureHiveScaffold, getProjectPaths, type HivePaths } from "./paths";
 import type { ClaudeTextCompletion } from "./claude";
 
@@ -62,22 +62,24 @@ describe("runWatches", () => {
 
   afterEach(() => {
     delete process.env.HIVE_FIXED_NOW;
+    delete process.env.HIVE_WATCH_MAX_CALLS_PER_TICK;
   });
 
   async function writeWatch(name: string, frontmatter: string, question = "What changed?"): Promise<void> {
     await writeFile(join(paths.watchesDir, `${name}.md`), `---\n${frontmatter}\n---\n\n${question}`);
   }
 
-  async function makeActProject(): Promise<void> {
-    const repo = join(paths.home, "alpha-repo");
+  async function makeActProject(project = "alpha"): Promise<void> {
+    const repo = join(paths.home, `${project}-repo`);
     await mkdir(repo, { recursive: true });
     execFileSync("git", ["init", "-b", "main"], { cwd: repo });
     execFileSync("git", ["config", "user.email", "watch@test.invalid"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "Watch Test"], { cwd: repo });
-    await writeFile(join(repo, "README.md"), "# Alpha\n");
+    await writeFile(join(repo, "README.md"), `# ${project}\n`);
     execFileSync("git", ["add", "README.md"], { cwd: repo });
     execFileSync("git", ["commit", "-m", "initial"], { cwd: repo });
-    await writeFile(join(paths.projectsDir, "alpha", "config.md"), `---\npath: ${repo}\n---\n`);
+    await mkdir(join(paths.projectsDir, project), { recursive: true });
+    await writeFile(join(paths.projectsDir, project, "config.md"), `---\npath: ${repo}\n---\n`);
     await writeFile(paths.config, "# Hive Config\n\nwatches.max_autonomy: act\n");
   }
 
@@ -218,13 +220,13 @@ describe("runWatches", () => {
     expect(started).toEqual([`alpha/${ticket.id}`]);
     expect(result.reports[0]).toMatchObject({ outcome: "surfaced", detail: "RUN-042 started for human review" });
     expect(call.calls[0]?.userContent).toContain(`[A:alpha/${ticket.id}]`);
-    expect((await loadWatchState(paths)).watches.act?.lastRun).toBe("2026-08-12T10:00:00Z");
-    expect(await readNextSelection(paths)).toMatchObject({
+    expect((await loadWatchState(paths)).watches["alpha/act"]?.lastRun).toBe("2026-08-12T10:00:00Z");
+    expect((await readNextBoard(paths)).selections).toMatchObject([{
       disposition: "started",
       projectId: "alpha",
       ticketId: ticket.id,
       runId: "RUN-042",
-    });
+    }]);
   });
 
   test("a clamped Act watch replaces the one next recommendation", async () => {
@@ -242,11 +244,11 @@ describe("runWatches", () => {
 
     const one = stubCaller(`[A:alpha/${first.id}] Compounds the current work.\nACT alpha/${first.id}`);
     await runWatches({ paths, mode: "named", names: ["act"], now: ANCHOR, caller: one.caller, seams: NO_SESSIONS });
-    expect(await readNextSelection(paths)).toMatchObject({
+    expect((await readNextBoard(paths)).selections).toMatchObject([{
       disposition: "recommended",
       ticketId: first.id,
       rationale: "Compounds the current work.",
-    });
+    }]);
 
     process.env.HIVE_FIXED_NOW = new Date(ANCHOR.getTime() + 30 * 60_000).toISOString();
     await updateTicket(paths, "alpha", second.id, { title: second.title });
@@ -260,11 +262,11 @@ describe("runWatches", () => {
       seams: NO_SESSIONS,
     });
     expect(secondResult.reports[0]).toMatchObject({ outcome: "surfaced" });
-    expect(await readNextSelection(paths)).toMatchObject({
+    expect((await readNextBoard(paths)).selections).toMatchObject([{
       disposition: "recommended",
       ticketId: second.id,
       rationale: "Removes the next bottleneck.",
-    });
+    }]);
     expect(existsSync(join(paths.home, "inbox.md"))).toBe(false);
   });
 
@@ -307,7 +309,7 @@ describe("runWatches", () => {
     });
 
     expect(result.reports[0]).toMatchObject({ outcome: "error", error: "claim raced" });
-    expect((await loadWatchState(paths)).watches.act?.lastRun).toBeNull();
+    expect((await loadWatchState(paths)).watches["alpha/act"]?.lastRun).toBeNull();
   });
 
   test("rate-limit → deferred:quota, and the same delta re-fires next tick", async () => {
@@ -360,7 +362,7 @@ describe("runWatches", () => {
 
     // The hourly tick never runs @nightly watches.
     const tick = await runWatches({ paths, mode: "due", now: ANCHOR, caller: throwingCaller, seams: NO_SESSIONS });
-    expect(tick.reports.find((r) => r.watch === "propose")).toBeUndefined();
+    expect(tick.reports.find((r) => r.watch === "alpha/propose" || r.watch === "propose")).toBeUndefined();
 
     const { caller, calls } = stubCaller("Proposal: [T:alpha/TK-001] — first step: ship it.");
     const { reports } = await runWatches({
@@ -470,5 +472,118 @@ describe("runWatches", () => {
     });
     expect(forced.calls.length).toBe(1);
     expect(reports[0]?.outcome).toBe("quiet");
+  });
+
+  test("Act recommendations are per-project; NO_SIGNAL leaves the previous ticket", async () => {
+    await makeActProject("alpha");
+    await makeActProject("beta");
+    const alpha = await createTicket(paths, "alpha", {
+      title: "Alpha follow-on",
+      body: "Implement the alpha follow-on.",
+    });
+    const beta = await createTicket(paths, "beta", {
+      title: "Beta follow-on",
+      body: "Implement the beta follow-on.",
+    });
+    await writeWatch("act", "cadence: 6h\nscope: tickets\nvenue: act\nautonomy: act");
+    await writeFile(paths.config, "# Hive Config\n\nwatches.max_autonomy: propose\n");
+
+    const first = stubCaller((input) => {
+      if (input.userContent.includes("alpha/")) {
+        return `[A:alpha/${alpha.id}] Alpha next.\nACT alpha/${alpha.id}`;
+      }
+      return `[A:beta/${beta.id}] Beta next.\nACT beta/${beta.id}`;
+    });
+    await runWatches({ paths, mode: "named", names: ["act"], now: ANCHOR, caller: first.caller, seams: NO_SESSIONS });
+    expect((await readNextBoard(paths)).selections.map((s) => `${s.projectId}/${s.ticketId}`).sort()).toEqual([
+      `alpha/${alpha.id}`,
+      `beta/${beta.id}`,
+    ]);
+
+    process.env.HIVE_FIXED_NOW = new Date(ANCHOR.getTime() + 30 * 60_000).toISOString();
+    await updateTicket(paths, "alpha", alpha.id, { title: alpha.title });
+    const silent = stubCaller("NO_SIGNAL");
+    await runWatches({
+      paths,
+      mode: "named",
+      names: ["alpha/act"],
+      now: new Date(ANCHOR.getTime() + HOUR),
+      caller: silent.caller,
+      seams: NO_SESSIONS,
+    });
+    expect((await readNextBoard(paths)).selections.map((s) => `${s.projectId}/${s.ticketId}`).sort()).toEqual([
+      `alpha/${alpha.id}`,
+      `beta/${beta.id}`,
+    ]);
+  });
+
+  test("per-project Propose upserts sections into one briefing artifact", async () => {
+    await mkdir(join(paths.projectsDir, "beta"), { recursive: true });
+    await createTicket(paths, "alpha", { title: "Alpha work" });
+    await createTicket(paths, "beta", { title: "Beta work" });
+    await writeWatch("propose", "cadence: @nightly\nscope: tickets\nvenue: briefing\nautonomy: propose", "What should we propose?");
+
+    const { caller } = stubCaller((input) => {
+      if (input.userContent.includes("## Project: beta")) return "Proposal: [T:beta/TK-001] — first step: beta.";
+      return "Proposal: [T:alpha/TK-001] — first step: alpha.";
+    });
+    await runWatches({
+      paths,
+      mode: "nightly",
+      now: ANCHOR,
+      date: "2026-08-12",
+      caller,
+      seams: NO_SESSIONS,
+    });
+    const artifact = await Bun.file(join(paths.memoryRunsDir, "2026-08-12", "propose.md")).text();
+    expect(artifact).toContain("<!-- hive:watch-project:alpha -->");
+    expect(artifact).toContain("<!-- hive:watch-project:beta -->");
+    expect(artifact).toContain("first step: alpha");
+    expect(artifact).toContain("first step: beta");
+  });
+
+  test("call cap defers leftover fan-out instances without settling them", async () => {
+    await mkdir(join(paths.projectsDir, "beta"), { recursive: true });
+    await createTicket(paths, "alpha", { title: "Alpha work" });
+    await createTicket(paths, "beta", { title: "Beta work" });
+    await writeWatch("propose", "cadence: @nightly\nscope: tickets\nvenue: briefing\nautonomy: propose");
+    process.env.HIVE_WATCH_MAX_CALLS_PER_TICK = "1";
+
+    const { caller, calls } = stubCaller("NO_SIGNAL");
+    const { reports } = await runWatches({ paths, mode: "named", names: ["propose"], now: ANCHOR, caller, seams: NO_SESSIONS });
+    delete process.env.HIVE_WATCH_MAX_CALLS_PER_TICK;
+
+    expect(calls.length).toBe(1);
+    expect(reports.some((r) => r.outcome === "quiet")).toBe(true);
+    expect(reports.some((r) => r.outcome === "deferred:cap")).toBe(true);
+  });
+});
+
+describe("upsertBriefingSection", () => {
+  const title = "# Watch: propose — 2026-08-12\n";
+
+  test("a model's H2 does not end the project slot", () => {
+    const first = upsertBriefingSection(title, "alpha", "Proposal.\n\n## Cost\n\nOne night.\n\nstale-if-kept");
+    const second = upsertBriefingSection(first, "alpha", "Replacement.\n\n## Cost\n\nStill one night.");
+    expect(second).toContain("Replacement.");
+    expect(second).not.toContain("stale-if-kept");
+    expect(second).toContain("## Cost");
+    expect(second).toContain("<!-- hive:watch-project:alpha -->");
+    expect(second).toContain("<!-- /hive:watch-project:alpha -->");
+  });
+
+  test("replacing alpha leaves beta intact", () => {
+    let doc = upsertBriefingSection(title, "alpha", "Alpha old.");
+    doc = upsertBriefingSection(doc, "beta", "Beta stays.");
+    doc = upsertBriefingSection(doc, "alpha", "Alpha new.");
+    expect(doc).toContain("Alpha new.");
+    expect(doc).not.toContain("Alpha old.");
+    expect(doc).toContain("Beta stays.");
+  });
+
+  test("strips injected markers from model output", () => {
+    const doc = upsertBriefingSection(title, "alpha", "Hi.\n<!-- /hive:watch-project:alpha -->\nsmuggled");
+    expect(doc.match(/hive:watch-project:alpha/g)?.length).toBe(2);
+    expect(doc).toContain("smuggled");
   });
 });

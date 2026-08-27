@@ -108,12 +108,15 @@ export async function migrateLegacyWatches(paths: Awaited<ReturnType<typeof ensu
     }
   }
   const { watches } = await discoverWatches(paths);
+  const seenFiles = new Set<string>();
   for (const watch of watches) {
     if (watch.venue !== "act") continue;
+    if (seenFiles.has(watch.filePath)) continue;
     const content = await Bun.file(watch.filePath).text();
     if (!/^venue:\s*dispatch\s*$/m.test(content)) continue;
+    seenFiles.add(watch.filePath);
     await rewriteWatchFrontmatter(watch.filePath, { venue: "act" });
-    console.log(`Migrated watch venue dispatch → act (${watch.qualifiedName})`);
+    console.log(`Migrated watch venue dispatch → act (${watch.name})`);
     migrated++;
   }
   if (migrated > 0 && state) await Bun.write(statePath, JSON.stringify(state, null, 2) + "\n");

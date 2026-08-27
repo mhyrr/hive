@@ -5,10 +5,11 @@ HIVE repo.
 
 ## Layout
 
-- `*.md` — cross-project watches. **Each file IS a watch**: frontmatter
-  declares cadence/scope/autonomy, the body is the standing question, passed
-  verbatim as the prompt core. Drop a new file here and it's live at the next
-  hourly tick. (This README is skipped.)
+- `*.md` — fleet specs. **Each file IS a standing question**: frontmatter
+  declares cadence/scope/autonomy, the body is the prompt core. Act and Propose
+  fan out to every registered project at discovery (one evaluation per
+  colony, same file). Observe stays cross-project. Drop a new file here and
+  it's live at the next hourly tick. (This README is skipped.)
 - `~/.hive/projects/<p>/watches/*.md` — watches scoped to one project.
 - `state.json` — per-watch tick state: last run, last outcome, last-seen
   delta fingerprints, log-only usage. `lastTick` at the top is the hourly

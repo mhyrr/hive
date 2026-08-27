@@ -153,7 +153,7 @@ export async function collectWatchesPage(paths: HivePaths): Promise<WatchesPageD
 
   // Briefing-venue artifacts from recent run dirs (propose.md et al).
   const artifacts: SurfacedArtifact[] = [];
-  const briefingWatchNames = watches.filter((w) => w.venue === "briefing").map((w) => w.name);
+  const briefingWatchNames = [...new Set(watches.filter((w) => w.venue === "briefing").map((w) => w.name))];
   if (briefingWatchNames.length > 0) {
     const entries = await readdir(paths.memoryRunsDir, { withFileTypes: true }).catch(() => []);
     const dates = entries

@@ -12,8 +12,9 @@ import {
   TIERS,
   VENUES,
   discoverWatches,
-  findWatch,
+  findWatches,
   formatCadence,
+  mutateWatches,
   parseCadence,
   rewriteWatchFrontmatter,
   type WatchDef,
@@ -27,19 +28,19 @@ const USAGE = `Usage:
   hive watch ceiling <level>          Set the global ceiling (observe, propose, or act)
   hive watch run --due                Run everything due (the launchd tick entrypoint)
   hive watch run <name> [...]         Force-run named watches (bypasses due-ness + delta gate)
-  hive watch on <name>                Enable a watch
-  hive watch off <name>               Disable a watch
+  hive watch on <name>                Enable (fanned Act/Propose need project/name)
+  hive watch off <name>               Disable (fanned Act/Propose need project/name)
   hive watch off --all                Hard stop: disable every watch
-  hive watch set <name> k=v [...]     Update frontmatter (cadence, model, autonomy, venue, scope, enabled)`;
+  hive watch set <name> k=v [...]     Update frontmatter (fanned Act/Propose need project/name)`;
 
-async function requireWatch(paths: HivePaths, ref: string): Promise<WatchDef> {
+async function requireWatches(paths: HivePaths, ref: string): Promise<WatchDef[]> {
   const { watches } = await discoverWatches(paths);
-  const watch = findWatch(watches, ref);
-  if (!watch) {
+  const found = findWatches(watches, ref);
+  if (found.length === 0) {
     const known = watches.map((w) => w.qualifiedName).join(", ") || "(none)";
     throw new UsageError(`No watch named "${ref}". Known: ${known}`);
   }
-  return watch;
+  return found;
 }
 
 function pad(s: string, n: number): string {
@@ -134,7 +135,7 @@ export async function watchCommand(args: string[]): Promise<void> {
       if (!due && names.length === 0) throw new UsageError(`watch run needs --due or watch name(s).\n\n${USAGE}`);
       if (due && names.length > 0) throw new UsageError("watch run takes --due OR names, not both.");
       if (!due) {
-        for (const name of names) await requireWatch(paths, name); // fail fast on typos
+        for (const name of names) await requireWatches(paths, name); // fail fast on typos
       }
       const { reports, warnings } = await runWatches({
         paths,
@@ -158,22 +159,29 @@ export async function watchCommand(args: string[]): Promise<void> {
       const enabled = sub === "on";
       if (!enabled && rest[0] === "--all") {
         const { watches } = await discoverWatches(paths);
-        for (const w of watches) await rewriteWatchFrontmatter(w.filePath, { enabled: "false" });
+        const files = [...new Set(watches.map((w) => w.filePath))];
+        for (const file of files) await rewriteWatchFrontmatter(file, { enabled: "false" });
         console.log(`Disabled ${watches.length} watch(es). Hard stop.`);
         return;
       }
       const ref = rest[0];
       if (!ref) throw new UsageError(`watch ${sub} needs a name.\n\n${USAGE}`);
-      const watch = await requireWatch(paths, ref);
-      await rewriteWatchFrontmatter(watch.filePath, { enabled: String(enabled) });
-      console.log(`${watch.qualifiedName}: ${enabled ? "enabled" : "disabled"}`);
+      const matches = await requireWatches(paths, ref);
+      const result = await mutateWatches(paths, ref, matches, { enabled: String(enabled) });
+      const verb = enabled ? "enabled" : "disabled";
+      if (result.createdOverride) {
+        console.log(`${ref}: ${verb} (project override)`);
+      } else {
+        const label = matches.length === 1 ? matches[0]!.qualifiedName : `${ref} (${matches.length} projects)`;
+        console.log(`${label}: ${verb}`);
+      }
       return;
     }
 
     case "set": {
       const [ref, ...pairs] = rest;
       if (!ref || pairs.length === 0) throw new UsageError(`watch set needs a name and k=v pairs.\n\n${USAGE}`);
-      const watch = await requireWatch(paths, ref);
+      const matches = await requireWatches(paths, ref);
       const updates: Record<string, string> = {};
       for (const pair of pairs) {
         const i = pair.indexOf("=");
@@ -183,8 +191,13 @@ export async function watchCommand(args: string[]): Promise<void> {
         validateSetPair(key, value);
         updates[key] = value;
       }
-      await rewriteWatchFrontmatter(watch.filePath, updates);
-      console.log(`${watch.qualifiedName}: ${Object.entries(updates).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+      const result = await mutateWatches(paths, ref, matches, updates);
+      if (result.createdOverride) {
+        console.log(`${ref}: ${Object.entries(updates).map(([k, v]) => `${k}=${v}`).join(", ")} (project override)`);
+      } else {
+        const label = matches.length === 1 ? matches[0]!.qualifiedName : `${ref} (${matches.length} projects)`;
+        console.log(`${label}: ${Object.entries(updates).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+      }
       return;
     }
 

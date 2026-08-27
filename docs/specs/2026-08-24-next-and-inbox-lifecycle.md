@@ -13,16 +13,19 @@ HIVE will give each output one owner:
 
 - Observe writes a dated watch artifact. The dashboard folds that artifact into
   the briefing for the same date.
-- A clamped Act watch replaces one structured `next.json` record. `hive next`
-  shows that recommendation after it checks the live ticket again.
-- An Act watch that starts work records that disposition in `next.json`. It does
-  not write an inbox notification. The private run remains the audit record.
+- A clamped Act watch upserts one structured slot per project in `next.json`.
+  `hive next` lists every slot after it checks each live ticket again.
+  `NO_SIGNAL` does not clear a slot.
+- An Act watch that starts work records that disposition in that project's
+  slot. It does not write an inbox notification. The private run remains the
+  audit record.
 - Project inboxes remain short-lived inputs to the nightly briefer.
 - The global inbox stops accepting new writes. Its existing contents move to a
   dated archive once.
 
-`hive next` answers one question: which ticket should an agent execute next? It
-does not replace `hive ticket ready`, which remains the complete inventory.
+`hive next` answers one question: which ticket should an agent execute next,
+per project? It does not replace `hive ticket ready`, which remains the
+complete inventory.
 
 ## Safety rules
 
@@ -41,6 +44,7 @@ body. A stale record stays visible as unavailable until Act replaces it.
   briefing.
 - An inbox-only project clears after its captured briefing lands.
 - A briefing failure or changed inbox preserves the inbox.
-- Consecutive Act proposals replace one record instead of growing a log.
+- Consecutive Act proposals for the same project replace that project's slot.
+  Other projects stay. A v1 singleton file migrates to a one-item v2 board.
 - `hive next` rejects a ticket whose live state is no longer executable.
 - No runtime path writes `~/.hive/inbox.md`.

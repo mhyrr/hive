@@ -387,10 +387,9 @@ export interface WatchDigest {
   actCandidateCount?: number;
 }
 
-/** Warm-project cap for cross-project digests: attention goes to the top
- * ranked projects; the rest are named in one line so nothing is silently
- * dropped (no-silent-caps canon). */
-const MAX_DIGEST_PROJECTS = 5;
+/** Warm-project cap is gone for fleet Observe: expand every project with
+ * activity. Project-scoped Act/Propose already see one colony. Char caps
+ * still bound the digest. Cold projects are named, not silently dropped. */
 const SECTION_CHAR_CAP = 5_000;
 const DIGEST_CHAR_CAP = 28_000;
 const EXCERPT_CHAR_CAP = 280;
@@ -532,7 +531,7 @@ export async function assembleWatchDigest(args: {
     seams: args.seams,
   });
   const warm = activity.filter((a) => a.score > 0);
-  const focus = (watch.autonomy === "act" ? warm : (warm.length > 0 ? warm : activity)).slice(0, MAX_DIGEST_PROJECTS);
+  const focus = watch.autonomy === "act" ? warm : (warm.length > 0 ? warm : activity);
   const skipped = activity.filter((a) => !focus.some((f) => f.project === a.project));
 
   const sessions = watch.scope.includes("transcripts")
@@ -554,7 +553,7 @@ export async function assembleWatchDigest(args: {
     `Activity ranking: ${activity.map((a) => `${a.project}(${a.score})`).join(", ") || "none"}.`,
   );
   if (skipped.length > 0) {
-    sections.push(`Not expanded (cold or beyond top ${MAX_DIGEST_PROJECTS}): ${skipped.map((a) => a.project).join(", ")}.`);
+    sections.push(`Not expanded (cold): ${skipped.map((a) => a.project).join(", ")}.`);
   }
 
   // Act's complete shortlist goes first so the global digest cap can never
