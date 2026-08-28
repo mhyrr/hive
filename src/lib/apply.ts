@@ -1,7 +1,7 @@
 // Pass F — Apply. Walks the verifier's decisions.json and turns it into
 // canonical mutations: appends accepted entries, supersedes by hash, merges
-// tags, drains mid-session candidates, lands accepted reflections, lands
-// project-scoped gaps as questions, copies the briefing into ~/.hive/briefings/.
+// tags, drains mid-session candidates, lands accepted reflections, logs the
+// verifier's gaps (briefing-only), copies the briefing into ~/.hive/briefings/.
 //
 // Per-project atomic — a failure on alpha doesn't block bravo.
 //
@@ -116,9 +116,6 @@ export interface ProjectApplyOutcome {
   merged: number;
   rejected: number;
   directivesForceAdmitted: number;  // directives the verifier tried to reject but were kept (TK-123)
-  gapsLanded: number;
-  gapsRecurring: number;            // re-observed gaps annotated on the existing question (TK-147)
-  gapsCovered: number;              // gaps already answered by canon or the identity stack
   drainedCandidates: number;
   drainPath: string | null;
   inboxTruncated: boolean;
@@ -134,9 +131,9 @@ export interface ApplyResult {
     merged: number;
     rejected: number;
     directivesForceAdmitted: number;
-    gapsLanded: number;
-    gapsRecurring: number;
-    gapsCovered: number;
+    /** Project-scoped verifier gaps. They stay in the briefing and gaps.md;
+     * they never enter canon. */
+    gapsBriefed: number;
     reflectionsLanded: number;
   };
   perProject: ProjectApplyOutcome[];
@@ -154,9 +151,6 @@ function emptyOutcome(projectId: string): ProjectApplyOutcome {
     merged: 0,
     rejected: 0,
     directivesForceAdmitted: 0,
-    gapsLanded: 0,
-    gapsRecurring: 0,
-    gapsCovered: 0,
     drainedCandidates: 0,
     drainPath: null,
     inboxTruncated: false,
@@ -413,134 +407,34 @@ async function applyReflectionDecision(
 }
 
 // ---------------------------------------------------------------------------
-// Gaps that target a known project land as question-type entries.
-// Gaps targeting greg/maya/system land as reflections.
-// Other gap subjects stay briefing-only.
+// Gaps. The verifier's gaps are the pipeline reporting on itself — "Sonnet
+// missed X", "the extractor inflated Y". They stay where a human reads them:
+// the briefing and runs/{DATE}/gaps.md. They never enter canon, reflections,
+// or identity proposals. (They used to land as `[gap]` open questions and, via
+// the reflections store and Pass P, as `[reflection]` facts in whichever
+// project the provenance text named; by 2026-08-28 that was 42 of hive's 64
+// open questions, and every raw reader of knowledge.md — Pass B's own prompt,
+// the observe watch, read_hive_memory — saw the verifier's critique instead of
+// the project's knowledge.) Durable lessons the verifier notices are Pass B's
+// and Pass C's to extract on the next run, not the gap channel's to smuggle in.
 // ---------------------------------------------------------------------------
 
 interface GapDisposition {
   subject: string;
-  disposition: "question" | "recurring" | "covered" | "reflection" | "orphan";
+  disposition: "briefing";
   observation: string;
   source: string;
-  /** What already covered it, for `covered` and `recurring`. */
-  coveredBy?: string;
-  /** New recurrence count, for `recurring`. */
-  count?: number;
 }
 
-async function landGaps(
-  ctx: ApplyContext,
-  gaps: VerifierGap[],
-  outcomeByProject: Map<string, ProjectApplyOutcome>,
-  reflectionLandings: ReflectionLanding[],
-): Promise<{
-  asQuestions: number;
-  asReflections: number;
-  recurring: number;
-  covered: number;
-  orphans: number;
-}> {
-  let asQuestions = 0;
-  let asReflections = 0;
-  let recurring = 0;
-  let covered = 0;
-  let orphans = 0;
+async function landGaps(ctx: ApplyContext, gaps: VerifierGap[]): Promise<{ briefed: number }> {
   // A gate that drops input has to say what it dropped, or the next reader
-  // reads "3 gaps landed" as "3 gaps observed."
-  const dispositions: GapDisposition[] = [];
-  for (const g of gaps) {
-    const subject = g.subject.toLowerCase();
-    if (subject === "greg" || subject === "maya" || subject === "system") {
-      reflectionLandings.push({
-        subject: subject as ReflectionLanding["subject"],
-        content: g.observation,
-        tags: ["gap"],
-        provenance: g.source,
-      });
-      dispositions.push({ subject, disposition: "reflection", observation: g.observation, source: g.source });
-      asReflections++;
-      continue;
-    }
-    if (ctx.projectIds.has(g.subject)) {
-      const outcome = outcomeByProject.get(g.subject) ?? emptyOutcome(g.subject);
-      outcomeByProject.set(g.subject, outcome);
-      try {
-        // TK-147: gaps go through the same dedupe gate as reflections. Without
-        // it a gap the verifier re-observes lands as a fresh Open Question every
-        // night, so a standing question reads as N unrelated ones.
-        const dup = await checkDuplicate(ctx.paths, g.subject, g.observation);
-
-        if (dup.duplicate && dup.knowledgeHit?.section === "question") {
-          // Still open, seen again — one question getting louder.
-          let count = 0;
-          if (!ctx.dryRun) {
-            ({ count } = await markEntryRecurrence(
-              ctx.paths,
-              g.subject,
-              "question",
-              dup.knowledgeHit.hash,
-              ctx.date,
-            ));
-          }
-          dispositions.push({
-            subject: g.subject,
-            disposition: "recurring",
-            observation: g.observation,
-            source: g.source,
-            coveredBy: dup.coveredBy?.snippet,
-            count,
-          });
-          outcome.gapsRecurring++;
-          recurring++;
-          continue;
-        }
-
-        if (dup.duplicate) {
-          // Covered by a fact, convention, decision, or the identity stack —
-          // it is not an open gap, so it does not become a question.
-          dispositions.push({
-            subject: g.subject,
-            disposition: "covered",
-            observation: g.observation,
-            source: g.source,
-            coveredBy: dup.coveredBy
-              ? `${dup.coveredBy.source}: ${dup.coveredBy.snippet}`
-              : undefined,
-          });
-          outcome.gapsCovered++;
-          covered++;
-          continue;
-        }
-
-        if (!ctx.dryRun) {
-          await appendProjectMemory(
-            ctx.paths,
-            g.subject,
-            "question",
-            g.observation,
-            ["gap"],
-          );
-        }
-      } catch (err) {
-        outcome.errors.push(
-          `gap-as-question: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        continue;
-      }
-      dispositions.push({
-        subject: g.subject,
-        disposition: "question",
-        observation: g.observation,
-        source: g.source,
-      });
-      outcome.gapsLanded++;
-      asQuestions++;
-      continue;
-    }
-    dispositions.push({ subject: g.subject, disposition: "orphan", observation: g.observation, source: g.source });
-    orphans++;
-  }
+  // reads "3 gaps briefed" as "3 gaps observed."
+  const dispositions: GapDisposition[] = gaps.map((g) => ({
+    subject: g.subject,
+    disposition: "briefing",
+    observation: g.observation,
+    source: g.source,
+  }));
 
   if (dispositions.length > 0 && !ctx.dryRun) {
     const logPath = join(ctx.paths.memoryRunsDir, ctx.date, "gaps.applied.log");
@@ -548,7 +442,7 @@ async function landGaps(
     await appendFile(logPath, dispositions.map((d) => JSON.stringify(d)).join("\n") + "\n");
   }
 
-  return { asQuestions, asReflections, recurring, covered, orphans };
+  return { briefed: dispositions.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -652,19 +546,15 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
     }
   }
 
-  // Land gaps — projects-as-questions, identity-as-reflections
-  const gapStats = await landGaps(ctx, verifierExtras.gaps, outcomeByProject, reflectionLandings);
-  void gapStats; // captured indirectly via the per-project gap counters and reflectionLandings
+  // Gaps stay in the briefing; nothing lands.
+  const gapStats = await landGaps(ctx, verifierExtras.gaps);
 
   // Drain candidates.md and rebuild the index for projects whose canon changed.
   for (const projectId of projectIds) {
     const outcome = outcomeByProject.get(projectId);
     const midSession = ctx.sources.midSession.get(projectId) ?? [];
-    // gapsRecurring counts too — a recurrence bump rewrites knowledge.md, so the
-    // index has to be rebuilt from it. gapsCovered writes nothing.
     const touched =
-      (outcome &&
-        outcome.accepted + outcome.superseded + outcome.merged + outcome.gapsLanded + outcome.gapsRecurring > 0) ||
+      (outcome && outcome.accepted + outcome.superseded + outcome.merged > 0) ||
       midSession.length > 0;
     if (!touched) continue;
     const o = ensureOutcome(projectId);
@@ -755,9 +645,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
       merged: acc.merged + o.merged,
       rejected: acc.rejected + o.rejected,
       directivesForceAdmitted: acc.directivesForceAdmitted + o.directivesForceAdmitted,
-      gapsLanded: acc.gapsLanded + o.gapsLanded,
-      gapsRecurring: acc.gapsRecurring + o.gapsRecurring,
-      gapsCovered: acc.gapsCovered + o.gapsCovered,
+      gapsBriefed: acc.gapsBriefed,
       reflectionsLanded: acc.reflectionsLanded,
     }),
     {
@@ -766,9 +654,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
       merged: 0,
       rejected: 0,
       directivesForceAdmitted: 0,
-      gapsLanded: 0,
-      gapsRecurring: 0,
-      gapsCovered: 0,
+      gapsBriefed: gapStats.briefed,
       reflectionsLanded,
     },
   );

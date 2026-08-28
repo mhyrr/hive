@@ -31,9 +31,17 @@ export function rateForModel(modelId: string): ModelRate | null {
 export interface UsageDelta {
   provider: string;
   model: string;
+  /** Full prompt context, cached slices included. */
   inputTokens: number;
   outputTokens: number;
+  /** Slice of inputTokens served from the prompt cache (billed at 10%). */
+  cacheReadTokens?: number;
+  /** Slice of inputTokens written to the prompt cache (billed at 125%). */
+  cacheCreationTokens?: number;
 }
+
+const CACHE_READ_MULTIPLIER = 0.1;
+const CACHE_WRITE_MULTIPLIER = 1.25;
 
 export interface CostBreakdown {
   inputUsd: number;
@@ -47,7 +55,12 @@ export function estimateCost(usage: UsageDelta): CostBreakdown {
   if (!rate) {
     return { inputUsd: 0, outputUsd: 0, totalUsd: 0, modelKnown: false };
   }
-  const inputUsd = (usage.inputTokens / 1_000_000) * rate.inputPerMTok;
+  const cacheRead = usage.cacheReadTokens ?? 0;
+  const cacheWrite = usage.cacheCreationTokens ?? 0;
+  const uncached = Math.max(0, usage.inputTokens - cacheRead - cacheWrite);
+  const billableInput =
+    uncached + cacheWrite * CACHE_WRITE_MULTIPLIER + cacheRead * CACHE_READ_MULTIPLIER;
+  const inputUsd = (billableInput / 1_000_000) * rate.inputPerMTok;
   const outputUsd = (usage.outputTokens / 1_000_000) * rate.outputPerMTok;
   return {
     inputUsd,

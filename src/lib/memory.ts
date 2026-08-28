@@ -1053,6 +1053,127 @@ export async function readLog(
 // Index — auto-maintained summary (Layer 3)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Canon digest — one line per active entry, strongest first, under a budget.
+// For prompts that need to know what canon already holds without carrying the
+// whole file. Pass B used to receive the full knowledge.md as "do not
+// duplicate"; by 2026-08-28 that was 46k–66k tokens against a 16k excerpt
+// budget, and the extractor's yield tracked the canon's size, not the day's.
+// ---------------------------------------------------------------------------
+
+export const CANON_DIGEST_ENTRY_MAX_CHARS = 220;
+export const CANON_DIGEST_BUDGET_TOKENS = 12_000;
+
+type CanonSection = "fact" | "convention" | "decision" | "question";
+const CANON_SECTION_LABELS: Record<CanonSection, string> = {
+  fact: "Facts",
+  convention: "Conventions",
+  decision: "Decisions",
+  question: "Open questions",
+};
+
+export interface CanonDigestOptions {
+  maxEntryChars?: number;
+  budgetTokens?: number;
+}
+
+/** Active canon entries as `- [section] text…` lines, grouped by section,
+ * weakest entries dropped first when the budget binds. `[gap]` questions are
+ * excluded — they are the pipeline talking about itself. */
+export async function renderCanonDigest(
+  paths: HivePaths,
+  projectId: string,
+  options: CanonDigestOptions = {},
+): Promise<string> {
+  const snapshot = await readProjectMemorySnapshot(paths, projectId);
+  const meta = await readMeta(paths, projectId);
+  const maxChars = options.maxEntryChars ?? CANON_DIGEST_ENTRY_MAX_CHARS;
+  const budget = options.budgetTokens ?? CANON_DIGEST_BUDGET_TOKENS;
+
+  type Row = { section: CanonSection; line: string; strength: number };
+  const rows: Row[] = [];
+  const clip = (text: string): string =>
+    text.length <= maxChars ? text : `${text.slice(0, maxChars).trimEnd()}…`;
+  const collect = (
+    section: CanonSection,
+    entries: Array<{ text: string; tags: string[]; superseded?: boolean }>,
+  ): void => {
+    for (const e of entries) {
+      if (e.superseded || e.tags.includes("gap")) continue;
+      rows.push({
+        section,
+        line: `- [${section}] ${clip(e.text)}`,
+        strength: entryStrength(meta.entries[entryHash(e.text)]),
+      });
+    }
+  };
+  collect("fact", snapshot.facts);
+  collect("convention", snapshot.conventions);
+  collect("decision", snapshot.decisions);
+  collect("question", snapshot.questions);
+
+  const ranked = [...rows].sort((a, b) => b.strength - a.strength);
+  const kept = new Set<Row>();
+  let tokens = 0;
+  for (const r of ranked) {
+    const cost = Math.ceil(r.line.length / 4);
+    if (tokens + cost > budget) continue;
+    kept.add(r);
+    tokens += cost;
+  }
+  const dropped = rows.length - kept.size;
+
+  const lines: string[] = [];
+  for (const section of Object.keys(CANON_SECTION_LABELS) as CanonSection[]) {
+    const group = rows.filter((r) => r.section === section && kept.has(r));
+    if (group.length === 0) continue;
+    lines.push(`### ${CANON_SECTION_LABELS[section]} (${group.length})`);
+    for (const r of group) lines.push(r.line);
+    lines.push("");
+  }
+  if (dropped > 0) {
+    lines.push(`_(${dropped} weaker entries omitted to fit the budget)_`);
+  }
+  return lines.join("\n").trim();
+}
+
+export interface CanonEntryCreated {
+  section: CanonSection;
+  text: string;
+  createdAt: string;
+}
+
+/** Active, non-gap canon entries whose meta `createdAt` falls within
+ * [sinceLabel, untilLabel] (inclusive YYYY-MM-DD labels). A decision with no
+ * meta row falls back to its own timestamp. */
+export async function canonEntriesCreatedBetween(
+  paths: HivePaths,
+  projectId: string,
+  sinceLabel: string,
+  untilLabel: string,
+): Promise<CanonEntryCreated[]> {
+  const snapshot = await readProjectMemorySnapshot(paths, projectId);
+  const meta = await readMeta(paths, projectId);
+  const out: CanonEntryCreated[] = [];
+  const consider = (
+    section: CanonSection,
+    entries: Array<{ text: string; tags: string[]; superseded?: boolean; ts?: string | null }>,
+  ): void => {
+    for (const e of entries) {
+      if (e.superseded || e.tags.includes("gap")) continue;
+      const createdAt = meta.entries[entryHash(e.text)]?.createdAt ?? e.ts ?? null;
+      if (!createdAt) continue;
+      if (createdAt < sinceLabel || createdAt > untilLabel) continue;
+      out.push({ section, text: e.text, createdAt });
+    }
+  };
+  consider("fact", snapshot.facts);
+  consider("convention", snapshot.conventions);
+  consider("decision", snapshot.decisions);
+  consider("question", snapshot.questions);
+  return out;
+}
+
 export async function rebuildIndex(
   paths: HivePaths,
   projectId: string,

@@ -13,6 +13,7 @@ import {
 import { parseWatchFile, type WatchDef } from "./watch";
 import { createTicket } from "./ticket";
 import { ensureHiveScaffold, type HivePaths } from "./paths";
+import { appendProjectMemory, knowledgePath } from "./memory";
 
 // Date-anchored fixtures: all timestamps derive from ANCHOR; ticket `updated`
 // stamps flow through HIVE_FIXED_NOW so the real ticket layer stays in play.
@@ -239,6 +240,28 @@ describe("assembleWatchDigest", () => {
     expect(digest.text).not.toContain("## Project: gamma");
     expect(digest.provenance).toContain(`[T:alpha/${ticket.id}]`);
     expect(digest.provenance).toContain("[C:alpha/abc123]");
+  });
+
+  test("memory scope carries what entered canon in the interval, not the file tail", async () => {
+    // An old entry, then the interval's additions, then a verifier gap question.
+    process.env.HIVE_FIXED_NOW = new Date(ANCHOR.getTime() - 10 * 24 * HOUR).toISOString();
+    await appendProjectMemory(paths, "alpha", "fact", "Ancient fact nobody needs re-announced");
+    process.env.HIVE_FIXED_NOW = new Date(ANCHOR.getTime() - HOUR).toISOString();
+    await appendProjectMemory(paths, "alpha", "decision", "Chose Postgres over SQLite for alpha", ["db"]);
+    await appendProjectMemory(paths, "alpha", "question", "Sonnet missed the retro convention again", ["gap"]);
+    const kPath = knowledgePath(paths, "alpha");
+    await utimes(kPath, new Date(ANCHOR.getTime() - HOUR), new Date(ANCHOR.getTime() - HOUR));
+    await createTicket(paths, "alpha", { title: "warm it up" });
+
+    const watch = makeWatch({ scope: ["tickets", "memory"], project: "alpha" });
+    const digest = await assembleWatchDigest({ paths, watch, since: SINCE, now: ANCHOR, seams: seams({}) });
+
+    expect(digest.text).toContain("[M:alpha/knowledge] canon entries added in interval (1)");
+    expect(digest.text).toContain("[decision · ");
+    expect(digest.text).toContain("Chose Postgres over SQLite for alpha");
+    expect(digest.text).not.toContain("Ancient fact");
+    expect(digest.text).not.toContain("Sonnet missed");
+    expect(digest.provenance).toContain("[M:alpha/knowledge]");
   });
 
   test("fleet Observe expands every warm project, not a top-N slice", async () => {

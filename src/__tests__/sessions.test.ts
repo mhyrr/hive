@@ -10,6 +10,7 @@ import {
   noveltyScore,
   hasAlwaysIncludeMarker,
   estimateTokens,
+  shouldSkipUserText,
   type ExtractedExchange,
 } from "../lib/sessions";
 import { ensureHiveScaffold } from "../lib/paths";
@@ -360,5 +361,23 @@ describe("Codex session extraction", () => {
       else process.env.HIVE_HOME = originalHiveHome;
       await rm(home, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shouldSkipUserText
+// ---------------------------------------------------------------------------
+
+describe("shouldSkipUserText", () => {
+  test("drops harness scaffolding that is not a human turn", () => {
+    expect(shouldSkipUserText("<environment_context>\n  <current_date>2026-08-27</current_date>")).toBe(true);
+    expect(shouldSkipUserText("exit")).toBe(true);
+    expect(shouldSkipUserText("exit\n")).toBe(true);
+    expect(shouldSkipUserText("<tool_result>ok</tool_result>")).toBe(true);
+  });
+
+  test("keeps terse real prompts", () => {
+    expect(shouldSkipUserText("tests?")).toBe(false);
+    expect(shouldSkipUserText("exit the loop early when the queue is empty")).toBe(false);
   });
 });

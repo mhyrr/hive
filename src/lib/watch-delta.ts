@@ -27,6 +27,7 @@ import { parseInbox } from "./inbox";
 import { listTickets, readTicket } from "./ticket";
 import { extractRepoPath } from "./project";
 import { extractExchanges, findRecentSessions, redact, resolveProjectName, shouldSkipUserText } from "./sessions";
+import { canonEntriesCreatedBetween } from "./memory";
 import type { WatchDef, WatchScopeKind } from "./watch";
 
 // ---------------------------------------------------------------------------
@@ -396,6 +397,8 @@ const EXCERPT_CHAR_CAP = 280;
 const MAX_SESSIONS_PER_PROJECT = 6;
 const MAX_EXCERPTS_PER_SESSION = 4;
 const MAX_COMMIT_LINES = 40;
+const MAX_CANON_ENTRIES = 12;
+const CANON_ENTRY_CHAR_CAP = 400;
 const MAX_ACT_CANDIDATES = 12;
 const MAX_ACT_TICKET_BODY_CHARS = 6_000;
 const MAX_ACT_SECTION_CHARS = 16_000;
@@ -657,14 +660,32 @@ export async function assembleWatchDigest(args: {
 
     if (watch.scope.includes("memory")) {
       const knowledgePath = join(paths.memoryProjectsDir, project, "knowledge.md");
-      const knowledge = await readIfExists(knowledgePath);
       const candidatesPath = join(paths.memoryProjectsDir, project, "candidates.md");
       const candidates = await readIfExists(candidatesPath);
       const lines: string[] = [];
-      if (knowledge && knowledge.trim() && changedWithin(knowledgePath, sinceMs, untilMs)) {
-        const tag = `[M:${project}/knowledge]`;
-        lines.push(`— ${tag} knowledge.md (current tail; file changed in interval)`, knowledge.trim().slice(-2_500));
-        provenance.push(tag);
+      if (changedWithin(knowledgePath, sinceMs, untilMs)) {
+        // What entered canon in the interval — not the file's tail. knowledge.md
+        // is sectioned by type, so its tail is always Open Questions whatever
+        // changed, and a watch reading it saw the same standing questions every
+        // cycle as if they were news.
+        const added = await canonEntriesCreatedBetween(
+          paths,
+          project,
+          new Date(sinceMs).toISOString().slice(0, 10),
+          new Date(untilMs).toISOString().slice(0, 10),
+        ).catch(() => []);
+        if (added.length > 0) {
+          const tag = `[M:${project}/knowledge]`;
+          const rendered = added.slice(0, MAX_CANON_ENTRIES).map((e) => {
+            const text = e.text.length > CANON_ENTRY_CHAR_CAP ? `${e.text.slice(0, CANON_ENTRY_CHAR_CAP)}…` : e.text;
+            return `- [${e.section} · ${e.createdAt}] ${text}`;
+          });
+          if (added.length > MAX_CANON_ENTRIES) {
+            rendered.push(`… (${added.length - MAX_CANON_ENTRIES} more entr${added.length - MAX_CANON_ENTRIES === 1 ? "y" : "ies"} added in interval)`);
+          }
+          lines.push(`— ${tag} canon entries added in interval (${added.length})`, ...rendered);
+          provenance.push(tag);
+        }
       }
       if (candidates && candidates.trim() && changedWithin(candidatesPath, sinceMs, untilMs)) {
         const tag = `[M:${project}/candidates]`;

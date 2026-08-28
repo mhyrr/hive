@@ -339,6 +339,10 @@ export function shouldSkipUserText(text: string): boolean {
   // Skip skill expansions (long injected prompts like /ultra, /brainstorm)
   if (text.startsWith("**ultrathink**")) return true;
   if (text.startsWith("<EXTREMELY_IMPORTANT>")) return true;
+  // Cursor CLI persists a machine-generated environment block as the first
+  // user message and a bare `exit` as the last. Neither is a human turn.
+  if (text.startsWith("<environment_context>")) return true;
+  if (text.trim() === "exit") return true;
 
   return false;
 }

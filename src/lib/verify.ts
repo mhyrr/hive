@@ -729,6 +729,8 @@ export async function callVerifier(
     model: response.model,
     inputTokens: response.inputTokens ?? 0,
     outputTokens: response.outputTokens ?? 0,
+    cacheReadTokens: response.cacheReadTokens,
+    cacheCreationTokens: response.cacheCreationTokens,
     durationMs: response.durationMs,
   };
   const cost = estimateCost(usage);
@@ -965,6 +967,8 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
     model: usages[0]?.model ?? verifierModel().modelId,
     inputTokens: usages.reduce((n, u) => n + u.inputTokens, 0),
     outputTokens: usages.reduce((n, u) => n + u.outputTokens, 0),
+    cacheReadTokens: usages.reduce((n, u) => n + (u.cacheReadTokens ?? 0), 0),
+    cacheCreationTokens: usages.reduce((n, u) => n + (u.cacheCreationTokens ?? 0), 0),
     durationMs: usages.reduce((n, u) => n + (u.durationMs ?? 0), 0),
   };
   const cost = estimateCost(totalUsage);

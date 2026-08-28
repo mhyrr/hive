@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 
 import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
-import { readProjectMemorySnapshot } from "./memory";
+import { renderCanonDigest } from "./memory";
 import { buildExchangeExcerpt } from "./condition";
 import type { ConditionReport, ProjectSignal } from "./condition";
 import { estimateCost, appendUsageRecord } from "./pricing";
@@ -155,7 +155,7 @@ A learning is durable if:
 
 Skip ruthlessly:
 - Task status, work-in-progress, "currently doing X", "next we'll Y"
-- Anything already captured in the project's existing knowledge.md (provided below)
+- Anything already in the canon digest below. The digest is truncated and budgeted; the verifier holds the full canon and dedupes by hash, so when you are unsure whether something is already captured, include it
 - Speculative observations or ones with weak grounding
 - User preferences or working-style observations — those go to a separate self-reflection channel
 - Anything obvious from a glance at the code or commit messages
@@ -201,7 +201,7 @@ Project: ${projectId}
 Date: ${date}
 `);
 
-  sections.push(`## Existing canon (knowledge.md — do not duplicate these)
+  sections.push(`## Existing canon (digest — one line per entry, strongest first)
 
 ${knowledgeText.trim() || "(empty — this is a fresh project)"}
 `);
@@ -249,7 +249,7 @@ ${previews}
 
   sections.push(`## Output
 
-Return a JSON array of candidates per the system prompt. Look for reusable conventions and decision rationale across exchanges, not only local artifact facts. Be conservative — three excellent candidates beat ten mediocre ones.`);
+Return a JSON array of candidates per the system prompt. Look for reusable conventions, decision rationale, and mechanisms across exchanges, not only local artifact facts. The verifier filters, so err toward surfacing: a durable learning you leave out is lost, a weak one costs one rejection.`);
 
   return sections.join("\n");
 }
@@ -352,6 +352,8 @@ export interface ExtractorCallResult<T> {
   usage: {
     inputTokens: number | null;
     outputTokens: number | null;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
     durationMs: number | null;
     provider: string;
     model: string;
@@ -367,6 +369,8 @@ export interface ModelTextCompletion {
   text: string;
   inputTokens: number | null;
   outputTokens: number | null;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   durationMs: number | null;
 }
 
@@ -407,6 +411,8 @@ export async function callProjectExtractor(
     usage: {
       inputTokens: response.inputTokens,
       outputTokens: response.outputTokens,
+      cacheReadTokens: response.cacheReadTokens,
+      cacheCreationTokens: response.cacheCreationTokens,
       durationMs: response.durationMs,
       provider: response.provider,
       model: response.model,
@@ -437,6 +443,8 @@ export async function callReflectionExtractor(
     usage: {
       inputTokens: response.inputTokens,
       outputTokens: response.outputTokens,
+      cacheReadTokens: response.cacheReadTokens,
+      cacheCreationTokens: response.cacheCreationTokens,
       durationMs: response.durationMs,
       provider: response.provider,
       model: response.model,
@@ -461,30 +469,10 @@ export async function loadProjectKnowledgeText(
   paths: HivePaths,
   projectId: string,
 ): Promise<string> {
-  const snap = await readProjectMemorySnapshot(paths, projectId).catch(() => null);
-  if (!snap) return "";
-  const lines: string[] = [];
-  if (snap.facts.length > 0) {
-    lines.push("## Facts");
-    for (const f of snap.facts) if (!f.superseded) lines.push(`- ${f.text}`);
-    lines.push("");
-  }
-  if (snap.conventions.length > 0) {
-    lines.push("## Conventions");
-    for (const c of snap.conventions) if (!c.superseded) lines.push(`- ${c.text}`);
-    lines.push("");
-  }
-  if (snap.decisions.length > 0) {
-    lines.push("## Decisions");
-    for (const d of snap.decisions) if (!d.superseded) lines.push(`- [${d.ts}] ${d.text}`);
-    lines.push("");
-  }
-  if (snap.questions.length > 0) {
-    lines.push("## Open questions");
-    for (const q of snap.questions) if (!q.superseded) lines.push(`- ${q.text}`);
-    lines.push("");
-  }
-  return lines.join("\n");
+  // A budgeted digest, not the file. The verifier holds the full canon and
+  // dedupes by hash; Pass B only needs enough of it to steer away from the
+  // obvious repeats.
+  return renderCanonDigest(paths, projectId).catch(() => "");
 }
 
 export async function loadIdentityText(paths: HivePaths): Promise<string> {
@@ -554,6 +542,8 @@ export async function runProjectExtractor(
     model: result.usage.model,
     inputTokens: result.usage.inputTokens ?? 0,
     outputTokens: result.usage.outputTokens ?? 0,
+    cacheReadTokens: result.usage.cacheReadTokens,
+    cacheCreationTokens: result.usage.cacheCreationTokens,
   });
   await writeJsonArtifact(outputPath, {
     pass: "B",
@@ -607,6 +597,8 @@ export async function runReflectionExtractor(
     model: result.usage.model,
     inputTokens: result.usage.inputTokens ?? 0,
     outputTokens: result.usage.outputTokens ?? 0,
+    cacheReadTokens: result.usage.cacheReadTokens,
+    cacheCreationTokens: result.usage.cacheCreationTokens,
   });
   await writeJsonArtifact(outputPath, {
     pass: "C",

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +27,8 @@ import {
   formatRecurrence,
   markEntryRecurrence,
   INDEX_SIZE_BUDGET_BYTES,
+  renderCanonDigest,
+  canonEntriesCreatedBetween,
   type MetaSidecar,
 } from "../lib/memory";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
@@ -721,5 +723,87 @@ describe("rebuildIndex", () => {
     );
     const output = await rebuildIndex(paths, "test-project");
     expect(Buffer.byteLength(output, "utf-8")).toBeLessThanOrEqual(INDEX_SIZE_BUDGET_BYTES);
+  });
+});
+
+describe("renderCanonDigest", () => {
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    paths = await ensureHiveScaffold(await mkdtemp(join(tmpdir(), "hive-digest-")));
+  });
+
+  test("one line per active entry, grouped by section, gap questions excluded", async () => {
+    await appendProjectMemory(paths, "p", "fact", "Uses Bun for the runtime", ["runtime"]);
+    await appendProjectMemory(paths, "p", "convention", "Stage files by name", ["git"]);
+    await appendProjectMemory(paths, "p", "decision", "Chose Postgres over SQLite", ["db"]);
+    await appendProjectMemory(paths, "p", "question", "Is the heartbeat still useful?", ["ops"]);
+    await appendProjectMemory(paths, "p", "question", "Sonnet missed the retro convention", ["gap"]);
+    await appendProjectMemory(paths, "p", "fact", "Old JWT library", ["auth"]);
+    await supersedeEntry(paths, "p", "fact", "Old JWT library", "New JWT library");
+
+    const digest = await renderCanonDigest(paths, "p");
+    expect(digest).toContain("### Facts (2)");
+    expect(digest).toContain("- [fact] Uses Bun for the runtime");
+    expect(digest).toContain("- [fact] New JWT library");
+    expect(digest).not.toContain("Old JWT library");
+    expect(digest).toContain("- [convention] Stage files by name");
+    expect(digest).toContain("- [decision] Chose Postgres over SQLite");
+    expect(digest).toContain("### Open questions (1)");
+    expect(digest).toContain("Is the heartbeat still useful?");
+    expect(digest).not.toContain("Sonnet missed");
+  });
+
+  test("long entries are clipped and the budget drops the weakest first", async () => {
+    const long = "x".repeat(600);
+    await appendProjectMemory(paths, "p", "fact", long);
+    for (let i = 0; i < 20; i++) {
+      await appendProjectMemory(paths, "p", "fact", `filler fact number ${i} about nothing much`);
+    }
+    const digest = await renderCanonDigest(paths, "p", { maxEntryChars: 50, budgetTokens: 120 });
+    expect(digest).not.toContain(long);
+    expect(digest).toContain("…");
+    expect(digest).toMatch(/_\(\d+ weaker entries omitted to fit the budget\)_/);
+    // Every kept line honours the clip.
+    for (const line of digest.split("\n").filter((l) => l.startsWith("- ["))) {
+      expect(line.length).toBeLessThanOrEqual("- [convention] ".length + 51);
+    }
+  });
+
+  test("empty canon renders empty", async () => {
+    expect(await renderCanonDigest(paths, "p")).toBe("");
+  });
+});
+
+describe("canonEntriesCreatedBetween", () => {
+  let paths: HivePaths;
+
+  beforeEach(async () => {
+    paths = await ensureHiveScaffold(await mkdtemp(join(tmpdir(), "hive-created-")));
+  });
+
+  afterEach(() => {
+    delete process.env.HIVE_FIXED_NOW;
+  });
+
+  test("returns entries whose meta createdAt falls in the window, gaps excluded", async () => {
+    process.env.HIVE_FIXED_NOW = "2026-08-01T12:00:00.000Z";
+    await appendProjectMemory(paths, "p", "fact", "Old fact from August first");
+    process.env.HIVE_FIXED_NOW = "2026-08-12T09:00:00.000Z";
+    await appendProjectMemory(paths, "p", "fact", "Fresh fact from the twelfth", ["new"]);
+    await appendProjectMemory(paths, "p", "decision", "Fresh decision from the twelfth");
+    await appendProjectMemory(paths, "p", "question", "Sonnet missed something", ["gap"]);
+
+    const added = await canonEntriesCreatedBetween(paths, "p", "2026-08-11", "2026-08-12");
+    expect(added.map((e) => e.text).sort()).toEqual([
+      "Fresh decision from the twelfth",
+      "Fresh fact from the twelfth",
+    ]);
+    expect(added.every((e) => e.createdAt === "2026-08-12")).toBe(true);
+    expect(added.find((e) => e.text === "Fresh decision from the twelfth")?.section).toBe("decision");
+  });
+
+  test("a project with no canon yields nothing", async () => {
+    expect(await canonEntriesCreatedBetween(paths, "p", "2026-01-01", "2026-12-31")).toEqual([]);
   });
 });

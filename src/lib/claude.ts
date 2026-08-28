@@ -256,8 +256,17 @@ export async function completeClaudeText(input: {
         `Treat as a declined or dropped completion, not an empty extraction.`,
     );
   }
-  const inputTokens = envelope.usage?.input_tokens ?? null;
-  const outputTokens = envelope.usage?.output_tokens ?? null;
+  // `input_tokens` is only the uncached slice of the prompt. The CLI's prompt
+  // cache carries nearly all of a system-prompt-plus-canon call, so the raw
+  // field reads 2–8 tokens and the nightly cost log under-reports by the whole
+  // canon. Report the full context size; keep the cache split for pricing.
+  const u = envelope.usage;
+  const uncachedTokens = u?.input_tokens ?? null;
+  const cacheCreationTokens = u?.cache_creation_input_tokens ?? 0;
+  const cacheReadTokens = u?.cache_read_input_tokens ?? 0;
+  const inputTokens =
+    uncachedTokens === null ? null : uncachedTokens + cacheCreationTokens + cacheReadTokens;
+  const outputTokens = u?.output_tokens ?? null;
 
   return {
     provider: "anthropic",
@@ -265,6 +274,8 @@ export async function completeClaudeText(input: {
     text,
     inputTokens,
     outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
     totalTokens:
       inputTokens !== null && outputTokens !== null
         ? inputTokens + outputTokens

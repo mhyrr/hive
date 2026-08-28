@@ -35,13 +35,12 @@ the implicit ranking signal.
 **Knowledge** — Compiled project intelligence. A single `knowledge.md`
 with four sections: Durable Facts, Conventions, Decisions, Open
 Questions. Written deliberately by agents via `write_hive_memory`.
-Entries can be superseded (struck through with a date). An open question
-the nightly verifier keeps re-observing carries a recurrence marker —
-`_(seen 3×, last 2026-08-17)_` — so a standing gap reads as one question
-getting louder rather than three unrelated ones. Tags and that marker are
-metadata on the line: `entryHash` strips both, so an entry's identity is
-its prose and a recurrence bump never orphans its metadata. This is the
-system of record.
+Entries can be superseded (struck through with a date). Tags and the
+optional recurrence marker (`_(seen 3×, last 2026-08-17)_`) are metadata
+on the line: `entryHash` strips both, so an entry's identity is its prose.
+The verifier's own gaps ("Sonnet missed X") never enter this file — they
+are the pipeline reporting on itself and live in the briefing and
+`runs/{DATE}/gaps.md`. This is the system of record.
 
 **Index** — Auto-generated summary loaded at session start. Built
 mechanically by `rebuildIndex()` from knowledge + recent log. Designed
@@ -303,6 +302,9 @@ Pass A — Conditioning (mechanical, no LLM)
   ↓ skip-if-trivial early exit emits a stub briefing
 
 Pass B — Sonnet, per project with signal (parallel)
+  ↓ prompt carries a budgeted canon digest (renderCanonDigest: strongest
+  ↓   entries first, 220-char lines, 12k tokens, [gap] excluded) — not the
+  ↓   full knowledge.md; the verifier owns dedupe against full canon
   ↓ extract decisions, conventions, durable facts, open questions from the selected exchanges and project artifacts
   ↓ each candidate carries a free-text provenance string
 
@@ -322,10 +324,10 @@ Pass F — Apply (mechanical)
   ↓                 (directives marked reject are force-admitted, not dropped)
   ↓ drain candidates.md → runs/{DATE}/candidates.consumed.{name}.md
   ↓ rebuild _index.md per project touched
-  ↓ land accepted reflections + project-scoped gaps as questions
-  ↓   (gaps pass the same dedupe gate as reflections: a gap already
-  ↓    covered by canon is dropped, and one re-observed on an open
-  ↓    question bumps that question's recurrence marker instead)
+  ↓ land accepted reflections
+  ↓ log the verifier's gaps to gaps.applied.log (disposition "briefing") —
+  ↓   they stay in the briefing and gaps.md, never canon, reflections, or
+  ↓   identity proposals; durable lessons are Pass B/C's to extract next run
   ↓ copy briefing.md → ~/.hive/briefings/{DATE}.md
   ↓ clear each captured project inbox when its body still matches Pass V
 ```

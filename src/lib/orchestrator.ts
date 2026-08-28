@@ -415,13 +415,12 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       );
       result.briefingPath = value.briefingPath;
       const forced = value.totals.directivesForceAdmitted;
-      const recurring = value.totals.gapsRecurring;
       result.passes.F = {
         pass: "F",
         status: "complete",
         detail:
           `+${value.totals.accepted} ~${value.totals.superseded} ⊕${value.totals.merged} ✗${value.totals.rejected}` +
-          (recurring > 0 ? ` ↻${recurring} recurring gap(s)` : "") +
+          (value.totals.gapsBriefed > 0 ? ` ⚑${value.totals.gapsBriefed} gap(s) briefed` : "") +
           (forced > 0 ? ` ⚡${forced} directive(s) kept over verifier reject` : ""),
         durationMs,
       };
