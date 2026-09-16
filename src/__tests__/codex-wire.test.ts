@@ -5,9 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  CODEX_PROJECT_DOC_MAX_BYTES,
+  ensureCodexProjectDocMaxBytes,
   getCodexAgentsMdStatus,
   getCodexHome,
   getCodexHooksFeatureStatus,
+  getCodexProjectDocMaxBytes,
   getRegisteredCodexHiveMcp,
   installCodexIdentityHook,
   writeCodexAgentsMd,
@@ -269,5 +272,165 @@ describe("getCodexHooksFeatureStatus", () => {
     );
     const result = await getCodexHooksFeatureStatus();
     expect(result).toEqual({ enabled: true, key: "hooks" });
+  });
+});
+
+describe("getCodexProjectDocMaxBytes", () => {
+  test("returns null when config.toml is missing", async () => {
+    expect(await getCodexProjectDocMaxBytes()).toBeNull();
+  });
+
+  test("returns null when the key is absent", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `model = "gpt-5.5"\n\n[features]\nhooks = true\n`,
+    );
+    expect(await getCodexProjectDocMaxBytes()).toBeNull();
+  });
+
+  test("returns the top-level value when present", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `model = "gpt-5.5"\nproject_doc_max_bytes = 65536\n\n[features]\nhooks = true\n`,
+    );
+    expect(await getCodexProjectDocMaxBytes()).toBe(65536);
+  });
+
+  test("ignores the key under a table header (it would belong to that table)", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `model = "gpt-5.5"\n\n[features]\nproject_doc_max_bytes = 131072\n`,
+    );
+    expect(await getCodexProjectDocMaxBytes()).toBeNull();
+  });
+
+  test("ignores a commented-out key", async () => {
+    await writeFile(
+      join(scratch, ".codex", "config.toml"),
+      `# project_doc_max_bytes = 131072\nmodel = "gpt-5.5"\n`,
+    );
+    expect(await getCodexProjectDocMaxBytes()).toBeNull();
+  });
+});
+
+describe("ensureCodexProjectDocMaxBytes", () => {
+  const configPath = () => join(scratch, ".codex", "config.toml");
+
+  test("adds the key above the first table header when missing", async () => {
+    const original = `model = "gpt-5.5"\n\n[features]\nhooks = true\n\n[mcp_servers.hive]\ncommand = "/bin/hive-mcp"\n`;
+    await writeFile(configPath(), original);
+
+    const result = await ensureCodexProjectDocMaxBytes();
+    expect(result).toEqual({ changed: true, previous: null, value: CODEX_PROJECT_DOC_MAX_BYTES });
+
+    // still top-level, so Codex actually reads it
+    expect(await getCodexProjectDocMaxBytes()).toBe(CODEX_PROJECT_DOC_MAX_BYTES);
+
+    const raw = await Bun.file(configPath()).text();
+    expect(raw.indexOf("project_doc_max_bytes")).toBeLessThan(raw.indexOf("[features]"));
+  });
+
+  test("preserves the rest of the file", async () => {
+    const original = `model = "gpt-5.5"\n\n[features]\nhooks = true\n\n[mcp_servers.hive]\ncommand = "/bin/hive-mcp"\nargs = []\n`;
+    await writeFile(configPath(), original);
+
+    await ensureCodexProjectDocMaxBytes();
+
+    const raw = await Bun.file(configPath()).text();
+    const withoutKey = raw
+      .split("\n")
+      .filter((line) => !line.startsWith("project_doc_max_bytes"))
+      .join("\n");
+    // only the inserted key line and its blank separator differ
+    expect(withoutKey.replace("\n\n\n", "\n\n")).toBe(original);
+    expect(raw).toContain(`command = "/bin/hive-mcp"`);
+    expect(raw).toContain("hooks = true");
+  });
+
+  test("raises a value below the minimum", async () => {
+    await writeFile(configPath(), `project_doc_max_bytes = 32768\nmodel = "gpt-5.5"\n`);
+    const result = await ensureCodexProjectDocMaxBytes();
+    expect(result).toEqual({ changed: true, previous: 32768, value: CODEX_PROJECT_DOC_MAX_BYTES });
+    expect(await getCodexProjectDocMaxBytes()).toBe(CODEX_PROJECT_DOC_MAX_BYTES);
+    expect(await Bun.file(configPath()).text()).toBe(
+      `project_doc_max_bytes = ${CODEX_PROJECT_DOC_MAX_BYTES}\nmodel = "gpt-5.5"\n`,
+    );
+  });
+
+  test("leaves an already-sufficient value alone", async () => {
+    const original = `project_doc_max_bytes = 131072\nmodel = "gpt-5.5"\n`;
+    await writeFile(configPath(), original);
+    const result = await ensureCodexProjectDocMaxBytes();
+    expect(result).toEqual({ changed: false, previous: 131072, value: 131072 });
+    expect(await Bun.file(configPath()).text()).toBe(original);
+  });
+
+  test("appends when the file has no table headers", async () => {
+    await writeFile(configPath(), `model = "gpt-5.5"\n`);
+    await ensureCodexProjectDocMaxBytes();
+    expect(await Bun.file(configPath()).text()).toBe(
+      `model = "gpt-5.5"\nproject_doc_max_bytes = ${CODEX_PROJECT_DOC_MAX_BYTES}\n`,
+    );
+  });
+
+  test("creates config.toml when it is missing", async () => {
+    const result = await ensureCodexProjectDocMaxBytes();
+    expect(result.changed).toBe(true);
+    expect(await Bun.file(configPath()).text()).toBe(
+      `project_doc_max_bytes = ${CODEX_PROJECT_DOC_MAX_BYTES}\n`,
+    );
+  });
+
+  test("skips when ~/.codex doesn't exist", async () => {
+    await rm(join(scratch, ".codex"), { recursive: true });
+    expect(await ensureCodexProjectDocMaxBytes()).toEqual({ changed: false, previous: null, value: null });
+  });
+
+  test("honours a custom minimum", async () => {
+    await writeFile(configPath(), `project_doc_max_bytes = 40000\n`);
+    const result = await ensureCodexProjectDocMaxBytes(32768);
+    expect(result).toEqual({ changed: false, previous: 40000, value: 40000 });
+  });
+});
+
+describe("ensureCodexProjectDocMaxBytes edge cases", () => {
+  const configPath = () => join(scratch, ".codex", "config.toml");
+
+  test("reads a TOML integer with underscores and does not duplicate the key", async () => {
+    await writeFile(configPath(), `project_doc_max_bytes = 131_072\n`);
+    expect(await getCodexProjectDocMaxBytes()).toBe(131072);
+    const result = await ensureCodexProjectDocMaxBytes();
+    expect(result.changed).toBe(false);
+    expect((await Bun.file(configPath()).text()).match(/project_doc_max_bytes/g)).toHaveLength(1);
+  });
+
+  test("replaces an unparseable top-level value instead of adding a second key", async () => {
+    await writeFile(configPath(), `project_doc_max_bytes = "big"\n\n[features]\nhooks = true\n`);
+    await ensureCodexProjectDocMaxBytes();
+    const raw = await Bun.file(configPath()).text();
+    expect(raw.match(/project_doc_max_bytes/g)).toHaveLength(1);
+    expect(raw).toBe(`project_doc_max_bytes = ${CODEX_PROJECT_DOC_MAX_BYTES}\n\n[features]\nhooks = true\n`);
+  });
+
+  test("inserts above a table header that is the first line", async () => {
+    await writeFile(configPath(), `[features]\nhooks = true\n`);
+    await ensureCodexProjectDocMaxBytes();
+    expect(await Bun.file(configPath()).text()).toBe(
+      `project_doc_max_bytes = ${CODEX_PROJECT_DOC_MAX_BYTES}\n\n[features]\nhooks = true\n`,
+    );
+    expect(await getCodexProjectDocMaxBytes()).toBe(CODEX_PROJECT_DOC_MAX_BYTES);
+  });
+
+  test("handles a file without a trailing newline", async () => {
+    await writeFile(configPath(), `model = "gpt-5.5"`);
+    await ensureCodexProjectDocMaxBytes();
+    expect(await Bun.file(configPath()).text()).toBe(
+      `model = "gpt-5.5"\nproject_doc_max_bytes = ${CODEX_PROJECT_DOC_MAX_BYTES}\n`,
+    );
+    await writeFile(configPath(), `model = "gpt-5.5"\n[features]\nhooks = true`);
+    await ensureCodexProjectDocMaxBytes();
+    expect(await Bun.file(configPath()).text()).toBe(
+      `model = "gpt-5.5"\nproject_doc_max_bytes = ${CODEX_PROJECT_DOC_MAX_BYTES}\n\n[features]\nhooks = true`,
+    );
   });
 });

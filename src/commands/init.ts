@@ -3,7 +3,7 @@ import { chmod, readdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { execSync } from "node:child_process";
 
-import { wireCodex } from "../lib/codex-wire";
+import { CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES, wireCodex } from "../lib/codex-wire";
 import { wireCursor } from "../lib/cursor-wire";
 import { assembleIdentity } from "../lib/identity";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
@@ -479,6 +479,12 @@ export async function initCommand(args: string[]): Promise<void> {
       }
       if (codex.hookWired) {
         console.log("Wired SessionStart hook in ~/.codex/hooks.json");
+      }
+      if (codex.projectDocMaxBytesChanged) {
+        const was = codex.projectDocMaxBytesPrevious === null
+          ? `unset, Codex default ${CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES}`
+          : String(codex.projectDocMaxBytesPrevious);
+        console.log(`Set project_doc_max_bytes = ${codex.projectDocMaxBytes} in ~/.codex/config.toml (was ${was})`);
       }
     }
   } catch {

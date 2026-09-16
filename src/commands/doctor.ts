@@ -3,9 +3,12 @@ import { execSync, spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 import {
+  CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES,
+  CODEX_PROJECT_DOC_MAX_BYTES,
   getCodexAgentsMdStatus,
   getCodexHome,
   getCodexHooksFeatureStatus,
+  getCodexProjectDocMaxBytes,
   getRegisteredCodexHiveMcp,
   isCodexInstalled,
 } from "../lib/codex-wire";
@@ -18,6 +21,11 @@ import {
 } from "../lib/cursor-wire";
 import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
 import { assembleIdentity } from "../lib/identity";
+import {
+  auditProjectInstructionFiles,
+  formatBytes,
+  type InstructionFinding,
+} from "../lib/instruction-files";
 import { INDEX_SIZE_BUDGET_BYTES, validateMemoryStructure } from "../lib/memory";
 import { getHivePaths, listProjects } from "../lib/paths";
 import {
@@ -151,6 +159,23 @@ async function checkCodex(): Promise<Check[]> {
       : { status: "fail", label: `Codex MCP command missing: ${registered}` });
   } else {
     checks.push({ status: "warn", label: "hive not registered in ~/.codex/config.toml", detail: "Run: hive init" });
+  }
+
+  // Instruction-file budget. Codex loads ~/.codex/AGENTS.md and the repo's
+  // AGENTS.md under one `project_doc_max_bytes` ceiling and truncates the
+  // overflow mid-file with no notice. TK-153A.
+  const docMax = await getCodexProjectDocMaxBytes();
+  const effectiveDocMax = docMax ?? CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES;
+  if (docMax !== null && docMax >= CODEX_PROJECT_DOC_MAX_BYTES) {
+    checks.push({ status: "pass", label: `project_doc_max_bytes = ${docMax} (${formatBytes(docMax)})` });
+  } else {
+    checks.push({
+      status: "warn",
+      label: docMax === null
+        ? `project_doc_max_bytes unset — Codex defaults to ${effectiveDocMax} (${formatBytes(effectiveDocMax)})`
+        : `project_doc_max_bytes = ${docMax} (${formatBytes(docMax)}) below ${CODEX_PROJECT_DOC_MAX_BYTES}`,
+      detail: `Run: hive init — raises it to ${CODEX_PROJECT_DOC_MAX_BYTES} (${formatBytes(CODEX_PROJECT_DOC_MAX_BYTES)}); effective now ${effectiveDocMax} (${formatBytes(effectiveDocMax)}), shared by ~/.codex/AGENTS.md and every repo AGENTS.md.`,
+    });
   }
 
   // Hooks feature flag — required for HIVE hooks to fire.
@@ -462,6 +487,65 @@ async function checkStaleClaudeMd(): Promise<Check[]> {
 
   if (checks.length === 0) {
     checks.push({ status: "pass", label: "no stale identity blocks in registered CLAUDE.md files" });
+  }
+
+  return checks;
+}
+
+/**
+ * TK-153D: audit every registered project's instruction files against the
+ * fact-sheet doctrine — root under 8 KB / 200 lines, one source of truth,
+ * no generated framework blocks, small nested files, and the Codex arithmetic
+ * (global identity + repo AGENTS.md + largest nested one vs project_doc_max_bytes).
+ */
+async function checkInstructionFiles(): Promise<Check[]> {
+  const checks: Check[] = [];
+  const paths = getHivePaths();
+
+  if (!existsSync(paths.projectsDir)) return checks;
+
+  const codexAgentsPath = join(getCodexHome(), "AGENTS.md");
+  const codexGlobalBytes = existsSync(codexAgentsPath) ? statSync(codexAgentsPath).size : null;
+  const codexMaxBytes = (await getCodexProjectDocMaxBytes()) ?? CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES;
+
+  // Codes worth repeating in the collapsed one-line summary for a clean project.
+  const summaryCodes = new Set(["root-size", "codex-budget", "codex-claude-only", "root-none"]);
+
+  const projects = await listProjects(paths.projectsDir);
+  for (const projectId of projects) {
+    const configPath = join(paths.projectsDir, projectId, "config.md");
+    if (!existsSync(configPath)) continue;
+
+    const config = readFileSync(configPath, "utf-8");
+    const pathMatch = config.match(/^path:\s*(.+)$/m);
+    if (!pathMatch) continue;
+    const projectPath = pathMatch[1]!.trim();
+    if (!existsSync(projectPath)) continue;
+
+    let findings: InstructionFinding[];
+    try {
+      findings = auditProjectInstructionFiles(projectPath, { codexGlobalBytes, codexMaxBytes });
+    } catch {
+      // intentional: unreadable project tree — skip rather than fail the doctor
+      continue;
+    }
+
+    const warnings = findings.filter((f) => f.severity === "warn");
+    if (warnings.length === 0) {
+      const summary = findings
+        .filter((f) => summaryCodes.has(f.code))
+        .map((f) => f.label)
+        .join(", ");
+      checks.push({ status: "pass", label: `${projectId}: ${summary || "instruction files within budget"}` });
+    } else {
+      for (const warning of warnings) {
+        checks.push({ status: "warn", label: `${projectId}: ${warning.label}`, detail: warning.detail });
+      }
+    }
+  }
+
+  if (checks.length === 0) {
+    checks.push({ status: "pass", label: "no registered projects to audit" });
   }
 
   return checks;
@@ -852,6 +936,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
     { heading: "Scheduler", checks: checkScheduler() },
     { heading: "Memory schema", checks: await checkMemorySchema() },
     { heading: "Registered CLAUDE.md", checks: await checkStaleClaudeMd() },
+    { heading: "Instruction files", checks: await checkInstructionFiles() },
     await checkProject(),
     { heading: "Build", checks: checkBuild() },
   ];

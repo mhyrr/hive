@@ -162,6 +162,102 @@ export async function getCodexHooksFeatureStatus(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
+// project_doc_max_bytes (Codex instruction-file budget)
+// ---------------------------------------------------------------------------
+
+/** What HIVE wants the Codex doc budget raised to (identity + root + one nested). */
+export const CODEX_PROJECT_DOC_MAX_BYTES = 65536;
+/** What Codex itself uses when the key is absent. */
+export const CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES = 32768;
+
+const PROJECT_DOC_MAX_BYTES_KEY = "project_doc_max_bytes";
+
+/**
+ * Read the top-level `project_doc_max_bytes` from ~/.codex/config.toml.
+ *
+ * Top-level only: TOML keys after a `[table]` header belong to that table, so
+ * parsing stops at the first header. Comment lines are ignored. Returns null
+ * when the file or the key is missing — Codex then defaults to 32768
+ * (CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES).
+ */
+export async function getCodexProjectDocMaxBytes(): Promise<number | null> {
+  const configPath = join(getCodexHome(), "config.toml");
+  if (!existsSync(configPath)) return null;
+  const raw = await Bun.file(configPath).text();
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("#")) continue;
+    if (trimmed.startsWith("[")) break; // past the top-level section
+    const match = trimmed.match(/^project_doc_max_bytes\s*=\s*(\d[\d_]*)/);
+    if (match) return Number(match[1]!.replace(/_/g, ""));
+  }
+  return null;
+}
+
+export interface CodexProjectDocMaxBytesResult {
+  changed: boolean;
+  /** Effective value before the write: null when the key was absent. */
+  previous: number | null;
+  /** Effective value after the write: null only when ~/.codex is missing. */
+  value: number | null;
+}
+
+/**
+ * Ensure ~/.codex/config.toml carries a top-level `project_doc_max_bytes` of at
+ * least `min`. Leaves an already-sufficient value alone. The key is written
+ * above the first `[table]` header so it stays top-level; every other byte of
+ * the file is preserved.
+ */
+export async function ensureCodexProjectDocMaxBytes(
+  min: number = CODEX_PROJECT_DOC_MAX_BYTES,
+): Promise<CodexProjectDocMaxBytesResult> {
+  const codexHome = getCodexHome();
+  if (!existsSync(codexHome)) return { changed: false, previous: null, value: null };
+
+  const configPath = join(codexHome, "config.toml");
+  const current = await getCodexProjectDocMaxBytes();
+  if (current !== null && current >= min) {
+    return { changed: false, previous: current, value: current };
+  }
+
+  const keyLine = `${PROJECT_DOC_MAX_BYTES_KEY} = ${min}`;
+
+  if (!existsSync(configPath)) {
+    await Bun.write(configPath, `${keyLine}\n`);
+    return { changed: true, previous: null, value: min };
+  }
+
+  const raw = await Bun.file(configPath).text();
+  const lines = raw.split("\n");
+
+  // Replace in place when a top-level key line already exists — too low, or a
+  // value the reader couldn't parse. Never insert a second copy: a duplicate
+  // top-level key makes Codex reject the whole file.
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i]!.trim();
+    if (trimmed.startsWith("#")) continue;
+    if (trimmed.startsWith("[")) break;
+    if (/^project_doc_max_bytes\s*=/.test(trimmed)) {
+      lines[i] = keyLine;
+      await Bun.write(configPath, lines.join("\n"));
+      return { changed: true, previous: current, value: min };
+    }
+  }
+
+  // Key absent at top level: insert above the first table header, or append.
+  const firstTable = lines.findIndex((line) => line.trim().startsWith("["));
+  if (firstTable === -1) {
+    const next = raw.length === 0 ? `${keyLine}\n` : raw.endsWith("\n") ? `${raw}${keyLine}\n` : `${raw}\n${keyLine}\n`;
+    await Bun.write(configPath, next);
+  } else {
+    lines.splice(firstTable, 0, keyLine, "");
+    await Bun.write(configPath, lines.join("\n"));
+  }
+  return { changed: true, previous: current, value: min };
+}
+
+// ---------------------------------------------------------------------------
 // AGENTS.md emission
 // ---------------------------------------------------------------------------
 
@@ -308,6 +404,9 @@ export interface CodexWireResult {
   agentsMdWritten: boolean;
   hookScriptInstalled: boolean;
   hookWired: boolean;
+  projectDocMaxBytesChanged: boolean;
+  projectDocMaxBytesPrevious: number | null;
+  projectDocMaxBytes: number | null;
 }
 
 export async function wireCodex(opts: {
@@ -321,6 +420,9 @@ export async function wireCodex(opts: {
     agentsMdWritten: false,
     hookScriptInstalled: false,
     hookWired: false,
+    projectDocMaxBytesChanged: false,
+    projectDocMaxBytesPrevious: null,
+    projectDocMaxBytes: null,
   };
 
   if (!isCodexInstalled() || !existsSync(getCodexHome())) {
@@ -338,6 +440,15 @@ export async function wireCodex(opts: {
   const hook = await installCodexIdentityHook();
   result.hookScriptInstalled = hook.scriptInstalled;
   result.hookWired = hook.hookWired;
+
+  // TK-153A: Codex loads ~/.codex/AGENTS.md plus the repo's AGENTS.md under one
+  // budget and truncates the overflow silently. HIVE's identity alone is ~22 KB
+  // of the 32 KiB default, so raise the ceiling to leave room for a repo file
+  // and one nested file.
+  const budget = await ensureCodexProjectDocMaxBytes(CODEX_PROJECT_DOC_MAX_BYTES);
+  result.projectDocMaxBytesChanged = budget.changed;
+  result.projectDocMaxBytesPrevious = budget.previous;
+  result.projectDocMaxBytes = budget.value;
 
   return result;
 }
