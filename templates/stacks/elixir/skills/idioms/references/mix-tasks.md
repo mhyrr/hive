@@ -113,3 +113,11 @@ defmodule Mix.Tasks.MyApp.ValidateTest do
   end
 end
 ```
+
+## Using Mix Tasks
+
+- Read the docs and options before invoking a task: `mix help task_name`.
+- `mix deps.clean --all` is **almost never** the fix. Avoid it unless you have a
+  specific reason — it forces a full recompile of every dependency.
+- Debug test failures by narrowing: `mix test test/my_test.exs`, then
+  `mix test --failed` to re-run only what broke.

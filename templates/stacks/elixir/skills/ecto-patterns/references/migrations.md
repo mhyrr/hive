@@ -1,5 +1,14 @@
 # Migrations Reference
 
+## Generating Migrations
+
+**Always** generate migration files with the Mix task so the timestamp and
+naming conventions are right — never hand-create the file:
+
+```bash
+mix ecto.gen.migration add_role_to_users   # underscored name
+```
+
 ## Basic Migration
 
 ```elixir

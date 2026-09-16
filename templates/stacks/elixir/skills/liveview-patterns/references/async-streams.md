@@ -104,6 +104,43 @@ def handle_event("delete", %{"id" => id}, socket) do
 end
 ```
 
+### Streams Are Not Enumerable
+
+`@streams.name` cannot be filtered, counted, or reduced. `Enum.filter/2`,
+`Enum.reject/2` and `Enum.count/1` do not work on it.
+
+To filter, prune or refresh, **refetch and re-stream the whole collection with
+`reset: true`**:
+
+```elixir
+def handle_event("filter", %{"filter" => filter}, socket) do
+  messages = list_messages(filter)
+
+  {:noreply,
+   socket
+   |> assign(:messages_empty?, messages == [])
+   |> stream(:messages, messages, reset: true)}
+end
+```
+
+Counts need their own assign, as above — the stream cannot supply one.
+
+### Re-stream When an Assign Changes Streamed Content
+
+If an assign drives markup *inside* a streamed item, changing that assign alone
+patches nothing. `stream_insert/3` the affected item along with the assign:
+
+```elixir
+def handle_event("edit_message", %{"message_id" => id}, socket) do
+  message = Chat.get_message!(id)
+
+  {:noreply,
+   socket
+   |> stream_insert(:messages, message)
+   |> assign(:editing_message_id, String.to_integer(id))}
+end
+```
+
 ### Stream Pagination with Limit
 
 ```elixir
@@ -116,7 +153,8 @@ stream(socket, :posts, Enum.reverse(posts), at: 0, limit: 30)
 
 ### Empty Stream Handling (Use CSS)
 
-Cannot use `Enum.empty?` on streams. Use `:only-child`:
+Streams do not support empty states. Use `:only-child` — it works only when the
+empty-state element is the sole sibling of the stream comprehension:
 
 ```elixir
 ~H"""
@@ -169,4 +207,25 @@ assign_async(socket, :org, fn -> {:ok, %{org: fetch_org(slug)}} end)
 
 # ✅ Use streams (O(1) memory)
 {:ok, stream(socket, :items, Items.list_items())}
+
+# ❌ Deprecated collection updates
+<div phx-update="append">   # also "prepend"
+# ✅ Position with the stream API instead
+stream(socket, :items, items, at: -1)  # append (default); at: 0 prepends
+```
+
+## Template Contract
+
+Every stream needs both halves or nothing renders:
+
+1. The parent element carries `phx-update="stream"` **and** a DOM id.
+2. The comprehension consumes `@streams.name` and uses the yielded id as each
+   child's DOM id.
+
+```heex
+<div id="messages" phx-update="stream">
+  <div :for={{id, msg} <- @streams.messages} id={id}>
+    {msg.text}
+  </div>
+</div>
 ```

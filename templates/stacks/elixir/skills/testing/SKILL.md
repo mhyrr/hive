@@ -20,9 +20,11 @@ Quick reference for Elixir testing patterns.
 3. **MOCK ONLY AT BOUNDARIES** — Never mock database, internal modules, or stdlib
 4. **BEHAVIOURS AS CONTRACTS** — All mocks must implement a defined `@callback` behaviour
 5. **BUILD BY DEFAULT** — Use `build/2` in factories; `insert/2` only when DB needed
-6. **NO PROCESS.SLEEP** — Use `assert_receive` with timeout for async operations
+6. **NO `Process.sleep/1` OR `Process.alive?/1`** — `assert_receive` with timeout; `Process.monitor/1` + `:DOWN` to wait on exit; `_ = :sys.get_state(pid)` to sync
 7. **VERIFY_ON_EXIT!** — Always call in Mox tests setup
 8. **FACTORIES MATCH SCHEMA REQUIRED FIELDS** — Factory definitions must include all fields that have `validate_required` in the schema changeset. Missing fields cause cascading test failures
+9. **START PROCESSES WITH `start_supervised!/1`** — never a bare `start_link` in a test. It guarantees cleanup between tests
+10. **SELECT ELEMENTS, NOT HTML** — `element/2` / `has_element?/2` against the DOM ids you put in the template. Never assert on raw HTML strings
 
 ## Quick Decisions
 
@@ -58,6 +60,16 @@ Quick reference for Elixir testing patterns.
 # Setup chain
 setup [:create_user, :authenticate]
 
+# Supervised process — cleaned up automatically
+pid = start_supervised!({MyApp.Worker, arg: 1})
+
+# Wait for a process to finish (never Process.sleep)
+ref = Process.monitor(pid)
+assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+
+# Sync: make sure the process handled prior messages
+_ = :sys.get_state(pid)
+
 # Pattern matching assertion
 assert {:ok, %User{name: name}} = create_user(attrs)
 
@@ -77,6 +89,9 @@ html = render_async(view)  # MUST call for assign_async
 | Wrong | Right |
 |-------|-------|
 | `Process.sleep(100)` | `assert_receive {:done, _}, 5000` |
+| `Process.alive?(pid)` polling | `Process.monitor/1` + `:DOWN` assertion |
+| `{:ok, pid} = Worker.start_link([])` | `start_supervised!({Worker, []})` |
+| `assert render(view) =~ "<form id=\"x\""` | `assert has_element?(view, "#x")` |
 | `insert(:user)` in factory | `build(:user)` in factory |
 | `async: true` with `set_mox_global()` | `async: false` |
 | Mock internal modules | Test through public API |

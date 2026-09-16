@@ -30,6 +30,40 @@ defp hash_password(changeset) do
 end
 ```
 
+## Never `cast` a Programmatically Set Field
+
+Fields the caller must not control — `user_id`, `account_id`, `role`, anything
+derived from the scope — **must not** appear in `cast/4` or any permit list.
+Mass assignment is the vulnerability. Set them explicitly when building the
+struct:
+
+```elixir
+# ❌ user_id is now attacker-controllable
+|> cast(attrs, [:body, :user_id])
+
+# ✅ set from the scope, cast only what the user owns
+%Post{user_id: scope.user.id}
+|> cast(attrs, [:body])
+```
+
+## Reading Changeset Fields
+
+Changesets are structs and do **not** implement `Access`. `changeset[:field]` is
+invalid. Always:
+
+```elixir
+Ecto.Changeset.get_field(changeset, :field)  # change, falling back to data
+Ecto.Changeset.get_change(changeset, :field) # only if it changed
+```
+
+## Validation Gotchas
+
+- `validate_number/2` **does not support `:allow_nil`**. No Ecto validation
+  needs it: validations only run when a change exists for the field and its
+  value is not nil.
+- Validations give fast feedback; only DB constraints are race-free. See
+  "CONSTRAINTS BEAT VALIDATIONS" in the skill's Iron Laws.
+
 ## Multiple Changesets per Schema
 
 ```elixir
@@ -163,7 +197,7 @@ add :addresses, :map, default: "[]"
 |------|-----------|------------|-------|
 | Primary key | `:binary_id` | `uuid` | Prefer UUIDs |
 | Text | `:string` | `varchar` | Default |
-| Long text | `:text` | `text` | No limit |
+| Long text | `:string` | `text` | Ecto has no `:text` type |
 | Integer | `:integer` | `integer` | |
 | Money | `:integer` | `integer` | Store cents (never float!) |
 | Decimal | `:decimal` | `numeric` | Precise calculations |

@@ -21,6 +21,18 @@ Reference for writing idiomatic Elixir code with BEAM-aware patterns.
 8. **SUPERVISE ALL LONG-LIVED PROCESSES** — Never bare `GenServer.start_link`/`Agent.start_link` in production. Use supervision trees
 9. **WRAP THIRD-PARTY LIBRARY APIs** — Always facade external deps behind a project-owned module. Enables swapping without touching callers
 
+## Language Traps — Invalid Code That Looks Valid
+
+These compile-fail or silently no-op. Full examples in `references/language-traps.md`.
+
+1. **LISTS HAVE NO ACCESS SYNTAX** — `mylist[i]` is invalid. Use `Enum.at/2`, pattern matching, or `List`
+2. **NEVER REBIND INSIDE `if`/`case`/`cond`** — the block returns a value; bind *that*. `if x do socket = assign(...) end` throws the assign away
+3. **NO `else if` / `elsif`** — Elixir has `if/else` only. Use `cond` or `case` for multiple conditions
+4. **ONE MODULE PER FILE** — nested modules cause cyclic deps and compile errors
+5. **STRUCTS HAVE NO ACCESS BEHAVIOUR** — `changeset[:field]` and `user[:email]` are invalid on structs. Use `user.email` or the struct's API (`Ecto.Changeset.get_field/2`)
+6. **PREDICATES END IN `?`, NEVER START WITH `is_`** — `is_` is reserved for guards
+7. **DATE/TIME IS IN THE STDLIB** — `Date`, `Time`, `DateTime`, `Calendar`. Add no dependency for it (only exception: `date_time_parser` for parsing)
+
 ## BEAM Architecture (Why Elixir Works This Way)
 
 - **Processes are cheap (2.6KB)** — Spawn liberally for concurrency/isolation
@@ -92,11 +104,15 @@ Task.Supervisor.async_nolink(TaskSup, fn -> work() end)
 | `String.to_atom(input)` | `String.to_existing_atom(input)` |
 | `spawn(fn -> log(conn) end)` | `ip = conn.ip; spawn(fn -> log(ip) end)` |
 | `unless condition` | `if !condition` (unless deprecated in 1.18) |
+| `mylist[0]` | `Enum.at(mylist, 0)` |
+| `changeset[:field]` | `Ecto.Changeset.get_field(changeset, :field)` |
+| `def is_active?(u)` | `def active?(u)` (`is_` is for guards) |
 
 ## References
 
 For detailed patterns, see:
 
+- `references/language-traps.md` - Invalid-looking-valid syntax (list access, rebinding, Access on structs, `else if`)
 - `references/pattern-matching.md` - Pattern matching, guards, binary matching
 - `references/otp-patterns.md` - GenServer, Supervisor, Task, Registry
 - `references/error-handling.md` - Tagged tuples, rescue, with

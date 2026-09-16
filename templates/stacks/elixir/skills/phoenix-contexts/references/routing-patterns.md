@@ -11,6 +11,24 @@
 Routes.post_path(conn, :show, post)
 ```
 
+## Scope Aliases — Never Alias Route Modules Yourself
+
+A `scope` block takes an optional alias that is prefixed onto **every** route
+inside it. You never need your own `alias` for a route definition, and adding
+one produces a duplicated module prefix.
+
+```elixir
+scope "/admin", AppWeb.Admin do
+  pipe_through :browser
+
+  live "/users", UserLive, :index   # → AppWeb.Admin.UserLive
+end
+```
+
+The generated `:browser` scope is already aliased with `AppWeb`, so plain
+`live "/weather", WeatherLive` resolves to `AppWeb.WeatherLive`. Always check
+which alias the enclosing scope applies before naming a module in a route.
+
 ## Pipeline Design
 
 ```elixir

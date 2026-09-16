@@ -24,6 +24,9 @@ Reference for working with Ecto schemas, queries, and migrations.
 7. **SEPARATE QUERIES FOR `has_many`, JOIN FOR `belongs_to`** — Avoids row multiplication
 8. **NO IMPLICIT CROSS JOINS** — `from(a in A, b in B)` without `on:` creates Cartesian product
 9. **DEDUP BEFORE `cast_assoc` WITH SHARED DATA** — When multiple parents share child data, deduplicate child records BEFORE building changesets. Dedup only works within a single changeset
+10. **NEVER `cast` A PROGRAMMATICALLY SET FIELD** — `user_id`, `account_id`, anything from the scope. Set it on the struct; casting it is mass assignment
+11. **CHANGESETS HAVE NO ACCESS BEHAVIOUR** — `changeset[:field]` is invalid. Use `Ecto.Changeset.get_field/2`
+12. **PRELOAD ANYTHING A TEMPLATE TOUCHES** — `message.user.email` in a template means `:user` is preloaded in the query, not lazily in the view
 
 ## Quick Schema Template
 
@@ -78,6 +81,10 @@ end
 | `Repo.all(User) \|> Enum.filter(& &1.active)` | `from(u in User, where: u.active)` |
 | Preloading in loops | `Repo.preload(posts, :comments)` |
 | `Repo.get!(User, user_id)` with user input | `Repo.get(User, id)` + handle nil |
+| `field :body, :text` | `field :body, :string` (column can still be `text`) |
+| `changeset[:field]` | `Ecto.Changeset.get_field(changeset, :field)` |
+| `validate_number(cs, :n, allow_nil: true)` | drop it — nil changes never validate |
+| Writing a migration file by hand | `mix ecto.gen.migration add_foo_to_bars` |
 
 ## References
 

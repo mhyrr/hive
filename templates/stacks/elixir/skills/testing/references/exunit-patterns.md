@@ -209,3 +209,20 @@ MIX_ENV=int_test mix test test/features/file_test.exs --trace 2>&1 | \
 **Rule**: When running E2E tests, always pipe through a filter
 to extract pass/fail signal. Raw output is too noisy to read
 in Claude Code.
+
+## Process Synchronization (Never Sleep)
+
+`Process.sleep/1` and `Process.alive?/1` do not belong in tests — they trade a
+correct answer for a slow, flaky one.
+
+```elixir
+# Start processes supervised: cleanup is guaranteed between tests
+pid = start_supervised!({MyApp.Worker, name: :test_worker})
+
+# Wait for a process to finish: monitor and assert the DOWN message
+ref = Process.monitor(pid)
+assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+
+# Synchronize before the next call: the call is served after every message already queued
+_ = :sys.get_state(pid)
+```

@@ -31,14 +31,49 @@ def handle_event("save", %{"user" => params}, socket) do
   end
 end
 
-# Template
+# Template — always an explicit, unique DOM id
 ~H"""
-<.form for={@form} phx-change="validate" phx-submit="save">
+<.form for={@form} id="user-form" phx-change="validate" phx-submit="save">
   <.input field={@form[:name]} label="Name" />
   <.input field={@form[:email]} type="email" label="Email" />
   <.button>Save</.button>
 </.form>
 """
+```
+
+The UI must **always** be driven by a `to_form/2` assign derived from a
+changeset — never by the changeset itself. See `heex-syntax.md` "Forms".
+
+## Building the Form Assign
+
+### From a changeset (the default)
+
+`to_form/1` pulls data, params and errors off the changeset, and computes `:as`
+from the schema. A `MyApp.Users.User` changeset submits as `%{"user" => params}`.
+
+```elixir
+%MyApp.Users.User{}
+|> Ecto.Changeset.change()
+|> to_form()
+```
+
+### From raw params
+
+A map passed to `to_form/1` is treated as form params, and is expected to have
+**string keys**:
+
+```elixir
+def handle_event("submitted", params, socket) do
+  {:noreply, assign(socket, form: to_form(params))}
+end
+```
+
+Pass `:as` to nest them under a name:
+
+```elixir
+def handle_event("submitted", %{"user" => user_params}, socket) do
+  {:noreply, assign(socket, form: to_form(user_params, as: :user))}
+end
 ```
 
 ## Debouncing & Throttling

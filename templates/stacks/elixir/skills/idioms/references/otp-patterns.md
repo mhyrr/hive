@@ -201,11 +201,16 @@ case Task.yield(task, 5000) || Task.shutdown(task) do
   nil -> handle_timeout()
 end
 
-# Concurrent collection processing
+# Concurrent collection processing with back-pressure
 urls
 |> Task.async_stream(&fetch_url/1, max_concurrency: 10, timeout: 30_000)
 |> Enum.map(fn {:ok, result} -> result end)
 ```
+
+`Task.async_stream/3` is the default for concurrent enumeration — it gives
+back-pressure for free. Most of the time you want `timeout: :infinity` and a
+real timeout inside the callback; the default 5s timeout kills the whole stream
+on one slow element.
 
 ## Supervisor: Fault Tolerance
 
@@ -225,6 +230,10 @@ Supervisor.start_link(children,
   max_seconds: 5
 )
 ```
+
+**Built-in OTP primitives require a `name:` in the child spec.** `DynamicSupervisor`,
+`Registry` (which raises without one) and `Task.Supervisor` cannot be addressed otherwise; every later call
+addresses them by that name: `DynamicSupervisor.start_child(MyApp.WorkerSupervisor, spec)`.
 
 ### Restart Strategies
 

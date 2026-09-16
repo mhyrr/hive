@@ -83,10 +83,18 @@ Repo.all(from o in Order, join: u in User, ...)  # Don't query other schemas
 | Direct Repo calls in controllers | Delegate to context |
 | Schema callbacks with side effects | Use Ecto.Multi |
 
+## Routing
+
+A router `scope` supplies the alias for every route inside it — **never** write
+your own `alias` for a route definition, or the module prefix is duplicated.
+`scope "/admin", AppWeb.Admin do ... live "/users", UserLive ... end` points at
+`AppWeb.Admin.UserLive`. See `references/routing-patterns.md`.
+
 ## Version Notes
 
 - **Phoenix 1.8+**: Uses built-in `%Scope{}` struct for authorization context
 - **Phoenix 1.7**: Requires manual authorization context (see `references/scopes-auth.md` "Pre-Scopes Patterns")
+- **`Phoenix.View` is gone** — no longer included with Phoenix or needed. Rendering lives in the `*HTML`/`*JSON` modules (`use MyAppWeb, :html`)
 
 ## References
 

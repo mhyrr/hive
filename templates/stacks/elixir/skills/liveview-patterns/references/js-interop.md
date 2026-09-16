@@ -59,6 +59,40 @@ Tell LiveView to skip DOM diffing for a subtree.
 | Alpine.js components | Sometimes |
 | Simple JS animations | Usually not needed |
 
+## Hook Flavors
+
+**Never write a raw `<script>` tag in HEEx** — it is incompatible with LiveView.
+Two supported flavors:
+
+### Colocated hooks (inline scripts)
+
+Script defined inside the template, auto-bundled into `app.js`. The hook name
+**must** start with a `.`:
+
+```heex
+<input type="text" name="user[phone]" id="user-phone" phx-hook=".PhoneNumber" />
+<script :type={Phoenix.LiveView.ColocatedHook} name=".PhoneNumber">
+  export default {
+    mounted() {
+      this.el.addEventListener("input", e => {
+        let m = this.el.value.replace(/\D/g, "").match(/^(\d{3})(\d{3})(\d{4})$/)
+        if (m) { this.el.value = `${m[1]}-${m[2]}-${m[3]}` }
+      })
+    }
+  }
+</script>
+```
+
+### External hooks
+
+Object literals in `assets/js/`, passed to the `LiveSocket` constructor — see
+"Hook Registration" below.
+
+### Rules for both
+
+- **Always** pair `phx-hook` with a unique DOM id, or the compiler raises.
+- A hook that manages its own DOM **must** also carry `phx-update="ignore"`.
+
 ## Solution 2: Hooks with Lifecycle Management
 
 ```javascript
@@ -152,6 +186,27 @@ mounted() {
     this.editor.commands.setContent(content, false)
   })
 }
+```
+
+**Always rebind or return the socket** from `push_event/3` — it is a pure
+function and the event is lost otherwise:
+
+```elixir
+socket = push_event(socket, "my_event", %{...})
+# or return it directly:
+{:noreply, push_event(socket, "my_event", %{...})}
+```
+
+### Client → server with a reply
+
+```javascript
+this.pushEvent("my_event", { one: 1 }, reply => console.log("reply:", reply))
+```
+
+```elixir
+def handle_event("my_event", %{"one" => 1}, socket) do
+  {:reply, %{two: 2}, socket}
+end
 ```
 
 ## Common Library Patterns

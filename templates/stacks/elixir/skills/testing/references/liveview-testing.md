@@ -1,5 +1,35 @@
 # LiveView Testing Reference
 
+Assertions run through `Phoenix.LiveViewTest` and `LazyHTML` (shipped with it).
+Forms are driven by `render_submit/2` and `render_change/2`.
+
+## Selecting, Not Scraping
+
+- **Never** assert against raw HTML. Use `element/2`, `has_element?/2` and
+  selector-based helpers: `assert has_element?(view, "#my-form")`.
+- **Always reference the DOM ids you put in the template.** That is what those
+  ids are for — see `elixir-liveview-patterns` `references/heex-syntax.md`.
+- Favor the presence of key elements over text content, which changes.
+- Test outcomes, not implementation details.
+- `Phoenix.Component` functions like `<.form>` may emit different HTML than you
+  picture. Assert against the real output structure.
+
+### Debugging a failing selector
+
+Print the actual markup, narrowed by `LazyHTML` so the output stays readable:
+
+```elixir
+html = render(view)
+document = LazyHTML.from_fragment(html)
+matches = LazyHTML.filter(document, "your-complex-selector")
+IO.inspect(matches, label: "Matches")
+```
+
+### Test plan
+
+Split major cases into small, isolated files. Start with tests that verify
+content exists, then layer interaction tests on top.
+
 ## Mount and Interact
 
 ```elixir

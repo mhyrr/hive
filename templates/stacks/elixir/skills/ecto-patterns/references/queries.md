@@ -164,6 +164,15 @@ from(p in Post, preload: [:author])
 Repo.preload(post, comments: from(c in Comment, order_by: c.inserted_at, limit: 10))
 ```
 
+**Preload in the query for anything a template will touch.** A template reaching
+`message.user.email` fails on an unloaded association — the fix belongs in the
+context's query, not in the view.
+
+## seeds.exs
+
+`priv/repo/seeds.exs` runs outside any module, so nothing is imported for you.
+`import Ecto.Query` (and alias the Repo and schemas) at the top of the file.
+
 ## Pagination
 
 ```elixir
