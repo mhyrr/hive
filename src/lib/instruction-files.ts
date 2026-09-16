@@ -23,7 +23,8 @@ export const NESTED_BUDGET_BYTES = 4096;
 export const USAGE_RULES_MARKER = "<!-- usage-rules-start -->";
 
 const MAX_WALK_DEPTH = 6;
-const SKIP_DIRS = new Set(["node_modules", "deps", "_build", ".git", "dist", ".elixir_ls"]);
+// templates/ holds files emitted elsewhere (HIVE identity, stack starters), not doctrine for this repo.
+const SKIP_DIRS = new Set(["node_modules", "deps", "_build", ".git", "dist", ".elixir_ls", "templates"]);
 const SKIP_REL_DIRS = new Set([join("priv", "static")]);
 const INSTRUCTION_FILENAMES = new Set(["CLAUDE.md", "AGENTS.md"]);
 

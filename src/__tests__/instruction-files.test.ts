@@ -172,7 +172,7 @@ describe("nested instruction files", () => {
 
   test("vendored trees are skipped", async () => {
     await writeFile(join(repo, "AGENTS.md"), "# Facts\n");
-    for (const dir of ["deps", "node_modules", "_build", "dist", ".elixir_ls"]) {
+    for (const dir of ["deps", "node_modules", "_build", "dist", ".elixir_ls", "templates"]) {
       await mkdir(join(repo, dir, "phoenix"), { recursive: true });
       await writeFile(join(repo, dir, "phoenix", "AGENTS.md"), filler(5000));
     }
