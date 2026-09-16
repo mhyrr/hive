@@ -1,68 +1,66 @@
-# TypeScript / React / Next.js Stack
+# TypeScript / React / Next.js root file starter
 
-This project uses the `typescript` HIVE stack. Three specialist skills ship
-with it — reach for them by topic rather than reading reference files by
-hand.
+Copy the body below to your repo's `AGENTS.md` (Codex reads only that name)
+with `CLAUDE.md` a symlink or a one-line `@AGENTS.md` import. Fill in the
+angle brackets, delete what doesn't apply, keep it under 8 KB and 200 lines.
+`CLAUDE-starter.md` has the six rules and the porting procedure.
 
-## When to reach for which skill
+The `typescript-*` skills carry this stack's canon — type system, React,
+App Router — and load on demand. Never copy that canon here; a root file that
+restates a skill pays for it in every session.
 
-- **`typescript-types`** — advanced TypeScript: generics, conditional types,
-  mapped types, discriminated unions, branded types, utility types, tRPC
-  end-to-end safety, `tsconfig.json` strict-mode wiring. Default skill for
-  type-heavy work, monorepo setup, or when the compiler is fighting you.
-- **`typescript-react`** — React 18/19: hooks, Server Components, Suspense,
-  `useActionState`, `use()`, TanStack Query, Zustand. Invoke on `.tsx`
-  components, custom hook design, or when debugging rendering.
-- **`typescript-nextjs`** — Next.js 14+ App Router: RSC vs client components,
-  server actions, route handlers, middleware, streaming SSR, metadata for
-  SEO, `loading.tsx` / `error.tsx` boundaries, Vercel deploy config. Invoke
-  on anything under `app/` or when touching route config.
+---
 
-Each SKILL.md is the quick reference; deep dives live in `references/*.md`
-and load on demand.
+# <App>
 
-## Cross-cutting rules
+<One paragraph: what this is, who it's for, the current focus.> Next.js <x>
+App Router, React <x>, TypeScript strict, <Postgres/Prisma/Drizzle>, <runtime>.
 
-Distilled from the three skills' `MUST DO` / `MUST NOT DO` blocks.
+| Read this | For |
+|---|---|
+| `README.md`, `PRODUCT.md` | What it is, who it's for, what it promises |
+| `docs/design/<doc>.md` | The architecture and its numbered decisions |
+| `DESIGN.md` | The surface. Binding; it overrides generic UI guidance |
 
-1. **Strict mode, no exceptions.** Every `tsconfig.json` flag in strict
-   mode is on. No `"strict": false` projects; no "temporary" `any`.
-2. **`unknown` over `any`.** When the type is genuinely unknown, narrow
-   it with a type guard — don't escape the type system.
-3. **Discriminated unions for state.** Every non-trivial state shape has
-   a `kind` / `status` / `_tag` discriminator. No "optional everything"
-   object shapes.
-4. **Branded types for domain primitives.** `UserId`, `Cents`, `Email`
-   get branded. Raw `string` / `number` at boundaries only.
-5. **Never assert with `as` across unrelated types.** If the compiler
-   rejects it, the runtime will too. Use type guards or narrow properly.
-6. **Exhaustive switches with `never`.** `const _exhaustive: never = x;`
-   in the default branch catches new variants at compile time.
-7. **Server Components by default** in Next.js App Router. Mark with
-   `"use client"` only when you need interactivity, browser APIs, or hooks.
-8. **Server actions take `FormData`, return serializable results.** No
-   class instances, no functions, no `Date` objects leaving the server.
-9. **No `useEffect` for derived state.** Compute it in render. `useEffect`
-   is for synchronizing with external systems (subscriptions, DOM, network).
-10. **Suspense boundaries close to the source of async.** Not at the root.
+## The line the codebase is built around
 
-## Design philosophy
+- **External data is parsed once, at the edge.** Every boundary (request
+  body, third-party response, env) goes through a schema parser, and the
+  types are trusted inside. `unknown` at the seam, never `any`.
+- **Never floats for money.** Integer cents behind a branded `Cents`; the
+  formatting happens at the edge, once.
+- **<The one rule this app cannot break.>** <What breaks without it.>
 
-- **Types are documentation.** A well-typed signature replaces a
-  paragraph of comments. Lean into generics and branded types.
-- **Push work to the compiler.** Discriminated unions + exhaustive
-  switches + branded types catch bugs before runtime.
-- **Boundaries should be narrow and typed.** Validate external data
-  once at the edge (Zod, io-ts, branded parsers) then trust the types
-  internally.
-- **Servers render HTML, clients hydrate interaction.** In Next.js App
-  Router, the default is always "run on the server." Only pay for the
-  client bundle when you need it.
+## Where things live
 
-## Attribution
+```text
+app/                  routes: page.tsx, layout.tsx, route.ts
+app/api/<name>/       route handlers
+src/lib/              <the domain logic — framework-free>
+src/components/       shared UI
+src/db/               schema and queries, the only place they live
+```
+
+## Commands
+
+```sh
+bun test <path> -t "<name>"   # one test by name
+bunx tsc --noEmit             # types only, without a full build
+bun build src/cli.ts --compile --outfile <bin>   # --compile, not --target bun: the latter emits a bundle that only runs under bun
+```
+
+## Conventions
+
+- Migrations are append-only once merged; a mistake gets a new migration.
+- Server actions take `FormData` and return serializable values — no class
+  instances, no `Date`, nothing that cannot cross the wire.
+- Env is read once, in one typed module, never `process.env` in a component.
+- Incidents and gotchas go to HIVE memory, not this file.
+
+---
 
 Skill content derived from
-[Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills)
-(MIT). Full license text in `LICENSE`. Vendored at commit
-[`5b76101`](https://github.com/Jeffallan/claude-skills/commit/5b76101)
-(2026-03-23); see `.vendored-commit` for the exact SHA.
+[Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills) (MIT).
+Full license text in `LICENSE`; vendored at commit
+[`5b76101`](https://github.com/Jeffallan/claude-skills/commit/5b76101) — see
+`.vendored-commit` for the exact SHA.

@@ -20,6 +20,7 @@ Reference for writing idiomatic Elixir code with BEAM-aware patterns.
 7. **@external_resource FOR COMPILE-TIME FILES** — Modules reading files at compile time MUST declare `@external_resource`
 8. **SUPERVISE ALL LONG-LIVED PROCESSES** — Never bare `GenServer.start_link`/`Agent.start_link` in production. Use supervision trees
 9. **WRAP THIRD-PARTY LIBRARY APIs** — Always facade external deps behind a project-owned module. Enables swapping without touching callers
+10. **NO `IO.inspect` IN COMMITTED CODE** — `dbg/2` while debugging, stripped before commit; `Logger` for anything that should persist
 
 ## Language Traps — Invalid Code That Looks Valid
 
