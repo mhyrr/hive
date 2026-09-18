@@ -723,6 +723,9 @@ function checkScheduler(): Check[] {
     }
   }
 
+  const dashboard = checkDashboardFreshness(loadedList);
+  if (dashboard) checks.push(dashboard);
+
   const retiredHeartbeat = join(launchAgentsDir, "com.hive.heartbeat.plist");
   if (existsSync(retiredHeartbeat)) {
     checks.push({
@@ -733,6 +736,38 @@ function checkScheduler(): Check[] {
   }
 
   return checks;
+}
+
+/** Parse `ps -o etime=` output (`[[dd-]hh:]mm:ss`) into seconds. */
+export function parseElapsed(etime: string): number | null {
+  const m = etime.trim().match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
+  if (!m) return null;
+  const [, days, hours, minutes, seconds] = m;
+  return ((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60 + Number(seconds);
+}
+
+/** The dashboard is the one long-lived launchd service. Replacing the binary on
+ * disk does not restart it, so it keeps serving the code it loaded at start. */
+export function dashboardFreshness(startedAtMs: number, binaryPath: string, binaryMtimeMs: number): Check {
+  if (binaryMtimeMs <= startedAtMs) return { status: "pass", label: "com.hive.dashboard runs the installed binary" };
+  const uid = process.getuid?.() ?? "$(id -u)";
+  return {
+    status: "warn",
+    label: "com.hive.dashboard predates its binary (serving old code)",
+    detail: `${binaryPath} changed after the dashboard started. Run: launchctl kickstart -k gui/${uid}/com.hive.dashboard`,
+  };
+}
+
+function checkDashboardFreshness(loadedList: string): Check | null {
+  const line = loadedList.split("\n").find((l) => l.trim().split(/\s+/)[2] === "com.hive.dashboard");
+  const pid = Number(line?.trim().split(/\s+/)[0]);
+  if (!Number.isInteger(pid) || pid <= 0) return null; // not running — the loaded check covers it
+
+  const elapsed = parseElapsed(run(`ps -o etime= -p ${pid}`) ?? "");
+  const binaryPath = run(`ps -o comm= -p ${pid}`);
+  if (elapsed === null || !binaryPath || !existsSync(binaryPath)) return null;
+
+  return dashboardFreshness(Date.now() - elapsed * 1000, binaryPath, statSync(binaryPath).mtimeMs);
 }
 
 async function checkProject(): Promise<{ heading: string; checks: Check[] }> {
@@ -821,7 +856,7 @@ function checkBuild(): Check[] {
     checks.push({
       status: "warn",
       label: `hive-bin is stale (source newer by ${unit})`,
-      detail: `Newest: ${newestFile.replace(process.cwd() + "/", "")}. Run: bun build src/cli.ts --target bun --outfile hive-bin`,
+      detail: `Newest: ${newestFile.replace(process.cwd() + "/", "")}. Run: bun build src/cli.ts --compile --outfile hive-bin`,
     });
   } else {
     checks.push({ status: "pass", label: "hive-bin up to date" });
