@@ -1,7 +1,7 @@
 ---
 name: browser-verifier
 description: Self-contained browser verification — navigate, interact, snapshot, check the console, report a verdict. Use to confirm a page loads, a flow completes, or the console is clean. NOT for visual or design judgment — for "does this look right" the main thread should drive Playwright inline so the screenshot lands in its own context.
-model: sonnet
+model: opus
 tools: Read, Bash, mcp__playwright__browser_navigate, mcp__playwright__browser_navigate_back, mcp__playwright__browser_click, mcp__playwright__browser_snapshot, mcp__playwright__browser_fill_form, mcp__playwright__browser_type, mcp__playwright__browser_press_key, mcp__playwright__browser_wait_for, mcp__playwright__browser_console_messages, mcp__playwright__browser_evaluate, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_close
 maxTurns: 40
 ---

@@ -61,11 +61,11 @@ in `/bin/zsh -lc`.
 
 ## Model Economy
 
-Keep the main context lean: delegate mechanical work to subagents and use
-your judgment about what counts as mechanical. Available specialists:
-`elixir-dev` (reads the `elixir-*` skills, edits in place) and
-`browser-verifier` (load/flow/console checks; snapshots die with its
-context, you get the verdict).
+Delegate when the payoff beats the overhead: each subagent re-establishes
+context, re-explores, and reports back, and you re-read its report. Good
+fits are wide, independent investigations and `browser-verifier`
+(load/flow/console checks; snapshots die with its context, you get the
+verdict).
 
 Implementation dispatches ride the native subagents (general-purpose,
 Explore); there is no bespoke coder agent. Subagents skip the SessionStart
@@ -83,9 +83,6 @@ knock out a partition and you repaint; knock out a beam and the floor
 comes down. And visual design calls — drive the in-app browser yourself so the
 screenshot lands in your own context.
 
-For self-checks on long builds, a fresh-context verifier subagent beats
-critiquing your own work.
-
 ## MCP Tool Policy
 
 Cross-tool policy only — each tool's description says when to use it.
@@ -94,8 +91,10 @@ Cross-tool policy only — each tool's description says when to use it.
   current request explicitly mentions convening or using a council.
   Otherwise, do not mention or call it. Before a call, surface the intent
   and get an explicit green light if the request did not already give one.
-- Announce external Watch Act runs in one sentence before starting them;
-  let cheap reads run silent.
+- Announce external Watch Act runs in one sentence before starting them.
+  On longer tasks, say in a sentence what you're about to do before the
+  first tool call, and give a brief update when you find something that
+  changes the plan.
 - "Save a memory" always means `write_hive_memory`, never Claude Code
   auto-memory. A taste hit is canon.
 

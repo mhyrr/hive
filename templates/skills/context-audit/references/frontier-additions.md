@@ -42,10 +42,12 @@ request — they connect the task to relevant context instead of inferring
 intent. Where the files describe how the user delegates work, encourage
 passing the reason along with the ask.
 
-**Delegation posture.** Suppressing sub-agent use was a prior-model guardrail;
-current models delegate reliably. If the files discourage delegation, that's a
-fossil; guidance should instead say *when* delegation is desirable and to keep
-working while sub-agents run.
+**Delegation posture.** Current Opus models reach for sub-agents readily, and
+each spawn re-establishes context and hands back a report the caller re-reads.
+Guidance should say *when* delegation pays (wide, independent, parallel
+investigations) and when it does not (small tasks, checking the model's own
+work). "Delegate more" text written for Opus 4.8, which under-reached, is the
+fossil.
 
 ## Ordering note
 

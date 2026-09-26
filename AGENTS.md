@@ -1,8 +1,8 @@
 # HIVE
 
-Identity, project memory, and the reflection protocol load via the user-level
-SessionStart hook at `~/.claude/hooks/load-identity.sh` — no per-repo wiring
-needed. If identity feels missing, run `hive doctor`.
+Identity and project memory load via the user-level SessionStart hook at
+`~/.claude/hooks/load-identity.sh` — no per-repo wiring needed. If identity
+feels missing, run `hive doctor`.
 
 Claude Code is the default interactive harness. Pi is optional via `hive -3`
 / `hive --pi`; HIVE injects identity with a generated `pi -e` extension and
@@ -13,20 +13,8 @@ Cursor CLI is optional via `hive -a` / `hive --cursor`. HIVE prepends the
 canonical identity to Cursor's positional initial prompt. `hive init`
 registers HIVE in `~/.cursor/mcp.json`; Cursor approval remains per project.
 
-HIVE MCP tools (deferred in Claude Code — schemas load via ToolSearch on first use):
-- `convene_council` — Multi-model deliberation. Standard, analyst, or dialectic modes.
-- `read_hive_memory` — Read project intelligence (full knowledge or lightweight index).
-- `write_hive_memory` — Queue a fact/convention/decision/question as a candidate. Mid-session writes go to `candidates.md`; the nightly verifier (Pass V) admits them to canon.
-- `search_memory` — BM25 search across knowledge and session logs. Bumps recall metadata for retrieval strengthening.
-- `search_taste` — Retrieve ACTIVE (approved) taste units for a work-type category (IDEAS/DESIGN/IMPLEMENTATION/TEST_EVAL/COMMUNICATION/PROCESS). Merges the project + general stores; only approved units are returned. Reach for it when starting a kind of work.
-- `reflect_session` — Batch-queue session learnings as candidates. Raw entries also land in the session log.
-- `create_ticket` — Create a ticket (bug, feature, task, epic, chore) with priority, tags, and dependencies.
-- `list_tickets` — List and filter project tickets by status, type, or tags.
-- `show_ticket` — Show full ticket details including notes.
-- `update_ticket` — Update ticket status, priority, tags, or other fields.
-- `add_ticket_note` — Add a timestamped note to a ticket.
-- `add_project` — Register a new project with HIVE.
-- `hive_status` — Full system dashboard (identity, projects, tickets, scheduled jobs, agents).
+HIVE's MCP tools live in `src/mcp-server.ts`; each tool's description is its
+contract. Claude Code defers them, so schemas load via ToolSearch on first use.
 
 ## Auth
 
@@ -61,8 +49,8 @@ their native authentication behavior.
 ## Architecture
 
 Two entry points:
-- `src/cli.ts` — CLI (init, doctor, context, identity, project, stack, council, memory, ticket, watch, inbox, taste, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex, `hive -a` -> Cursor). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
-- `src/mcp-server.ts` — MCP server (same tools as the bullet list above).
+- `src/cli.ts` — CLI (init, doctor, context/prompts, identity, project, stack, council, memory, ticket/tickets, goal, next, watch, inbox, taste, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex, `hive -a` -> Cursor). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
+- `src/mcp-server.ts` — MCP server.
 
 Crown-jewel modules:
 - `src/lib/council.ts` — parallel multi-model deliberation

@@ -402,8 +402,8 @@ write it to HIVE memory via write_hive_memory.
 Drive the loop from HIVE tickets instead of a standalone PRD:
 
 ```bash
-# The planner creates tickets
-claude --agent maya-planner "Design the auth system for TK-015"
+# A planning session creates the tickets
+hive "Design the auth system for TK-015 and file the work as tickets"
 
 # The Ralph loop works through them (identity + memory load via the
 # SessionStart hook; the prompt only needs the ticket pointer)

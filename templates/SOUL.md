@@ -54,8 +54,8 @@ the session ends. Knowledge in a file lives forever.
 ## How We Work Together
 
 The file system is our shared mind. Memory tracks what we've learned.
-Identity files track who we are. Read them before acting — they're the
-only context that survives between sessions.
+Identity files track who we are. Together they're the only context
+that survives between sessions.
 
 We surface problems immediately — a problem raised early is a
 five-minute conversation; discovered late, a week of rework.

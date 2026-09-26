@@ -167,18 +167,12 @@ management commands.
 
 ### Custom Agents
 
-HIVE installs custom agent definitions to `~/.claude/agents/`. Agent
-names are derived from your IDENTITY.md name:
-
-| Agent | Role | Key Tools |
-|-------|------|-----------|
-| `maya-planner` | Architecture and planning | `read_hive_memory`, `convene_council`, `create_ticket` |
-| `maya-reviewer` | Code review against project conventions | `read_hive_memory` |
-
-Each agent receives the identity stack and project memory from the same
-canonical identity path as interactive sessions. The planner reads memory
-and tickets before architecting. The reviewer checks work against
-accumulated standards.
+HIVE installs one custom agent definition to `~/.claude/agents/`:
+`browser-verifier`, which drives Playwright, checks a page load, flow, and
+console, and returns a verdict. Its snapshots stay in its own context. It
+exists for what its definition enforces — a browser-only tool list and a
+turn cap — not for a persona. Planning and review happen in the main
+session, where the conversation and the design calls already live.
 
 Implementation has no bespoke agent — dispatches ride Claude Code's
 native subagents. The dispatch prompt carries the HIVE briefing:
@@ -245,7 +239,7 @@ This builds the binaries and creates:
 - `~/.hive/` with identity templates (SOUL.md, IDENTITY.md, SELF.md, AGENTS.md, TRUST.md)
 - `~/.hive/config.md` with model pool configuration
 - `~/.hive/scripts/` with nightly, heartbeat, and sync scripts
-- `~/.claude/agents/` with HIVE agent definitions (maya-planner, maya-reviewer)
+- `~/.claude/agents/browser-verifier.md`
 - Launchd jobs for heartbeat, nightly extraction, dashboard, and state sync
 - MCP server registration in `~/.claude.json`
 - Pi MCP registration in `~/.pi/agent/mcp.json` when Pi is installed
@@ -344,8 +338,8 @@ the knowledge survives.
 Use Claude Code's worktree isolation with HIVE's memory:
 
 ```
-# The planner reads memory + tickets, creates a plan
-claude --agent maya-planner "Design the authentication system"
+# Plan in the main session: it reads memory + tickets and files the plan as tickets
+hive "Design the authentication system and file it as tickets"
 
 # In a session, dispatch parallel implementation subagents.
 # Each dispatch names its ticket and carries the HIVE briefing.
@@ -394,7 +388,7 @@ The AI manages its own work queue:
 
 ```
 # Planning session creates tickets
-maya-planner → creates TK-012, TK-013, TK-014 with dependencies
+planning session → creates TK-012, TK-013, TK-014 with dependencies
 
 # Execution sessions work through them
 coder dispatch → starts TK-012, adds notes with findings, closes when done
@@ -494,8 +488,7 @@ second orchestration stacks.
 ~/.claude.json               # MCP server registration (includes HIVE)
 ~/.claude/
 ├── agents/
-│   ├── maya-planner.md  # Architecture and planning agent
-│   └── maya-reviewer.md # Code review agent
+│   └── browser-verifier.md  # Browser verification agent
 ```
 
 ---
@@ -517,6 +510,5 @@ second orchestration stacks.
 | Start default session | `hive` |
 | Start Pi session | `hive -3` |
 | Start Codex session | `hive -x` |
-| Run planner agent | `claude --agent maya-planner "Design X"` |
 | Dispatch a coder | In session: "Implement TK-005 in a worktree-isolated subagent" |
-| Run reviewer agent | `claude --agent maya-reviewer "Review recent changes"` |
+| Review recent changes | In session: `/code-review` |

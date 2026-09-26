@@ -54,13 +54,11 @@ describe("council trigger policy", () => {
     expect(metadata.councilDescription).not.toContain("reasonable people would diverge");
   });
 
-  test("identity and planner templates do not promote the council", () => {
+  test("identity templates do not promote the council", () => {
     const agents = readFileSync(join(repoRoot, "templates", "AGENTS.md"), "utf-8");
     const identity = readFileSync(join(repoRoot, "templates", "IDENTITY.md"), "utf-8");
-    const planner = readFileSync(join(repoRoot, "templates", "agents", "maya-planner.md"), "utf-8");
 
     expect(agents).toContain("current request explicitly mentions convening or using a council");
     expect(identity.toLowerCase()).not.toContain("council");
-    expect(planner.toLowerCase()).not.toContain("council");
   });
 });

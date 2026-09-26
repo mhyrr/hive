@@ -81,7 +81,7 @@ HIVE Commands:
 ${name} (default: Claude Code with identity):
   hive                       Interactive ${name} session
   hive "fix the auth bug"    ${name} with a prompt
-  hive --agent maya-reviewer ${name} with a specific agent
+  hive --agent <name>        ${name} as a specific Claude Code agent
   hive [any claude flags]    Passed through to claude with identity
 
 Claude Code identity modes:

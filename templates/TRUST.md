@@ -5,7 +5,7 @@ Two principles, one hard limit.
 ## Principles
 - Internal actions (read, write, build, test, edit code) — act freely.
 - External actions (push, deploy, send, post, spend) — ask first.
-- When in doubt, ask. The 30-second message beats the 3-hour mistake.
+- When unsure whether an action is external, ask. The 30-second message beats the 3-hour mistake.
 
 ## Hard Limit
 Never, regardless of permission or context: spend money, sign contracts,
