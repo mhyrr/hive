@@ -12,6 +12,9 @@ import type { ModelTextCompletion } from "./model";
 
 export type { ModelTextCompletion };
 
+/** Levels `claude --effort` accepts (an unknown value is ignored with a warning). */
+export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface ClaudeTextCompletion extends ModelTextCompletion {
   provider: "anthropic";
 }
@@ -155,7 +158,7 @@ export async function withDeadline<T>(
  * callers use this so a stalled extraction/verification fails fast and visibly
  * (in minutes) instead of eating hours of wall-clock. */
 export function completeClaudeTextBounded(
-  input: { modelId: string; systemPrompt: string; userContent: string },
+  input: { modelId: string; systemPrompt: string; userContent: string; effort?: ClaudeEffort },
   timeoutMs: number = nightlyCallTimeoutMs(),
 ): Promise<ClaudeTextCompletion> {
   return withDeadline(timeoutMs, `claude --print (${input.modelId})`, (signal) =>
@@ -163,6 +166,7 @@ export function completeClaudeTextBounded(
       modelId: input.modelId,
       systemPrompt: input.systemPrompt,
       userContent: input.userContent,
+      effort: input.effort,
       signal,
     }),
   );
@@ -174,9 +178,13 @@ export async function completeClaudeText(input: {
   userContent: string;
   signal?: AbortSignal;
   /** Override the user's global `alwaysThinkingEnabled` for this one-shot call.
-   * Extended thinking adds large latency + hidden output tokens; classification
-   * and extraction passes don't need it. Default: inherit the user's setting. */
+   * For the cheap Haiku classifier, where thinking only adds latency and hidden
+   * output tokens. Judgment routes keep adaptive thinking and set `effort`
+   * instead — Claude Opus 5.5 and Fable 5.1 reject disabled thinking outright.
+   * Default: inherit the user's setting. */
   disableThinking?: boolean;
+  /** `--effort` for this call. Unset inherits the user's effortLevel. */
+  effort?: ClaudeEffort;
 }): Promise<ClaudeTextCompletion> {
   const bin = resolveClaudeBin();
   const startedAt = Date.now();
@@ -210,6 +218,7 @@ export async function completeClaudeText(input: {
   if (input.disableThinking) {
     args.push("--settings", JSON.stringify({ alwaysThinkingEnabled: false }));
   }
+  if (input.effort) args.push("--effort", input.effort);
 
   // Pass the user prompt over stdin to avoid argv length limits and any
   // shell-quoting traps for prompts containing newlines, quotes, or markdown.

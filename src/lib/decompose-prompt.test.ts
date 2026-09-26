@@ -34,9 +34,9 @@ const baseCtx: DecomposeContext = {
 };
 
 describe("DECOMPOSE_SYSTEM_PROMPT", () => {
-  test("declares plan-then-emit shape with analysis + json blocks", () => {
-    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("<analysis>");
+  test("asks for a single <json> block — planning stays in the model's thinking", () => {
     expect(DECOMPOSE_SYSTEM_PROMPT).toContain("<json>");
+    expect(DECOMPOSE_SYSTEM_PROMPT).not.toContain("<analysis>");
   });
   test("names the count guardrails", () => {
     expect(DECOMPOSE_SYSTEM_PROMPT).toContain("3-10 children");
@@ -44,8 +44,8 @@ describe("DECOMPOSE_SYSTEM_PROMPT", () => {
   test("requires substantive children, no TBD placeholders", () => {
     expect(DECOMPOSE_SYSTEM_PROMPT).toContain("TBD");
   });
-  test("includes a SELF-CHECK section", () => {
-    expect(DECOMPOSE_SYSTEM_PROMPT).toContain("SELF-CHECK");
+  test("carries no self-check scaffold — validateGraph owns the structural rules", () => {
+    expect(DECOMPOSE_SYSTEM_PROMPT).not.toContain("SELF-CHECK");
   });
   test("includes a worked example", () => {
     expect(DECOMPOSE_SYSTEM_PROMPT).toContain("<example>");

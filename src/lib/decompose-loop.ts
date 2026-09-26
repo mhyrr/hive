@@ -48,8 +48,8 @@ export type LLMCaller = (input: LLMCallInput) => Promise<LLMCallOutput>;
 
 export const DEFAULT_MAX_ATTEMPTS = 8;
 export const DEFAULT_MAX_COST_USD = 5;
-export const DEFAULT_DECOMPOSE_MODEL = "claude-opus-4-7";
-export const DEFAULT_ORIENT_MODEL = "claude-opus-4-7";
+export const DEFAULT_DECOMPOSE_MODEL = "claude-opus-5-5";
+export const DEFAULT_ORIENT_MODEL = "claude-opus-5-5";
 
 // ---------------------------------------------------------------------------
 // Result shape

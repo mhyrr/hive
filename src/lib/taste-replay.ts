@@ -32,7 +32,7 @@ import type { TasteCandidate } from "./taste-types";
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PROVIDER = "anthropic";
-const REPLAY_MODEL = "claude-sonnet-5";
+const REPLAY_MODEL = "claude-opus-5-5";
 
 export function tasteReplayModel(): { provider: string; modelId: string } {
   const override = process.env.HIVE_TASTE_REPLAY_MODEL;
@@ -316,7 +316,7 @@ const defaultReplayCaller: ModelCaller = async (input) => {
       systemPrompt: input.systemPrompt,
       userContent: input.userContent,
       signal: ctrl.signal,
-      disableThinking: true,
+      effort: "medium",
     });
   } finally {
     clearTimeout(timer);

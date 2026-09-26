@@ -157,6 +157,7 @@ if command -v caffeinate >/dev/null 2>&1; then RUNNER=(caffeinate -ims "${input.
 
 "\${RUNNER[@]}" \
   --model "${input.model}" \
+  --effort high \
   --append-system-prompt-file "${input.identityPath}" \
   --add-dir "${input.runDir}" \
   --agents "$(cat "${input.agentsPath}")" \
@@ -262,7 +263,7 @@ export async function startActRun(request: ActRunRequest): Promise<ActRunResult>
     await writeFile(wrapperPath, buildReviewRunWrapper({
       claude: executable("claude"),
       hive: executable("hive"),
-      model: request.model ?? process.env.HIVE_WATCH_ACT_MODEL ?? "claude-opus-4-6",
+      model: request.model ?? process.env.HIVE_WATCH_ACT_MODEL ?? "claude-opus-5-5",
       timeoutMin: request.timeoutMin ?? 60,
       workspacePath,
       runDir: allocated.runDir,

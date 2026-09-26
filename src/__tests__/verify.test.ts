@@ -44,7 +44,12 @@ import type { ModelCaller } from "../lib/extract";
 describe("pricing — rate table + cost math", () => {
   test("known model returns rate", () => {
     expect(rateForModel("claude-sonnet-4-6")?.inputPerMTok).toBe(3);
-    expect(rateForModel("claude-opus-4-7")?.outputPerMTok).toBe(75);
+    expect(rateForModel("claude-opus-4-7")?.outputPerMTok).toBe(25);
+  });
+
+  test("a [1m] context alias prices as its base model", () => {
+    expect(rateForModel("claude-opus-4-8[1m]")).not.toBeNull();
+    expect(rateForModel("claude-opus-4-8[1m]")).toEqual(rateForModel("claude-opus-4-8"));
   });
 
   test("unknown model returns null", () => {
@@ -137,8 +142,8 @@ describe("usage summary aggregation", () => {
     expect(summary.totals.inputTokens).toBe(60_000);
     expect(summary.totals.outputTokens).toBe(6_000);
     // B: 10k * $3/Mtok + 1k * $15/Mtok = $0.045
-    // V: 50k * $15/Mtok + 5k * $75/Mtok = $1.125
-    expect(summary.totals.totalUsd).toBeCloseTo(1.17, 5);
+    // V: 50k * $5/Mtok + 5k * $25/Mtok = $0.375
+    expect(summary.totals.totalUsd).toBeCloseTo(0.42, 5);
   });
 });
 

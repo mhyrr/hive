@@ -24,6 +24,7 @@ describe("review-only Act wrapper", () => {
   test("runs only in the explicit workspace and never merges, pushes, or cleans it", () => {
     expect(wrapper).toContain('cd "/tmp/RUN-042/workspace"');
     expect(wrapper).toContain('--add-dir "/tmp/RUN-042"');
+    expect(wrapper).toContain("--effort high");
     expect(wrapper).toContain("GIT_CONFIG_KEY_0=core.hooksPath");
     expect(wrapper).toContain('GIT_CONFIG_VALUE_0="/tmp/RUN-042/hooks"');
     expect(wrapper).toContain('git rev-list --count "abc123..HEAD"');

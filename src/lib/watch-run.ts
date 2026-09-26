@@ -14,7 +14,7 @@ import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { completeClaudeTextBounded, type ClaudeTextCompletion } from "./claude";
+import { completeClaudeTextBounded, type ClaudeEffort, type ClaudeTextCompletion } from "./claude";
 import { extractConfigValue } from "./config";
 import { getProjectPaths, listProjects, type HivePaths } from "./paths";
 import { writeNextSelection } from "./next";
@@ -25,7 +25,7 @@ import {
   assembleWatchDigest,
   type DeltaSeams,
 } from "./watch-delta";
-import { resolveWatchModel } from "./watch-model";
+import { resolveWatchEffort, resolveWatchModel } from "./watch-model";
 import { startActRun } from "./act-run";
 import {
   loadWatchState,
@@ -107,6 +107,7 @@ export type WatchCaller = (input: {
   modelId: string;
   systemPrompt: string;
   userContent: string;
+  effort?: ClaudeEffort;
 }) => Promise<ClaudeTextCompletion>;
 
 export interface WatchActRequest {
@@ -367,7 +368,7 @@ async function runWatchesUnlocked(options: RunWatchesOptions): Promise<RunWatche
       let completion: ClaudeTextCompletion;
       callsThisTick += 1;
       try {
-        completion = await caller({ modelId, systemPrompt, userContent });
+        completion = await caller({ modelId, systemPrompt, userContent, effort: resolveWatchEffort(watch.model) });
       } catch (err) {
         const outcome: WatchOutcome = isQuotaError(err) ? "deferred:quota" : "error";
         entry.lastOutcome = outcome;

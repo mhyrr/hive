@@ -12,6 +12,7 @@ export const liveClaudeCaller: LLMCaller = async (
     modelId: input.modelId,
     systemPrompt: input.systemPrompt,
     userContent: input.userMessage,
+    effort: "high",
   });
   return {
     text: result.text,

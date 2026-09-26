@@ -76,7 +76,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PROVIDER = "anthropic";
-const CONSOLIDATE_MODEL = "claude-opus-4-8";
+const CONSOLIDATE_MODEL = "claude-opus-5-5";
 
 export function tasteConsolidatorModel(): { provider: string; modelId: string } {
   const override = process.env.HIVE_TASTE_CONSOLIDATE_MODEL;
@@ -142,6 +142,7 @@ For EACH candidate, output one object. Output ONLY a JSON array, no prose, no ma
   "dedupe_key": "<copied verbatim from the candidate>",
   "coherence": "covered|extends|contradicts|uncovered",
   "ladders_up_to": "<a heading copied EXACTLY from PRINCIPLE HEADINGS, or null>",
+  "wanted_principle": "<if coherence=uncovered: the principle you reached for and did not find, as a short heading; else null>",
   "tension_note": "<if coherence=contradicts: state which is true — 'candidate-wrong' | 'principle-too-broad' | 'scoped-exception' — and one sentence why; else null>",
   "conflict_with": "<dedupe_key of an EXISTING UNIT this contradicts, or null>",
   "human_confirmed": <true only if the evidence shows the human EXPLICITLY endorsed this as a rule (e.g. 'yes, always do X', 'remember this'); a one-off correction is NOT an endorsement>,
@@ -163,11 +164,11 @@ some principle" — with principles this broad, almost anything can. It is:
   resolve it yourself; just name which of the three explanations holds.
 - coherence=uncovered ⇒ NO heading in the enum fits. Set ladders_up_to to null.
 
-CRITICAL: ladders_up_to must be a heading copied exactly from PRINCIPLE HEADINGS.
-Do NOT invent a principle, paraphrase a heading, or coin a plausible-sounding one.
-If nothing in the enum fits, the honest answer is coherence=uncovered — that is a
-useful signal (it is how a genuinely new principle gets discovered), not a
-failure to classify. covered/extends/contradicts all REQUIRE a real heading.
+ladders_up_to must be a heading copied exactly from PRINCIPLE HEADINGS, or null.
+If no heading fits, set coherence=uncovered and ladders_up_to=null, and name the
+principle you reached for in wanted_principle — that is how a genuinely new
+principle gets discovered, not a failure to classify. covered/extends/contradicts
+all require a real heading.
 
 Other rules:
 - Be conservative on human_confirmed and on conflict_with. Default both to
@@ -254,6 +255,9 @@ export function validateCoherenceDecision(
       wanted = named; // may be null — the model claimed a relation but named nothing
       coherence = "uncovered";
     }
+  } else {
+    // An honest `uncovered` names the rung it reached for in its own field.
+    wanted = str(o.wanted_principle);
   }
 
   return {
@@ -816,7 +820,7 @@ const defaultConsolidateCaller: ModelCaller = async (input) => {
       systemPrompt: input.systemPrompt,
       userContent: input.userContent,
       signal: ctrl.signal,
-      disableThinking: true,
+      effort: "high",
     });
   } finally {
     clearTimeout(timer);

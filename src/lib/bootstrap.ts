@@ -1132,14 +1132,14 @@ Your output must be valid JSON matching this schema:
   "conventions": [
     { "text": "...", "confidence": "high" | "medium" }
   ],
-  "architecture_summary": "3-5 sentences describing what this codebase does and how it's organized",
+  "architecture_summary": "a short paragraph: what this codebase does and how it's organized",
   "key_dependencies": [
     { "name": "...", "role": "..." }
   ]
 }
 
 Rules:
-- Extract 2-4 conventions that a new developer needs to know. Focus on patterns that are non-obvious from the config alone. Examples: "Controllers delegate to context modules, never call Repo directly", "Tests use factory functions from test/support/factory.ex", "Components follow container/presenter split".
+- Extract the conventions a new developer needs to know: patterns that are non-obvious from the config alone. Examples: "Controllers delegate to context modules, never call Repo directly", "Tests use factory functions from test/support/factory.ex", "Components follow container/presenter split".
 - Only include conventions you can see evidence for in the provided files. "medium" confidence if you see one example; "high" if you see it consistently or it's enforced by config.
 - The architecture summary should answer: what does this project do, what's the main tech stack, and how is the code organized? Write for someone who will work in this codebase tomorrow.
 - Key dependencies are libraries/frameworks that shape how you write code in this repo — not utilities. Phoenix, Ecto, React, Next.js yes. leftpad, uuid no. Include their role (e.g. "ORM", "web framework", "state management").
@@ -1311,7 +1311,7 @@ export type InferenceEmitResult = {
   model: string;
 };
 
-const INFERENCE_MODEL = "claude-sonnet-4-5-20250514";
+const INFERENCE_MODEL = "claude-opus-5-5";
 
 /**
  * Run the inference pass: select files, build prompt, call LLM, parse output,

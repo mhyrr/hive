@@ -361,8 +361,8 @@ function formatTasteResults(results: TasteSearchResult[], category: string, quer
   if (results.length === 0) {
     return (
       `No active ${category} taste yet${q}. ` +
-      "(Units become retrievable only after you approve them with `hive taste review` — " +
-      "holding/pending judgments are never returned.)"
+      "(Units become active once the nightly gate sees them recur across sessions — and, for " +
+      "fuzzy rules, pass replay. Holding and contradiction-pending units are never returned.)"
     );
   }
   const lines: string[] = [`${results.length} active ${category} taste unit(s)${q}:`, ""];
@@ -383,12 +383,13 @@ function formatTasteResults(results: TasteSearchResult[], category: string, quer
 server.registerTool("search_taste", {
   description:
     "Retrieve ACTIVE taste units for a work-type category (IDEAS, DESIGN, IMPLEMENTATION, " +
-    "TEST_EVAL, COMMUNICATION, PROCESS) — the approved judgments about how to do that kind " +
+    "TEST_EVAL, COMMUNICATION, PROCESS) — the admitted judgments about how to do that kind " +
     "of work well. Use when starting that kind of work. Searches the project store and the " +
     "cross-project general store together, so it works outside a registered project. Add a " +
     "query to focus within the category (BM25); omit it to browse everything active there. " +
-    "Only units approved via `hive taste review` return — pending and contradicted units " +
-    "never do, so empty results are normal while a store fills.",
+    "Only active units return: the nightly gate admits a unit once it recurs across sessions " +
+    "(and, for FUZZY rules, passes replay). Units still holding, or held as contradictions of a " +
+    "principle pending `hive taste review`, never return, so empty results are normal while a store fills.",
   inputSchema: {
     category: z
       .enum(TASTE_CATEGORIES)
@@ -418,7 +419,9 @@ server.registerTool("create_ticket", {
   description:
     "Create a new ticket in the project's ticket tracker. " +
     "Use for tracking bugs, features, tasks, epics, or chores. " +
-    "Tickets are stored as markdown files and support dependencies.",
+    "Tickets are stored as markdown files and support dependencies. " +
+    "Returns the new ticket's full detail, including its assigned TK-NNN id. depends must name " +
+    "existing tickets or the call fails. For a goal that needs several dependent tickets, use decompose_goal.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     title: z.string().describe("Ticket title — concise, imperative form."),
@@ -456,7 +459,9 @@ server.registerTool("create_ticket", {
 // Tool 6: List tickets
 server.registerTool("list_tickets", {
   description:
-    "List tickets in the project, optionally filtered by status, type, or tags.",
+    "List tickets in the project, optionally filtered by status, type, or tags. Returns one line per " +
+    "ticket (ID, status, priority, type, title, tags, and any tickets it is blocked by) — no bodies " +
+    "or notes; use show_ticket for those. With no filters it returns every ticket, closed ones included.",
   inputSchema: {
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     status: z.enum(["open", "in_progress", "closed"]).optional().describe("Filter by status."),
@@ -591,7 +596,9 @@ server.registerTool("add_project", {
   description:
     "Register a project with HIVE. Creates project config and memory file in ~/.hive/. " +
     "After this, the project is included in nightly scans, morning briefings, and memory is scoped to it. " +
-    "Use the current working directory if no path is provided.",
+    "Use the current working directory if no path is provided. Overwrites config.md if the name is " +
+    "already registered. Does not scan the repo or seed any memory entries; run " +
+    "bootstrap_infer_conventions afterwards for that.",
   inputSchema: {
     name: z.string().describe("Project name (lowercase, alphanumeric + hyphens)."),
     path: z.string().optional().describe("Absolute path to the project. Defaults to current working directory."),
@@ -832,14 +839,15 @@ server.registerTool("decompose_goal", {
     "tickets so the decomposition is project-aware and avoids duplicating work. " +
     "Use when the user has a goal large enough to need a dependency-aware work breakdown. " +
     "For 1-2 child shape, the writer creates standalone tickets without " +
-    "an epic. Use dry_run to preview without writing.",
+    "an epic. Use dry_run to preview without writing. Runs synchronously: up to max_attempts " +
+    "rounds, each one Opus decompose call plus, when validation fails, one orient call — expect minutes.",
   inputSchema: {
     goal: z.string().describe("The rough goal in natural language."),
     project: z.string().optional().describe("Project name. Defaults to project matching current directory."),
     dry_run: z.boolean().optional().describe("Show the proposal without creating tickets. Default false."),
     priority: z.number().min(0).max(3).optional().describe("Priority for the epic (children inherit). 0-3. Default 2."),
     max_attempts: z.number().min(1).max(20).optional().describe("Max OODA-loop attempts. Default 8."),
-    max_cost_usd: z.number().min(0).optional().describe("Hard spend cap in USD. Default 5."),
+    max_cost_usd: z.number().min(0).optional().describe("Spend cap in USD, checked before each attempt (the attempt in flight can overshoot it) and estimated from HIVE's price table; models missing from that table count as $0. Default 5."),
   },
 }, async ({ goal, project, dry_run, priority, max_attempts, max_cost_usd }) => {
   const { gatherDecomposeContext } = await import("./lib/decompose-prompt");

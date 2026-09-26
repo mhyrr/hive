@@ -4,7 +4,7 @@ import { estimateCost } from "../lib/pricing";
 describe("estimateCost", () => {
   test("bills the full context at the input rate when no cache split is given", () => {
     const c = estimateCost({ provider: "anthropic", model: "claude-sonnet-5", inputTokens: 1_000_000, outputTokens: 0 });
-    expect(c.inputUsd).toBeCloseTo(3, 6);
+    expect(c.inputUsd).toBeCloseTo(2, 6);
     expect(c.modelKnown).toBe(true);
   });
 
@@ -18,7 +18,7 @@ describe("estimateCost", () => {
       cacheCreationTokens: 100_000,
     });
     // 100k uncached ×1 + 100k write ×1.25 + 800k read ×0.1 = 305k billable
-    expect(c.inputUsd).toBeCloseTo(0.305 * 3, 6);
+    expect(c.inputUsd).toBeCloseTo(0.305 * 2, 6);
   });
 
   test("unknown model reports zero and modelKnown=false", () => {

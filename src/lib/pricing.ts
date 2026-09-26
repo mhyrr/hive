@@ -1,7 +1,7 @@
 // Per-model pricing for HIVE LLM calls. Rates are easy to edit — when
 // Anthropic shifts list prices, change the table; the rest follows.
 //
-// Source: Anthropic public pricing as of 2026-01.
+// Source: Anthropic list prices per MTok, as of 2026-09.
 
 export interface ModelRate {
   inputPerMTok: number;   // USD per million input tokens
@@ -10,22 +10,27 @@ export interface ModelRate {
 
 const RATES: Record<string, ModelRate> = {
   // Sonnet family
-  "claude-sonnet-5": { inputPerMTok: 3, outputPerMTok: 15 },
+  "claude-sonnet-5": { inputPerMTok: 2, outputPerMTok: 10 },
   "claude-sonnet-4-6": { inputPerMTok: 3, outputPerMTok: 15 },
   "claude-sonnet-4-5": { inputPerMTok: 3, outputPerMTok: 15 },
 
-  // Opus family. Current list price is $5/$25 per MTok (Opus 4.6+); the
-  // 4-6/4-7 rows below predate that drop and are left as-is for historical runs.
+  // Opus family
+  "claude-opus-5-5": { inputPerMTok: 4, outputPerMTok: 20 },
+  "claude-opus-5": { inputPerMTok: 5, outputPerMTok: 25 },
   "claude-opus-4-8": { inputPerMTok: 5, outputPerMTok: 25 },
-  "claude-opus-4-7": { inputPerMTok: 15, outputPerMTok: 75 },
-  "claude-opus-4-6": { inputPerMTok: 15, outputPerMTok: 75 },
+  "claude-opus-4-7": { inputPerMTok: 5, outputPerMTok: 25 },
+  "claude-opus-4-6": { inputPerMTok: 5, outputPerMTok: 25 },
 
   // Haiku family
   "claude-haiku-4-5": { inputPerMTok: 1, outputPerMTok: 5 },
+
+  // Fable family
+  "claude-fable-5-1": { inputPerMTok: 10, outputPerMTok: 50 },
 };
 
 export function rateForModel(modelId: string): ModelRate | null {
-  return RATES[modelId] ?? null;
+  // A trailing `[1m]` selects Claude Code's 1M-context variant of the same model.
+  return RATES[modelId.replace(/\[1m\]$/, "")] ?? null;
 }
 
 export interface UsageDelta {

@@ -256,8 +256,8 @@ describe("collectRunUsage", () => {
     expect(snap.passes.length).toBe(3);
     expect(snap.totalInputTokens).toBe(80_000);
     expect(snap.totalOutputTokens).toBe(6_000);
-    // 8k*$3 + 0.8k*$15 + 12k*$3 + 1.2k*$15 + 60k*$15 + 4k*$75 = 1.2M = $1.20 + bits
-    expect(snap.totalUsd).toBeGreaterThan(1);
+    // 8k*$3 + 0.8k*$15 + 12k*$3 + 1.2k*$15 + 60k*$5 + 4k*$25 = $0.49
+    expect(snap.totalUsd).toBeCloseTo(0.49, 5);
     expect(snap.totalUsdFormatted.startsWith("$")).toBe(true);
     // Per-pass projects pass through (B carries project, C/V do not)
     const b = snap.passes.find((p) => p.pass === "B");

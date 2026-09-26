@@ -47,7 +47,7 @@ import {
 import type { ProjectCandidate, ReflectionCandidate, ModelCaller } from "./extract";
 
 const DEFAULT_PROVIDER = "anthropic";
-const DEFAULT_MODEL = "claude-opus-4-8";
+const DEFAULT_MODEL = "claude-opus-5-5";
 
 function verifierModel(): { provider: string; modelId: string } {
   const override = process.env.HIVE_VERIFY_MODEL;
@@ -283,7 +283,7 @@ Bar for accept: "would this still help a session a month from now?" Be selective
 
 If the candidate's quoted source isn't visible anywhere in the inputs, **reject as cite_unverifiable** — citation discipline matters more than charity.`;
 
-const PROJECT_VERIFIER_SYSTEM_PROMPT = `You are the verifier for HIVE's nightly memory pipeline. Sonnet (in Pass B) extracted candidates from one project's day; you decide what becomes that project's canon.
+const PROJECT_VERIFIER_SYSTEM_PROMPT = `You are the verifier for HIVE's nightly memory pipeline. The Pass B extractor pulled candidates from one project's day; you decide what becomes that project's canon.
 
 You see exactly one project. Every candidate below belongs to it, and every target_hash you cite must come from the canon block below — you cannot reach into another project's memory, and you shouldn't try.
 
@@ -297,7 +297,7 @@ ${DECISION_RULES}
 **Directives.** A mid-session candidate marked \`"directive": true\` was saved on Greg's explicit instruction — it is his decision, not an extractor's guess. You MAY **accept**, **supersede**, or **merge** a directive: refine its wording, place it well, or fold it into an existing entry. You may NOT **reject** it — the human already decided it's worth keeping, so the accept-bar, cite_unverifiable, trivial, and low_signal do not apply. Your job on a directive is placement, never veto. (A directive you try to reject is force-admitted downstream anyway, so a reject decision just produces a worse-placed entry.)
 
 ## 2) Gap report
-Things Sonnet missed but should have caught — patterns from this project's day that didn't land in the candidate batch. Cite the specific source (e.g. "alpha:topRanked[5] — Greg established X but extractor missed it"). Empty array if Sonnet did fine.
+Things the Pass B extractor missed but should have caught — patterns from this project's day that didn't land in the candidate batch. Cite the specific source (e.g. "alpha:topRanked[5] — Greg established X but extractor missed it"). Empty array if nothing was missed.
 
 # OUTPUT — strict schema
 
@@ -345,11 +345,11 @@ Template:
 # HIVE — YYYY-MM-DD
 
 ## Headline
-<1–2 sentences. What mattered most overnight.>
+<The one thing that mattered most overnight.>
 
 ## Per project
 ### project-name
-- What shipped / decisions / open threads (≤5 bullets)
+- What shipped / decisions / open threads — only what Greg would act on
 - Watch and nightly findings since last briefing (folded from inbox.md)
 - Tickets that moved
 
@@ -483,7 +483,7 @@ ${
   }
 `);
 
-  sections.push(`## Pass B candidates (Sonnet, ${block.bCandidates.length})
+  sections.push(`## Pass B candidates (${block.bCandidates.length})
 
 ${
     block.bCandidates.length > 0
@@ -707,6 +707,7 @@ const defaultCaller: ModelCaller = (input) =>
     modelId: input.modelId,
     systemPrompt: input.systemPrompt,
     userContent: input.userContent,
+    effort: "high",
   });
 
 export async function callVerifier(

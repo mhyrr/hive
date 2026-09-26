@@ -270,7 +270,7 @@ everything is green and Maya still feels off:
    (and PostCompact). Old sessions won't pick up changes until restart.
 2. **Check the model.** `claude --version` should show ≥ 2.1.x. Interactive
    sessions use whatever `--model` / `~/.claude/settings.json` specifies.
-   Watch Act defaults to `claude-opus-4-6`; override it with
+   Watch Act defaults to `claude-opus-5-5`; override it with
    `HIVE_WATCH_ACT_MODEL`.
 3. **Dry-run the hook.** `bash ~/.claude/hooks/load-identity.sh | less` —
    should show soul stack → project memory → stack hint → taste.

@@ -291,7 +291,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   emit({
     type: "pass-start",
     pass: "B",
-    detail: `${targets.length} project${targets.length === 1 ? "" : "s"} with signal — Sonnet calls in series`,
+    detail: `${targets.length} project${targets.length === 1 ? "" : "s"} with signal — Opus calls in series`,
   });
   // Serial, NOT parallel: concurrent `claude --print` subprocesses contend on
   // OAuth/Keychain access in the detached launchd context and stall past
@@ -329,7 +329,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   result.passes.B = bReports;
 
   // ---- Pass C (cross-project reflections) -----------------------------------
-  emit({ type: "pass-start", pass: "C", detail: "Sonnet — cross-project reflections" });
+  emit({ type: "pass-start", pass: "C", detail: "Opus — cross-project reflections" });
   try {
     const { value, durationMs } = await timed(() =>
       runReflectionExtractor({ paths, date, caller }),

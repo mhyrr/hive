@@ -72,19 +72,15 @@ async function readIfExists(file: string): Promise<string> {
 // ---------------------------------------------------------------------------
 // Decompose prompt — initial pass
 //
-// Prompt design notes (2026-05-09 revision after landscape survey):
-// 1. Plan-then-emit: model produces <analysis> before the JSON. Anthropic's
-//    orchestrator-workers cookbook + Plan-and-Solve (Wang 2023). Strip post-parse.
-//    TK-136: the block asks for the decomposition PLAN, not a transcript of the
-//    model's reasoning. Fable-class safety classifiers run a `reasoning_extraction`
-//    refusal category, so "think out loud" / "show your reasoning" phrasing here
-//    risks a decline (HTTP 200, stop_reason: "refusal"). Asking for a plan — a
-//    conclusion with its constraints — carries the same plan-then-emit benefit
-//    without sitting in that category.
+// Prompt design notes:
+// 1. Output is one <json> block. Planning happens in the model's own adaptive
+//    thinking — no written <analysis> block or pre-emit self-check: validateGraph
+//    re-checks every structural rule and the orient loop repairs failures, and a
+//    prompt that asks for written-out reasoning risks a `reasoning_extraction`
+//    decline (HTTP 200, stop_reason: "refusal") on Fable-class and Opus 5.5.
 // 2. One worked <example> anchoring the schema, depends syntax, imperative
 //    titles. Anthropic prompt docs + Least-to-Most (Zhou).
-// 3. Pre-emit self-check section. Cheaper than an orient retry.
-// 4. Coverage-not-filtering on dedup: bias toward include + tag uncertain
+// 3. Coverage-not-filtering on dedup: bias toward include + tag uncertain
 //    children rather than asking the model to filter inline. Anthropic guidance
 //    that filtering belongs downstream of generation.
 //
@@ -108,7 +104,7 @@ PROCESS
 3. Wire dependencies as a DAG. No cycles. A child can depend on another child via its ref placeholder. Independent branches can be executed in parallel.
 4. On dedup: your job at this stage is COVERAGE, not filtering. If a child might overlap an open ticket, INCLUDE the child anyway and add the tag "possibly-covered"; cite the overlapping ticket(s) in that child's Notes section. A downstream step handles final dedup. The exception: if the entire goal is unambiguously covered by existing tickets, return a single child whose body explains the overlap.
 
-OUTPUT — first an <analysis> block holding your decomposition plan in prose (the shape you chose, and the constraints that drove it), then a single <json> block. Nothing outside those two blocks.
+OUTPUT — a single <json> block holding the JSON below. Nothing outside it.
 
 Schema for the JSON:
 {
@@ -136,21 +132,12 @@ CONSTRAINTS
 - Children inherit the epic's domain. Don't decompose across unrelated domains.
 - Body markdown lines use \\n for line breaks (this is JSON).
 - Do NOT include the epic in children. Do NOT include placeholder children whose bodies say "TBD" — every ticket must be substantive enough to execute.
-
-SELF-CHECK (do this in your <analysis> block before emitting the JSON)
-- [ ] Every ref in any "depends" array exists as another child's ref.
-- [ ] No child depends on itself.
-- [ ] No cycles (you can mentally walk each chain to a leaf).
-- [ ] Count is 3-10 (or 1-2 if that's honestly the right size).
-- [ ] Every tag is drawn from the project's existing tag distribution (or is "possibly-covered").
-- [ ] Every child title is imperative ("Add X", "Wire Y", "Fix Z").
-- [ ] Every child body has a Scope and Acceptance section, with checkboxes in Acceptance.
+- Every child body has a Scope section and an Acceptance section; Acceptance items are checkboxes.
 
 EXAMPLE (illustrative — do not copy verbatim)
 
 <example>
 <input_goal>Add retry for transient nightly extraction failures.</input_goal>
-<analysis>The goal is to stop a temporary provider failure from losing one project's nightly extraction. Project memory says projects are isolated during Pass B and retries are currently off. Natural decomposition: a pure retry policy, wire it around each project extraction, then record attempts in the nightly usage artifact. Three children, linear dependencies. No cycles; tags drawn from {nightly, memory}.</analysis>
 <json>
 {
   "epic": {
@@ -188,7 +175,7 @@ EXAMPLE (illustrative — do not copy verbatim)
 </json>
 </example>
 
-Return your <analysis> block, then the <json> block. Nothing else.`;
+Return the <json> block. Nothing else.`;
 
 export function buildDecomposeUserMessage(ctx: DecomposeContext): string {
   const sections: string[] = [];
@@ -239,7 +226,7 @@ export function buildDecomposeUserMessage(ctx: DecomposeContext): string {
     sections.push(`# Open tickets in this project\n(none)`);
   }
 
-  sections.push(`# Now decompose. Return ONLY valid JSON.`);
+  sections.push(`# Now decompose, in the output format the system prompt specifies.`);
 
   return sections.join("\n\n");
 }

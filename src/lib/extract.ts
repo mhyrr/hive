@@ -14,7 +14,7 @@ import type { ConditionReport, ProjectSignal } from "./condition";
 import { estimateCost, appendUsageRecord } from "./pricing";
 
 const DEFAULT_PROVIDER = "anthropic";
-const DEFAULT_MODEL = "claude-sonnet-5";
+const DEFAULT_MODEL = "claude-opus-5-5";
 
 function extractorModel(): { provider: string; modelId: string } {
   const override = process.env.HIVE_EXTRACT_MODEL;
@@ -153,10 +153,10 @@ A learning is durable if:
 - It is non-obvious from the code or git history alone — i.e. someone reading the codebase later wouldn't reach this insight without the conversational context
 - It can stand on its own without the surrounding exchange
 
-Skip ruthlessly:
+Skip:
 - Task status, work-in-progress, "currently doing X", "next we'll Y"
 - Anything already in the canon digest below. The digest is truncated and budgeted; the verifier holds the full canon and dedupes by hash, so when you are unsure whether something is already captured, include it
-- Speculative observations or ones with weak grounding
+- Speculation with nothing in the signal below to ground it
 - User preferences or working-style observations — those go to a separate self-reflection channel
 - Anything obvious from a glance at the code or commit messages
 
@@ -381,11 +381,14 @@ export type ModelCaller = (input: {
   userContent: string;
 }) => Promise<ModelTextCompletion>;
 
+// Pass B and C. `medium` is the starting point for an effort sweep on
+// Sonnet 5, not a measured optimum.
 const defaultCaller: ModelCaller = (input) =>
   completeClaudeTextBounded({
     modelId: input.modelId,
     systemPrompt: input.systemPrompt,
     userContent: input.userContent,
+    effort: "medium",
   });
 
 export async function callProjectExtractor(

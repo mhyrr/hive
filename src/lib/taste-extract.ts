@@ -7,7 +7,7 @@
  * the survivors fully and emits typed taste candidates carrying reasoning +
  * immutable evidence. Most flags do not survive TB — that is the design.
  */
-import { completeClaudeText } from "./claude";
+import { completeClaudeText, type ClaudeEffort } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
 import { estimateCost } from "./pricing";
 import { segmentWindows, type SegmentOptions } from "./taste-segment";
@@ -31,7 +31,7 @@ import {
 
 const DEFAULT_PROVIDER = "anthropic";
 const CLASSIFY_MODEL = "claude-haiku-4-5";
-const ANALYZE_MODEL = "claude-opus-4-8";
+const ANALYZE_MODEL = "claude-opus-5-5";
 
 function resolveModel(envVar: string, fallback: string): { provider: string; modelId: string } {
   const override = process.env[envVar];
@@ -52,22 +52,28 @@ export const tasteAnalyzerModel = () => resolveModel("HIVE_TASTE_ANALYZE_MODEL",
 // error (caught by runTasteExtract's isolation) instead of hanging the run.
 const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 900_000;
 
-const defaultCaller: ModelCaller = async (input) => {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), CALL_TIMEOUT_MS);
-  try {
-    return await completeClaudeText({
-      modelId: input.modelId,
-      systemPrompt: input.systemPrompt,
-      userContent: input.userContent,
-      signal: ctrl.signal,
-      // Classify + extract don't need extended thinking; it only adds latency.
-      disableThinking: true,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-};
+function boundedCaller(options: { disableThinking?: boolean; effort?: ClaudeEffort }): ModelCaller {
+  return async (input) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), CALL_TIMEOUT_MS);
+    try {
+      return await completeClaudeText({
+        modelId: input.modelId,
+        systemPrompt: input.systemPrompt,
+        userContent: input.userContent,
+        signal: ctrl.signal,
+        ...options,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+// TA is the Haiku classifier: thinking off keeps it fast. TB is the Opus
+// judgment step: adaptive thinking stays on and effort sets its depth.
+const defaultClassifyCaller = boundedCaller({ disableThinking: true });
+const defaultAnalyzeCaller = boundedCaller({ effort: "high" });
 
 // ---------------------------------------------------------------------------
 // Prompts — the load-bearing artifacts (design §4.1, §5.4)
@@ -87,18 +93,18 @@ A divergence is a moment where work was redirected — the signal taste lives in
 
 You are given candidate WINDOWS the mechanical pre-filter flagged. For each, decide: is this a GENUINE divergence, or normal forward progress / mechanical noise (a failed command then retry, a lint fix nobody reacted to, the agent reading files)?
 
-Output ONLY a compact JSON array — one TINY object per window that IS a divergence (omit the rest). Two fields each, nothing more:
+Output a JSON array with one object per window that IS a divergence (omit the rest):
 [{"windowId":"<verbatim id>","type_guess":"<one of the 8 types>"}]
 
 Rules:
-- Be EXTREMELY terse: windowId + type_guess only. Do NOT quote the window, do NOT explain, do NOT restate anything. A downstream pass re-reads the full window itself.
+- Include only windowId and type_guess. A downstream pass re-reads each flagged window in full, so quoting or explaining here only adds cost.
 - windowId must be copied verbatim.
-- Err toward recall, but DO skip windows that are only mechanical noise with no judgment in them.
-- No commentary, no markdown fences — just the JSON array. If nothing is a divergence, output [].`;
+- Err toward recall, but skip windows that are only mechanical noise with no judgment in them.
+- If nothing is a divergence, output [].`;
 
 const TB_ANALYZE_SYSTEM_PROMPT = `You extract durable TASTE from flagged divergence windows in an AI coding agent's transcripts. Taste = "a senior engineer wouldn't have done that" judgments — the reusable preference under a specific correction.
 
-For each window, decide whether there is a GENERALIZABLE judgment worth remembering. MOST WINDOWS DO NOT — skip ruthlessly. Emit a candidate ONLY when all hold:
+For each window, decide whether there is a generalizable judgment worth remembering. Most windows will not yield one; emit a candidate when all of these hold:
 - It would change future behavior on a NEW task, not just this one (it generalizes).
 - It is something a capable model would NOT already reliably do. Skip obvious best-practice the model already has.
 - There is verbatim evidence with an anchor id from the window. No anchor ⇒ no candidate.
@@ -325,7 +331,7 @@ export interface AnalyzeCallResult {
 
 export async function callTasteClassifier(
   windows: DivergenceWindow[],
-  caller: ModelCaller = defaultCaller,
+  caller: ModelCaller = defaultClassifyCaller,
 ): Promise<FlagCallResult> {
   const { provider, modelId } = tasteClassifierModel();
   const completion = await caller({
@@ -359,7 +365,7 @@ export async function callTasteClassifier(
 
 export async function callTasteAnalyzer(
   windows: DivergenceWindow[],
-  caller: ModelCaller = defaultCaller,
+  caller: ModelCaller = defaultAnalyzeCaller,
 ): Promise<AnalyzeCallResult> {
   const { provider, modelId } = tasteAnalyzerModel();
   const completion = await caller({
@@ -427,7 +433,8 @@ export async function runTasteExtract(
   loaded: LoadedTranscript[],
   opts: RunTasteExtractOptions = {},
 ): Promise<TasteExtractResult> {
-  const caller = opts.caller ?? defaultCaller;
+  // Undefined lets each pass fall back to its own default caller.
+  const caller = opts.caller;
   const result: TasteExtractResult = {
     flags: [],
     candidates: [],
@@ -514,7 +521,8 @@ export async function runProjectTasteExtract(
   loaded: LoadedTranscript[],
   opts: RunProjectTasteExtractOptions = {},
 ): Promise<ProjectTasteResult> {
-  const caller = opts.caller ?? defaultCaller;
+  // Undefined lets each pass fall back to its own default caller.
+  const caller = opts.caller;
   const result: ProjectTasteResult = {
     flags: [],
     candidates: [],

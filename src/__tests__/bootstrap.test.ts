@@ -809,10 +809,10 @@ describe("formatInferenceReport", () => {
       candidates: [],
       inference: result,
       durationMs: 3500,
-      model: "claude-sonnet-4-5-20250514",
+      model: "claude-opus-5-5",
     });
 
-    expect(report).toContain("claude-sonnet-4-5-20250514");
+    expect(report).toContain("claude-opus-5-5");
     expect(report).toContain("3500ms");
     expect(report).toContain("Wrote 2 candidate(s)");
     expect(report).toContain("1 skipped");

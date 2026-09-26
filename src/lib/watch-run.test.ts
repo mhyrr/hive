@@ -22,6 +22,7 @@ interface RecordedCall {
   modelId: string;
   systemPrompt: string;
   userContent: string;
+  effort?: string;
 }
 
 function stubCaller(reply: string | ((input: RecordedCall) => string)): {
@@ -98,6 +99,8 @@ describe("runWatches", () => {
     const report = reports.find((r) => r.watch === "alpha/ready");
     expect(report?.outcome).toBe("surfaced");
     expect(calls.length).toBeGreaterThan(0);
+    // No `model:` in the watch → standard tier → its starting effort.
+    expect(calls[0]?.effort).toBe("medium");
     const inbox = await Bun.file(getProjectPaths(paths, "alpha").inbox).text();
     expect(inbox).toContain("watch:alpha/ready");
     expect(inbox).toContain(ticket.id);

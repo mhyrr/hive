@@ -159,8 +159,8 @@ Watch files use tier aliases resolved by `src/lib/watch-model.ts`:
 | Alias | Default | Override |
 | --- | --- | --- |
 | `fast` | `claude-haiku-4-5` | `HIVE_WATCH_MODEL_FAST` |
-| `standard` | `claude-sonnet-5` | `HIVE_WATCH_MODEL_STANDARD` |
-| `judgment` | `claude-opus-4-8` | `HIVE_WATCH_MODEL_JUDGMENT` |
+| `standard` | `claude-opus-5-5` | `HIVE_WATCH_MODEL_STANDARD` |
+| `judgment` | `claude-opus-5-5` | `HIVE_WATCH_MODEL_JUDGMENT` |
 
 `HIVE_WATCH_MODEL_<NAME>` overrides one named watch. Each evaluation makes at
 most one model call. `HIVE_WATCH_MAX_CALLS_PER_TICK` defaults to

@@ -164,6 +164,17 @@ describe("validateCoherenceDecision", () => {
     expect(d?.wanted_principle).toBeNull();
   });
 
+  test("an honest uncovered carries the rung it reached for", () => {
+    const d = validateCoherenceDecision(
+      { dedupe_key: "a", coherence: "uncovered", ladders_up_to: null, wanted_principle: "Conservation of complexity" },
+      new Set(["a"]),
+      HEADS,
+    );
+    expect(d?.coherence).toBe("uncovered");
+    expect(d?.ladders_up_to).toBeNull();
+    expect(d?.wanted_principle).toBe("Conservation of complexity");
+  });
+
   test("a contradiction must still name a real principle to count as one", () => {
     const bogus = validateCoherenceDecision(
       { dedupe_key: "a", coherence: "contradicts", ladders_up_to: "Ship it fast", tension_note: "principle-too-broad" },
