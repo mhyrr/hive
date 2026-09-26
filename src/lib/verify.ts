@@ -35,7 +35,7 @@ import {
   type MemoryEntry,
   type ProjectDecision,
 } from "./memory";
-import type { ConditionReport } from "./condition";
+import type { ConditionReport, ProjectSignal } from "./condition";
 import {
   estimateCost,
   appendUsageRecord,
@@ -242,6 +242,29 @@ export function validateVerifierOutput(
   return { decisions, gaps, briefing_markdown: briefing };
 }
 
+/** Every candidate a call was shown must come back decided exactly once. Pass F
+ * drains a project's candidates.md whether or not a decision names each entry,
+ * so an omitted candidate — a user directive included — would be discarded
+ * undecided. Ids the call was not shown are ignored here. */
+export function assertDecisionCoverage(
+  label: string,
+  expectedIds: string[],
+  decisions: VerifierDecision[],
+): void {
+  const expected = new Set(expectedIds);
+  const counts = new Map<string, number>();
+  for (const d of decisions) {
+    if (expected.has(d.candidate_id)) counts.set(d.candidate_id, (counts.get(d.candidate_id) ?? 0) + 1);
+  }
+  const missing = expectedIds.filter((id) => !counts.has(id));
+  const repeated = [...counts].filter(([, n]) => n > 1).map(([id]) => id);
+  if (missing.length === 0 && repeated.length === 0) return;
+  const parts: string[] = [];
+  if (missing.length > 0) parts.push(`undecided: ${missing.join(", ")}`);
+  if (repeated.length > 0) parts.push(`decided more than once: ${repeated.join(", ")}`);
+  throw new Error(`${label} decisions do not cover its candidates exactly once (${parts.join("; ")})`);
+}
+
 // ---------------------------------------------------------------------------
 // JSON parsing — same tolerance as extract.ts but expects an object
 // ---------------------------------------------------------------------------
@@ -318,7 +341,7 @@ Return ONE JSON object, no fences, no prose around it:
   ]
 }
 
-Schema discipline: every candidate listed in the inputs MUST appear in decisions[] exactly once. No silent drops, no duplicate decisions. Do not write a briefing — a later call does that.`;
+Decide every candidate listed in the inputs exactly once; a missing or repeated candidate_id fails the whole pass. Do not write a briefing — a later call does that.`;
 
 const BRIEFER_SYSTEM_PROMPT = `You are the verifier for HIVE's nightly memory pipeline. The per-project verifier calls have already decided what enters each project's canon; their decisions are digested below. You do the two jobs that span projects.
 
@@ -381,7 +404,7 @@ Return ONE JSON object, no fences, no prose around it:
   "briefing_markdown": "<full briefing per template>"
 }
 
-Schema discipline: every C candidate listed in the inputs MUST appear in decisions[] exactly once, and decisions[] must contain nothing else — the project candidates in the digest are already decided, and repeating one would double-admit it.`;
+Decide every C candidate exactly once (a missing one fails the pass), and put nothing else in decisions[] — the project candidates in the digest are already decided, and repeating one would double-admit it.`;
 
 /**
  * The briefer's system prompt, with the HIVE soul prepended as voice context.
@@ -418,6 +441,9 @@ export interface ProjectVerifierBlock {
   midSessionCandidates: Candidate[];
   inboxText: string;
   bCandidates: ProjectCandidate[];
+  /** This project's Pass A signal — the sessions, commits, and tickets its
+   * candidates cite. Set only for projects that get a verifier call. */
+  signal?: ProjectSignal;
 }
 
 export interface VerifierInputBundle {
@@ -438,6 +464,21 @@ export function blockHasCandidates(block: ProjectVerifierBlock): boolean {
 
 function fence(value: unknown): string {
   return "```json\n" + JSON.stringify(value, null, 2) + "\n```";
+}
+
+/** The evidence a shard checks citations against, under the same
+ * `topRanked[i]` ids Pass B saw, so a cited exchange can be found by id. */
+function renderProjectSignal(signal: ProjectSignal): string {
+  return fence({
+    git: signal.git,
+    tickets_moved: signal.tickets.moved,
+    exchanges: signal.sessions.topRanked.map((r, i) => ({
+      id: `topRanked[${i}]`,
+      role: r.role,
+      timestamp: r.timestamp,
+      excerpt: r.preview,
+    })),
+  });
 }
 
 /** The per-project verifier prompt: one project's canon and its candidates.
@@ -467,6 +508,11 @@ ${fence({
     decisions: block.canon.decisions,
     questions: block.canon.questions,
   })}
+`);
+
+  sections.push(`## Today's signal for this project (Pass A — what the candidates cite)
+
+${block.signal ? renderProjectSignal(block.signal) : "(no Pass A signal for this project in the window)"}
 `);
 
   sections.push(`## Mid-session candidates (candidates.md, ${block.midSessionCandidates.length})
@@ -538,6 +584,15 @@ export function digestShardDecisions(
       ...(src ? { type: src.type, content: src.content } : {}),
     };
   });
+}
+
+/** The candidate ids a shard is shown, minted exactly as the user content
+ * renders them, so coverage is checked against what the model saw. */
+export function blockCandidateIds(block: ProjectVerifierBlock): string[] {
+  return [
+    ...block.midSessionCandidates.map((_, i) => `candidates.${block.projectId}[${i}]`),
+    ...block.bCandidates.map((_, i) => `B.${block.projectId}[${i}]`),
+  ];
 }
 
 /** The briefer prompt: what happened (conditioning report), what watches and
@@ -681,7 +736,15 @@ export async function loadVerifierBundle(
       ? await serializeProjectCanon(paths, projectId)
       : { projectId, facts: [], conventions: [], decisions: [], questions: [] };
 
-    perProject.push({ projectId, canon, midSessionCandidates: midSession, inboxText, bCandidates });
+    const signal = condition.projects.find((p) => p.projectName === projectId);
+    perProject.push({
+      projectId,
+      canon,
+      midSessionCandidates: midSession,
+      inboxText,
+      bCandidates,
+      ...(hasCandidates && signal ? { signal } : {}),
+    });
   }
 
   // Principles
@@ -714,7 +777,7 @@ export async function callVerifier(
   systemPrompt: string,
   userContent: string,
   caller: ModelCaller = defaultCaller,
-  opts: { label?: string; requireBriefing?: boolean } = {},
+  opts: { label?: string; requireBriefing?: boolean; expectedIds?: string[] } = {},
 ): Promise<VerifierCallResult> {
   const { provider, modelId } = verifierModel();
   assertPromptFits(opts.label ?? "V", systemPrompt, userContent);
@@ -725,6 +788,7 @@ export async function callVerifier(
   if ("error" in validated) {
     throw new Error(`Verifier output failed schema: ${validated.error}\nFirst 400 chars: ${raw.slice(0, 400)}`);
   }
+  if (opts.expectedIds) assertDecisionCoverage(opts.label ?? "V", opts.expectedIds, validated.decisions);
   const usage: UsageDelta & { durationMs: number | null } = {
     provider: response.provider,
     model: response.model,
@@ -902,6 +966,7 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
     const shard = await callVerifier(shardSystem, userContent, opts.caller, {
       label: `V.${block.projectId}`,
       requireBriefing: false,
+      expectedIds: blockCandidateIds(block),
     });
     decisions.push(...shard.output.decisions);
     gaps.push(...shard.output.gaps);
@@ -924,6 +989,7 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   const brief = await callVerifier(briefSystem, briefUser, opts.caller, {
     label: "V.brief",
     requireBriefing: true,
+    expectedIds: bundle.cCandidates.map((_, i) => `C[${i}]`),
   });
   usages.push(brief.usage);
   gaps.push(...brief.output.gaps);

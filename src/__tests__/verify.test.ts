@@ -16,6 +16,7 @@ import {
   digestShardDecisions,
   estimatePromptTokens,
   assertPromptFits,
+  assertDecisionCoverage,
   loadVerifierBundle,
   callVerifier,
   runVerifier,
@@ -266,6 +267,36 @@ describe("validateVerifierOutput", () => {
   });
 });
 
+describe("assertDecisionCoverage", () => {
+  const ids = ["candidates.alpha[0]", "B.alpha[0]"];
+
+  test("passes when every shown candidate is decided exactly once", () => {
+    expect(() =>
+      assertDecisionCoverage("V.alpha", ids, [
+        { candidate_id: "candidates.alpha[0]", action: "accept" },
+        { candidate_id: "B.alpha[0]", action: "reject", reason: "trivial" },
+        { candidate_id: "C[0]", action: "accept" },
+      ]),
+    ).not.toThrow();
+  });
+
+  test("fails the pass on a silently dropped candidate", () => {
+    expect(() =>
+      assertDecisionCoverage("V.alpha", ids, [{ candidate_id: "B.alpha[0]", action: "accept" }]),
+    ).toThrow(/V\.alpha.*undecided: candidates\.alpha\[0\]/);
+  });
+
+  test("fails the pass on a candidate decided twice", () => {
+    expect(() =>
+      assertDecisionCoverage("V.alpha", ids, [
+        { candidate_id: "candidates.alpha[0]", action: "accept" },
+        { candidate_id: "B.alpha[0]", action: "accept" },
+        { candidate_id: "B.alpha[0]", action: "reject", reason: "duplicate" },
+      ]),
+    ).toThrow(/decided more than once: B\.alpha\[0\]/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // User content assembly
 // ---------------------------------------------------------------------------
@@ -334,6 +365,59 @@ describe("buildProjectVerifierUserContent", () => {
     expect(content).not.toContain("bravo");
     expect(content).not.toContain("Conditioning report");
     expect(content).toContain("No briefing.");
+  });
+
+  test("carries the project's Pass A signal under the ids candidates cite", () => {
+    const content = buildProjectVerifierUserContent(
+      "2026-04-26",
+      "",
+      alphaBlock({
+        signal: {
+          projectName: "alpha",
+          projectPath: null,
+          sessions: {
+            sessionCount: 1,
+            exchangeCount: 1,
+            tokenEstimate: 10,
+            topRanked: [
+              {
+                role: "user",
+                preview: "never retry a parse error",
+                timestamp: "2026-04-26T10:00:00Z",
+                source: "claude",
+                sessionId: "s1",
+                signalRank: 1,
+                score: 1,
+                tokenCount: 10,
+                excerptTokenCount: 10,
+                novelty: 1,
+                alwaysInclude: false,
+                truncated: false,
+              },
+            ],
+          },
+          git: {
+            available: true,
+            commits: 1,
+            insertions: 3,
+            deletions: 1,
+            filesChanged: 1,
+            subjects: ["fix: stop retrying parse errors"],
+          },
+          tickets: { moved: [] },
+          inbox: { inboxBytes: 0, findings: 0 },
+        },
+      }),
+    );
+    expect(content).toContain("Today's signal for this project");
+    expect(content).toContain('"id": "topRanked[0]"');
+    expect(content).toContain("never retry a parse error");
+    expect(content).toContain("fix: stop retrying parse errors");
+  });
+
+  test("says so when the project had no Pass A signal", () => {
+    const content = buildProjectVerifierUserContent("2026-04-26", "", alphaBlock());
+    expect(content).toContain("(no Pass A signal for this project in the window)");
   });
 });
 
