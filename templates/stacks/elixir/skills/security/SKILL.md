@@ -13,14 +13,14 @@ paths:
 
 Quick reference for security patterns in Elixir/Phoenix.
 
-## Iron Laws — Never Violate These
+## Rules
 
-1. **VALIDATE AT BOUNDARIES** — Never trust client input. All data through changesets
-2. **NEVER INTERPOLATE USER INPUT** — Use Ecto's `^` operator, never string interpolation
-3. **NO String.to_atom WITH USER INPUT** — Atom exhaustion DoS. Use `to_existing_atom/1`
-4. **AUTHORIZE EVERYWHERE** — Check in contexts AND re-validate in LiveView events
-5. **ESCAPE BY DEFAULT** — Never use `raw/1` with untrusted content
-6. **SECRETS NEVER IN CODE** — All secrets in `runtime.exs` from env vars
+1. **Validate at boundaries** — Never trust client input. All data through changesets
+2. **Never interpolate user input** — Use Ecto's `^` operator, never string interpolation
+3. **No String.to_atom with user input** — Atom exhaustion DoS. Use `to_existing_atom/1`
+4. **Authorize everywhere** — Check in contexts AND re-validate in LiveView events
+5. **Escape by default** — Never use `raw/1` with untrusted content
+6. **Secrets never in code** — All secrets in `runtime.exs` from env vars
 
 ## Quick Patterns
 

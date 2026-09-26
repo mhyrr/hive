@@ -46,14 +46,15 @@ src/db/               schema and queries, the only place they live
 ```sh
 bun test <path> -t "<name>"   # one test by name
 bunx tsc --noEmit             # types only, without a full build
-bun build src/cli.ts --compile --outfile <bin>   # --compile, not --target bun: the latter emits a bundle that only runs under bun
+bunx next build               # production build
 ```
 
 ## Conventions
 
 - Migrations are append-only once merged; a mistake gets a new migration.
-- Server actions take `FormData` and return serializable values — no class
-  instances, no `Date`, nothing that cannot cross the wire.
+- Server actions take `FormData` and return plain serializable values
+  (primitives, plain objects and arrays, `Date`, `Map`/`Set`) — no class
+  instances or functions.
 - Env is read once, in one typed module, never `process.env` in a component.
 - Incidents and gotchas go to HIVE memory, not this file.
 

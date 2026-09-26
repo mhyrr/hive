@@ -13,18 +13,18 @@ paths:
 
 Quick reference for Elixir testing patterns.
 
-## Iron Laws — Never Violate These
+## Rules
 
-1. **ASYNC BY DEFAULT** — Use `async: true` unless tests modify global state
-2. **SANDBOX ISOLATION** — All database tests use Ecto.Adapters.SQL.Sandbox
-3. **MOCK ONLY AT BOUNDARIES** — Never mock database, internal modules, or stdlib
-4. **BEHAVIOURS AS CONTRACTS** — All mocks must implement a defined `@callback` behaviour
-5. **BUILD BY DEFAULT** — Use `build/2` in factories; `insert/2` only when DB needed
-6. **NO `Process.sleep/1` OR `Process.alive?/1`** — `assert_receive` with timeout; `Process.monitor/1` + `:DOWN` to wait on exit; `_ = :sys.get_state(pid)` to sync
-7. **VERIFY_ON_EXIT!** — Always call in Mox tests setup
-8. **FACTORIES MATCH SCHEMA REQUIRED FIELDS** — Factory definitions must include all fields that have `validate_required` in the schema changeset. Missing fields cause cascading test failures
-9. **START PROCESSES WITH `start_supervised!/1`** — never a bare `start_link` in a test. It guarantees cleanup between tests
-10. **SELECT ELEMENTS, NOT HTML** — `element/2` / `has_element?/2` against the DOM ids you put in the template. Never assert on raw HTML strings
+1. **Async by default** — Use `async: true` unless tests modify global state
+2. **Sandbox isolation** — All database tests use Ecto.Adapters.SQL.Sandbox
+3. **Mock only at boundaries** — Never mock database, internal modules, or stdlib
+4. **Behaviours as contracts** — All mocks must implement a defined `@callback` behaviour
+5. **Build by default** — Use `build/2` in factories; `insert/2` only when DB needed
+6. **No `Process.sleep/1` or `Process.alive?/1`** — `assert_receive` with timeout; `Process.monitor/1` + `:DOWN` to wait on exit; `_ = :sys.get_state(pid)` to sync
+7. **`verify_on_exit!`** — Always call in Mox tests setup
+8. **Factories match schema required fields** — Factory definitions must include all fields that have `validate_required` in the schema changeset. Missing fields cause cascading test failures
+9. **Start processes with `start_supervised!/1`** — never a bare `start_link` in a test. It guarantees cleanup between tests
+10. **Select elements, not HTML** — `element/2` / `has_element?/2` against the DOM ids you put in the template. Never assert on raw HTML strings
 
 ## Quick Decisions
 
@@ -81,7 +81,7 @@ setup :verify_on_exit!
 expect(MockAPI, :call, fn _ -> {:ok, "data"} end)
 
 # LiveView async
-html = render_async(view)  # MUST call for assign_async
+html = render_async(view)  # required after assign_async
 ```
 
 ## Common Anti-patterns

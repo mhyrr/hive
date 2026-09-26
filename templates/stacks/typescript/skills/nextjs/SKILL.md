@@ -1,12 +1,11 @@
 ---
 name: nextjs-developer
-description: "Use when building Next.js 14+ applications with App Router, server components, or server actions. Invoke to configure route handlers, implement middleware, set up API routes, add streaming SSR, write generateMetadata for SEO, scaffold loading.tsx/error.tsx boundaries, or deploy to Vercel. Triggers on: Next.js, Next.js 14, App Router, RSC, use server, Server Components, Server Actions, React Server Components, generateMetadata, loading.tsx, Next.js deployment, Vercel, Next.js performance."
+description: "Next.js App Router work — route segments and layouts, Server vs Client Components, Server Actions, route handlers, data fetching and caching, streaming with loading/error boundaries, metadata for SEO, and deployment. Use when editing files under `app/`, `next.config.*`, or Next.js route conventions."
 license: MIT
 metadata:
   author: https://github.com/Jeffallan
   version: "1.1.0"
   domain: frontend
-  triggers: Next.js, Next.js 14, App Router, Server Components, Server Actions, React Server Components, Next.js deployment, Vercel, Next.js performance
   role: specialist
   scope: implementation
   output-format: code
@@ -15,16 +14,7 @@ metadata:
 
 # Next.js Developer
 
-Senior Next.js developer with expertise in Next.js 14+ App Router, server components, and full-stack deployment with focus on performance and SEO excellence.
-
-## Core Workflow
-
-1. **Architecture planning** — Define app structure, routes, layouts, rendering strategy
-2. **Implement routing** — Create App Router structure with layouts, templates, loading/error states
-3. **Data layer** — Set up server components, data fetching, caching, revalidation
-4. **Optimize** — Images, fonts, bundles, streaming, edge runtime
-5. **Deploy** — Production build, environment setup, monitoring
-   - Validate: run `next build` locally, confirm zero type errors, check `NEXT_PUBLIC_*` and server-only env vars are set, run Lighthouse/PageSpeed to confirm Core Web Vitals > 90
+Senior Next.js developer with expertise in the Next.js App Router, server components, and full-stack deployment with focus on performance and SEO excellence.
 
 ## Reference Guide
 
@@ -40,18 +30,11 @@ Load detailed guidance based on context:
 
 ## Constraints
 
-### MUST DO (Next.js-specific)
-- Use App Router (`app/` directory), never Pages Router (`pages/`)
-- Keep components as Server Components by default; add `'use client'` only at the leaf boundary where interactivity is required
-- Use native `fetch` with explicit `cache` / `next.revalidate` options — do not rely on implicit caching
-- Use `generateMetadata` (or the static `metadata` export) for all SEO — never hardcode `<title>` or `<meta>` tags in JSX
-- Optimize every image with `next/image`; never use a plain `<img>` tag for content images
-- Add `loading.tsx` and `error.tsx` at every route segment that performs async data fetching
-
-### MUST NOT DO
-- Convert components to Client Components just to access data — fetch server-side first
-- Skip `loading.tsx`/`error.tsx` boundaries on async route segments
-- Deploy without running `next build` to confirm zero errors
+- New routes go in `app/`. In a codebase still on `pages/`, follow its router unless the task is the migration.
+- Components are Server Components by default; add `'use client'` at the smallest leaf that needs state, effects, or browser APIs. Fetch on the server rather than converting a component to reach data.
+- Set caching explicitly on each `fetch` (`force-cache`, `next: { revalidate }`, or `no-store`); an unmarked fetch is not cached (Next.js 15+).
+- SEO tags come from `metadata`/`generateMetadata`, not hand-written `<title>`/`<meta>`. Content images use `next/image`.
+- Async route segments get a loading state (`loading.tsx` or `<Suspense>`) and an `error.tsx`.
 
 ## Code Examples
 
@@ -118,9 +101,10 @@ export default function NewProductPage() {
 import type { Metadata } from 'next'
 
 export async function generateMetadata(
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ): Promise<Metadata> {
-  const product = await fetchProduct(params.id)
+  const { id } = await params
+  const product = await fetchProduct(id)
   return {
     title: product.name,
     description: product.description,
@@ -128,15 +112,6 @@ export async function generateMetadata(
   }
 }
 ```
-
-## Output Templates
-
-When implementing Next.js features, provide:
-1. App structure (route organization)
-2. Layout/page components with proper data fetching
-3. Server actions if mutations needed
-4. Configuration (`next.config.js`, TypeScript)
-5. Brief explanation of rendering strategy chosen
 
 ## Knowledge Reference
 

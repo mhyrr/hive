@@ -8,7 +8,7 @@ Next.js extends the native fetch with caching and revalidation options:
 // app/page.tsx
 async function getData() {
   const res = await fetch('https://api.example.com/posts', {
-    cache: 'force-cache', // Default: cache forever (SSG)
+    cache: 'force-cache', // opt in: fetch is uncached unless told otherwise (Next.js 15+)
   })
 
   if (!res.ok) {
@@ -29,7 +29,7 @@ export default async function Page() {
 ```tsx
 // 1. Force cache (Static Site Generation)
 fetch('https://api.example.com/data', {
-  cache: 'force-cache' // Default behavior
+  cache: 'force-cache' // opt-in cache (SSG)
 })
 
 // 2. No cache (Server-Side Rendering)
@@ -193,9 +193,10 @@ export default async function Page() {
 
 ```tsx
 // When one fetch depends on another
-export default async function Page({ params }: { params: { id: string } }) {
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   // First fetch
-  const user = await fetch(`https://api.example.com/users/${params.id}`)
+  const user = await fetch(`https://api.example.com/users/${id}`)
     .then(res => res.json())
 
   // Second fetch depends on first
@@ -448,8 +449,9 @@ export async function generateStaticParams() {
   }))
 }
 
-export default async function Post({ params }: { params: { slug: string } }) {
-  const post = await fetch(`https://api.example.com/posts/${params.slug}`)
+export default async function Post({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  const post = await fetch(`https://api.example.com/posts/${slug}`)
     .then(res => res.json())
 
   return (
@@ -473,7 +475,7 @@ export default async function Post({ params }: { params: { slug: string } }) {
 
 ## Best Practices
 
-1. **Default to caching** - Use force-cache for static content
+1. **Opt in to caching** - `force-cache` or `next.revalidate` for static content; an unmarked fetch is not cached
 2. **Use ISR** - Revalidate periodically for semi-dynamic content
 3. **Parallel fetching** - Use Promise.all for independent requests
 4. **Deduplicate** - Use React cache() for repeated calls

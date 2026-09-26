@@ -1,9 +1,9 @@
 # Elixir 1.18 Features Reference
 
 > **Official changelog**: <https://github.com/elixir-lang/elixir/blob/main/CHANGELOG.md>
-> **HexDocs**: <https://hexdocs.pm/elixir/> — Use `hexdocs-fetcher` for latest API docs.
+> **HexDocs**: <https://hexdocs.pm/elixir/>
 
-## Duration Module (Elixir 1.18+)
+## Duration Module (Elixir 1.17+)
 
 Native duration representation without external dependencies.
 
@@ -31,10 +31,10 @@ Duration.add(Duration.new!(hour: 1), Duration.new!(minute: 30))
 #=> %Duration{hour: 1, minute: 30}
 
 # Adding to DateTime/NaiveDateTime
-DateTime.add(DateTime.utc_now(), Duration.new!(hour: 24))
+DateTime.shift(DateTime.utc_now(), hour: 24)
 
 # Subtracting
-DateTime.add(DateTime.utc_now(), Duration.negate(Duration.new!(day: 7)))
+DateTime.shift(DateTime.utc_now(), Duration.negate(Duration.new!(day: 7)))
 ```
 
 ### Duration in Oban Jobs
@@ -45,7 +45,7 @@ defmodule MyApp.Workers.ReminderWorker do
   use Oban.Worker
 
   def schedule_reminder(user_id, delay_duration) do
-    scheduled_at = DateTime.add(DateTime.utc_now(), delay_duration)
+    scheduled_at = DateTime.shift(DateTime.utc_now(), delay_duration)
 
     %{user_id: user_id}
     |> new(scheduled_at: scheduled_at)
@@ -63,16 +63,16 @@ ReminderWorker.schedule_reminder(user.id, Duration.new!(day: 3))
 # With Cachex or similar
 def get_user_with_cache(user_id) do
   Cachex.fetch(:users_cache, user_id,
-    ttl: Duration.to_milliseconds(Duration.new!(hour: 1))
+    ttl: to_timeout(hour: 1)
   )
 end
 
-# Convert to different units
-Duration.to_seconds(Duration.new!(hour: 2))
-#=> 7200
+# Convert to milliseconds (units up to weeks)
+to_timeout(hour: 2)
+#=> 7200000
 
-Duration.to_milliseconds(Duration.new!(minute: 5))
-#=> 300_000
+to_timeout(Duration.new!(minute: 5))
+#=> 300000
 ```
 
 ### Anti-patterns
@@ -82,14 +82,13 @@ Duration.to_milliseconds(Duration.new!(minute: 5))
 Process.send_after(self(), :timeout, 3600_000)  # What unit? Confusing!
 
 # PREFER: Duration makes intent clear
-Process.send_after(self(), :timeout,
-  Duration.to_milliseconds(Duration.new!(hour: 1)))
+Process.send_after(self(), :timeout, to_timeout(hour: 1))
 
 # AVOID: Manual arithmetic
 scheduled_at = DateTime.add(now, 7 * 24 * 60 * 60, :second)
 
 # PREFER: Readable duration
-scheduled_at = DateTime.add(now, Duration.new!(week: 1))
+scheduled_at = DateTime.shift(now, week: 1)
 ```
 
 ## Enhanced dbg/2 (Elixir 1.18+)
@@ -162,6 +161,6 @@ pattern match instead. This avoids unnecessary formatter churn.
 
 ## Compatibility Notes
 
-- Duration requires Elixir 1.18+
-- For projects on 1.17 or earlier, use Timex or manual arithmetic
-- Check version in mix.exs: `{:elixir, "~> 1.18"}`
+- Duration requires Elixir 1.17+
+- For projects on 1.16 or earlier, use Timex or manual arithmetic
+- Check version in mix.exs: `elixir: "~> 1.17"`

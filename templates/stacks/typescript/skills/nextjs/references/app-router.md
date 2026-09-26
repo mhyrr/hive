@@ -201,13 +201,15 @@ export default function Analytics() {
 // but show full page on direct navigation
 
 // app/photos/[id]/page.tsx (full page)
-export default function PhotoPage({ params }: { params: { id: string } }) {
-  return <div>Photo {params.id} - Full Page</div>
+export default async function PhotoPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  return <div>Photo {id} - Full Page</div>
 }
 
 // app/@modal/(.)photos/[id]/page.tsx (modal)
-export default function PhotoModal({ params }: { params: { id: string } }) {
-  return <div>Photo {params.id} - Modal</div>
+export default async function PhotoModal({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  return <div>Photo {id} - Modal</div>
 }
 ```
 
@@ -215,8 +217,9 @@ export default function PhotoModal({ params }: { params: { id: string } }) {
 
 ```tsx
 // app/blog/[slug]/page.tsx
-export default function BlogPost({ params }: { params: { slug: string } }) {
-  return <h1>Post: {params.slug}</h1>
+export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  return <h1>Post: {slug}</h1>
 }
 
 // Generate static params at build time
@@ -240,8 +243,9 @@ export const revalidate = 60
 ```tsx
 // app/docs/[...slug]/page.tsx
 // Matches: /docs/a, /docs/a/b, /docs/a/b/c
-export default function Docs({ params }: { params: { slug: string[] } }) {
-  return <div>Docs: {params.slug.join('/')}</div>
+export default async function Docs({ params }: { params: Promise<{ slug: string[] }> }) {
+  const { slug } = await params
+  return <div>Docs: {slug.join('/')}</div>
 }
 
 // Optional catch-all: [[...slug]]
@@ -268,9 +272,10 @@ export async function POST(request: NextRequest) {
 // Dynamic routes: app/api/users/[id]/route.ts
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await db.user.findUnique({ where: { id: params.id } })
+  const { id } = await params
+  const user = await db.user.findUnique({ where: { id } })
   return NextResponse.json(user)
 }
 ```
@@ -282,9 +287,10 @@ export async function GET(
 import type { Metadata } from 'next'
 
 export async function generateMetadata(
-  { params }: { params: { slug: string } }
+  { params }: { params: Promise<{ slug: string }> }
 ): Promise<Metadata> {
-  const post = await fetchPost(params.slug)
+  const { slug } = await params
+  const post = await fetchPost(slug)
 
   return {
     title: post.title,

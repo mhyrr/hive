@@ -19,7 +19,7 @@ Quick reference for Elixir Oban patterns.
 **Before applying patterns, check for Oban Pro:**
 
 ```bash
-grep -E "oban_pro|oban_web" mix.exs
+grep -E "oban_pro" mix.exs
 grep -r "use Oban.Pro.Worker" lib/
 grep -r "Oban.Pro.Engines.Smart" config/
 ```
@@ -40,15 +40,15 @@ See `references/oban-pro-basics.md` for all patterns and migration guide.
 
 ---
 
-## Iron Laws — Never Violate These
+## Rules
 
-1. **JOBS MUST BE IDEMPOTENT** — Safe to retry. Use idempotency keys for payments
-2. **JOBS MUST STORE IDs, NOT STRUCTS** — JSON serialization. `%{user_id: 1}` not `%{user: %User{}}`
-3. **JOBS MUST HANDLE ALL RETURN VALUES** — `:ok`, `{:error, _}`, `{:cancel, _}`, `{:snooze, _}`
-4. **ARGS USE STRING KEYS** — Pattern match `%{"user_id" => id}` not `%{user_id: id}`
-5. **UNIQUE CONSTRAINTS FOR USER ACTIONS** — Prevent double-click duplicates
-6. **NEVER STORE LARGE DATA IN ARGS** — Store references (IDs, paths), not content
-7. **SMART ENGINE: NEVER USE `attempt` TO LIMIT SNOOZES** — Snooze rolls back attempt counter. Use `meta["snoozed"]` instead. Causes infinite loops
+1. **Jobs must be idempotent** — Safe to retry. Use idempotency keys for payments
+2. **Jobs must store IDs, not structs** — JSON serialization. `%{user_id: 1}` not `%{user: %User{}}`
+3. **Jobs must handle all return values** — `:ok`, `{:error, _}`, `{:cancel, _}`, `{:snooze, _}`
+4. **Args use string keys** — Pattern match `%{"user_id" => id}` not `%{user_id: id}`
+5. **Unique constraints for user actions** — Prevent double-click duplicates
+6. **Never store large data in args** — Store references (IDs, paths), not content
+7. **Smart Engine: never use `attempt` to limit snoozes** — Snooze rolls back attempt counter. Use `meta["snoozed"]` instead. Causes infinite loops
 
 ## Quick Worker Template
 
@@ -85,10 +85,10 @@ end
 
 ### Which Queue?
 
-- **Critical operations** → High concurrency (20+)
-- **Mailers/Webhooks (I/O)** → Medium concurrency (30-50)
-- **CPU-intensive** → Low concurrency (3-5)
-- **External APIs** → Use `dispatch_cooldown` for rate limiting
+- **I/O-bound** (mailers, webhooks) → higher `limit` (30-50)
+- **CPU-bound** → `limit` near core count (3-5)
+- **Critical work** → its own queue so other work can't starve it
+- **External APIs** → `dispatch_cooldown` (or Pro `rate_limit`) to stay under quota
 
 ### Testing Pattern
 

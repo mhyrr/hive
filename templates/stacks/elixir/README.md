@@ -1,7 +1,7 @@
 # Elixir Stack
 
 Opinionated bundle of skills for Elixir / Phoenix / LiveView / Ecto / Oban work.
-Covers Iron Laws, framework patterns, and common pitfalls.
+Covers rules, framework patterns, and common pitfalls.
 
 ## Skills
 

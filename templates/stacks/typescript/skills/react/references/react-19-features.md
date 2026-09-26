@@ -42,16 +42,15 @@ function Theme({ children }: { children: React.ReactNode }) {
 ## useActionState
 
 ```tsx
-'use client';
-import { useActionState } from 'react';
+// actions.ts
+'use server';
 
 interface FormState {
   error?: string;
   success?: boolean;
 }
 
-async function submitAction(prevState: FormState, formData: FormData): Promise<FormState> {
-  'use server';
+export async function submitAction(prevState: FormState, formData: FormData): Promise<FormState> {
   const email = formData.get('email') as string;
 
   try {
@@ -61,6 +60,13 @@ async function submitAction(prevState: FormState, formData: FormData): Promise<F
     return { error: 'Failed to subscribe' };
   }
 }
+```
+
+```tsx
+// NewsletterForm.tsx
+'use client';
+import { useActionState } from 'react';
+import { submitAction } from './actions';
 
 function NewsletterForm() {
   const [state, formAction, isPending] = useActionState(submitAction, {});

@@ -15,14 +15,6 @@ metadata:
 
 # TypeScript Pro
 
-## Core Workflow
-
-1. **Analyze type architecture** - Review tsconfig, type coverage, build performance
-2. **Design type-first APIs** - Create branded types, generics, utility types
-3. **Implement with type safety** - Write type guards, discriminated unions, conditional types; run `tsc --noEmit` to catch type errors before proceeding
-4. **Optimize build** - Configure project references, incremental compilation, tree shaking; re-run `tsc --noEmit` to confirm zero errors after changes
-5. **Test types** - Confirm type coverage with a tool like `type-coverage`; validate that all public APIs have explicit return types; iterate on steps 3–4 until all checks pass
-
 ## Reference Guide
 
 Load detailed guidance based on context:
@@ -90,7 +82,7 @@ type RequireExactlyOne<T, Keys extends keyof T = keyof T> =
   { [K in Keys]-?: Required<Pick<T, K>> & Partial<Record<Exclude<Keys, K>, never>> }[Keys];
 ```
 
-### Recommended tsconfig.json
+### tsconfig.json for a published Node library
 ```json
 {
   "compilerOptions": {
@@ -110,35 +102,14 @@ type RequireExactlyOne<T, Keys extends keyof T = keyof T> =
 }
 ```
 
+Apps built by a bundler (Next.js, Vite) use `"moduleResolution": "bundler"` and `noEmit` instead — see `references/configuration.md` → Framework-Specific Configs.
+
 ## Constraints
 
-### MUST DO
-- Enable strict mode with all compiler flags
-- Use type-first API design
-- Implement branded types for domain modeling
-- Use `satisfies` operator for type validation
-- Create discriminated unions for state machines
-- Use `Annotated` pattern with type predicates
-- Generate declaration files for libraries
-- Optimize for type inference
-
-### MUST NOT DO
-- Use explicit `any` without justification
-- Skip type coverage for public APIs
-- Mix type-only and value imports
-- Disable strict null checks
-- Use `as` assertions without necessity
-- Ignore compiler performance warnings
-- Skip declaration file generation
-- Use enums (prefer const objects with `as const`)
-
-## Output Templates
-
-When implementing TypeScript features, provide:
-1. Type definitions (interfaces, types, generics)
-2. Implementation with type guards
-3. tsconfig configuration if needed
-4. Brief explanation of type design decisions
+- Keep `strict` on. Fix or narrow instead of adding `any` or `as`; one that is genuinely needed gets a comment saying why.
+- Prefer `as const` objects over `enum` (enums emit runtime code).
+- Model state machines as discriminated unions with an exhaustive `never` check.
+- Libraries ship declaration files; applications don't need them.
 
 ## Knowledge Reference
 

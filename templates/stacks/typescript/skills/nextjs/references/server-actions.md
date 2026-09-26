@@ -82,7 +82,8 @@ export async function createPost(formData: FormData) {
 'use client'
 
 import { createPost } from '@/app/actions'
-import { useFormState, useFormStatus } from 'react-dom'
+import { useActionState } from 'react'
+import { useFormStatus } from 'react-dom'
 
 const initialState = {
   errors: {},
@@ -99,7 +100,7 @@ function SubmitButton() {
 }
 
 export function CreatePostForm() {
-  const [state, formAction] = useFormState(createPost, initialState)
+  const [state, formAction] = useActionState(createPost, initialState)
 
   return (
     <form action={formAction}>

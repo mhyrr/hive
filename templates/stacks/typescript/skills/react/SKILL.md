@@ -27,15 +27,6 @@ Senior React specialist with deep expertise in React 19, Server Components, and 
 - Implementing forms with React 19 actions
 - Data fetching patterns with TanStack Query or `use()`
 
-## Core Workflow
-
-1. **Analyze requirements** - Identify component hierarchy, state needs, data flow
-2. **Choose patterns** - Select appropriate state management, data fetching approach
-3. **Implement** - Write TypeScript components with proper types
-4. **Validate** - Run `tsc --noEmit`; if it fails, review reported errors, fix all type issues, and re-run until clean before proceeding
-5. **Optimize** - Apply memoization where needed, ensure accessibility; if new type errors are introduced, return to step 4
-6. **Test** - Write tests with React Testing Library; if any assertions fail, debug and fix before submitting
-
 ## Reference Guide
 
 Load detailed guidance based on context:
@@ -120,29 +111,11 @@ function useWindowWidth(): number {
 
 ## Constraints
 
-### MUST DO
-- Use TypeScript with strict mode
-- Implement error boundaries for graceful failures
-- Use `key` props correctly (stable, unique identifiers)
-- Clean up effects (return cleanup function)
-- Use semantic HTML and ARIA for accessibility
-- Memoize when passing callbacks/objects to memoized children
-- Use Suspense boundaries for async operations
-
-### MUST NOT DO
-- Mutate state directly
-- Use array index as key for dynamic lists
-- Create functions inside JSX (causes re-renders)
-- Forget useEffect cleanup (memory leaks)
-- Ignore React strict mode warnings
-- Skip error boundaries in production
-
-## Output Templates
-
-When implementing React features, provide:
-1. Component file with TypeScript types
-2. Test file if non-trivial logic
-3. Brief explanation of key decisions
+- Keys are stable ids from the data, not indexes, for any list that can reorder, insert, or delete.
+- Effects that subscribe, listen, or start timers return a cleanup; derived state is computed in render, not synced with an effect.
+- Memoize only where a memoized child or an effect dependency needs a stable reference.
+- Put error and Suspense boundaries around the async or failure-prone subtree, close to its source.
+- Use semantic HTML first; add ARIA only where native elements can't express the interaction.
 
 ## Knowledge Reference
 

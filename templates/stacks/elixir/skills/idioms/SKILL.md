@@ -9,38 +9,30 @@ user-invocable: false
 
 Reference for writing idiomatic Elixir code with BEAM-aware patterns.
 
-## Iron Laws — Never Violate These
+## Rules
 
-1. **NO PROCESS WITHOUT A RUNTIME REASON** — Processes model concurrency, state, isolation—NOT code structure
-2. **MESSAGES ARE COPIED** — Keep messages small (except binaries >64 bytes)
-3. **GUARDS USE `and`/`or`/`not`** — Never use short-circuit operators in guards (guards require boolean operands)
-4. **CHANGESETS FOR EXTERNAL DATA** — Use `cast/4` for user input, `change/2` for internal
-5. **RESCUE ONLY FOR EXTERNAL CODE** — Never use rescue for control flow
-6. **NO DYNAMIC ATOM CREATION** — `String.to_atom(user_input)` causes memory leak (atoms aren't GC'd)
-7. **@external_resource FOR COMPILE-TIME FILES** — Modules reading files at compile time MUST declare `@external_resource`
-8. **SUPERVISE ALL LONG-LIVED PROCESSES** — Never bare `GenServer.start_link`/`Agent.start_link` in production. Use supervision trees
-9. **WRAP THIRD-PARTY LIBRARY APIs** — Always facade external deps behind a project-owned module. Enables swapping without touching callers
-10. **NO `IO.inspect` IN COMMITTED CODE** — `dbg/2` while debugging, stripped before commit; `Logger` for anything that should persist
+1. **No process without a runtime reason** — Processes model concurrency, state, isolation—NOT code structure
+2. **Messages are copied** — Keep messages small (except binaries >64 bytes)
+3. **Guards use `and`/`or`/`not`** — Never use short-circuit operators in guards (guards require boolean operands)
+4. **Changesets for external data** — Use `cast/4` for user input, `change/2` for internal
+5. **Rescue only for external code** — Never use rescue for control flow
+6. **No dynamic atom creation** — `String.to_atom(user_input)` causes memory leak (atoms aren't GC'd)
+7. **@external_resource for compile-time files** — Modules reading files at compile time must declare `@external_resource`
+8. **Supervise all long-lived processes** — Never bare `GenServer.start_link`/`Agent.start_link` in production. Use supervision trees
+9. **Wrap external services, not frameworks** — an HTTP API, payment provider, or mailer gets a project-owned module behind a behaviour so it can be swapped and mocked (the testing skill's rules 3-4). Ecto, Phoenix and Oban are used directly
+10. **No `IO.inspect` in committed code** — `dbg/2` while debugging, stripped before commit; `Logger` for anything that should persist
 
-## Language Traps — Invalid Code That Looks Valid
+## Language Traps and Conventions
 
-These compile-fail or silently no-op. Full examples in `references/language-traps.md`.
+These fail to compile, silently do nothing, or break a convention the tooling assumes. Full examples in `references/language-traps.md`.
 
-1. **LISTS HAVE NO ACCESS SYNTAX** — `mylist[i]` is invalid. Use `Enum.at/2`, pattern matching, or `List`
-2. **NEVER REBIND INSIDE `if`/`case`/`cond`** — the block returns a value; bind *that*. `if x do socket = assign(...) end` throws the assign away
+1. **Lists have no access syntax** — `mylist[i]` is invalid. Use `Enum.at/2`, pattern matching, or `List`
+2. **Never rebind inside `if`/`case`/`cond`** — the block returns a value; bind *that*. `if x do socket = assign(...) end` throws the assign away
 3. **NO `else if` / `elsif`** — Elixir has `if/else` only. Use `cond` or `case` for multiple conditions
-4. **ONE MODULE PER FILE** — nested modules cause cyclic deps and compile errors
-5. **STRUCTS HAVE NO ACCESS BEHAVIOUR** — `changeset[:field]` and `user[:email]` are invalid on structs. Use `user.email` or the struct's API (`Ecto.Changeset.get_field/2`)
-6. **PREDICATES END IN `?`, NEVER START WITH `is_`** — `is_` is reserved for guards
-7. **DATE/TIME IS IN THE STDLIB** — `Date`, `Time`, `DateTime`, `Calendar`. Add no dependency for it (only exception: `date_time_parser` for parsing)
-
-## BEAM Architecture (Why Elixir Works This Way)
-
-- **Processes are cheap (2.6KB)** — Spawn liberally for concurrency/isolation
-- **Complete memory isolation** — No shared state, no locks needed
-- **Messages are copied** (except binaries >64 bytes) — Keep messages small
-- **Per-process GC** — No global GC pauses
-- **"Let it crash"** — Supervisors restart to known-good state
+4. **One module per file** — nested modules cause cyclic deps and compile errors
+5. **Structs have no access behaviour** — `changeset[:field]` and `user[:email]` are invalid on structs. Use `user.email` or the struct's API (`Ecto.Changeset.get_field/2`)
+6. **Predicates end in `?`, never start with `is_`** — `is_` is reserved for guards
+7. **Date/time is in the stdlib** — `Date`, `Time`, `DateTime`, `Calendar`. Add no dependency for it (only exception: `date_time_parser` for parsing)
 
 ## Core Principles
 
@@ -48,7 +40,6 @@ These compile-fail or silently no-op. Full examples in `references/language-trap
 2. **Tagged tuples for expected failures** — `{:ok, _}`/`{:error, _}` for expected errors, raise for bugs
 3. **Pipe operator for data transformation** — Start with data, never pipe single calls
 4. **Let it crash** — Handle expected errors, crash on unexpected ones
-5. **Explicit over implicit** — Be clear about intentions
 
 ## Quick Decision Trees
 
@@ -91,9 +82,9 @@ with {:ok, user} <- get_user(id),
   {:ok, order}
 end
 
-# Task for async
-Task.Supervisor.async_nolink(TaskSup, fn -> work() end)
-|> Task.yield(5000) || Task.shutdown(task)
+# Task with a timeout, supervised and unlinked
+task = Task.Supervisor.async_nolink(MyApp.TaskSupervisor, fn -> work() end)
+Task.yield(task, 5000) || Task.shutdown(task)
 ```
 
 ## Common Pitfalls
@@ -101,7 +92,7 @@ Task.Supervisor.async_nolink(TaskSup, fn -> work() end)
 | Wrong | Right |
 |-------|-------|
 | `length(list) == 0` | `list == []` or `Enum.empty?(list)` |
-| `list ++ [item]` | `[item \| list] \|> Enum.reverse()` |
+| `acc ++ [item]` inside a loop/reduce | `[item \| acc]` in the loop, `Enum.reverse/1` once at the end |
 | `String.to_atom(input)` | `String.to_existing_atom(input)` |
 | `spawn(fn -> log(conn) end)` | `ip = conn.ip; spawn(fn -> log(ip) end)` |
 | `unless condition` | `if !condition` (unless deprecated in 1.18) |
@@ -121,4 +112,4 @@ For detailed patterns, see:
 - `references/troubleshooting.md` - Production BEAM debugging (memory, performance, crashes)
 - `references/anti-patterns.md` - Common mistakes and fixes
 - `references/mix-tasks.md` - Mix task naming, option parsing, shell output
-- `references/elixir-118-features.md` - Duration module, dbg improvements (1.18+)
+- `references/elixir-118-features.md` - Duration module (1.17+), dbg improvements

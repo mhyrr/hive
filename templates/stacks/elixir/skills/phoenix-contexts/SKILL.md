@@ -9,12 +9,11 @@ user-invocable: false
 
 Reference for designing and implementing Phoenix contexts (bounded contexts).
 
-## Iron Laws — Never Violate These
+## Rules
 
-1. **CONTEXTS OWN THEIR DATA** — Never query another context's schema directly via Repo
-2. **SCOPES ARE MANDATORY (Phoenix 1.8+)** — Every context function MUST accept scope as first parameter
-3. **THIN CONTROLLERS/LIVEVIEWS** — Controllers translate HTTP, business logic stays in contexts
-4. **NO SIDE EFFECTS IN SCHEMAS** — Use `Ecto.Multi` for transactions with side effects
+1. **Contexts own their data** — Never query another context's schema directly via Repo
+2. **Thin controllers/LiveViews** — Controllers translate HTTP, business logic stays in contexts
+3. **No side effects in schemas** — Use `Ecto.Multi` for transactions with side effects
 
 ## Context Structure
 
@@ -24,24 +23,6 @@ lib/my_app/
 │   ├── user.ex         # Schema
 │   ├── scope.ex        # Scope struct (Phoenix 1.8+)
 ├── accounts.ex         # Context module (public API)
-```
-
-## Phoenix 1.8+ Scopes (CRITICAL)
-
-All context functions MUST accept scope as first parameter:
-
-```elixir
-def list_posts(%Scope{} = scope) do
-  from(p in Post, where: p.user_id == ^scope.user.id)
-  |> Repo.all()
-end
-
-def create_post(%Scope{} = scope, attrs) do
-  %Post{user_id: scope.user.id}
-  |> Post.changeset(attrs)
-  |> Repo.insert()
-  |> broadcast(scope, :created)
-end
 ```
 
 ## Quick Decisions
@@ -92,7 +73,7 @@ your own `alias` for a route definition, or the module prefix is duplicated.
 
 ## Version Notes
 
-- **Phoenix 1.8+**: Uses built-in `%Scope{}` struct for authorization context
+- **Phoenix 1.8+**: `mix phx.gen.auth` generates a `%Scope{}` module (`MyApp.Accounts.Scope`) and the `:scopes` config that later generators use
 - **Phoenix 1.7**: Requires manual authorization context (see `references/scopes-auth.md` "Pre-Scopes Patterns")
 - **`Phoenix.View` is gone** — no longer included with Phoenix or needed. Rendering lives in the `*HTML`/`*JSON` modules (`use MyAppWeb, :html`)
 

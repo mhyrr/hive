@@ -181,9 +181,10 @@ async function getAlbums(artistId: string) {
   return fetch(`https://api.example.com/artists/${artistId}/albums`)
 }
 
-export default async function ArtistPage({ params }: { params: { id: string } }) {
+export default async function ArtistPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   // Sequential: albums depends on artist
-  const artist = await getArtist(params.id)
+  const artist = await getArtist(id)
   const albums = await getAlbums(artist.id)
 
   return (
@@ -278,8 +279,9 @@ export default async function Page() {
 // app/blog/[slug]/page.tsx
 import { LikeButton } from './like-button'
 
-export default async function BlogPost({ params }: { params: { slug: string } }) {
-  const post = await getPost(params.slug)
+export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  const post = await getPost(slug)
 
   return (
     <article>

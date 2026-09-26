@@ -375,8 +375,9 @@ export default async function Page() {
 // app/blog/[slug]/page.tsx
 export const revalidate = 3600 // Revalidate every hour
 
-export default async function BlogPost({ params }: { params: { slug: string } }) {
-  const post = await fetchPost(params.slug)
+export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  const post = await fetchPost(slug)
   return <article>{post.content}</article>
 }
 ```

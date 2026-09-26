@@ -62,7 +62,7 @@ Ecto.Changeset.get_change(changeset, :field) # only if it changed
   needs it: validations only run when a change exists for the field and its
   value is not nil.
 - Validations give fast feedback; only DB constraints are race-free. See
-  "CONSTRAINTS BEAT VALIDATIONS" in the skill's Iron Laws.
+  "CONSTRAINTS BEAT VALIDATIONS" in the skill's Rules.
 
 ## Multiple Changesets per Schema
 

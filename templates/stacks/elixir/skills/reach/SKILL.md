@@ -51,8 +51,6 @@ Then `mix deps.get`. Requires Elixir 1.18+ / OTP 27+.
 
 `TARGET` is either `MyApp.Accounts.create_user/1` or `lib/my_app/accounts.ex:42`.
 
-Task names from Reach 1.x were removed in 2.0 and fail with migration guidance.
-
 ## How to use it as an agent
 
 **Start narrow.** `mix reach.map` prints the whole project and buries the answer.
@@ -118,24 +116,13 @@ Reach.Project.from_sources(paths)      # explicit file list
 Reach.Project.from_glob("lib/**/*.ex")
 ```
 
-## Do not use the JS/TS frontend
+## Elixir and Erlang only
 
-Reach advertises JavaScript and TypeScript support through the optional
-`:quickbeam` dep. Measured on a 156-file Bun/TypeScript codebase (2026-08-21,
-reach 2.8.2 / quickbeam 0.10.20 and 0.11.0):
-
-- 7 files raised `Protocol.UndefinedError` out of `QuickBEAM.Bytecode.from_map/1`.
-  Reach's JS frontend only rescues `ArgumentError`, `ErlangError`, `MatchError`,
-  and `RuntimeError`, so the exception escapes and kills the whole run. One bad
-  file means no output at all.
-- 19 more failed to parse (`import.meta only valid in module code`, syntax errors).
-- On the 130 that did parse, the frontend strips `import`/`export` before
-  compiling, so cross-file calls resolve by bare identifier: real edges like
-  `{:readdir, :catch, 1}` and `{:map, :sort, 0}`. The call graph is name
-  collision noise, not a dependence graph.
-
-Elixir and Erlang are the supported path. For TypeScript, use the language's
-own tooling.
+Reach's optional JS/TS frontend (`:quickbeam`) is not usable: a file it can't
+convert raises an exception Reach doesn't rescue, aborting the whole run, and
+because it strips `import`/`export`, cross-file calls resolve by bare name —
+the call graph is name-collision noise. For TypeScript, use the language's own
+tooling. (Checked against reach 2.8.2 / quickbeam 0.11.0.)
 
 ## Reference
 

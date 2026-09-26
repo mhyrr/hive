@@ -103,7 +103,7 @@ use Oban.Pro.Worker,
   encryption: {MyApp.Vault, :fetch_key, []}
 ```
 
-**Iron Law**: Encryption breaks uniqueness on `args` (encrypted args differ
+**Note**: Encryption breaks uniqueness on `args` (encrypted args differ
 each time). Use `meta` for unique constraints with encrypted workers.
 
 ### Deadlines

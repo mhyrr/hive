@@ -163,6 +163,6 @@ function Search() {
 | Anti-pattern | Fix |
 |--------------|-----|
 | Inline objects | Lift out or useMemo |
-| Inline functions | useCallback |
+| Inline function passed to a memoized child | useCallback |
 | Large bundle | lazy() + Suspense |
 | Long lists | Virtualization |
