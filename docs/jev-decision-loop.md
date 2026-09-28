@@ -229,6 +229,57 @@ the loop repeats.
 3. **Propose.** Decisions surface as one-click suggestions.
 4. **Act.** `hive loop` runs detached within budgets.
 
+## Prior art: Jev in coding harnesses (Sep 2026)
+
+These came from search summaries. The authors' numbers are unverified.
+
+| Pattern | Examples | Decision | Takeaway for HIVE |
+|---|---|---|---|
+| Stop-time "really done?" gate | jev-belay, jev-claude, cc-jev-teacher | 4 yes/no (noul) questions on the transcript since the last prompt; block with a reason if the "done" is unverified | Most mature pattern. jev-belay reports AUROC 0.976. It pre-filters with regex, so only 17.7% of stops reach Jev, and it lets the stop through on any error. |
+| Ralph loop plus a Jev judge | ralph-jev, ralph-jev-gauntlet | On a "done" claim, pass/fail on workspace evidence; a fail feeds the reason into the next fresh iteration | Closest to `hive loop`, but pass/fail only |
+| Next-step choice | jev-mcp `jev_next_step` | `continue / retry / change_approach / ask_user / done` | Closest to our menu. Keeps `done` only if a second completion question is confidently yes; turns `retry` into `change_approach` after N tries |
+| Per-step choice with fan-out | agent-browser loop | Action choice **plus speculative follow-up choices in the same call** | Removes our second call (see below) |
+| Tool-call risk gate | jev-guard, jev-auto-approve, OpenRouter cookbook | `deny / ask / allow` (+ `user_requested`, `from_untrusted`) | The most common use of all. Handle obvious cases in code instead of calling Jev on every tool call |
+| Model / subagent routing | jev-router (×3), jev-claude-code, jev-agent-hooks | Haiku / Sonnet / Opus per turn or subagent | Shadow mode by default (weiping). **Near-duplicate labels split probability** |
+| Compaction | fast-jev-compaction | Keep or drop each tool result | Criticized publicly: judging items one at a time makes agents forget and loop, and it breaks caching. A handoff-based REPROMPT is the safer route |
+| PR / CI / issue triage | jevtriage, CI-failure classes, issue bots | `ready/needs_review/risky`; `real_failure/flaky_test/infrastructure/base_branch/process_check` | Ready-made menus for later sub-decisions |
+
+Nobody found so far uses Jev as a **full lifecycle next-action engine**.
+The existing tools are single gates or a 5-label step choice.
+
+### Design changes from this research
+
+1. **Speculative fan-out in one call.** Send `next_action` together with
+   the follow-up choices that depend on it: `next_ticket` over eligible
+   tickets, `review_kind` (self / subagent / council), `ci_failure_class`.
+   The questions are independent, so each follow-up is phrased with its
+   premise: "*If* the agent moves to another ticket, which one?". HIVE
+   uses only the follow-up that matches the winning action. This is
+   one call, not two.
+2. **Double confirmation for terminal moves, still decided by Jev.**
+   `DONE` / `SHIP` / `NEXT_TICKET` also require a confidently-true
+   `verified_complete` noul in the same call. This is the jev-belay and
+   `jev_next_step` pattern: Jev still makes the call, it just has to
+   agree with itself.
+3. **Tighten the menu.** Near-duplicate options split probability, so
+   the current draft needs trimming. Candidate merges:
+   - CONTINUE + IMPLEMENT
+   - ASK_HUMAN + UNSURE
+   - REVIEW → SIMPLIFY handled as a review follow-up
+   - DONE vs NEXT_TICKET decided by whether ready tickets exist
+
+   Aim for ~8 sharply distinct options.
+4. **Expect lots of escalation at first.** In a 149-row comparison with
+   Haiku, Jev triggered escalation on 34.7% of rows against 2.7% for
+   Haiku. Shadow mode is how to tune the thresholds.
+5. **One hook for two harnesses.** Codex Stop and PostToolUse hooks take
+   the same input and output shapes as Claude Code's, so the Stop hook
+   can serve both.
+6. **Cheapest first milestone:** a jev-belay-style "verified done?" Stop
+   gate in HIVE. It's small, proven, and exercises the whole path
+   (transcript → state → Jev → block with a reason) before building the
+   full menu.
+
 ## Module sketch
 
 | New | Role |
