@@ -44,6 +44,8 @@ the available tools and outputs.
 The research used search summaries only, because docs fetches were
 blocked. **Verify these points against docs.typesafe.ai before building.**
 
+- **Access:** through OpenRouter with a normal OpenRouter API key (the
+  obvious path), or TypeSafe's own waitlisted API.
 - `POST /v1/systemone` takes a `state` and a dict of typed `questions`.
 - **Choice question:** `instructions` (string or object) plus an option map
   `{ KEY: "description / rubric" }`, with up to 255 options. **Option
@@ -284,7 +286,7 @@ The existing tools are single gates or a 5-label step choice.
 
 | New | Role |
 |---|---|
-| `src/lib/jev.ts` | HTTP driver (fetch, like `callOllama`), `TYPESAFE_API_KEY` |
+| `src/lib/jev.ts` | HTTP driver (fetch, like `callOllama`); OpenRouter by default (`OPENROUTER_API_KEY`), optional direct TypeSafe (`TYPESAFE_API_KEY`) |
 | `src/lib/decide-state.ts` | Builds the state object from `transcript.ts`, git, ticket, plan, and memory |
 | `src/lib/decider.ts` | Loads the option menu, calls Jev, applies the confidence gate, logs |
 | `src/lib/decide-actions.ts` | The dispatch table: one executor per choice |
@@ -294,10 +296,14 @@ The existing tools are single gates or a 5-label step choice.
 
 ## Open questions
 
-- **Access.** Early access is waitlisted. Is there a key? The loop could
-  be prototyped with a Claude JSON call standing in for Jev behind the
-  same interface, but the point is Jev's cost and latency, so the real
-  test needs the real thing.
+- **Access: settled. Go through OpenRouter.** Direct TypeSafe access is
+  waitlisted, but Jev is available on OpenRouter with an ordinary
+  OpenRouter key (OpenRouter's cookbook even has a Jev auto-approve
+  recipe). The driver targets OpenRouter first; direct
+  `api.typesafe.ai` is an optional second endpoint behind the same
+  interface. Still to confirm: whether OpenRouter passes the native
+  typed `state`/`questions` request and `probabilities` response through
+  unchanged, or wraps Jev in its chat-completions shape.
 - **Menu granularity.** Is it one flat menu, or a menu that changes with
   phase (e.g. no SHIP offered while the plan is unfinished)? A flat menu
   is simpler and lets Jev see everything. Phase-filtered is safer, but
