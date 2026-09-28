@@ -1,287 +1,258 @@
 # Jev Decision Loop — design brainstorm
 
-Status: **exploration / spitball**. Nothing here is built. Written 2026-09-28.
+Status: **exploration / spitball**. Nothing here is built.
+Revision 2 (2026-09-28): Jev is **the** decision engine. Revision 1 treated
+it as a signal source under a HIVE rule layer, which had the relationship
+backwards.
 
-## The gap
-
-Every harness HIVE wraps (Claude Code, Codex, Pi, Cursor) has the same
-loop: model → tools → model → … → *stop*. "Stop" is where the human
-re-enters and makes the decision the agent can't: *now what?* Review it?
-Ship it? It went sideways, redesign? Context is bloated, start fresh? Pick
-the next ticket?
-
-HIVE already has pieces of an autonomous outer loop:
-
-- `docs/ralph-loop.md`: many short, fresh-context sessions ("context is a
-  cache, not state").
-- Watch Act (`watch-run.ts` → `act-run.ts`): picks a ticket, runs a detached
-  `claude` in a worktree, then grades the exit with shell heuristics
-  (commits + `plan.md` checkboxes → `review_ready|blocked|partial|failed`).
-- `next.json` + `checkNextAvailability`: deterministic ticket eligibility.
-
-What's missing is a **cheap, fast, typed decision at every stop point**.
-That is exactly the shape of Jev.
-
-## What Jev is (as far as we know)
-
-The research below comes from search summaries only. Direct fetches were
-blocked, so **verify these figures against docs.typesafe.ai before building.**
-
-- TypeSafe AI's "System One" model. Launched Sep 15 2026 in waitlisted
-  early access. Endpoint: `POST https://api.typesafe.ai/v1/systemone`,
-  model `jev-latest`.
-- Input: a `state` (text/JSON) plus a dict of named, typed `questions`:
-  - `choice`: pick one of ≤255 options you define.
-  - `noul`: a probability that a statement is true.
-  - `score`: a rubric scale.
-- Output: answers, probabilities, and confidence. **No rationale, no text
-  generation.**
-- 64k tokens total (state + all questions); 32k for state + the longest
-  question. Irrelevant state hurts accuracy.
-- ~70–500 ms per call; ~$0.04 per 1M input tokens, output free. A 30k-token
-  decision costs about a tenth of a cent, so it's cheap enough to call on
-  every turn.
-- Known weaknesses:
-  - One hard question scores worse than Haiku.
-  - **Decomposing it into several narrow questions and combining them with
-    fitted weights beats it by a lot.**
-  - Choice answers are overconfident.
-  - It reads text literally.
-  - It is weak against prompt injection.
-
-## Core design principle: Jev is a sensor, HIVE is the policy
-
-Don't ask Jev one giant question ("what should we do next?") and obey it.
-Instead:
-
-1. **Deterministic signals first.** HIVE computes what is simply a fact:
-   - context-window fill (from transcript `usage`);
-   - iterations and cost so far;
-   - git dirty/clean, commits since start, diff size;
-   - last test/lint exit code;
-   - PRD checkbox count;
-   - ticket state.
-
-   Never ask a model for something you can measure.
-2. **Jev answers narrow semantic questions**, mostly `noul`, about the
-   transcript tail. Examples:
-   - "Did the agent claim the task is complete?"
-   - "Is there evidence tests were run after the last code change?"
-   - "Is the agent repeating a failed approach?"
-   - "Did the agent express uncertainty about the design?"
-   - "Is the agent blocked on information only a human has?"
-   - "Did the work drift outside the ticket's scope?"
-3. **Jev also casts one `choice` vote** over the action set. That vote is
-   a feature, not a command.
-4. **A small HIVE policy** (a decision table first, fitted weights later)
-   combines 1–3 into an action. The policy enforces legal transitions and
-   budgets, and escalates when confidence is low.
-
-This follows the decomposition finding. It makes decisions explainable,
-even though Jev gives no rationale: the log shows which signals fired. It
-also keeps the provider swappable. A `Decider` interface can have a Jev
-backend and a Haiku-with-JSON backend for users without Jev access.
-
-## The action vocabulary
-
-A lifecycle state machine, not a flat list. Jev's `choice` options are
-**filtered to the legal transitions from the current phase**, which Jev
-supports because options are defined per call.
-
-| Action | Meaning | What HIVE does |
-|---|---|---|
-| `CONTINUE` | Not done; the plan is still valid | Inject "continue; next unchecked item is X" |
-| `DESIGN` | No plan yet, or the approach is failing | Inject a planning prompt; write `plan.md` before code |
-| `IMPLEMENT` | Design is settled | Inject "implement plan step N" |
-| `VERIFY` | Claimed done without evidence | Inject "run tests/lint/typecheck and show output" |
-| `FIX` | Checks are red | Inject the failure output plus "fix root cause" |
-| `REVIEW` | Green, not yet reviewed | Run `/code-review` or a reviewer subagent, or a council call |
-| `SIMPLIFY` | Review found cruft or the diff is bloated | Inject `/simplify` |
-| `SHIP` | Green and reviewed | Commit, push, open PR (gated by autonomy) |
-| `REPROMPT` | Context heavy at a natural checkpoint | Handoff → fresh session (see below) |
-| `NEXT_TICKET` | Ticket done and shipped | Close ticket; pick the next one (see below) |
-| `ASK_HUMAN` | Ambiguous, risky, low confidence, or stuck | Stop and surface why (inbox/notification) |
-| `DONE` | Nothing left to do | Stop normally |
-
-Legal-transition sketch:
+## The idea in one picture
 
 ```
-DESIGN → IMPLEMENT → VERIFY ⇄ FIX → REVIEW → (SIMPLIFY → VERIFY)* → SHIP → NEXT_TICKET
-   ↑___________ DESIGN (thrashing detected) ____________|
-Any phase → REPROMPT | ASK_HUMAN | CONTINUE
+            ┌──────────────── HIVE ────────────────┐
+ session ──▶│ assemble STATE (facts only)           │
+ ticket  ──▶│   goal, plan, transcript tail,        │
+ git     ──▶│   repo/test facts, context %, history │
+ memory  ──▶│                                       │
+            └───────────────┬───────────────────────┘
+                            ▼
+            ┌──────────────── JEV ─────────────────┐
+            │ question: next_action (choice)        │
+            │ options:  REPROMPT, IMPLEMENT, FIX,   │
+            │           REVIEW, SHIP, … , UNSURE    │
+            └───────────────┬───────────────────────┘
+                            ▼
+      { choice: "REVIEW", confidence: .93,
+        probabilities: { REVIEW:.81, FIX:.07, SHIP:.05, … } }
+                            ▼
+            ┌──────────────── HIVE ────────────────┐
+            │ dispatch[choice](): carry on the work │
+            └───────────────────────────────────────┘
 ```
 
-Deterministic overrides take precedence over Jev's vote:
+HIVE gathers context and executes. Jev decides. Jev's output is a
+probability distribution over a fixed menu of next moves, and nothing
+more.
 
-- Tests red → never `SHIP`.
-- Budget exhausted → `ASK_HUMAN`.
-- The same action 3× with no diff change → `DESIGN` or `ASK_HUMAN`.
+This matches TypeSafe's own guidance: *"Keep facts in state and judgments
+in questions."* All of HIVE's accumulated context is the facts, and "what
+next?" is the judgment. It is also how Pydantic AI's `TypeSafeModel`
+already uses Jev inside an agent loop: each step is one route choice over
+the available tools and outputs.
 
-## Two ways in (your "two kinds")
+## What Jev gives us
 
-### Kind 1 — agent-initiated: "I don't know what to do"
+The research used search summaries only, because docs fetches were
+blocked. **Verify these points against docs.typesafe.ai before building.**
 
-A new MCP tool, `decide_next`, in `src/mcp-server.ts`. The agent calls it
-when it is uncertain. HIVE builds the state from the session transcript
-plus ticket plus git, asks Jev, applies the policy, and returns the action
-plus the instruction text. It is cheap enough that the tool description can
-say "call this whenever you're about to ask the user what to do next."
+- `POST /v1/systemone` takes a `state` and a dict of typed `questions`.
+- **Choice question:** `instructions` (string or object) plus an option map
+  `{ KEY: "description / rubric" }`, with up to 255 options. **Option
+  descriptions are the main tuning knob.** There's no few-shot or
+  fine-tuning, so the definitions are where HIVE's taste lives.
+- **State:** a string, object, or array. TypeSafe recommends an object with
+  descriptive keys, referenced by name (in backticks) from the
+  instructions.
+- **Answer:** `choice`, `confidence` (a separate axis: "should I act on
+  this?"), and the full `probabilities` map. There is no rationale.
+- Limits: 32k tokens for state plus the longest question (the one that
+  bites) and 64k total.
+- Speed and cost: ~70–500 ms, ~$0.04 per 1M input tokens, output free.
+  One decision on a full 30k state costs about a tenth of a cent.
+- **Multiple questions** in one request share one forward pass, so they
+  are nearly free, but they are **independent**: one can't condition on
+  another's answer. Dependent decisions need a second call.
+- **It never abstains on its own.** Without an "other/unsure" option it
+  forces a pick. Always include one.
+- **Known quirk:** Pydantic AI found Jev tends to re-pick a route whose
+  result is already in the history. Our state design has to account for
+  this (see Decision history below).
 
-### Kind 2 — stop-triggered: "don't stop, decide"
+## The decision call
 
-Two mechanisms, because each harness exposes a different surface.
+### Question
 
-**A. In-session hook (keeps the conversation alive).**
+```jsonc
+{
+  "next_action": {
+    "type": "choice",
+    "instructions": "An autonomous coding agent working on `goal` has just reached a stopping point. Given `plan`, `session_tail`, `repo`, `metrics` and `decision_history`, choose what the agent should do next.",
+    "options": {
+      "CONTINUE":   "The current plan step is partly done and the agent was interrupted or stopped early; keep going on the same step.",
+      "DESIGN":     "There is no concrete plan yet, OR the approach has failed repeatedly, OR the agent voiced doubt about the architecture. Stop coding and produce/redo a plan.",
+      "IMPLEMENT":  "A plan exists and has unchecked steps; the next step is clear and not started.",
+      "VERIFY":     "Code changed since tests/lint/typecheck last ran, or the agent claimed success without showing passing output.",
+      "FIX":        "The most recent checks failed or an error is unresolved.",
+      "REVIEW":     "Checks pass on the latest change and the diff has not been reviewed yet.",
+      "SIMPLIFY":   "A review happened and flagged duplication, dead code, or over-engineering that hasn't been addressed.",
+      "SHIP":       "Checks pass, review is done and addressed, and the plan is complete; commit, push, open PR.",
+      "REPROMPT":   "Context is heavily used (see `metrics.context_used_pct`) and the work is at a clean checkpoint; hand off and start a fresh session.",
+      "NEXT_TICKET":"The ticket in `goal` is shipped or closed; move on to other work.",
+      "ASK_HUMAN":  "Progress requires a decision, credential, or information only the human has, or the agent is going in circles.",
+      "DONE":       "Everything requested is finished and nothing further is warranted.",
+      "UNSURE":     "The state does not clearly support any option above."
+    }
+  }
+}
+```
 
-- **Claude Code:** a `Stop` hook, installed by `hive init` next to the
-  existing SessionStart/PostCompact wiring (`init.ts:196`).
-  - The hook reads `transcript_path` from stdin and runs
-    `hive decide --hook claude-stop`.
-  - To keep going, it returns `{"decision":"block","reason":"<instruction>"}`.
-    Claude treats the reason as its next instruction.
-  - Guarded by `stop_hook_active` and a per-session budget file in
-    `~/.hive/sessions/<id>/decisions.jsonl`.
-- **Codex:** `hooks.json` already supports `Stop` (`codex-wire.ts:7`); add it
-  in `installCodexIdentityHook`.
-- **Pi:** add a turn-end/stop handler to the generated extension
-  (`cli.ts:147`).
-- **Cursor:** no hook surface, so the only option is B.
-- Only active when HIVE launched the session (`HIVE_IDENTITY_IN_PROMPT` is
-  already the tell), and only when the loop is opted in (`hive --loop`).
-  Otherwise the hook exits 0 and nothing changes.
+The menu is a first draft and will evolve; the option text *is* the
+design. Tuning is done by editing descriptions, which is a HIVE-level
+artifact (`~/.hive/decider/options.md`). That lets taste and memory shape
+it over time.
 
-**B. Driver loop, `hive loop` (harness-agnostic; can clear context).**
+### State
 
-This turns `ralph-loop.md` from a guide into a command. HIVE runs the
-harness headless, one episode at a time:
+A single object that fits the 32k budget. Facts only, no judgments:
 
-- `claude -p --output-format stream-json`
-- `codex exec`
-- `pi -p`
-- `cursor-agent -p`
+```jsonc
+{
+  "goal":            "TK-142: add rate limiting to auth endpoints\n<ticket body>",
+  "plan":            "- [x] middleware\n- [x] tests\n- [ ] docs",   // plan.md, if any
+  "session_tail":    [ /* last N assistant msgs + tool results, newest last, truncated */ ],
+  "repo": {
+    "branch": "hive/act/…", "dirty": true, "diff_stat": "4 files, +120 −8",
+    "commits_since_start": 3,
+    "last_check": { "cmd": "bun test", "exit": 0, "ran_after_last_edit": true, "tail": "…" }
+  },
+  "metrics": { "context_used_pct": 62, "turns": 41, "elapsed_min": 38 },
+  "decision_history": [ { "action": "IMPLEMENT", "at_turn": 12 }, { "action": "VERIFY", "at_turn": 30 } ],
+  "project_conventions": "<short excerpt from HIVE project memory>"
+}
+```
 
-Between episodes it calls the decider and then either:
+- Deterministic values such as `context_used_pct` (from transcript
+  `usage`), test exit codes, and diff stats go **into the state as
+  facts**. Jev weighs them; HIVE doesn't pre-decide from them.
+- **Decision history** is in the state so Jev can see "we already reviewed
+  once." It also counters the re-pick quirk: the option descriptions are
+  phrased as preconditions ("…and the diff has not been reviewed yet"), so
+  a completed action no longer matches.
+- The transcript tail is where most of the budget goes. Newest messages
+  win, and tool output gets truncated harder than assistant prose.
 
-- **resumes** the same session with the injected instruction
-  (`claude --resume <id> -p "<instr>"`);
-- starts a **fresh** session with a handoff prompt (`REPROMPT`);
-- **switches ticket** (`NEXT_TICKET`); or
-- **stops** (`ASK_HUMAN` / `DONE`).
+### Reading the answer
 
-This is the only way to do a true "clear and continue," and it works the
-same across all four harnesses. The Watch Act executor (`act-run.ts`) is
-essentially one episode of this already. `hive loop` generalizes it and
-replaces the post-exit shell grading with the decider.
+The distribution is the decision; HIVE only decides whether to trust it:
 
-Recommendation: build **B first**. It covers every harness, supports
-REPROMPT, and runs detached (the "human out" goal). Add A for Claude
-afterwards, as the interactive "keep going while I watch" mode.
+- `confidence` ≥ threshold and top-2 margin ≥ threshold → **dispatch the
+  choice.**
+- Otherwise, or if the choice is `UNSURE` → treat it as `ASK_HUMAN`. The
+  notification includes the top-3 probabilities: "Jev is torn:
+  REVIEW 0.48 / FIX 0.41."
 
-## REPROMPT: the context-reset move
+The thresholds start conservative, because choice confidence was measured
+as overconfident, and get tuned from logs.
 
-- **Trigger:**
-  - context fill > ~50% (deterministic, from transcript `usage`) **AND**
-  - Jev `noul("agent is at a natural checkpoint: no half-finished edit,
-    no pending tool result")` > threshold.
+## What HIVE does with each choice
 
-  Measure, then let Jev pick the *moment*.
-- **Who writes the handoff:** the agent itself, because it has the context
-  and Jev can't generate text. HIVE injects: "Write a handoff to
-  `~/.hive/sessions/<id>/handoff.md`: goal, what's done (with commit
-  SHAs), what's next, dead ends to avoid, open questions. Then stop."
-- **Relaunch:** HIVE starts a fresh episode with identity, the ticket, the
-  handoff, and `plan.md`. The PRD and git carry the state; the handoff
-  carries the *judgment* ("don't try X again").
-- Bonus: handoffs are high-signal input for the nightly memory pipeline
-  (dead ends → reflections).
+Each executor is a small function. "Inject" means HIVE feeds the next
+instruction into the running session; "restart" means a fresh session.
 
-## NEXT_TICKET: Jev as reranker
+| Choice | HIVE carries on by… |
+|---|---|
+| CONTINUE | Inject "continue the current step" |
+| DESIGN | Inject a planning prompt: write/replace `plan.md`, no code yet |
+| IMPLEMENT | Inject "implement the next unchecked plan step" |
+| VERIFY | Inject "run the project's checks and show the output" |
+| FIX | Inject the failing output with "find and fix the root cause" |
+| REVIEW | Inject `/code-review`, or run a reviewer/council pass and inject its findings |
+| SIMPLIFY | Inject `/simplify` |
+| SHIP | Commit, push, and open a PR, gated by HIVE autonomy (`propose` → inbox item instead) |
+| REPROMPT | Inject "write a handoff to `…/handoff.md`", then **restart** with identity + goal + plan + handoff |
+| NEXT_TICKET | Close the ticket, make a **second Jev call** to pick the ticket (below), then **restart** on it |
+| ASK_HUMAN / UNSURE | Stop and notify with the distribution and the state snapshot |
+| DONE | Stop |
 
-1. The candidate set comes from `checkNextAvailability` / `getReadyTickets`.
-   This deterministic filter stays; Jev never sees ineligible tickets.
-2. Jev ranks the survivors. There are two options:
-   - a single `choice` over ticket IDs (≤255), with state = "what we just
-     did" + ticket titles/bodies; or
-   - a per-ticket `noul("this ticket is a natural continuation of the
-     work just completed")` alongside `score(priority/unblock value)`, used
-     as a rerank.
+After every executor finishes, the session reaches its next stop, and
+the loop repeats.
 
-   The per-ticket form is more robust and parallelizes in one call.
-3. The result is written to `next.json` with `sourceWatch: "decider"`, and
-   the existing disposition model applies: `recommended` under `propose`
-   autonomy, `started` under `act`.
-4. Watch Act's model call for selection could switch to this too. It's
-   ~1000× cheaper, so the hourly watch could become per-event.
+### Follow-up calls (because questions are independent)
 
-## State building: fit 32k tokens, keep it relevant
+- **NEXT_TICKET → which ticket.** This is a second call.
+  - State: what was just finished, plus the eligible tickets, filtered by
+    `checkNextAvailability` (id, title, first lines of the body).
+  - Question: `choice` over the ticket IDs (up to 255), with the ticket
+    summaries as option descriptions.
+  - The result goes to `next.json`, where the existing
+    recommended/started disposition applies.
+- Any other "which one" pick after an action works the same way. For
+  example: which reviewer to use, or whether to send a REVIEW to council.
 
-"As much context as possible" is the wrong target, because Jev degrades
-with irrelevant state. The builder (`decide-state.ts`, reusing
-`transcript.ts` parsers + `sessions.ts` redaction) assembles:
+## Where the call happens (your two kinds)
 
-- the ticket title and body, plus `plan.md` with checkbox state;
-- deterministic facts as a compact JSON block;
-- the last N assistant messages and tool results, newest first, truncated
-  to the budget;
-- `git diff --stat` and the last test output tail;
-- the decision history for this session (last 5 actions), for anti-loop
-  context.
+1. **"I don't know what to do"**: an MCP tool, `decide_next`. The agent
+   calls it itself. HIVE builds the state from that session's transcript,
+   runs the Jev call, and returns the choice plus the executor's
+   instruction text.
+2. **"I'm about to stop"**: every stop triggers a decision.
+   - **`hive loop` (build first).** It runs the harness headless, one
+     episode at a time: `claude -p`, `codex exec`, `pi -p`,
+     `cursor-agent -p`. At each episode end it calls Jev, then either
+     resumes with the injected instruction or restarts fresh (REPROMPT,
+     NEXT_TICKET). This works for every harness, is the only way to
+     actually clear context, and generalizes the Watch Act executor
+     (`act-run.ts`), whose shell-heuristic grading Jev replaces.
+   - **In-session Stop hook (interactive mode).** A Claude Code `Stop` hook
+     returns `{"decision":"block","reason":"<executor instruction>"}` so
+     the session keeps going. Codex's `Stop` hook and a Pi extension
+     handler work the same way. Actions that need a restart end the
+     session and hand off to `hive loop`. This is opt-in, only for
+     sessions HIVE launched.
 
-## Safety rails
+## Guardrails (around the loop, not around Jev's judgment)
 
-- **Budgets:** max decisions, max wall-clock, max cost per loop; each
-  ends in `ASK_HUMAN`.
-- **Autonomy ceiling:** reuse `watches.max_autonomy`. `SHIP` and
-  `NEXT_TICKET`-start need `act`; under `propose` they become inbox
-  items.
-- **Confidence floor:** Jev's choice answers are overconfident, so the
-  threshold should be high and the decision should require agreement
-  between the vote and the policy. Disagreement → `ASK_HUMAN`.
-- **Injection:** the state contains tool output (web pages, file contents).
-  The action set is closed, and no action is destructive on its own; SHIP
-  goes through existing gates. The worst case is a wasted iteration.
-- **Fail closed to a human:** if Jev is down, a decision times out, or the
-  key is missing, the stop simply happens. No silent fallback to another
-  provider (same ethos as the Auth section of CLAUDE.md). Haiku as a
-  backend is an explicit config choice, not an automatic fallback.
-- **Audit:** every decision goes to `decisions.jsonl` with state hash,
-  signals, Jev answers, policy verdict, and action. This compensates for
-  Jev having no rationale.
+- **Budgets:** max decisions, max wall-clock, and max spend per loop.
+  Hitting one means stop and notify.
+- **Autonomy ceiling:** reuse `watches.max_autonomy`. SHIP and
+  starting the next ticket need `act`.
+- **Hard authorization:** Jev picks the action, but irreversible side
+  effects (push, PR, ticket close) still go through HIVE's existing gates.
+  TypeSafe's own guidance is that authorization rules apply whatever the
+  probability says.
+- **Fail closed:** if Jev is unreachable, the key is missing, or the
+  response is malformed, the session stops normally and you're notified.
+  No silent fallback to another model (the Auth ethos in CLAUDE.md).
+- **Audit:** `~/.hive/sessions/<id>/decisions.jsonl` records the state
+  hash, the full distribution, confidence, the action taken, and the
+  outcome.
 
-## Rollout: shadow → propose → act
+## Rollout
 
-1. **Shadow.** The Stop hook calls the decider and logs, but always allows
-   the stop. The dashboard shows "Jev would have said: REVIEW (0.91)". You
-   thumbs-up/down it; that is the labelled dataset.
-2. **Fit.** Once there are a few hundred labels, fit per-signal weights
-   (a logistic regression over the `noul` features). This is the
-   decomposition trick that took the reported phishing benchmark from 63%
-   to 95%. It could run in the nightly pipeline.
-3. **Propose.** Decisions become suggestions in the inbox or on the
-   dashboard.
-4. **Act.** `hive loop` executes them within budgets.
+1. **Shadow.** The Stop hook calls Jev on your normal interactive
+   sessions and logs "Jev would pick REVIEW (0.81)" without acting. The
+   dashboard lets you mark each one right or wrong, or give the right
+   answer.
+2. **Tune.** Where Jev is wrong, rewrite option descriptions and state
+   shape. There are no weights to train; the menu *is* the model's
+   configuration. A nightly pass could suggest description edits from
+   the disagreements.
+3. **Propose.** Decisions surface as one-click suggestions.
+4. **Act.** `hive loop` runs detached within budgets.
 
-## Rough module map
+## Module sketch
 
 | New | Role |
 |---|---|
-| `src/lib/jev.ts` | HTTP driver (fetch, like `callOllama`); `TYPESAFE_API_KEY` |
-| `src/lib/decider.ts` | `Decider` interface; Jev + Claude-JSON backends; question battery; policy table |
-| `src/lib/decide-state.ts` | State builder from transcript / git / ticket / plan |
-| `src/commands/decide.ts` | `hive decide [--hook claude-stop\|codex-stop] [--session <id>]` |
-| `src/commands/loop.ts` | `hive loop [--ticket TK-N] [-x\|-3\|-a]` episode driver |
+| `src/lib/jev.ts` | HTTP driver (fetch, like `callOllama`), `TYPESAFE_API_KEY` |
+| `src/lib/decide-state.ts` | Builds the state object from `transcript.ts`, git, ticket, plan, and memory |
+| `src/lib/decider.ts` | Loads the option menu, calls Jev, applies the confidence gate, logs |
+| `src/lib/decide-actions.ts` | The dispatch table: one executor per choice |
+| `src/commands/loop.ts` | `hive loop [--ticket TK-N] [-x\|-3\|-a]` |
+| `src/commands/decide.ts` | `hive decide --hook claude-stop` (and shadow mode) |
 | `mcp-server.ts` | `decide_next` tool |
-| `init.ts` / `codex-wire.ts` / Pi extension | Stop-hook wiring (opt-in) |
 
 ## Open questions
 
-- **Access:** is there a TypeSafe early-access key? If not, prototype the
-  whole loop on the Haiku backend. The policy and signals are the real IP;
-  Jev is a cost/latency upgrade.
-- Should `REVIEW` route to a council (multi-model) review when the diff is
-  large? That's cheap to decide, expensive to run.
-- One decider per loop, or should the Watch system own it (a "session
-  watch" with scope `transcripts` firing on stop events rather than a
-  cadence)? This would fold the design into existing concepts nicely.
-- The action vocabulary above is a first guess. Shadow-mode logs will show
-  which labels you actually reach for.
+- **Access.** Early access is waitlisted. Is there a key? The loop could
+  be prototyped with a Claude JSON call standing in for Jev behind the
+  same interface, but the point is Jev's cost and latency, so the real
+  test needs the real thing.
+- **Menu granularity.** Is it one flat menu, or a menu that changes with
+  phase (e.g. no SHIP offered while the plan is unfinished)? A flat menu
+  is simpler and lets Jev see everything. Phase-filtered is safer, but
+  that puts HIVE judgment back into the loop.
+- **Should REVIEW be its own sub-decision** (self-review vs. subagent vs.
+  council)? That would be a second choice call when REVIEW wins.
+- **Should the session-level loop be a Watch?** A "session watch" whose
+  venue is a Jev decision and whose trigger is a stop event would fold
+  this into existing concepts.
