@@ -1,0 +1,9 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00013",
+    "text": "release 1.4.0 deployed to prod. dashboards nominal. changelog: recurring availability rules, clinic CSV import.",
+    "ts": "1747149900.000000",
+    "thread_ts": "1747068000.000000"
+  }
+]

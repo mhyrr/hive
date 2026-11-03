@@ -1,0 +1,15 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "Pitch: migrate the test runner to Vitest. It's 3x faster on my machine and the mocks are saner.",
+    "ts": "1745323380.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "Tempting, but parking this until after 1.5 — a test-runner migration mid-release-crunch is how we end up starring in our own postmortem. Bring it back in June.",
+    "ts": "1745324100.000000",
+    "thread_ts": "1745323380.000000"
+  }
+]

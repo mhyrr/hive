@@ -1,0 +1,15 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00005",
+    "text": "npm install took 4m40s on CI just now. I'm switching the repo to pnpm today unless someone objects before EOD.",
+    "ts": "1737453480.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "+1, no objection. workspace file too please",
+    "ts": "1737453780.000000",
+    "thread_ts": "1737453480.000000"
+  }
+]

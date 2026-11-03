@@ -1,0 +1,160 @@
+[
+  {
+    "actor_id": "maya",
+    "name": "Maya Okafor",
+    "team": "exec",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00001",
+      "email": "maya@sundialhq.test",
+      "git": []
+    }
+  },
+  {
+    "actor_id": "dev",
+    "name": "Dev Batra",
+    "team": "eng",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00002",
+      "email": "dev@sundialhq.test",
+      "git": [
+        "Dev Batra <dev@sundialhq.test>"
+      ]
+    }
+  },
+  {
+    "actor_id": "priya",
+    "name": "Priya Shenoy",
+    "team": "eng",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00003",
+      "email": "priya@sundialhq.test",
+      "git": [
+        "Priya Shenoy <priya@sundialhq.test>"
+      ]
+    }
+  },
+  {
+    "actor_id": "tom",
+    "name": "Tom Hale",
+    "team": "eng",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00004",
+      "email": "tom@sundialhq.test",
+      "git": [
+        "Tom Hale <tom@sundialhq.test>",
+        "tomhale <tom.hale.dev@fastmail.test>"
+      ]
+    }
+  },
+  {
+    "actor_id": "lena",
+    "name": "Lena Fischer",
+    "team": "eng",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00005",
+      "email": "lena@sundialhq.test",
+      "git": [
+        "Lena Fischer <lena@sundialhq.test>"
+      ]
+    }
+  },
+  {
+    "actor_id": "marcus",
+    "name": "Marcus Webb",
+    "team": "eng",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00006",
+      "email": "marcus@sundialhq.test",
+      "git": [
+        "Marcus Webb <marcus@sundialhq.test>"
+      ]
+    }
+  },
+  {
+    "actor_id": "ana",
+    "name": "Ana Reyes",
+    "team": "eng",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00007",
+      "email": "ana@sundialhq.test",
+      "git": [
+        "Ana Reyes <ana@sundialhq.test>"
+      ]
+    }
+  },
+  {
+    "actor_id": "jules",
+    "name": "Jules Park",
+    "team": "product",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00008",
+      "email": "jules@sundialhq.test",
+      "git": []
+    }
+  },
+  {
+    "actor_id": "sofia",
+    "name": "Sofia Marino",
+    "team": "product",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00009",
+      "email": "sofia@sundialhq.test",
+      "git": []
+    }
+  },
+  {
+    "actor_id": "ray",
+    "name": "Ray Donnelly",
+    "team": "gtm",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00010",
+      "email": "ray@sundialhq.test",
+      "git": []
+    }
+  },
+  {
+    "actor_id": "nadia",
+    "name": "Nadia Hassan",
+    "team": "gtm",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00011",
+      "email": "nadia@sundialhq.test",
+      "git": []
+    }
+  },
+  {
+    "actor_id": "colin",
+    "name": "Colin Zhu",
+    "team": "gtm",
+    "is_agent": false,
+    "identities": {
+      "slack": "U0AA00012",
+      "email": "colin@sundialhq.test",
+      "git": []
+    }
+  },
+  {
+    "actor_id": "deploybot",
+    "name": "deploybot",
+    "team": "eng",
+    "is_agent": true,
+    "identities": {
+      "slack": "U0AA00013",
+      "email": "deploybot@sundialhq.test",
+      "git": [
+        "deploybot <deploybot@sundialhq.test>"
+      ]
+    }
+  }
+]

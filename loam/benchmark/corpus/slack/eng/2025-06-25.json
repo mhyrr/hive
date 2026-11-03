@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "Before anyone spikes a chart library for the ops dashboard — didn't we already decide Metabase for reports back in April? The embed exists; let's point it inward instead of building charts twice.",
+    "ts": "1750857660.000000"
+  }
+]

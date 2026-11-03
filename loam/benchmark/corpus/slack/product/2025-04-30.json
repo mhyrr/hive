@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00008",
+    "text": "Fun fact for the PhysioNetwork case study: cross-clinic benchmarks are essentially free for us because every clinic lives in the same cluster — competitors quote a data-warehouse project for what we do with one query.",
+    "ts": "1746012120.000000"
+  }
+]

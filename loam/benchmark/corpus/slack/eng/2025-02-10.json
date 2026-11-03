@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "Decision from the postmortem, effective now: no schema migrations on Fridays. Migrations land Monday–Thursday, after a staging soak, with CONCURRENTLY for index builds. Doc: docs/postmortems/2025-02-07-friday-migration.md",
+    "ts": "1739182320.000000"
+  }
+]

@@ -1,0 +1,15 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "TIL the hard way: Twilio sandbox numbers cannot send SMS to Australian mobiles. At all. That's why every staging reminder for Kettleworth has been silently vanishing.",
+    "ts": "1738685520.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "For AU you need a paid sender with a registered alphanumeric ID. Filing under things-the-docs-bury. Staging now logs instead of sends for AU numbers.",
+    "ts": "1738685880.000000",
+    "thread_ts": "1738685520.000000"
+  }
+]

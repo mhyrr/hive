@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "Incident runbook is in the repo (docs/runbooks/incidents.md): sev levels, one IC, comms templates, 48h blameless postmortem. Read it before you need it.",
+    "ts": "1738244400.000000"
+  }
+]

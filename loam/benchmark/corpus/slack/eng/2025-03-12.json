@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "ADR-006 accepted: trunk-based development starting Monday. Release branches are retired — everyone commits to main behind flags, releases become a tag plus the checklist.",
+    "ts": "1741772700.000000"
+  }
+]

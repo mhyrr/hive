@@ -1,0 +1,9 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "Capacity note for the same doc: we're capped around 200 rps on bookings before the pool starves, so the refactor keeps availability reads off the primary.",
+    "ts": "1749830520.000000",
+    "thread_ts": "1749726480.000000"
+  }
+]

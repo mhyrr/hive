@@ -1,0 +1,43 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00013",
+    "text": ":rotating_light: ALERT booking-service error rate 43% (threshold 2%). p99 latency 30s+. All tenants affected.",
+    "ts": "1738946460.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00003",
+    "text": "Declaring sev1 per the incident runbook. Ana, can you IC? I think this is my migration — timing lines up with 0007 going out.",
+    "ts": "1738946640.000000",
+    "thread_ts": "1738946460.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "IC here. Confirmed: index build from migration 0007 is holding an ACCESS EXCLUSIVE lock on bookings. Every clinic's writes are queued behind it. Options: wait it out (est 2h+) or kill and revert.",
+    "ts": "1738947120.000000",
+    "thread_ts": "1738946460.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "Customer comms going out now using the runbook template — 'investigating an issue affecting bookings, next update in 30 minutes.' Nadia is calling Kettleworth directly since it's mid-morning there.",
+    "ts": "1738948200.000000",
+    "thread_ts": "1738946460.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "Reverted via 0008, locks cleared, error rate back under 1%. Standing reminder from tonight: one bad lock hits every clinic we have — that's the deal we signed up for with a single cluster.",
+    "ts": "1738958280.000000",
+    "thread_ts": "1738946460.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00003",
+    "text": "It was mine and it was avoidable: no CONCURRENTLY, no staging soak, shipped at 4:30 on a Friday. Postmortem Monday. I'm buying the retro donuts for a month.",
+    "ts": "1738959300.000000",
+    "thread_ts": "1738946460.000000"
+  }
+]

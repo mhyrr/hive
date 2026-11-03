@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "PSA for anyone writing test fixtures: we're single-cluster multi-tenant, so every fixture row needs a clinic_id or RLS will eat your test and tell you nothing.",
+    "ts": "1739964780.000000"
+  }
+]

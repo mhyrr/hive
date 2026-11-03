@@ -1,0 +1,22 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00013",
+    "text": ":warning: signup queue depth 1,840 (threshold 100). booking-service p99 9.4s. onboarding jobs stalled.",
+    "ts": "1744139520.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "It's the PhysioNetwork webinar — they demoed us live to ~2,000 clinics and dropped the signup link at the end. Signups running about 40x normal.",
+    "ts": "1744139760.000000",
+    "thread_ts": "1744139520.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "sev2, IC me, runbook open. Good news: it's a queue, not a crash. Bad news: signups are hammering the same pool bookings use.",
+    "ts": "1744139940.000000",
+    "thread_ts": "1744139520.000000"
+  }
+]

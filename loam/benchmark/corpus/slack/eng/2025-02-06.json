@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "FYI frontend folks: reminder sends are all Twilio now per ADR-004, so the delivery-status webhooks changed shape. Types updated in src/reminders.",
+    "ts": "1738836300.000000"
+  }
+]

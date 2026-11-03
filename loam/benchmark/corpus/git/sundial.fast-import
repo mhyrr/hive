@@ -1,0 +1,437 @@
+commit refs/heads/main
+mark :1
+author Dev Batra <dev@sundialhq.test> 1736154720 +0000
+committer Dev Batra <dev@sundialhq.test> 1736154720 +0000
+data 33
+init: repo scaffold, ADR process
+M 100644 inline README.md
+data 195
+# sundial
+
+Scheduling for clinics. Booking, reminders, rosters.
+
+- `src/` services
+- `migrations/` schema changes
+- `adr/` architecture decision records
+- `docs/` runbooks, policies, postmortems
+
+M 100644 inline package.json
+data 65
+{
+  "name": "sundial",
+  "private": true,
+  "version": "0.1.0"
+}
+
+M 100644 inline adr/0001-record-decisions.md
+data 180
+# ADR-001: Record architecture decisions
+
+Status: accepted 2025-01-06
+
+We keep ADRs in `adr/`, numbered, immutable once accepted. A superseding
+ADR links back to what it replaces.
+
+
+commit refs/heads/main
+mark :2
+author Priya Shenoy <priya@sundialhq.test> 1736350800 +0000
+committer Priya Shenoy <priya@sundialhq.test> 1736350800 +0000
+data 41
+scaffold booking and scheduling services
+M 100644 inline src/booking/index.ts
+data 82
+// booking service: slots, holds, confirmations
+export const service = "booking";
+
+M 100644 inline src/scheduling/index.ts
+data 88
+// scheduling service: rosters, availability rules
+export const service = "scheduling";
+
+
+commit refs/heads/main
+mark :3
+author Dev Batra <dev@sundialhq.test> 1736852700 +0000
+committer Dev Batra <dev@sundialhq.test> 1736852700 +0000
+data 43
+ADR-003: single cluster, row-level tenancy
+M 100644 inline adr/0003-tenancy.md
+data 555
+# ADR-003: Single Postgres cluster, row-level tenancy
+
+Status: accepted 2025-01-14
+
+## Question
+Database per clinic, schema per clinic, or one cluster with row-level
+tenancy?
+
+## Decision
+One Postgres cluster. Every tenant-owned row carries `clinic_id`;
+row-level security policies enforce isolation.
+
+## Why
+Twelve people cannot operate five hundred databases. Cross-clinic
+reporting stays a query instead of an ETL project.
+
+## Accepted risk
+A bad query or a table lock affects every clinic at once. Blast radius
+is the price of operational simplicity.
+
+
+commit refs/heads/main
+mark :4
+author Lena Fischer <lena@sundialhq.test> 1737454920 +0000
+committer Lena Fischer <lena@sundialhq.test> 1737454920 +0000
+data 27
+build: standardize on pnpm
+M 100644 inline pnpm-workspace.yaml
+data 22
+packages:
+  - "src/*"
+
+M 100644 inline .npmrc
+data 19
+engine-strict=true
+
+
+commit refs/heads/main
+mark :5
+author Tom Hale <tom@sundialhq.test> 1738082880 +0000
+committer Tom Hale <tom@sundialhq.test> 1738082880 +0000
+data 54
+ADR-004: Twilio for reminder SMS; delete SMPP gateway
+M 100644 inline adr/0004-twilio.md
+data 193
+# ADR-004: Twilio for SMS reminders
+
+Status: accepted 2025-01-28
+
+Reminder SMS goes through Twilio. The half-built in-house SMPP gateway
+is deleted; carrier relationships are not our business.
+
+D src/sms-gateway/index.ts
+
+commit refs/heads/main
+mark :6
+author Ana Reyes <ana@sundialhq.test> 1738243860 +0000
+committer Ana Reyes <ana@sundialhq.test> 1738243860 +0000
+data 23
+docs: incident runbook
+M 100644 inline docs/runbooks/incidents.md
+data 543
+# Incident runbook
+
+1. Declare in #incidents with a sev level.
+   - sev1: clinics cannot book. sev2: degraded. sev3: cosmetic.
+2. One incident commander (IC). IC speaks in #incidents; everyone else
+   replies in thread.
+3. Timeline in the channel is the log of record.
+4. sev1/sev2: customer comms within 30 minutes (template below).
+5. Postmortem within 48h in docs/postmortems/, blameless.
+
+Comms template: "We're investigating an issue affecting <surface>.
+Bookings made in this window may need re-confirmation. Next update in
+30 minutes."
+
+
+commit refs/heads/main
+mark :7
+author Tom Hale <tom@sundialhq.test> 1738584120 +0000
+committer Tom Hale <tom@sundialhq.test> 1738584120 +0000
+data 42
+reminders: wire Twilio client per ADR-004
+M 100644 inline src/reminders/twilio.ts
+data 167
+// Twilio sender. Sandbox creds in staging, prod creds via vault.
+export async function sendReminder(to: string, body: string) {
+  /* twilio.messages.create(...) */
+}
+
+
+commit refs/heads/main
+mark :8
+author Priya Shenoy <priya@sundialhq.test> 1738945560 +0000
+committer Priya Shenoy <priya@sundialhq.test> 1738945560 +0000
+data 48
+migration: index bookings(clinic_id, starts_at)
+M 100644 inline migrations/0007_add_booking_idx.sql
+data 108
+-- speed up availability lookups
+CREATE INDEX idx_bookings_clinic_start ON bookings (clinic_id, starts_at);
+
+
+commit refs/heads/main
+mark :9
+author Ana Reyes <ana@sundialhq.test> 1738958040 +0000
+committer Ana Reyes <ana@sundialhq.test> 1738958040 +0000
+data 73
+revert: drop idx_bookings_clinic_start migration (locked bookings table)
+M 100644 inline migrations/0008_drop_booking_idx.sql
+data 120
+-- emergency revert of 0007; rebuild will use CREATE INDEX CONCURRENTLY
+DROP INDEX IF EXISTS idx_bookings_clinic_start;
+
+
+commit refs/heads/main
+mark :10
+author Dev Batra <dev@sundialhq.test> 1739180820 +0000
+committer Dev Batra <dev@sundialhq.test> 1739180820 +0000
+data 38
+postmortem: 2025-02-07 booking outage
+M 100644 inline docs/postmortems/2025-02-07-friday-migration.md
+data 776
+# Postmortem: Friday migration outage (2025-02-07)
+
+Blameless. Timeline from #incidents.
+
+At 16:26 on a Friday, migration 0007 created an index on `bookings`
+without CONCURRENTLY. On our single shared cluster (ADR-003) the
+ACCESS EXCLUSIVE lock queued every clinic's booking writes. Three
+hours of failed bookings across all tenants; reverted 19:54; weekend
+spent reconciling holds.
+
+## Contributing factors
+- Index build not CONCURRENTLY.
+- Shipped at 16:26 on a Friday with no staging soak and half the team
+  offline.
+- Single-cluster tenancy concentrates blast radius (accepted in
+  ADR-003 — this is what that acceptance costs).
+
+## Action items
+- [x] Migrations land Monday–Thursday only, after a staging soak.
+- [x] Lint migrations for non-concurrent index builds.
+
+
+commit refs/heads/main
+mark :11
+author tomhale <tom.hale.dev@fastmail.test> 1739398500 +0000
+committer tomhale <tom.hale.dev@fastmail.test> 1739398500 +0000
+data 57
+fix: replace hardcoded +11:00 offset with IANA tz lookup
+M 100644 inline src/scheduling/tz.ts
+data 266
+// Clinic-local time from UTC + IANA zone id. Never fixed offsets:
+// offsets lie twice a year and Kettleworth found out the hard way.
+export function clinicLocal(utc: Date, zone: string): Date {
+  return new Date(utc.toLocaleString("en-US", { timeZone: zone }));
+}
+
+
+commit refs/heads/main
+mark :12
+author Priya Shenoy <priya@sundialhq.test> 1739442780 +0000
+committer Priya Shenoy <priya@sundialhq.test> 1739442780 +0000
+data 56
+ADR-005: UTC at rest, IANA zone rules, no fixed offsets
+M 100644 inline adr/0005-utc-iana.md
+data 287
+# ADR-005: UTC at rest, IANA identifiers for locality
+
+Status: accepted 2025-02-13
+
+All timestamps are stored UTC. Clinic-local rendering derives from an
+IANA tz identifier on the clinic record. Fixed offsets are banned in
+application code; the Melbourne double-booking incident is why.
+
+
+commit refs/heads/main
+mark :13
+author Lena Fischer <lena@sundialhq.test> 1739804280 +0000
+committer Lena Fischer <lena@sundialhq.test> 1739804280 +0000
+data 24
+docs: release checklist
+M 100644 inline docs/runbooks/release.md
+data 332
+# Release checklist
+
+1. Changelog entry with clinic-visible changes called out.
+2. Deploy to staging.
+3. 24h staging soak (no skipping — the soak is the checklist).
+4. Smoke suite green: booking, reminder send, export.
+5. Prod deploy Tuesday–Thursday only.
+6. Post-release watch: 60 minutes on dashboards, then hand to on-call.
+
+
+commit refs/heads/main
+mark :14
+author Dev Batra <dev@sundialhq.test> 1741000620 +0000
+committer Dev Batra <dev@sundialhq.test> 1741000620 +0000
+data 50
+docs: deal-desk discount policy (authored by Ray)
+M 100644 inline docs/policies/deal-desk.md
+data 329
+# Deal desk: discount approval
+
+- Up to 15% off list: rep discretion, note it in the CRM.
+- Above 15%: written CEO sign-off BEFORE the number reaches the
+  customer. Forward the sign-off email into the deal record.
+- Never discount the export/offboarding fee. There isn't one, and
+  there never will be (clinics own their data).
+
+
+commit refs/heads/main
+mark :15
+author Dev Batra <dev@sundialhq.test> 1741771560 +0000
+committer Dev Batra <dev@sundialhq.test> 1741771560 +0000
+data 33
+ADR-006: trunk-based development
+M 100644 inline adr/0006-trunk-based.md
+data 181
+# ADR-006: Trunk-based development
+
+Status: accepted 2025-03-12
+
+Everyone commits to main behind feature flags. Release branches are
+retired; a release is a tag plus the checklist.
+
+
+commit refs/heads/main
+mark :16
+author Marcus Webb <marcus@sundialhq.test> 1741885740 +0000
+committer Marcus Webb <marcus@sundialhq.test> 1741885740 +0000
+data 71
+flags: minimal feature-flag store for the trunk-based flow per ADR-006
+M 100644 inline src/flags.ts
+data 104
+export const flags: Record<string, boolean> = {};
+export const isOn = (k: string) => flags[k] === true;
+
+
+commit refs/heads/main
+mark :17
+author Ana Reyes <ana@sundialhq.test> 1742456640 +0000
+committer Ana Reyes <ana@sundialhq.test> 1742456640 +0000
+data 57
+fix: staging reminder cron must use sandbox Twilio creds
+M 100644 inline infra/cron/staging.yaml
+data 114
+reminder-sweep:
+  schedule: "0 3 * * *"
+  env: staging
+  secrets:
+    twilio: sandbox   # was: prod. Never again.
+
+
+commit refs/heads/main
+mark :18
+author Ana Reyes <ana@sundialhq.test> 1742551920 +0000
+committer Ana Reyes <ana@sundialhq.test> 1742551920 +0000
+data 34
+postmortem: 2025-03-20 ghost cron
+M 100644 inline docs/postmortems/2025-03-20-ghost-cron.md
+data 551
+# Postmortem: the ghost cron (2025-03-20)
+
+The staging reminder sweep ran at 03:00 with production Twilio
+credentials and texted 43 real patients about appointments with
+"Dr. Placeholder". Root cause: staging cron config copied from prod
+during the Twilio cutover and never re-pointed at sandbox creds.
+
+Patients were called and apologized to by 09:30. Kettleworth's front
+desk was extremely gracious about it.
+
+## Action items
+- [x] Staging secrets namespaced; prod creds unreadable from staging.
+- [x] Sends from staging watermark the message body.
+
+
+commit refs/heads/main
+mark :19
+author Ana Reyes <ana@sundialhq.test> 1744202460 +0000
+committer Ana Reyes <ana@sundialhq.test> 1744202460 +0000
+data 56
+signup: token-bucket rate limit after the webinar surge
+M 100644 inline src/signup/ratelimit.ts
+data 197
+// Token bucket in front of clinic onboarding. The webinar taught us
+// the booking service saturates near 200 rps; keep signups under it.
+export const bucket = { capacity: 50, refillPerSec: 10 };
+
+
+commit refs/heads/main
+mark :20
+author deploybot <deploybot@sundialhq.test> 1747149600 +0000
+committer deploybot <deploybot@sundialhq.test> 1747149600 +0000
+data 67
+release: 1.4.0 — checklist complete per docs/runbooks/release.md
+M 100644 inline CHANGELOG.md
+data 88
+# Changelog
+
+## 1.4.0 — 2025-05-13
+- Recurring availability rules
+- Clinic CSV import
+
+
+commit refs/heads/main
+mark :21
+author Dev Batra <dev@sundialhq.test> 1747929780 +0000
+committer Dev Batra <dev@sundialhq.test> 1747929780 +0000
+data 59
+ADR-007: sign BAAs (supersedes the March BAA postponement)
+M 100644 inline adr/0007-baa.md
+data 282
+# ADR-007: Sign Business Associate Agreements
+
+Status: accepted 2025-05-22. Supersedes the 2025-03-05 decision to
+postpone BAAs past v1.
+
+US clinics are contingent on a signed BAA — Meridian re-opened on
+exactly this condition. Legal review done; audit-logging gaps close in
+1.5.
+
+
+commit refs/heads/main
+mark :22
+author tomhale <tom.hale.dev@fastmail.test> 1748625120 +0000
+committer tomhale <tom.hale.dev@fastmail.test> 1748625120 +0000
+data 42
+migration: practitioner_specialties table
+M 100644 inline migrations/0019_practitioner_specialties.sql
+data 102
+CREATE TABLE practitioner_specialties (
+  practitioner_id uuid NOT NULL,
+  specialty text NOT NULL
+);
+
+
+commit refs/heads/main
+mark :23
+author Priya Shenoy <priya@sundialhq.test> 1748856960 +0000
+committer Priya Shenoy <priya@sundialhq.test> 1748856960 +0000
+data 79
+fix: backfill specialties index on a Monday, per the no-Friday-migrations rule
+M 100644 inline migrations/0020_specialties_idx.sql
+data 87
+CREATE INDEX CONCURRENTLY idx_prac_spec ON practitioner_specialties (practitioner_id);
+
+
+commit refs/heads/main
+mark :24
+author Priya Shenoy <priya@sundialhq.test> 1749130020 +0000
+committer Priya Shenoy <priya@sundialhq.test> 1749130020 +0000
+data 54
+fix: normalize recurring-slot tz handling per ADR-005
+M 100644 inline src/scheduling/recurring.ts
+data 146
+// Expand recurring rules in UTC, render clinic-local at the edge.
+export function expand(ruleUtc: string, zone: string): Date[] {
+  return [];
+}
+
+
+commit refs/heads/main
+mark :25
+author Marcus Webb <marcus@sundialhq.test> 1750160940 +0000
+committer Marcus Webb <marcus@sundialhq.test> 1750160940 +0000
+data 92
+export: full clinic data export to CSV — clinics own their data, including on the way out
+M 100644 inline src/export/csv.ts
+data 132
+// Everything a clinic ever entered, in open formats, free.
+export function exportClinic(clinicId: string): string {
+  return "";
+}
+
+

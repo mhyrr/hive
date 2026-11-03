@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "Load-test results from last night's fun: the booking service falls over around 200 rps on the shared cluster — and it's connection-pool exhaustion, not CPU. Wrote it on the wall; plan capacity accordingly.",
+    "ts": "1744213620.000000"
+  }
+]

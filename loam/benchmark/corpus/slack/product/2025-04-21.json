@@ -1,0 +1,15 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "Mobile app question again? Q2 data's in: mobile web is 31% of practitioner sessions and climbing.",
+    "ts": "1745244720.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00008",
+    "text": "Noted and still parked — 31% says make mobile web better, not fork the roadmap. We'll look again with Q3 numbers.",
+    "ts": "1745245800.000000",
+    "thread_ts": "1745244720.000000"
+  }
+]

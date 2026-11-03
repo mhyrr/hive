@@ -1,0 +1,22 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "SMS status: the homegrown SMPP gateway is three weeks from *maybe* working, and reminders are the most-requested feature we have. Twilio integration is an afternoon. I know which one I want to own at 2am.",
+    "ts": "1738077960.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "Kill the gateway. Carrier plumbing is not our business — buy Twilio, delete the SMPP code so nobody resurrects it, write it up.",
+    "ts": "1738078440.000000",
+    "thread_ts": "1738077960.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "Done and done. ADR-004 incoming, gateway deletion in the same PR. o7",
+    "ts": "1738078860.000000",
+    "thread_ts": "1738077960.000000"
+  }
+]

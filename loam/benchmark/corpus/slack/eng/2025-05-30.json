@@ -1,0 +1,22 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00007",
+    "text": "Tom. It is 5pm. On a Friday. And migration 0019 just landed on main.",
+    "ts": "1748625960.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "It's Thursday-or-Monday, man, that rule is written in outage blood. Revert the deploy job and let the table land Monday with Priya's index.",
+    "ts": "1748626260.000000",
+    "thread_ts": "1748625960.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "…yeah, fair. Deploy job cancelled, table ships Monday. In my defense it's a CREATE TABLE, not an index — but the rule is the rule because we argued exactly this at 7pm on Feb 7.",
+    "ts": "1748626800.000000",
+    "thread_ts": "1748625960.000000"
+  }
+]

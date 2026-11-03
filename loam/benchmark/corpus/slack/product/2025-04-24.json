@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00008",
+    "text": "Timeline note for the 1.4 plan: the waitlist data model lands early in the week — we don't touch the schema on Fridays, so if it slips past Thursday it slips to Monday and the feature slips a week.",
+    "ts": "1745509080.000000"
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "Tenancy decision time, for real this week: database per clinic, schema per clinic, or one cluster with row-level tenancy. Thread your takes, ADR Friday-ish.",
+    "ts": "1736431500.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00003",
+    "text": "Row-level, strongly. Twelve of us cannot babysit 500 databases, and cross-clinic reporting stays a SQL query instead of an ETL pipeline. RLS policies are mature.",
+    "ts": "1736433060.000000",
+    "thread_ts": "1736431500.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00004",
+    "text": "I'll take row-level too, but let's be honest in the ADR about the cost: one bad query, one bad lock, and every clinic feels it at once. We're choosing blast radius for operability.",
+    "ts": "1736434920.000000",
+    "thread_ts": "1736431500.000000"
+  }
+]

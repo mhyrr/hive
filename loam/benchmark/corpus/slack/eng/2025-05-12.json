@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "1.4 release thread: running the release checklist — changelog done, staging deployed 15:00, soak clock started, smoke suite green this morning. Prod goes tomorrow (Tuesday) per the checklist.",
+    "ts": "1747068000.000000"
+  }
+]

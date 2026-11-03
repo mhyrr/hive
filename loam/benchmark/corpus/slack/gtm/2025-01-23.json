@@ -1,0 +1,15 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00011",
+    "text": "Kettleworth Physio (Melbourne) is live as our first AU clinic — pilot terms, weekly check-ins with their front desk. They're lovely and extremely direct, which is perfect.",
+    "ts": "1737630720.000000"
+  },
+  {
+    "type": "message",
+    "user": "U0AA00010",
+    "text": "AU allied health might be our wedge. Watch this space.",
+    "ts": "1737631140.000000",
+    "thread_ts": "1737630720.000000"
+  }
+]

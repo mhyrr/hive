@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00002",
+    "text": "ADR-003 is merged: single Postgres cluster, row-level tenancy on clinic_id. Tom's blast-radius caveat is written in as an accepted risk. Speak now or forever hold your migrations.",
+    "ts": "1736853600.000000"
+  }
+]

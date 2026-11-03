@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "user": "U0AA00006",
+    "text": "Availability-refactor design doc is up. It leans on two settled decisions rather than relitigating them: row-level tenancy per ADR-003, and all times UTC per ADR-005. Review by Thursday please.",
+    "ts": "1749726480.000000"
+  }
+]
