@@ -119,6 +119,22 @@ with the message as the next prompt.
 parent or Greg sends something, Greg answers a queue item, or a launchd timer
 nudges it to walk its checklist. That is all for now.
 
+**Greg can drive any agent directly.** The tree says who supervises whom,
+not who Greg can talk to. `hive` in a project directory (or `hive revrec`)
+attaches Greg's interactive session to that project's agent, with its
+workspace, memory and children intact.
+
+- While Greg is driving, he is that agent's supervisor: its questions come to
+  him in the session instead of going up to the chief of staff, and his
+  instructions count like queue answers (the important ones can become
+  precedents).
+- The agent notes in its log that Greg is driving, so the chief of staff
+  knows and does not start conflicting work there. The chief of staff can
+  still flag a collision ("you're changing auth in revrec; dobby depends on
+  it").
+- When Greg leaves, supervision returns to the chief of staff, which picks up
+  from the agent's log.
+
 ## 6. Supervision
 
 Agents are trusted to understand their scope. When a child reports, its
@@ -232,9 +248,10 @@ transcript. Nothing in the core depends on it.
 
 ## 15. Open questions
 
-- **Q1. Where does the chief of staff live?** Is it Greg's interactive `hive`
-  session, or a separate background session he talks to through the queue
-  and messages?
+- **Q1. Where does the chief of staff live?** Leaning: `hive` inside a
+  project attaches to that project's agent; `hive` anywhere else attaches to
+  the chief of staff. The rest of the time it runs as a background session
+  Greg reaches through the queue and messages.
 - **Q2. Messaging into non-Claude sessions.** Can Codex, Cursor CLI and Pi
   each run a session in the background and accept a new message into it
   (via resume), or do some need a different shape? Check each before
