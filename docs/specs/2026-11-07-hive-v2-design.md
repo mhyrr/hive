@@ -33,7 +33,7 @@ what their charter says they are for. The tree is simply who started whom.
 
 ```
 Greg
- └─ chief of staff                (charter: look across everything)
+ └─ Maya, chief of staff          (charter: look across everything)
      ├─ revrec                    (charter: the revrec project)
      │   ├─ rate-limiter          (charter: build TK-142, own worktree)
      │   └─ reviewer              (charter: review rate-limiter's branch, on Codex)
@@ -42,7 +42,8 @@ Greg
      └─ release-notes             (started by the chief of staff directly, on Pi)
 ```
 
-- **The chief of staff** is the agent at the top. It thinks across everything:
+- **The chief of staff is Maya**, the agent at the top. (This brings back the
+  Maya name from v1, whose Maya agents were retired.) She thinks across everything:
   conflicts, duplicated work, shared blockers, priorities. It can start agents
   under itself directly, not only through project agents.
 - **Project agents.** The agents directly under the chief of staff are
@@ -106,8 +107,9 @@ The minimum tool set:
 - `agent_start(harness, charter, repo?)` — start a child agent. If it will
   edit code, it gets its own worktree and branch; an agent that only thinks
   or reviews does not need one.
-- `report(to_parent, text)` — a child tells its parent it finished, is
-  stuck, has a question, or has an idea.
+- `message(to, text)` — send a message to an agent by name. A child uses it
+  to tell its parent it finished, is stuck, has a question, or has an idea.
+  Greg (or any session he has open) uses it to reach Maya: `to: "maya"`.
 - `queue_add(item)` — put something in front of Greg, with evidence.
 - `precedents_search(query)` — see how Greg decided similar things.
 
@@ -244,16 +246,16 @@ transcript. Nothing in the core depends on it.
 - Spot-checking decisions made without escalation.
 - Shadow-mode prediction of Greg's answers and metrics (corrections per change).
 - Normalized read-only / safe / full-auto modes across harnesses.
-- Agents whose charter spans several projects.
+- Agents whose charter spans several projects or has no repo.
 
 ## 15. Decisions (2026-11-08)
 
-- **D1. The chief of staff is a background Claude Code session on the
-  subscription.** Not `claude -p`, not API credits. Greg can resume it from
-  HIVE (e.g. `hive cos`), or message it from whatever Claude Code session he
-  has open (through a HIVE MCP tool or Claude's cross-session messaging).
-  To verify when building: background sessions authenticate with the
-  subscription like any interactive session.
+- **D1. Maya (the chief of staff) is a background Claude Code session on the
+  subscription.** Not `claude -p`, not API credits. Greg can resume her from
+  HIVE (e.g. `hive maya`), or message her from whatever Claude Code session
+  he has open with the HIVE MCP tool `message(to: "maya", ...)`. To verify
+  when building: background sessions authenticate with the subscription like
+  any interactive session.
 - **D2. Non-Claude harnesses are spawned like a sub-agent.** An agent hosted
   on Codex, Cursor or Pi is started by running its HIVE wrapper (`hive -x`,
   `hive -a`, `hive -3`) with the starting context and prompt injected, the
@@ -263,23 +265,18 @@ transcript. Nothing in the core depends on it.
   new invocation from the workspace where it does not. This is the whole
   adapter for those harnesses.
 - **D3. Recovery is a fresh session from the workspace.** Greg will clear
-  the chief of staff's context like any other session, so every agent keeps
+  Maya's context like any other session, so every agent keeps
   what matters in its workspace (`log.md`, `memory/`) rather than in its
   context.
 - **D4. Delete watches and campaign first**, then build v2.
-- **D5. Day-one project agents:** matreas, revrec, arete, writing,
-  investing, hive. Writing and investing likely have no code repo, so
-  project agents without a repo are in scope from day one (an agent without
-  a repo works in its workspace and needs no worktree).
+- **D5. One project agent per registered HIVE project.** The list comes from
+  the project registry, not from this doc. For Greg today that is matreas,
+  revrec, arete, writing, investing and hive, all with repositories.
+- **D6. Messages go through one HIVE MCP tool, `message(to, text)`**,
+  addressed by agent name. Messages for the chief of staff are addressed to
+  Maya.
 
-## 16. Open questions
-
-- **Q1. Messaging the chief of staff from another session.** HIVE MCP tool
-  (`cos_message`) versus Claude cross-session messaging: which one first?
-- **Q2. Names.** Confirm the day-one project names and that each exists as a
-  HIVE project (spelling of matreas in particular).
-
-## 17. Sources
+## 16. Sources
 
 Brian Armstrong's post (leads, chief of staff, one queue); Grok Bot
 architecture write-up (https://gist.github.com/wtfsayo/b80f74f4f64d18ced8c84502a23148fe);
