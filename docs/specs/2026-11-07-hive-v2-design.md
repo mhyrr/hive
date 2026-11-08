@@ -1,6 +1,6 @@
 # HIVE v2 — Design
 
-**Status:** Draft 3, for review. Nothing here is built.
+**Status:** Draft 4, for review. Nothing here is built.
 **Date:** 2026-11-07
 
 ## 1. What v2 is
@@ -244,27 +244,42 @@ transcript. Nothing in the core depends on it.
 - Spot-checking decisions made without escalation.
 - Shadow-mode prediction of Greg's answers and metrics (corrections per change).
 - Normalized read-only / safe / full-auto modes across harnesses.
-- Agents whose charter spans several projects or has no repo.
+- Agents whose charter spans several projects.
 
-## 15. Open questions
+## 15. Decisions (2026-11-08)
 
-- **Q1. Where does the chief of staff live?** Leaning: `hive` inside a
-  project attaches to that project's agent; `hive` anywhere else attaches to
-  the chief of staff. The rest of the time it runs as a background session
-  Greg reaches through the queue and messages.
-- **Q2. Messaging into non-Claude sessions.** Can Codex, Cursor CLI and Pi
-  each run a session in the background and accept a new message into it
-  (via resume), or do some need a different shape? Check each before
-  building their adapters.
-- **Q3. Session lifetime on the laptop.** What happens to long-lived
-  background sessions across sleep, restart, and context limits? Is "start
-  a fresh session from the workspace" good enough as the recovery?
-- **Q4. Teardown order.** Delete watches and campaign first, or build
-  alongside and cut over?
-- **Q5. First projects.** Which projects get an agent on day one? (Default:
-  one per active HIVE project.)
+- **D1. The chief of staff is a background Claude Code session on the
+  subscription.** Not `claude -p`, not API credits. Greg can resume it from
+  HIVE (e.g. `hive cos`), or message it from whatever Claude Code session he
+  has open (through a HIVE MCP tool or Claude's cross-session messaging).
+  To verify when building: background sessions authenticate with the
+  subscription like any interactive session.
+- **D2. Non-Claude harnesses are spawned like a sub-agent.** An agent hosted
+  on Codex, Cursor or Pi is started by running its HIVE wrapper (`hive -x`,
+  `hive -a`, `hive -3`) with the starting context and prompt injected, the
+  same way a sub-agent is handed "here's your context and task, go." The
+  agent's workspace is what lasts; each invocation is one turn. A follow-up
+  message resumes the session where the harness supports it, or starts a
+  new invocation from the workspace where it does not. This is the whole
+  adapter for those harnesses.
+- **D3. Recovery is a fresh session from the workspace.** Greg will clear
+  the chief of staff's context like any other session, so every agent keeps
+  what matters in its workspace (`log.md`, `memory/`) rather than in its
+  context.
+- **D4. Delete watches and campaign first**, then build v2.
+- **D5. Day-one project agents:** matreas, revrec, arete, writing,
+  investing, hive. Writing and investing likely have no code repo, so
+  project agents without a repo are in scope from day one (an agent without
+  a repo works in its workspace and needs no worktree).
 
-## 16. Sources
+## 16. Open questions
+
+- **Q1. Messaging the chief of staff from another session.** HIVE MCP tool
+  (`cos_message`) versus Claude cross-session messaging: which one first?
+- **Q2. Names.** Confirm the day-one project names and that each exists as a
+  HIVE project (spelling of matreas in particular).
+
+## 17. Sources
 
 Brian Armstrong's post (leads, chief of staff, one queue); Grok Bot
 architecture write-up (https://gist.github.com/wtfsayo/b80f74f4f64d18ced8c84502a23148fe);
