@@ -37,15 +37,15 @@ Greg
      ├─ revrec                    (charter: the revrec project)
      │   ├─ rate-limiter          (charter: build TK-142, own worktree)
      │   └─ reviewer              (charter: review rate-limiter's branch, on Codex)
-     ├─ dobby                     (charter: the dobby project)
+     ├─ matreas                   (charter: the matreas project)
      │   └─ ...
      └─ release-notes             (started by the chief of staff directly, on Pi)
 ```
 
 - **The chief of staff is Maya**, the agent at the top. (This brings back the
   Maya name from v1, whose Maya agents were retired.) She thinks across everything:
-  conflicts, duplicated work, shared blockers, priorities. It can start agents
-  under itself directly, not only through project agents.
+  conflicts, duplicated work, shared blockers, priorities. She can start
+  agents under herself directly, not only through project agents.
 - **Project agents.** The agents directly under the chief of staff are
   usually one per HIVE project. They start with that project's context
   (project memory, tickets, conventions), so a project agent is effectively
@@ -72,8 +72,8 @@ Greg
 ## 4. Agent workspaces
 
 ```
-~/.hive/
-  agents/<name>/          cos, revrec, rate-limiter, ...
+~/.hv/
+  agents/<name>/          maya, revrec, rate-limiter, ...
     charter.md            what this agent is for, in prose (Greg-editable)
     checklist.md          what to look at each time it wakes (Greg-editable)
     log.md                what it did and why, appended
@@ -121,21 +121,10 @@ with the message as the next prompt.
 parent or Greg sends something, Greg answers a queue item, or a launchd timer
 nudges it to walk its checklist. That is all for now.
 
-**Greg can drive any agent directly.** The tree says who supervises whom,
-not who Greg can talk to. `hive` in a project directory (or `hive revrec`)
-attaches Greg's interactive session to that project's agent, with its
-workspace, memory and children intact.
-
-- While Greg is driving, he is that agent's supervisor: its questions come to
-  him in the session instead of going up to the chief of staff, and his
-  instructions count like queue answers (the important ones can become
-  precedents).
-- The agent notes in its log that Greg is driving, so the chief of staff
-  knows and does not start conflicting work there. The chief of staff can
-  still flag a collision ("you're changing auth in revrec; dobby depends on
-  it").
-- When Greg leaves, supervision returns to the chief of staff, which picks up
-  from the agent's log.
+**Greg talks to Maya from anywhere.** Greg's sessions are ordinary sessions
+outside the tree. From any of them he reaches Maya with `message(to: "maya",
+...)`, or opens her directly with `hv maya`. Maya reaches the project agents
+with `message`. There is no attach mode and no hand-off of supervision.
 
 ## 6. Supervision
 
@@ -149,7 +138,7 @@ There is no fixed menu and no rules engine.
 opinion from another agent or model, or escalates to its parent. Each level
 adds its own read and recommendation before passing it on, so Greg sees a
 stack ("revrec recommends A; chief of staff agrees but A collides with
-dobby's migration, do it after") rather than a raw question.
+matreas's migration, do it after") rather than a raw question.
 
 **Precedents.** Greg's answers are saved to `precedents/` with his reason.
 Agents search them before escalating. Over time, decisions move down the
@@ -171,8 +160,8 @@ The result comes back as a proposal.
 
 ## 8. The queue
 
-One queue, an evolution of the dashboard at `127.0.0.1:7777`. Items are
-folders under `~/.hive/queue/`.
+One queue, an evolution of the dashboard, on its own port while v1 runs.
+Items are folders under `~/.hv/queue/`.
 
 - **Kinds:** review (a branch ready to look at), decision (a question the tree
   could not settle), proposal, blocker (needs a credential, fact or access),
@@ -200,7 +189,7 @@ precedent like any other.
 
 ## 10. Storage
 
-Markdown in git under `~/.hive/`, as today. Evidence files sit outside git.
+Markdown files under `~/.hv/`.
 Queue status lives in `item.md` frontmatter; session info in
 `session.json`. The minimum version needs no database. Add one when file
 contention or queue queries actually hurt.
@@ -252,7 +241,7 @@ transcript. Nothing in the core depends on it.
 
 - **D1. Maya (the chief of staff) is a background Claude Code session on the
   subscription.** Not `claude -p`, not API credits. Greg can resume her from
-  HIVE (e.g. `hive maya`), or message her from whatever Claude Code session
+  HIVE (e.g. `hv maya`), or message her from whatever Claude Code session
   he has open with the HIVE MCP tool `message(to: "maya", ...)`. To verify
   when building: background sessions authenticate with the subscription like
   any interactive session.
@@ -269,9 +258,9 @@ transcript. Nothing in the core depends on it.
   what matters in its workspace (`log.md`, `memory/`) rather than in its
   context.
 - **D4. Delete watches and campaign first**, then build v2.
-- **D5. One project agent per registered HIVE project.** The list comes from
-  the project registry, not from this doc. For Greg today that is matreas,
-  revrec, arete, writing, investing and hive, all with repositories.
+- **D5. Project agents come from an explicit list.** v2 starts with six:
+  matreas, revrec, arete, writing, investing and hive. The registry has 19
+  projects; the others get an agent only when Greg adds them.
 - **D6. Messages go through one HIVE MCP tool, `message(to, text)`**,
   addressed by agent name. Messages for the chief of staff are addressed to
   Maya.
@@ -283,30 +272,33 @@ transcript. Nothing in the core depends on it.
 - **D8. Incoming messages ride the harness.** What happens when a message
   reaches a busy session (queue, interrupt) is whatever that harness does.
   HIVE adds no delivery semantics of its own.
-- **D9. Greg's session is separate from the supervised agent.** When Greg
-  drives a project he has his own session, and the project agent under Maya
-  keeps running. Children stay under the agent that started them. This
-  supersedes the supervision hand-off described in §5.
+- **D9. There is no driving mode.** Greg's sessions stay outside the tree
+  and talk to Maya. Children stay under the agent that started them. See §5.
 - **D10. v2 is built on the long-running branch `hive-v2` and runs beside
-  v1.** It installs under a different binary name. The installed `hive`
-  binary, its launchd jobs and the dashboard stay on v1 until cutover.
-- **D11. D5's project list predates access to the real `~/.hive`.** The
-  registry has 19 projects, 18 with a repo path. Which ones get a project
-  agent is open.
+  v1.** It installs as `hv` and `hv-mcp`. The installed `hive` binary, its
+  launchd jobs and the dashboard stay on v1 until cutover. The branch lives
+  in its own worktree at `~/work/hive-v2`, and `~/work/hive` stays on `main`:
+  Claude Code and Codex start the `hive` MCP server from
+  `~/work/hive/src/mcp-server.ts`, and `~/.local/bin/hive-mcp` links to the
+  tracked `hive-mcp` binary in that checkout.
+- **D11. v2 uses `~/.hive` the way v1 does; everything new lives in `~/.hv`.**
+  Identity, memory, tickets, taste and the MCP tools are shared and live.
+  Anything new, different or extra (`agents/`, `queue/`, `precedents/`, v2
+  config) goes in `~/.hv`. v2 must not change how v1 reads or writes
+  `~/.hive`.
 - **D12. Subscription-only auth moves to the v2 spawn path.** Watch Act's
   executor is deleted with watches, and it was the code that unset
   `ANTHROPIC_API_KEY`. Every detached v2 start must do the same.
 
 ## 16. Build order
 
-Working binary name: `hive2`. v2 reads identity, memory and tickets from the
-shared `~/.hive` and writes only to its new folders (`agents/`, `queue/`,
-`precedents/`).
+Binary name: `hv`. Shared state: `~/.hive`. New state: `~/.hv` (D11).
 
 1. **Delete watches and the Act executor.** (D4)
-2. **Run side by side.** Install `hive2` and `hive2-mcp`, with its own
-   dashboard port. `hive2 init` must not touch v1's hooks, MCP entry or
-   launchd jobs.
+2. **Run side by side.** Install `hv` and `hv-mcp`, with its own dashboard
+   port. Add a `~/.hv` path for v2-only state. `hv init` must not touch v1's
+   hooks, MCP entry, templates or launchd jobs. Build artifacts use `hv`
+   names, never `hive-bin` or `hive-mcp`.
 3. **Spike the Claude adapter.** Start a background session with a charter,
    send it a message, resume it, confirm subscription auth (D1, D12), and
    find out how a parent can detect that a session exited. Every later slice
@@ -315,14 +307,14 @@ shared `~/.hive` and writes only to its new folders (`agents/`, `queue/`,
    `message`.
 5. **Supervision.** Exit and hang detection reaches the parent; restart from
    the workspace (D3, D7).
-6. **Maya and project agents.** `hive2 maya`, `hive2 <project>`, separate from
-   Greg's own session (D9).
+6. **Maya and the six project agents.** `hv maya`, and `message` from any
+   session (D5, D9).
 7. **Queue and precedents.** `queue_add`, `precedents_search`, the dashboard.
 8. **Other harnesses.** Codex, Cursor, Pi (D2).
 9. **Cutover.** Stop the `com.hive.watches` job. Delete what v1 still needs
    while both run: the `act_run` ticket fields, `hive next`, the dashboard's
-   Propose and Act-work surfaces, and the decompose loop. Rename `hive2` to
-   `hive`.
+   Propose and Act-work surfaces, and the decompose loop. Decide whether `hv`
+   keeps its name.
 
 ## 17. Sources
 
