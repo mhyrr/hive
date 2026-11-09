@@ -365,9 +365,11 @@ What this means for the build:
   `--bg` is untested, as is `-w` with `--bg`.
 - A session that left the active list without writing a report died. The
   harness cannot tell a crash from a clean exit, so the report file does.
-- `SendMessage` with `notify_when_idle` is a candidate for the monitor.
-  Delivery is verified; the notice itself is not. Cross-session messages are
-  held for approval when the two sessions run in different permission modes.
+- `SendMessage` with `notify_when_idle` is a candidate for the monitor. The
+  idle notice is verified: it arrived with the session's last reply, a few
+  minutes late. The notice for a killed session is not verified. Cross-session
+  messages are held for approval when the two sessions run in different
+  permission modes.
 
 ## 17. Sources
 
