@@ -342,6 +342,33 @@ Binary name: `hv`. Shared state: `~/.hive`. New state: `~/.hv` (D11).
    Propose and Act-work surfaces, and the decompose loop. Decide whether `hv`
    keeps its name.
 
+### Spike results (2026-11-09, Claude Code 2.1.319)
+
+Tested with real background sessions.
+
+| Question | Result |
+|---|---|
+| Start | `claude --bg -n <name> "<prompt>"` works and returns at once |
+| Auth | Subscription (D1 holds): `claude auth status` reports `claude.ai`, no API key in the environment |
+| Identity | Loads through the SessionStart hook, but only as a preview: the 18 KB output is saved to a file the agent has to read |
+| Inherited guard | A session started from a `hive` session inherits `HIVE_IDENTITY_IN_PROMPT=1`, so the hook skips and identity is missing |
+| Message a live session | `SendMessage` to the session name delivers; the session read it and replied |
+| `--resume` on a live session | Starts a copy. Never use it for delivery |
+| Resume a dead session | `claude --bg --resume <id>` wakes the same session with its history |
+| Status | `claude agents --json` lists active sessions with `pid` and `status` |
+| Killed session | Leaves the active list within 8 seconds. `--all` shows it with no `pid` and the same `state: done` as a clean finish |
+
+What this means for the build:
+
+- `hv` injects identity with `--append-system-prompt` and sets
+  `HIVE_IDENTITY_IN_PROMPT`, as `hive` does. Whether that flag combines with
+  `--bg` is untested, as is `-w` with `--bg`.
+- A session that left the active list without writing a report died. The
+  harness cannot tell a crash from a clean exit, so the report file does.
+- `SendMessage` with `notify_when_idle` is a candidate for the monitor.
+  Delivery is verified; the notice itself is not. Cross-session messages are
+  held for approval when the two sessions run in different permission modes.
+
 ## 17. Sources
 
 Brian Armstrong's post (leads, chief of staff, one queue); Grok Bot
