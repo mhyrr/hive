@@ -18,9 +18,10 @@ contract. Claude Code defers them, so schemas load via ToolSearch on first use.
 
 ## Auth
 
-HIVE defaults to **subscription OAuth** for detached Claude work. Watch Act's
-branch executor unsets `ANTHROPIC_API_KEY` before launch to enforce that
-default. If subscription OAuth fails, the run fails — surface the failure,
+HIVE defaults to **subscription OAuth** for detached Claude work. Every
+detached agent start must unset `ANTHROPIC_API_KEY` before launch to enforce
+that default (the v2 spawn path owns this; see D12 in
+`docs/specs/2026-11-07-hive-v2-design.md`). If subscription OAuth fails, the run fails — surface the failure,
 don't silently fall back.
 
 On macOS the OAuth token lives in Keychain (`Claude Code-credentials` in
@@ -28,7 +29,7 @@ On macOS the OAuth token lives in Keychain (`Claude Code-credentials` in
 Keychain access errors, which claude surfaces as `ConnectionRefused`. That's
 a real failure to expose, not paper over with an API key fallback.
 
-Watch Act does not offer an API-key fallback. Interactive harnesses retain
+Detached work has no API-key fallback. Interactive harnesses retain
 their native authentication behavior.
 
 ## Development
@@ -49,13 +50,12 @@ their native authentication behavior.
 ## Architecture
 
 Two entry points:
-- `src/cli.ts` — CLI (init, doctor, context/prompts, identity, project, stack, council, memory, ticket/tickets, goal, next, watch, inbox, taste, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex, `hive -a` -> Cursor). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
+- `src/cli.ts` — CLI (init, doctor, context/prompts, identity, project, stack, council, memory, ticket/tickets, goal, next, inbox, taste, dashboard) plus interactive harness routing (`hive` -> Claude Code, `hive -3` -> Pi, `hive -x` -> Codex, `hive -a` -> Cursor). The `memory` subcommand exposes the V1 nightly pipeline: `condition`, `extract-project`, `extract-reflections`, `verify`, `apply`, `nightly`.
 - `src/mcp-server.ts` — MCP server.
 
 Crown-jewel modules:
 - `src/lib/council.ts` — parallel multi-model deliberation
 - `src/lib/harness.ts` / `src/lib/pi-wire.ts` / `src/lib/codex-wire.ts` / `src/lib/cursor-wire.ts` — interactive harness selection and optional runtime wiring
-- `src/lib/watch.ts` / `src/lib/watch-run.ts` — standing-question schedules, evidence gates, and bounded action
 - `src/lib/orchestrator.ts` — nightly pipeline (Pass A → B → C → V → F → P)
 - `src/lib/verify.ts` — Opus verifier; the only path into `knowledge.md`
 - `src/lib/memory.ts` — storage layer: BM25, decay, hashed supersede/merge primitives, candidates queue

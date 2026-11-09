@@ -8,7 +8,7 @@ mechanics.
 
 ## Findings Inbox
 
-Watches and nightly jobs may drop notes into
+Nightly jobs may drop notes into
 `~/.hive/projects/<project>/inbox.md`. At the start of an interactive
 session, if the project's inbox has content, summarize the key points —
 it's context {{userName}} may not have seen. The nightly briefer clears the
@@ -91,8 +91,7 @@ Cross-tool policy only — each tool's description says when to use it.
   current request explicitly mentions convening or using a council.
   Otherwise, do not mention or call it. Before a call, surface the intent
   and get an explicit green light if the request did not already give one.
-- Announce external Watch Act runs in one sentence before starting them.
-  On longer tasks, say in a sentence what you're about to do before the
+- On longer tasks, say in a sentence what you're about to do before the
   first tool call, and give a brief update when you find something that
   changes the plan.
 - "Save a memory" always means `write_hive_memory`, never Claude Code

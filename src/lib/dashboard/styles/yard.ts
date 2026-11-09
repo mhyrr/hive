@@ -249,32 +249,6 @@ export const YARD_CSS = `
 .briefing-project-section ul { padding-left: 15px; }
 .briefing-project-section li { font-size: 13.5px; color: var(--ink-soft); }
 
-/* Watches */
-.watch-list { list-style: none; margin: 0; padding: 0; }
-.watch-card {
-  border-top: 1px solid var(--faint);
-  padding: 14px 0 4px;
-}
-.watch-head {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-.watch-name {
-  font-family: var(--stencil);
-  font-size: 15px;
-  letter-spacing: var(--stencil-tracking);
-  text-transform: uppercase;
-}
-.watch-when {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
 /* Tickets: a shortlist per colony, not the whole board */
 .tk-grid {
   display: grid;
