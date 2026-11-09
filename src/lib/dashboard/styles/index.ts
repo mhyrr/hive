@@ -19,7 +19,6 @@ export { TABLES_CSS } from "./tables";
 export { REFLECTIONS_CSS } from "./reflections";
 export { TICKETS_CSS } from "./tickets";
 export { TASTE_CSS } from "./taste";
-export { WATCHES_CSS } from "./watches";
 export { ARCHIVE_CSS } from "./archive";
 export { INTERACTIVE_CSS } from "./interactive";
 export { RESPONSIVE_CSS } from "./responsive";
@@ -34,7 +33,6 @@ import { TABLES_CSS } from "./tables";
 import { REFLECTIONS_CSS } from "./reflections";
 import { TICKETS_CSS } from "./tickets";
 import { TASTE_CSS } from "./taste";
-import { WATCHES_CSS } from "./watches";
 import { ARCHIVE_CSS } from "./archive";
 import { INTERACTIVE_CSS } from "./interactive";
 import { RESPONSIVE_CSS } from "./responsive";
@@ -51,7 +49,6 @@ export const DASHBOARD_CSS = [
   REFLECTIONS_CSS,
   TICKETS_CSS,
   TASTE_CSS,
-  WATCHES_CSS,
   ARCHIVE_CSS,
   INTERACTIVE_CSS,
   RESPONSIVE_CSS,

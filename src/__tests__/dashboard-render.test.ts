@@ -397,35 +397,4 @@ describe("project filter — the surfaces it has to reach", () => {
     expect(html).toMatch(/<li class="work-item"[^>]*data-project="alpha"/);
     expect(html).toMatch(/<li class="work-item"[^>]*data-project="bravo"/);
   });
-
-  test("a project-scoped watch is filterable; a fleet-wide one is not", () => {
-    const card = {
-      at: "2026-04-17T06:00:00Z",
-      outcome: "surfaced",
-      model: "opus",
-      durationMs: 1000,
-      error: null,
-      quiet: false,
-      dropped: false,
-      logPath: "/tmp/log",
-    };
-    const watches = {
-      generatedAt: "2026-04-17T07:00:00Z",
-      ceiling: "propose",
-      lastTick: "2026-04-17T06:00:00Z",
-      tickStale: false,
-      rows: [{ qualifiedName: "propose" }, { qualifiedName: "alpha/drift" }],
-      latest: [
-        { ...card, watch: "alpha/drift", output: "alpha is drifting" },
-        { ...card, watch: "propose", output: "a fleet-wide thought" },
-      ],
-      artifacts: [],
-      warnings: [],
-    } as unknown as DashboardData["watches"];
-    const html = renderDashboard(briefed({ watches }));
-    expect(html).toContain('<li class="watch-card" data-project="alpha">');
-    // A standing question about the whole apiary belongs to no colony, and
-    // hiding it under a filter would claim it did.
-    expect(html).toContain('<li class="watch-card">');
-  });
 });

@@ -52,8 +52,6 @@ Eight bands, in the order a morning actually wants them.
 - **Briefing.** The narrative written by the nightly Opus verifier, set
   in columns: a lede, a block per project, then what needs your attention
   and the verifier's flags.
-- **Watches.** What each standing watch last said, inline. The full
-  fleet and its prompts live at `/watches`.
 - **Tickets.** A five-per-project shortlist of what would be picked up
   next, with start / note / close inline. The whole board is at
   `/tickets`.
@@ -62,11 +60,11 @@ Eight bands, in the order a morning actually wants them.
   accumulated enough recall strength to be worth broadening.
 - **Archive.** 30 days of past briefings; click a date to open it.
 - **Upkeep.** Deliberately quiet at the bottom: log activity for the
-  `nightly`, `watches` and `sync` launchd jobs, last
+  `nightly` and `sync` launchd jobs, last
   night's pipeline cost, and the taste queue when something is waiting.
 
-Cut on purpose: generic execution history and the inbox band. Watch Act
-surfaces only failed or review-ready branches in the yard's attention signal;
+Cut on purpose: generic execution history and the inbox band. v1 Watch Act records
+surface only failed or review-ready branches in the yard's attention signal;
 full private execution records stay off the dashboard.
 
 ## Archive

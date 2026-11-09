@@ -481,42 +481,6 @@ export function renderBriefingBand(data: DashboardData): string {
 }
 
 /**
- * Watches, inline. The full control surface lives on /watches; this is what
- * each watch last actually said, which is the part worth a morning read.
- */
-export function renderWatchesBand(w: DashboardData["watches"]): string {
-  if (!w || w.rows.length === 0) return "";
-
-  const spoke = (w.latest ?? []).filter((c) => !c.quiet && !c.dropped && c.output);
-  const aside = w.tickStale ? "tick stale" : `${w.rows.length} watching`; // author text
-
-  if (spoke.length === 0) {
-    return band("watches", "Watches", aside, `<p class="band-none">Every watch chose silence.</p>`);
-  }
-
-  const cards = spoke
-    .map((c) => {
-      // A watch is qualified `project/name` when it is scoped to one colony,
-      // and bare when it reasons across the whole apiary. Only the scoped ones
-      // belong to the project filter; the fleet's standing questions are not
-      // any single project's, and hiding them would be a lie.
-      const scope = c.watch.includes("/") ? c.watch.slice(0, c.watch.indexOf("/")) : null;
-      const projectAttr = scope ? ` data-project="${escapeHtml(scope)}"` : "";
-      return `
-    <li class="watch-card"${projectAttr}>
-      <div class="watch-head">
-        <span class="watch-name">${escapeHtml(c.watch)}</span>
-        <span class="watch-when">${escapeHtml(relativeTime(c.at))}</span>
-      </div>
-      <div class="prose">${md(c.output ?? "")}</div>
-    </li>`;
-    })
-    .join("");
-
-  return band("watches", "Watches", aside, `<ol class="watch-list">${cards}</ol>`);
-}
-
-/**
  * Stores: everything HIVE knows, in one place.
  *
  * Replaces three separate sections — recent memory, open questions, and
@@ -635,7 +599,6 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
     [true, "#section-yard", "Yard"],
     [(data.activity ?? []).some((a) => a.commits > 0), "#section-work", "Work"],
     [!!data.todayBriefing, "#section-briefing", "Briefing"],
-    [(data.watches?.rows.length ?? 0) > 0, "#section-watches", "Watches"],
     [true, "#section-tickets", "Tickets"],
     [hasStores, "#section-stores", "Stores"],
     [data.briefings.length > 0, "#section-archive", "Archive"],
@@ -643,7 +606,6 @@ export function renderStickyNav(data: DashboardData, c: RenderContext): string {
   const pages: [string, string][] = [
     ["/tickets", "Full board"],
     ["/taste", "Taste"],
-    ["/watches", "All watches"],
   ];
   const anchor = ([href, label]: [string, string]) => `<a href="${href}">${label}</a>`;
   const jumpLinks = [
@@ -790,7 +752,7 @@ export function renderBriefings(data: DashboardData): string {
 export function renderPropose(propose: ProposeEntry | null | undefined): string {
   if (!propose) return "";
   return `<section class="section" id="section-propose">
-  <div class="section-head"><h2>Propose</h2><span class="kicker">${escapeHtml(propose.date)} · nightly propose cycle · <a href="/watches">fleet →</a></span></div>
+  <div class="section-head"><h2>Propose</h2><span class="kicker">${escapeHtml(propose.date)} · nightly propose cycle</span></div>
   <hr class="amber"/>
   <div class="briefing">${md(propose.body)}</div>
 </section>`;
@@ -1618,7 +1580,6 @@ export function renderDashboard(data: DashboardData, opts: RenderOptions = {}): 
     renderYard(data),
     `<main class="page">`,
     renderBriefingBand(data),
-    renderWatchesBand(data.watches),
     renderTickets(data.tickets, c),
     renderStores(data),
     renderArchive(data, c),

@@ -102,11 +102,6 @@ Pi uses a generated extension. Cursor uses the initial positional prompt.
   Claude, GPT, Gemini, and local models. The current agent synthesizes their
   agreement and disagreement. It supports standard and adversarial-dialectic
   modes. [Perplexity](https://perplexity.ai/) inspired it.
-- **Watches.** Markdown files declare standing questions, schedules, evidence,
-  model tiers, output locations, and autonomy. Observe connects findings.
-  Propose writes to the nightly briefing. Act can start one eligible ticket on
-  an isolated review branch. Unchanged evidence causes no model call. Run
-  `hive watch status`; see [docs/watches.md](docs/watches.md).
 - **Dashboard.** `hive dashboard` opens a verdict for each project. HIVE can
   serve it at `127.0.0.1:7777` or build `~/.hive/dashboard/index.html`. See
   [The Dashboard](#the-dashboard) and [docs/dashboard.md](docs/dashboard.md).
@@ -134,9 +129,9 @@ entrance width shows ticket traffic. The plate below gives the nightly verdict
 and its reason. Painted boxes need attention. Unpainted pine boxes do not.
 
 Below the yard, the dashboard shows commit subjects as their authors wrote them,
-the morning briefing, overnight watch results, five tickets per project, the
+the morning briefing, five tickets per project, the
 memory store, and 30 days of briefings. Select a colony to filter the page to
-that project. `/tickets`, `/taste`, and `/watches` have their own pages.
+that project. `/tickets` and `/taste` have their own pages.
 
 [DESIGN.md](DESIGN.md) records the design system.
 
@@ -160,13 +155,12 @@ The installer registers four launchd jobs:
 | `com.hive.nightly` | 2:00am daily | Runs the V1 memory pipeline: condition → Sonnet extract → Opus verify → apply → rebuild dashboard. Lands the morning briefing. |
 | `com.hive.sync` | 2:30am daily | Commits and pushes `~/.hive/` to git |
 | `com.hive.dashboard` | KeepAlive | Serves the local interactive dashboard on `127.0.0.1:7777` |
-| `com.hive.watches` | Hourly | Evaluates due standing questions; delta-gated watches make no model call when nothing changed |
 
 All jobs log to `~/.hive/logs/`. Manage them with `launchctl`:
 
 ```bash
 launchctl list | grep hive         # see running jobs
-launchctl unload ~/Library/LaunchAgents/com.hive.watches.plist  # stop one
+launchctl unload ~/Library/LaunchAgents/com.hive.sync.plist  # stop one
 ```
 
 Then register a project and start working:
@@ -283,7 +277,7 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `show_ticket` | Show full ticket details. Supports partial ID matching. |
 | `update_ticket` | Update ticket status, priority, tags, or other fields. |
 | `add_ticket_note` | Add a timestamped note with optional actor attribution. |
-| `add_project` | Register a project with HIVE (creates config, memory, tickets, and watches directories). |
+| `add_project` | Register a project with HIVE (creates config, memory, and tickets directories). |
 | `hive_status` | Dashboard showing identity, projects, tickets, scheduled jobs, and agents. |
 
 ## CLI Commands
@@ -303,11 +297,6 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive memory question <text>` | Add an open question |
 | `hive memory reflect` | Batch-write learnings from stdin (JSON) |
 | `hive memory extract-sessions` | Condense last 24h session transcripts for nightly |
-| `hive watch list` | List discovered standing questions and their settings |
-| `hive watch status` | Show watch state, outcomes, and logged usage |
-| `hive watch run <name>` | Force one named watch; `--due` is the scheduled tick entry point |
-| `hive watch ceiling observe\|propose\|act` | Set the global autonomy ceiling |
-| `hive watch on\|off <name>` | Enable or disable a watch |
 | `hive identity emit` | Print the canonical identity prefix used by hooks and harness launchers |
 | `hive context` | Audit session-start context size against budgets (alias: `hive prompts`) |
 | `hive context --json` | Same audit as JSON, for tracking size over time |
@@ -415,8 +404,7 @@ positional initial prompt. The verified Cursor version reads
 `hive doctor` checks all four harnesses and reports optional-harness failures as
 warnings.
 
-Watch Act always uses Claude Code for isolated branch execution. The `-x`, `-3`,
-and `-a` flags affect interactive sessions only. The nightly pipeline ingests
+The `-x`, `-3`, and `-a` flags affect interactive sessions only. The nightly pipeline ingests
 Claude Code and Codex transcripts. It does not ingest Pi or Cursor transcripts.
 
 See `docs/hive-reach.md` for the identity, MCP, and project-scope matrix. See
@@ -441,14 +429,6 @@ prevent lost updates.
 
 The `~/.hive/` Git repository records every memory change.
 
-## Automation: Watches
-
-Watches replace the former periodic agent loop with standing questions stored in
-Markdown. Each file sets the cadence, evidence scope, model tier, output
-location, and autonomy level. A global ceiling limits autonomy. Act can start
-one eligible ticket in a local worktree. A human must review and land the work;
-Act does not merge or push. See [docs/watches.md](docs/watches.md).
-
 ## File Layout
 
 ```
@@ -472,18 +452,17 @@ Act does not merge or push. See [docs/watches.md](docs/watches.md).
 │   │       └── log/          # daily session log entries
 │   └── runs/            # nightly pipeline artifacts
 ├── briefings/           # morning briefings
-├── runs/                # private Watch Act execution records
+├── runs/                # execution records from v1 Watch Act
 │   └── RUN-001/
 │       ├── goal.md, status, plan.md, output.log, pid
 ├── projects/
 │   └── <name>/
 │       ├── config.md    # project path
-│       ├── inbox.md     # watch and nightly findings
-│       ├── watches/     # project-scoped standing questions
+│       ├── inbox.md     # nightly findings
 │       └── tickets/
 │           └── TK-001.md
 ├── scripts/             # launchd entry points
-└── logs/                # nightly, watches, dashboard, sync logs
+└── logs/                # nightly, dashboard, sync logs
 ```
 
 ## Requirements
