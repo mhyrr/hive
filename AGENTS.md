@@ -47,6 +47,18 @@ their native authentication behavior.
 - Run CLI directly (no build): `bun run src/cli.ts <command>`
 - Test MCP server: `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}' | bun src/mcp-server.ts`
 
+## Running beside `hive`
+
+This branch builds `hv`, which runs beside the installed `hive` until cutover.
+Shared state stays in `~/.hive`; anything only v2 uses goes in `~/.hv`.
+
+- Build: `bun build src/cli.ts --compile --outfile hv-bin`, then
+  `cp hv-bin ~/.local/bin/hv` (rm first when replacing it).
+- Never build to `hive-bin` or `hive-mcp`. They are tracked, and live `hive`
+  depends on them. `~/work/hive` stays on `main` for the same reason.
+- `hv init` creates `~/.hv` only. `src/lib/hv-guard.ts` lists the commands
+  `hv` refuses because `hive` owns them.
+
 ## Architecture
 
 Two entry points:

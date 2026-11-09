@@ -58,7 +58,7 @@ export type ServeOptions = {
   runCli?: CliRunner;
 };
 
-export const DEFAULT_PORT = 7777;
+export const DEFAULT_PORT = 7778; // hive keeps 7777 while both run
 
 /** Start a Bun server. Returns the server instance for lifecycle control. */
 export function startDashboardServer(opts: ServeOptions): {

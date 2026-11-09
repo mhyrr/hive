@@ -10,6 +10,10 @@ deterministic. Tokens are no longer scarce; Greg's attention is. v2 is a
 solo-developer tool on Greg's laptop that turns HIVE into a small supervision
 tree of agents, with everything that needs Greg in one queue.
 
+The purpose: Greg gets an idea across, and agents run the whole loop from
+there: think, research, design, implement, test. Greg manages, nudges and sets
+direction instead of writing a design doc and iterating by hand each time.
+
 The approach: start loose, lean on the harnesses and the models, see what
 breaks, and add structure only then.
 
@@ -313,16 +317,17 @@ transcript. Nothing in the core depends on it.
 Binary name: `hv`. Shared state: `~/.hive`. New state: `~/.hv` (D11).
 
 1. **Delete watches and the Act executor.** (D4)
-2. **Run side by side.** Install `hv` and `hv-mcp`, with its own dashboard
-   port. Add a `~/.hv` path for v2-only state. `hv init` must not touch v1's
-   hooks, MCP entry, templates or launchd jobs. Build artifacts use `hv`
-   names, never `hive-bin` or `hive-mcp`.
+2. **Run side by side.** Install `hv`, with its own dashboard port. Add a
+   `~/.hv` path for v2-only state. `hv init` must not touch v1's hooks, MCP
+   entry, templates or launchd jobs. Build artifacts use `hv` names, never
+   `hive-bin` or `hive-mcp`.
 3. **Spike the Claude adapter.** Start a background session with a charter,
    send it a message, resume it, confirm subscription auth (D1, D12), and
    find out how a parent can detect that a session exited. Every later slice
    depends on these answers.
 4. **Agent workspaces and tools.** `agents/<name>/`, `agent_start`,
-   `message`.
+   `message`. These tools ship in `hv-mcp`, a server holding only the new
+   tools and registered beside `hive`.
 5. **Read-only Now view.** The dashboard's Now section, so agents are visible
    while they are tested.
 6. **Supervision.** Exit and hang detection reaches the parent; restart from

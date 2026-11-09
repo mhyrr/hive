@@ -13,6 +13,16 @@ describe("resolveHiveBin", () => {
     expect(bin).toBe("/opt/hive/bin/hive");
   });
 
+  test("prefers hv on PATH over hive's installed binary", () => {
+    const bin = resolveHiveBin({
+      env: {},
+      existsSync: (p) => p === "/home/u/.hive/scripts/hive-bin",
+      which: (cmd) => (cmd === "hv" ? "/home/u/.local/bin/hv" : "/usr/bin/hive"),
+      homedir: () => "/home/u",
+    });
+    expect(bin).toBe("/home/u/.local/bin/hv");
+  });
+
   test("ignores HIVE_BIN when file does not exist", () => {
     const bin = resolveHiveBin({
       env: { HIVE_BIN: "/nope" },

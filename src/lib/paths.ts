@@ -32,6 +32,35 @@ export function resolveHiveHome(): string {
   return process.env.HIVE_HOME || join(homedir(), ".hive");
 }
 
+/** State that exists only in v2. Everything shared with v1 stays in HivePaths. */
+export type HvPaths = {
+  home: string;
+  agentsDir: string;
+  queueDir: string;
+  precedentsDir: string;
+};
+
+export function resolveHvHome(): string {
+  return process.env.HV_HOME || join(homedir(), ".hv");
+}
+
+export function getHvPaths(home: string = resolveHvHome()): HvPaths {
+  return {
+    home,
+    agentsDir: join(home, "agents"),
+    queueDir: join(home, "queue"),
+    precedentsDir: join(home, "precedents"),
+  };
+}
+
+export async function ensureHvScaffold(home: string = resolveHvHome()): Promise<HvPaths> {
+  const paths = getHvPaths(home);
+  await mkdir(paths.agentsDir, { recursive: true });
+  await mkdir(paths.queueDir, { recursive: true });
+  await mkdir(paths.precedentsDir, { recursive: true });
+  return paths;
+}
+
 export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
   return {
     home,

@@ -12,7 +12,8 @@ import { doctorCommand } from "./commands/doctor";
 import { goalCommand } from "./commands/goal";
 import { identityCommand } from "./commands/identity";
 import { inboxCommand } from "./commands/inbox";
-import { initCommand } from "./commands/init";
+import { hvInitCommand } from "./commands/hv-init";
+import { hiveOwnedReason } from "./lib/hv-guard";
 import { memoryCommand } from "./commands/memory";
 import { nextCommand } from "./commands/next";
 import { tasteCommand } from "./commands/taste";
@@ -27,7 +28,7 @@ import { getIdentityName, assembleIdentity } from "./lib/identity";
 import { findPiBin } from "./lib/pi-wire";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
-  init: initCommand,
+  init: hvInitCommand,
   doctor: doctorCommand,
   context: contextCommand,
   prompts: contextCommand,
@@ -52,13 +53,13 @@ const retiredCommands = new Set(["campaign", "dispatch", "heartbeat", "ps", "kil
 
 function getUsage(): string {
   const name = getIdentityName();
-  return `Usage: hive [command] [args]
+  return `Usage: hv [command] [args]
 
 When called with a HIVE command, runs that command directly.
 When called with anything else (or no args), launches an interactive harness as ${name}.
 
 HIVE Commands:
-  init                       Set up ~/.hive and register MCP server
+  init                       Create ~/.hv (changes nothing else)
   doctor                     Validate installation health
   context                    Audit session-start context size vs budgets (alias: prompts)
   project add <name> <path>  Register a project (--bootstrap to scan)
@@ -73,33 +74,33 @@ HIVE Commands:
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
   identity emit              Print canonical identity prefix (used by SessionStart hook)
   inbox                      Show project inbox (clear with: inbox clear)
-  dashboard [build|open]     Build or open the Morning Edition dashboard
+  dashboard [serve|open]     Serve or open the dashboard (port 7778)
 
 ${name} (default: Claude Code with identity):
-  hive                       Interactive ${name} session
-  hive "fix the auth bug"    ${name} with a prompt
-  hive --agent <name>        ${name} as a specific Claude Code agent
-  hive [any claude flags]    Passed through to claude with identity
+  hv                       Interactive ${name} session
+  hv "fix the auth bug"    ${name} with a prompt
+  hv --agent <name>        ${name} as a specific Claude Code agent
+  hv [any claude flags]    Passed through to claude with identity
 
 Claude Code identity modes:
   (default)                  Append HIVE identity after Claude Code's base prompt (OAuth)
-  hive --owned [prompt]      Replace base prompt with HIVE identity; keep hooks/MCP/OAuth
-  hive --bare [prompt]       Full --bare; HIVE owns prompt, MCP rewired explicitly.
+  hv --owned [prompt]      Replace base prompt with HIVE identity; keep hooks/MCP/OAuth
+  hv --bare [prompt]       Full --bare; HIVE owns prompt, MCP rewired explicitly.
                              Requires ANTHROPIC_API_KEY (no subscription OAuth in --bare).
   HIVE_CLAUDE_MODE=owned     Set --owned via env
   HIVE_CLAUDE_MODE=bare      Set --bare via env
 
 Alt harness:
-  hive -3 [prompt]          Route through Pi CLI (Pi owns provider/model selection)
-  hive -x [prompt]           Route through Codex CLI (ChatGPT subscription)
-  hive -a [prompt]           Route through Cursor CLI (Cursor subscription)
-  HIVE_HARNESS=pi hive       Same as -3, via env
-  HIVE_HARNESS=codex hive    Same as -x, via env (use --claude to override)
-  HIVE_HARNESS=cursor hive   Same as -a, via env (use --claude to override)
+  hv -3 [prompt]          Route through Pi CLI (Pi owns provider/model selection)
+  hv -x [prompt]           Route through Codex CLI (ChatGPT subscription)
+  hv -a [prompt]           Route through Cursor CLI (Cursor subscription)
+  HIVE_HARNESS=pi hv       Same as -3, via env
+  HIVE_HARNESS=codex hv    Same as -x, via env (use --claude to override)
+  HIVE_HARNESS=cursor hv   Same as -a, via env (use --claude to override)
 
 Persona (swappable register/voice, interactive only):
-  hive --persona <name>      Load ~/.hive/personas/<name>.md (default: dry)
-  HIVE_PERSONA=<name> hive    Same, via env`;
+  hv --persona <name>      Load ~/.hive/personas/<name>.md (default: dry)
+  HIVE_PERSONA=<name> hv    Same, via env`;
 }
 
 function findClaude(): string {
@@ -347,21 +348,21 @@ async function launchPi(args: string[], persona?: string): Promise<void> {
 async function launchAgent(harness: Harness, claudeMode: ClaudeMode, args: string[], persona?: string): Promise<void> {
   if (harness === "pi") {
     if (claudeMode !== "append") {
-      console.error("hive: --owned/--bare only apply to Claude Code; ignored for Pi.");
+      console.error("hv: --owned/--bare only apply to Claude Code; ignored for Pi.");
     }
     await launchPi(args, persona);
     return;
   }
   if (harness === "codex") {
     if (claudeMode !== "append") {
-      console.error("hive: --owned/--bare only apply to Claude Code; ignored for Codex.");
+      console.error("hv: --owned/--bare only apply to Claude Code; ignored for Codex.");
     }
     await launchCodex(args, persona);
     return;
   }
   if (harness === "cursor") {
     if (claudeMode !== "append") {
-      console.error("hive: --owned/--bare only apply to Claude Code; ignored for Cursor.");
+      console.error("hv: --owned/--bare only apply to Claude Code; ignored for Cursor.");
     }
     await launchCursor(args, persona);
     return;
@@ -386,6 +387,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  const hiveOwned = hiveOwnedReason(args);
+  if (hiveOwned) {
+    console.error(`hv: ${hiveOwned}`);
+    process.exit(1);
+  }
+
   // Known HIVE command → handle directly
   const handler = hiveCommands[command];
   if (handler) {
@@ -402,7 +409,7 @@ async function main(): Promise<void> {
   }
 
   if (retiredCommands.has(command)) {
-    console.error(`hive: ${command} was retired. Use tickets for ongoing work.`);
+    console.error(`hv: ${command} was retired. Use tickets for ongoing work.`);
     process.exit(1);
   }
 

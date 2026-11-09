@@ -4,7 +4,8 @@
  *
  * Resolution order:
  *   1. `HIVE_BIN` environment variable
- *   2. `~/.hive/scripts/hive-bin` (installed by install.sh)
+ *   2. `hv` on PATH, so dashboard actions run the same build that serves them
+ *   3. `~/.hive/scripts/hive-bin` (installed by install.sh)
  *   3. `which hive` on PATH
  *
  * Throws if nothing is found. The server returns a 500 with an
@@ -44,6 +45,9 @@ export function resolveHiveBin(r: Resolver = {}): string {
 
   const fromEnv = env.HIVE_BIN?.trim();
   if (fromEnv && exists(fromEnv)) return fromEnv;
+
+  const fromHvPath = which("hv");
+  if (fromHvPath) return fromHvPath;
 
   const fromScripts = join(home(), ".hive", "scripts", "hive-bin");
   if (exists(fromScripts)) return fromScripts;

@@ -9,12 +9,11 @@ import { startDashboardServer, DEFAULT_PORT } from "../lib/dashboard/serve";
 
 export async function dashboardCommand(args: string[]): Promise<void> {
   const usage = `Usage:
-  hive dashboard              Open in browser (server if running, else build+open)
-  hive dashboard build        Regenerate ~/.hive/dashboard/index.html + archive
-  hive dashboard serve [--port N] [--open]
-                              Start the interactive server (127.0.0.1:7777)
-  hive dashboard open         Open the existing static dashboard
-  hive dashboard path         Print the dashboard file path`;
+  hv dashboard                Open the running server in a browser
+  hv dashboard serve [--port N] [--open]
+                              Start the interactive server (127.0.0.1:7778)
+  hv dashboard open           Open hive's existing static dashboard
+  hv dashboard path           Print hive's static dashboard file path`;
 
   const paths = await ensureHiveScaffold();
   const subcommand = args[0];
@@ -31,7 +30,7 @@ export async function dashboardCommand(args: string[]): Promise<void> {
     const { port, openAfter } = parseServeArgs(args.slice(1), defaultPort);
     const { server, port: actualPort } = startDashboardServer({ paths, port });
     const url = `http://127.0.0.1:${actualPort}`;
-    console.log(`HIVE dashboard serving at ${url}`);
+    console.log(`hv dashboard serving at ${url}`);
     if (openAfter) openInBrowser(url);
     // Keep the process alive; the server loop handles requests.
     // Under launchd this is the main loop; under a terminal, ctrl-C exits.
@@ -55,7 +54,7 @@ export async function dashboardCommand(args: string[]): Promise<void> {
   }
 
   if (!subcommand) {
-    // Auto-detect: if the server is up, open the server URL. Else build + open.
+    // hv never builds the static page: that file belongs to hive until cutover.
     const serverUp = await probePort("127.0.0.1", defaultPort, 100);
     if (serverUp) {
       const url = `http://127.0.0.1:${defaultPort}`;
@@ -63,10 +62,7 @@ export async function dashboardCommand(args: string[]): Promise<void> {
       openInBrowser(url);
       return;
     }
-    const result = await buildDashboard(paths, outputPath);
-    console.log(`Dashboard written: ${result.output}`);
-    openInBrowser(outputPath);
-    return;
+    throw new UsageError("The hv dashboard server is not running. Start it: hv dashboard serve --open");
   }
 
   if (subcommand === "open") {

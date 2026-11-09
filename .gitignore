@@ -13,6 +13,8 @@
 /hive
 /hive-mcp
 /hive-bin
+/hv-bin
+/hv-mcp
 /hive.exe
 coverage/
 node_modules/
