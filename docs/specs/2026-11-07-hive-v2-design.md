@@ -77,6 +77,7 @@ Greg
     charter.md            what this agent is for, in prose (Greg-editable)
     checklist.md          what to look at each time it wakes (Greg-editable)
     log.md                what it did and why, appended
+    reports/              one file per finished piece of work
     memory/               its own notes
     session.json          harness, session ID, parent, worktree, how to resume
   queue/<item-id>/
@@ -164,8 +165,7 @@ One queue, an evolution of the dashboard, on its own port while v1 runs.
 Items are folders under `~/.hv/queue/`.
 
 - **Kinds:** review (a branch ready to look at), decision (a question the tree
-  could not settle), proposal, blocker (needs a credential, fact or access),
-  FYI.
+  could not settle), proposal, blocker (needs a credential, fact or access).
 - **Each item has:** which agent raised it, each level's recommendation on the
   way up, evidence (screenshots and text, captured with the harness's own
   tools), and one-key actions: approve, reject, redirect, each with an
@@ -173,11 +173,29 @@ Items are folders under `~/.hv/queue/`.
 - **The chief of staff** ranks the queue, merges duplicates, groups related
   items, and settles what it can. It should be able to say why an item is
   first.
-- **Dashboard:** queue first, one item at a time, evidence large, keyboard
-  driven. Today's report becomes a secondary view. No network, no voice.
 
 When Greg answers, the answer goes to the agent that raised the item as a
 message and, with his reason, into `precedents/`.
+
+### The dashboard
+
+The `hv` home page is where Greg sees what is going on when he is not
+messaging. This is a first version, to iterate on. From the top:
+
+1. **Waiting on you.** The queue, ranked by Maya, with why the first item is
+   first. Opening an item shows one item at a time, evidence large, keyboard
+   driven.
+2. **Now.** One line per agent in tree order, from `session.json` and the last
+   log line. It refreshes every few seconds. An agent that exited or stopped
+   responding is painted here.
+3. **Reports.** Finished work, newest first. An agent writes a file to its
+   `reports/` folder when it finishes a piece of work, and the dashboard shows
+   that report as written.
+4. **The existing bands,** read from `~/.hive`: yard, briefing, commits,
+   tickets.
+
+It reuses the current collectors, renderer, action handlers and `DESIGN.md`.
+No network, no voice.
 
 ## 9. Proposals: small bets
 
@@ -305,13 +323,16 @@ Binary name: `hv`. Shared state: `~/.hive`. New state: `~/.hv` (D11).
    depends on these answers.
 4. **Agent workspaces and tools.** `agents/<name>/`, `agent_start`,
    `message`.
-5. **Supervision.** Exit and hang detection reaches the parent; restart from
+5. **Read-only Now view.** The dashboard's Now section, so agents are visible
+   while they are tested.
+6. **Supervision.** Exit and hang detection reaches the parent; restart from
    the workspace (D3, D7).
-6. **Maya and the six project agents.** `hv maya`, and `message` from any
+7. **Maya and the six project agents.** `hv maya`, and `message` from any
    session (D5, D9).
-7. **Queue and precedents.** `queue_add`, `precedents_search`, the dashboard.
-8. **Other harnesses.** Codex, Cursor, Pi (D2).
-9. **Cutover.** Stop the `com.hive.watches` job. Delete what v1 still needs
+8. **Queue and precedents.** `queue_add`, `precedents_search`, the dashboard's
+   Waiting and Reports sections.
+9. **Other harnesses.** Codex, Cursor, Pi (D2).
+10. **Cutover.** Stop the `com.hive.watches` job. Delete what v1 still needs
    while both run: the `act_run` ticket fields, `hive next`, the dashboard's
    Propose and Act-work surfaces, and the decompose loop. Decide whether `hv`
    keeps its name.
