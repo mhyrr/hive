@@ -276,7 +276,55 @@ transcript. Nothing in the core depends on it.
   addressed by agent name. Messages for the chief of staff are addressed to
   Maya.
 
-## 16. Sources
+- **D7. Supervision works like an Erlang supervision tree.** A parent
+  supervises the children it started and learns when one exits or hangs. A
+  child that dies without reporting is a signal to its parent, not silence.
+  This is part of the minimum build and replaces the first item in §14.
+- **D8. Incoming messages ride the harness.** What happens when a message
+  reaches a busy session (queue, interrupt) is whatever that harness does.
+  HIVE adds no delivery semantics of its own.
+- **D9. Greg's session is separate from the supervised agent.** When Greg
+  drives a project he has his own session, and the project agent under Maya
+  keeps running. Children stay under the agent that started them. This
+  supersedes the supervision hand-off described in §5.
+- **D10. v2 is built on the long-running branch `hive-v2` and runs beside
+  v1.** It installs under a different binary name. The installed `hive`
+  binary, its launchd jobs and the dashboard stay on v1 until cutover.
+- **D11. D5's project list predates access to the real `~/.hive`.** The
+  registry has 19 projects, 18 with a repo path. Which ones get a project
+  agent is open.
+- **D12. Subscription-only auth moves to the v2 spawn path.** Watch Act's
+  executor is deleted with watches, and it was the code that unset
+  `ANTHROPIC_API_KEY`. Every detached v2 start must do the same.
+
+## 16. Build order
+
+Working binary name: `hive2`. v2 reads identity, memory and tickets from the
+shared `~/.hive` and writes only to its new folders (`agents/`, `queue/`,
+`precedents/`).
+
+1. **Delete watches and the Act executor.** (D4)
+2. **Run side by side.** Install `hive2` and `hive2-mcp`, with its own
+   dashboard port. `hive2 init` must not touch v1's hooks, MCP entry or
+   launchd jobs.
+3. **Spike the Claude adapter.** Start a background session with a charter,
+   send it a message, resume it, confirm subscription auth (D1, D12), and
+   find out how a parent can detect that a session exited. Every later slice
+   depends on these answers.
+4. **Agent workspaces and tools.** `agents/<name>/`, `agent_start`,
+   `message`.
+5. **Supervision.** Exit and hang detection reaches the parent; restart from
+   the workspace (D3, D7).
+6. **Maya and project agents.** `hive2 maya`, `hive2 <project>`, separate from
+   Greg's own session (D9).
+7. **Queue and precedents.** `queue_add`, `precedents_search`, the dashboard.
+8. **Other harnesses.** Codex, Cursor, Pi (D2).
+9. **Cutover.** Stop the `com.hive.watches` job. Delete what v1 still needs
+   while both run: the `act_run` ticket fields, `hive next`, the dashboard's
+   Propose and Act-work surfaces, and the decompose loop. Rename `hive2` to
+   `hive`.
+
+## 17. Sources
 
 Brian Armstrong's post (leads, chief of staff, one queue); Grok Bot
 architecture write-up (https://gist.github.com/wtfsayo/b80f74f4f64d18ced8c84502a23148fe);
