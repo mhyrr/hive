@@ -112,14 +112,16 @@ The minimum tool set:
 - `agent_start(harness, charter, repo?)` — start a child agent. If it will
   edit code, it gets its own worktree and branch; an agent that only thinks
   or reviews does not need one.
-- `message(to, text)` — send a message to an agent by name. A child uses it
-  to tell its parent it finished, is stuck, has a question, or has an idea.
-  Greg (or any session he has open) uses it to reach Maya: `to: "maya"`.
+- `agent_list()` — every agent, its parent, whether its session is alive,
+  its report count and last log line.
+- Messages ride the harness (D6). A Claude agent reaches another by name with
+  Claude's own `SendMessage`: a child tells its parent it finished, is stuck,
+  has a question, or has an idea, and Greg reaches Maya from any session the
+  same way. HIVE builds a message bridge only where harnesses differ (step 9).
 - `queue_add(item)` — put something in front of Greg, with evidence.
 - `precedents_search(query)` — see how Greg decided similar things.
 
-Delivery uses the harness's own mechanism where one exists (Claude
-cross-session messaging, channels); otherwise HIVE resumes the target session
+Where a harness has no messaging of its own, HIVE resumes the target session
 with the message as the next prompt.
 
 **Waking.** An agent wakes when it gets a message: a child reports, its
@@ -127,9 +129,9 @@ parent or Greg sends something, Greg answers a queue item, or a launchd timer
 nudges it to walk its checklist. That is all for now.
 
 **Greg talks to Maya from anywhere.** Greg's sessions are ordinary sessions
-outside the tree. From any of them he reaches Maya with `message(to: "maya",
-...)`, or opens her directly with `hv maya`. Maya reaches the project agents
-with `message`. There is no attach mode and no hand-off of supervision.
+outside the tree. From any of them he reaches Maya with `SendMessage` to
+"maya", or opens her directly with `hv maya`. Maya reaches the project agents
+the same way. There is no attach mode and no hand-off of supervision.
 
 ## 6. Supervision
 
@@ -264,9 +266,8 @@ transcript. Nothing in the core depends on it.
 - **D1. Maya (the chief of staff) is a background Claude Code session on the
   subscription.** Not `claude -p`, not API credits. Greg can resume her from
   HIVE (e.g. `hv maya`), or message her from whatever Claude Code session
-  he has open with the HIVE MCP tool `message(to: "maya", ...)`. To verify
-  when building: background sessions authenticate with the subscription like
-  any interactive session.
+  he has open with `SendMessage` to "maya". Background sessions use the
+  subscription (verified in the spike).
 - **D2. Non-Claude harnesses are spawned like a sub-agent.** An agent hosted
   on Codex, Cursor or Pi is started by running its HIVE wrapper (`hive -x`,
   `hive -a`, `hive -3`) with the starting context and prompt injected, the
@@ -283,9 +284,12 @@ transcript. Nothing in the core depends on it.
 - **D5. Project agents come from an explicit list.** v2 starts with six:
   matreas, revrec, arete, writing, investing and hive. The registry has 19
   projects; the others get an agent only when Greg adds them.
-- **D6. Messages go through one HIVE MCP tool, `message(to, text)`**,
-  addressed by agent name. Messages for the chief of staff are addressed to
-  Maya.
+- **D6. Messages ride the harness; there is no HIVE `message` tool.**
+  (Revised 2026-11-10.) Claude agents use Claude's `SendMessage`, addressed by
+  the agent's name, which is also its session name. HIVE adds a bridge only
+  for messages that cross harnesses. All hv agents run in one permission
+  mode (`auto`, override with `HV_PERMISSION_MODE`), because Claude holds
+  messages between sessions in different modes for approval.
 
 - **D7. Supervision works like an Erlang supervision tree.** A parent
   supervises the children it started and learns when one exits or hangs. A
@@ -325,15 +329,17 @@ Binary name: `hv`. Shared state: `~/.hive`. New state: `~/.hv` (D11).
    send it a message, resume it, confirm subscription auth (D1, D12), and
    find out how a parent can detect that a session exited. Every later slice
    depends on these answers.
-4. **Agent workspaces and tools.** `agents/<name>/`, `agent_start`,
-   `message`. These tools ship in `hv-mcp`, a server holding only the new
-   tools and registered beside `hive`.
+4. **Agent workspaces and tools.** (Done 2026-11-10.) `agents/<name>/`,
+   `hv agent start|list`, and `hv-mcp` with `agent_start` and `agent_list`.
+   hv hands `hv-mcp` to each agent it starts with `--mcp-config`, so no global
+   MCP registration changes. `HV_AGENT` in that config tells the server whose
+   session it serves, which makes the caller the parent of what it starts.
 5. **Read-only Now view.** The dashboard's Now section, so agents are visible
    while they are tested.
 6. **Supervision.** Exit and hang detection reaches the parent; restart from
    the workspace (D3, D7).
-7. **Maya and the six project agents.** `hv maya`, and `message` from any
-   session (D5, D9).
+7. **Maya and the six project agents.** `hv maya`, and `SendMessage` to
+   Maya from any session (D5, D9).
 8. **Queue and precedents.** `queue_add`, `precedents_search`, the dashboard's
    Waiting and Reports sections.
 9. **Other harnesses.** Codex, Cursor, Pi (D2).
@@ -360,9 +366,11 @@ Tested with real background sessions.
 
 What this means for the build:
 
-- `hv` injects identity with `--append-system-prompt` and sets
-  `HIVE_IDENTITY_IN_PROMPT`, as `hive` does. Whether that flag combines with
-  `--bg` is untested, as is `-w` with `--bg`.
+- `hv` writes identity plus the agent's operating contract to
+  `agents/<name>/system-prompt.md`, passes it with
+  `--append-system-prompt-file`, and sets `HIVE_IDENTITY_IN_PROMPT`.
+  Verified with `--bg` on 2.1.322, as are `--mcp-config`,
+  `--permission-mode` and `-w`.
 - A session that left the active list without writing a report died. The
   harness cannot tell a crash from a clean exit, so the report file does.
 - `SendMessage` with `notify_when_idle` is a candidate for the monitor. The
@@ -372,6 +380,24 @@ What this means for the build:
   `claude agents --json` and checks for the report file. Cross-session
   messages are held for approval when the two sessions run in different
   permission modes.
+
+Step 4 findings (2026-11-10, Claude Code 2.1.322):
+
+- `--bg` refuses a folder Claude has not trusted. An agent can start only in
+  a repo Greg has opened in Claude at least once; hv says so plainly.
+- `--mcp-config` takes a list and swallows a prompt placed after it. The
+  session then starts idle and fails. hv puts a single-value flag after it.
+- A session that fails at start appears only under `claude agents --all`,
+  as `failed`. A finished one stays in the active list as `done` until
+  `claude rm`.
+- `-w <name>` creates `<main checkout>/.claude/worktrees/<name>` on branch
+  `worktree-<name>`, based on the main checkout's HEAD, even when started
+  from another worktree. `claude rm` removes a clean worktree and its branch.
+- End to end: Greg started an agent, it started a child through
+  `agent_start`, the child wrote a report and sent `DONE` to its parent by
+  name with `SendMessage`, and the parent wrote its report. The message
+  arrived tagged `from-mode="prompting"` although both transcripts record
+  `auto`, and it was not held. Watch this tag if messages start to stall.
 
 ## 17. Sources
 

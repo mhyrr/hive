@@ -52,8 +52,12 @@ their native authentication behavior.
 This branch builds `hv`, which runs beside the installed `hive` until cutover.
 Shared state stays in `~/.hive`; anything only v2 uses goes in `~/.hv`.
 
-- Build: `bun build src/cli.ts --compile --outfile hv-bin`, then
-  `cp hv-bin ~/.local/bin/hv` (rm first when replacing it).
+- Build: `bun build src/cli.ts --compile --outfile hv-bin` and
+  `bun build src/hv-mcp-server.ts --compile --outfile hv-mcp`, then copy them
+  to `~/.local/bin/hv` and `~/.local/bin/hv-mcp` (rm first when replacing).
+- `hv agent start|list` runs agents as Claude background sessions; their
+  workspaces live in `~/.hv/agents/`. `src/lib/hv-claude.ts` is the Claude
+  adapter; `src/lib/hv-agents.ts` owns workspaces and the start path.
 - Never build to `hive-bin` or `hive-mcp`. They are tracked, and live `hive`
   depends on them. `~/work/hive` stays on `main` for the same reason.
 - `hv init` creates `~/.hv` only. `src/lib/hv-guard.ts` lists the commands
