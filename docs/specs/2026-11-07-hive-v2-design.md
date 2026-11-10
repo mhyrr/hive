@@ -367,7 +367,9 @@ What this means for the build:
   harness cannot tell a crash from a clean exit, so the report file does.
 - `SendMessage` with `notify_when_idle` is a candidate for the monitor. The
   idle notice is verified: it arrived with the session's last reply, a few
-  minutes late. The notice for a killed session is not verified. Cross-session
+  minutes late. A killed session sends no notice: the subscription just
+  expires after 12 hours with no signal. Death detection therefore polls
+  `claude agents --json` and checks for the report file. Cross-session
   messages are held for approval when the two sessions run in different
   permission modes.
 
