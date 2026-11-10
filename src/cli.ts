@@ -12,6 +12,7 @@ import { doctorCommand } from "./commands/doctor";
 import { goalCommand } from "./commands/goal";
 import { identityCommand } from "./commands/identity";
 import { inboxCommand } from "./commands/inbox";
+import { hvAgentCommand } from "./commands/hv-agent";
 import { hvInitCommand } from "./commands/hv-init";
 import { hiveOwnedReason } from "./lib/hv-guard";
 import { memoryCommand } from "./commands/memory";
@@ -29,6 +30,7 @@ import { findPiBin } from "./lib/pi-wire";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: hvInitCommand,
+  agent: hvAgentCommand,
   doctor: doctorCommand,
   context: contextCommand,
   prompts: contextCommand,
@@ -60,6 +62,7 @@ When called with anything else (or no args), launches an interactive harness as 
 
 HIVE Commands:
   init                       Create ~/.hv (changes nothing else)
+  agent start|list           Start hv agents (background sessions) and see their state
   doctor                     Validate installation health
   context                    Audit session-start context size vs budgets (alias: prompts)
   project add <name> <path>  Register a project (--bootstrap to scan)

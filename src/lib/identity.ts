@@ -185,6 +185,11 @@ export async function assembleIdentity(opts?: {
   });
 }
 
+/** Identity for a named project (or none), independent of the process cwd. hv agents use this. */
+export async function assembleIdentityForProject(projectId: string | null): Promise<string> {
+  return buildCanonicalIdentity({ projectId, includeProjectMemory: true, includePersona: true });
+}
+
 export function getIdentityName(): string {
   const paths = getHivePaths();
   const idPath = join(paths.home, "IDENTITY.md");

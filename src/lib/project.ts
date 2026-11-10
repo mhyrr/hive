@@ -60,9 +60,14 @@ function isWithin(dir: string, base: string): boolean {
  * beats the repo root instead of resolving by readdir order.
  */
 export function resolveProjectFromCwd(): string | null {
+  return resolveProjectFromPath(process.cwd());
+}
+
+/** Same as resolveProjectFromCwd, for a directory other than the process cwd. */
+export function resolveProjectFromPath(dir: string): string | null {
   const paths = getHivePaths();
   if (!existsSync(paths.projectsDir)) return null;
-  const cwd = canonical(process.cwd());
+  const cwd = canonical(dir);
 
   let best: { projectId: string; depth: number } | null = null;
 
