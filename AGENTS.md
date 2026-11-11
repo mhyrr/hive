@@ -18,11 +18,10 @@ contract. Claude Code defers them, so schemas load via ToolSearch on first use.
 
 ## Auth
 
-HIVE defaults to **subscription OAuth** for detached Claude work. Every
-detached agent start must unset `ANTHROPIC_API_KEY` before launch to enforce
-that default (the v2 spawn path owns this; see D12 in
-`docs/specs/2026-11-07-hive-v2-design.md`). If subscription OAuth fails, the run fails — surface the failure,
-don't silently fall back.
+HIVE defaults to **subscription OAuth** for detached Claude work. Detached
+calls (the nightly pipeline's `claude --print`, `src/lib/claude.ts`) unset
+`ANTHROPIC_API_KEY` before launch to enforce that default. If subscription
+OAuth fails, the run fails — surface the failure, don't silently fall back.
 
 On macOS the OAuth token lives in Keychain (`Claude Code-credentials` in
 `login.keychain-db`). Detached subprocesses without a GUI session can hit
