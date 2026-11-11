@@ -19,7 +19,6 @@ import { tasteCommand } from "./commands/taste";
 import { projectCommand } from "./commands/project";
 import { stackCommand } from "./commands/stack";
 import { ticketCommand, ticketsCommand } from "./commands/ticket";
-import { watchCommand } from "./commands/watch";
 import { UsageError } from "./lib/errors";
 import { resolveHarness, type ClaudeMode, type Harness } from "./lib/harness";
 import { writeCodexAgentsMd } from "./lib/codex-wire";
@@ -44,13 +43,12 @@ const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   identity: identityCommand,
   inbox: inboxCommand,
   dashboard: dashboardCommand,
-  watch: watchCommand,
 };
 
 // Unknown words are valid interactive prompts, so retired command names need
 // an explicit tombstone. Otherwise `hive dispatch ...` would quietly launch an
 // agent conversation and look like a half-working command.
-const retiredCommands = new Set(["campaign", "dispatch", "heartbeat", "ps", "kill"]);
+const retiredCommands = new Set(["campaign", "dispatch", "heartbeat", "ps", "kill", "watch"]);
 
 function getUsage(): string {
   const name = getIdentityName();
@@ -73,7 +71,6 @@ HIVE Commands:
   tickets                    Open tickets for the project you're standing in
   ticket [create|list|...]   Project ticket tracker
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
-  watch list|status|run|...  Standing-question watches (ambient passes)
   identity emit              Print canonical identity prefix (used by SessionStart hook)
   inbox                      Show project inbox (clear with: inbox clear)
   dashboard [build|open]     Build or open the Morning Edition dashboard
@@ -405,7 +402,7 @@ async function main(): Promise<void> {
   }
 
   if (retiredCommands.has(command)) {
-    console.error(`hive: ${command} was retired. Use tickets and watches for ongoing work.`);
+    console.error(`hive: ${command} was retired. Use tickets for ongoing work.`);
     process.exit(1);
   }
 

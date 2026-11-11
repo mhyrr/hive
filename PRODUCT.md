@@ -86,12 +86,11 @@ status, last tick, ticket counts, inbox freshness), ticket buckets (ready /
 in-progress / blocked), dispatch runs with failures given prominence, recent
 memory entries with BM25+decay strength scores, promotion candidates, a
 cross-project open-questions rollup, the narrative morning briefing, last night's
-pipeline cost broken out by pass in USD, launchd health lines, and watches.
+pipeline cost broken out by pass in USD, and launchd health lines.
 
 **Product vocabulary — terminology, not decoration.** Identity stack
 (SOUL / IDENTITY / SELF / AGENTS / TRUST); facts, conventions, decisions,
-questions; candidates; Pass V; taste units; tickets; dispatch; campaign; watch
-(observe / propose / act); council; briefing; inbox.
+questions; candidates; Pass V; taste units; tickets; council; briefing; inbox.
 
 ## Capabilities and Constraints
 
@@ -133,7 +132,7 @@ open.
 
 Real and in-repo:
 
-- `README.md`, `GUIDE.md`, and `docs/` (dashboard, memory-architecture, watches,
+- `README.md`, `GUIDE.md`, and `docs/` (dashboard, memory-architecture,
   ralph-loop, taste research, platform audit).
 - Screenshots of the shipped dashboard: `dash-top.png`, `dash-2.png`,
   `dash-3.png`, `dash-4.png`, `dash-full.png`, plus `img/briefing-headline-fix.png`

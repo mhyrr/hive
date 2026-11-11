@@ -87,12 +87,12 @@ describe("dashboard server end-to-end", () => {
 
   // --- Nav link presence ---
 
-  test("every page carries the same four-tab nav", async () => {
-    for (const path of ["/", "/tickets", "/taste", "/watches"]) {
+  test("every page carries the same three-tab nav", async () => {
+    for (const path of ["/", "/tickets", "/taste"]) {
       const body = await (await fetch(`http://127.0.0.1:${port}${path}`)).text();
       expect(body).toContain('href="/tickets"');
       expect(body).toContain('href="/taste"');
-      expect(body).toContain('href="/watches"');
+      expect(body).not.toContain('href="/watches"');
       expect(body).not.toContain('href="/runs"');
     }
   });

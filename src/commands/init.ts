@@ -8,7 +8,6 @@ import { wireCursor } from "../lib/cursor-wire";
 import { assembleIdentity } from "../lib/identity";
 import { ensureDirectory, ensureHiveScaffold } from "../lib/paths";
 import { wirePi } from "../lib/pi-wire";
-import { discoverWatches, rewriteWatchFrontmatter } from "../lib/watch";
 
 type SettingsHookEntry = { hooks?: Array<{ type?: string; command?: string }> };
 type SettingsShape = { hooks?: Record<string, SettingsHookEntry[]> };
@@ -65,62 +64,6 @@ async function installTemplateDir(templateSubdir: string, destDir: string, execu
   }
 
   return installed;
-}
-
-async function retireLegacyWatch(path: string): Promise<string> {
-  let target = path.replace(/\.md$/, ".legacy");
-  let suffix = 1;
-  while (existsSync(target)) target = path.replace(/\.md$/, `.legacy-${suffix++}`);
-  await rename(path, target);
-  return target;
-}
-
-/** One-time Bets/Muse → Propose/Observe migration. The old files are retained
- * with a non-.md suffix, so custom edits remain recoverable without running a
- * duplicate cycle. State cursors move with the identity; audit logs stay put.
- * The same pass rewrites the old Act venue name in place. */
-export async function migrateLegacyWatches(paths: Awaited<ReturnType<typeof ensureHiveScaffold>>): Promise<number> {
-  const aliases = [["bets", "propose"], ["muse", "observe"]] as const;
-  let migrated = 0;
-  const statePath = join(paths.watchesDir, "state.json");
-  let state: { watches?: Record<string, unknown> } | null = null;
-  if (existsSync(statePath)) {
-    state = await Bun.file(statePath).json().catch(() => null) as { watches?: Record<string, unknown> } | null;
-  }
-
-  for (const [legacy, current] of aliases) {
-    const legacyPath = join(paths.watchesDir, `${legacy}.md`);
-    const retired = existsSync(legacyPath) ? await retireLegacyWatch(legacyPath) : null;
-    let changed = retired !== null;
-    if (state?.watches?.[legacy] && !state.watches[current]) {
-      state.watches[current] = state.watches[legacy];
-      changed = true;
-    }
-    if (state?.watches?.[legacy]) {
-      delete state.watches[legacy];
-      changed = true;
-    }
-    if (changed) {
-      console.log(retired
-        ? `Retired legacy watch ${legacy} → ${retired}; ${current} replaces it`
-        : `Migrated legacy watch state ${legacy} → ${current}`);
-      migrated++;
-    }
-  }
-  const { watches } = await discoverWatches(paths);
-  const seenFiles = new Set<string>();
-  for (const watch of watches) {
-    if (watch.venue !== "act") continue;
-    if (seenFiles.has(watch.filePath)) continue;
-    const content = await Bun.file(watch.filePath).text();
-    if (!/^venue:\s*dispatch\s*$/m.test(content)) continue;
-    seenFiles.add(watch.filePath);
-    await rewriteWatchFrontmatter(watch.filePath, { venue: "act" });
-    console.log(`Migrated watch venue dispatch → act (${watch.name})`);
-    migrated++;
-  }
-  if (migrated > 0 && state) await Bun.write(statePath, JSON.stringify(state, null, 2) + "\n");
-  return migrated;
 }
 
 // Skills may carry subdirectories (references/, scripts/), so install by
@@ -246,31 +189,6 @@ async function retireShippedLaunchAgent(plistName: string): Promise<string | nul
   return preserveRetiredFile(dest);
 }
 
-/** Older watch installs invoked the CLI directly, which left detached model
- * calls dependent on GUI Keychain access. Upgrade only that exact shipped
- * command; custom launchd definitions remain untouched. */
-function migrateWatchesLaunchAgent(): boolean {
-  const home = process.env.HOME || "";
-  const dest = join(home, "Library", "LaunchAgents", "com.hive.watches.plist");
-  if (!existsSync(dest)) return false;
-  const legacy = "\"${HIVE_BIN:-$HOME/.local/bin/hive}\" watch run --due";
-  const current = require("fs").readFileSync(dest, "utf-8") as string;
-  if (!current.includes(legacy)) return false;
-  const template = join(dirname(import.meta.dir), "..", "templates", "launchd", "com.hive.watches.plist");
-  require("fs").writeFileSync(dest, require("fs").readFileSync(template, "utf-8"));
-  try {
-    execSync(`launchctl unload ${dest}`, { encoding: "utf-8" });
-  } catch {
-    // It may not currently be loaded; load below is the meaningful operation.
-  }
-  try {
-    execSync(`launchctl load ${dest}`, { encoding: "utf-8" });
-  } catch {
-    // Non-fatal, matching first-install launchd behavior.
-  }
-  return true;
-}
-
 export async function initCommand(args: string[]): Promise<void> {
   const paths = await ensureHiveScaffold();
 
@@ -346,13 +264,6 @@ export async function initCommand(args: string[]): Promise<void> {
   // Ensure logs directory
   await ensureDirectory(join(paths.home, "logs"));
 
-  // Install template watches (idempotent — existing files never overwritten)
-  await migrateLegacyWatches(paths);
-  const watchesInstalled = await installTemplateDir("watches", paths.watchesDir);
-  if (watchesInstalled > 0) {
-    console.log(`Installed ${watchesInstalled} template watch(es) to ~/.hive/watches/`);
-  }
-
   // Install launchd agents for scheduled jobs
   const retiredHeartbeat = await retireShippedLaunchAgent("com.hive.heartbeat.plist");
   if (retiredHeartbeat) {
@@ -366,11 +277,6 @@ export async function initCommand(args: string[]): Promise<void> {
   }
   if (installLaunchAgent("com.hive.dashboard.plist")) {
     console.log("Installed dashboard server (127.0.0.1:7777, KeepAlive, via launchd)");
-  }
-  if (migrateWatchesLaunchAgent()) {
-    console.log("Updated watches tick for detached OAuth + sleep prevention");
-  } else if (installLaunchAgent("com.hive.watches.plist")) {
-    console.log("Installed watches tick (hourly via launchd)");
   }
   if (installLaunchAgent("com.hive.taste-review.plist")) {
     console.log("Installed weekly taste review reminder (Sunday 7pm via launchd)");
