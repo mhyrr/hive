@@ -73,8 +73,9 @@ Greg
 
 ```
 ~/.hive/
-  agents/<name>/          cos, revrec, rate-limiter, ...
-    charter.md            what this agent is for, in prose (Greg-editable)
+  agents/<name>/          maya, revrec, rate-limiter, ...
+    charter.md            what this agent is for, in prose, plus the skills
+                          it carries (Greg-editable)
     checklist.md          what to look at each time it wakes (Greg-editable)
     log.md                what it did and why, appended
     memory/               its own notes
@@ -83,6 +84,7 @@ Greg
     item.md               the ask, the chain of recommendations, status
     evidence/             *.png, *.txt
   precedents/             Greg's answers, one file each
+  skills/<name>/SKILL.md  the skill library every agent draws from
 ```
 
 - Each agent writes only its own folder; queue items are written by whoever
@@ -90,6 +92,34 @@ Greg
 - The charter is the scope. There is no mandate or permission format; the
   agent reads its charter and judges what fits.
 - If an agent's session is gone, a new session starts from its workspace.
+
+### Skills: what makes a role
+
+Agents are all the same kind of thing. What makes Maya different from the
+revrec agent is **her charter (what she is for) and her skills (how she does
+it)**. Skills are prose playbooks in the harness-native `SKILL.md` format, so
+they fit "trust the model": they explain how to do something well, they do not
+gate anything.
+
+Skills come in layers, and an agent carries the layers that fit its role:
+
+| Layer | Who carries it | Examples |
+|---|---|---|
+| **Shared core** | Every agent | How the tree works and how to talk in it (`message`, `agent_start`, `queue_add`, `precedents_search`); when to decide vs. escalate and how to add your read on the way up; keeping `log.md` and `memory/` current so a fresh session can pick up; capturing screenshots and text as evidence |
+| **Maya** | The chief of staff | Reading the whole tree (who is alive, what each agent is doing); ranking, merging and grouping the queue; spotting collisions between projects; choosing which harness to deploy for a job; supervising children that have gone quiet |
+| **Project** | Each project agent | The project's stack pack (the existing `templates/stacks/*/skills`, e.g. elixir, typescript); the ticket workflow; starting builder and reviewer children; proposals as small bets |
+| **Task** | Child agents | Whatever the job needs; the parent picks them when it calls `agent_start` |
+
+- **Delivery uses the harness.** For Claude Code, the agent's skills are
+  linked where its session loads skills. For harnesses that read the same
+  `SKILL.md` format, the same. For anything else, the skill text is injected
+  with the starting context (D2). The exact per-session mechanism needs
+  checking per harness when building.
+- **Overlap is fine.** Maya and a project agent both carry the shared core;
+  a project agent and its children may share the stack pack.
+- **Skills are where learning lands.** When precedents keep repeating the
+  same lesson, an agent can propose a skill edit through the queue, like a
+  charter change. Greg can edit any skill directly.
 
 ## 5. How agents run and talk
 
