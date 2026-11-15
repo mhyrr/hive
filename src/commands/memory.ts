@@ -18,7 +18,7 @@ import {
   runReflectionExtractor,
 } from "../lib/extract";
 import { runVerifier } from "../lib/verify";
-import { formatUsd, loadUsageSummary } from "../lib/pricing";
+import { formatInputTokens, formatRunCostLine, formatUsd, loadUsageSummary } from "../lib/pricing";
 import { applyDecisions } from "../lib/apply";
 import { runNightly, type PassReport } from "../lib/orchestrator";
 
@@ -115,10 +115,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
     // Cost summary
     const usage = await loadUsageSummary(paths, result.date);
     if (usage.records.length > 0) {
-      console.log(
-        `Cost: ${usage.totals.inputTokens.toLocaleString()} in / ` +
-          `${usage.totals.outputTokens.toLocaleString()} out tokens · ${formatUsd(usage.totals.totalUsd)}`,
-      );
+      console.log(formatRunCostLine(usage.totals));
     }
 
     if (result.briefingPath) {
@@ -305,13 +302,13 @@ export async function memoryCommand(args: string[]): Promise<void> {
     );
     console.log(
       `  Model: ${u.provider}/${u.model} · ` +
-        `tokens in/out: ${u.inputTokens}/${u.outputTokens} · ` +
+        `tokens: ${formatInputTokens(u)} / ${u.outputTokens.toLocaleString()} out · ` +
         `${u.durationMs ? `${u.durationMs}ms` : "duration ?"} · cost ${formatUsd(result.cost.totalUsd)}`,
     );
 
     const totals = await loadUsageSummary(paths, date);
     console.log(
-      `Run total: ${totals.totals.inputTokens} input + ${totals.totals.outputTokens} output tokens · ` +
+      `Run total: ${formatInputTokens(totals.totals)} / ${totals.totals.outputTokens.toLocaleString()} out tokens · ` +
         `${formatUsd(totals.totals.totalUsd)} (${totals.records.length} pass${totals.records.length === 1 ? "" : "es"})`,
     );
     return;

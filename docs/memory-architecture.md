@@ -69,7 +69,7 @@ everything.
 ├── briefing.md                 # Morning briefing (lands in ~/.hive/briefings/)
 ├── gaps.md                     # Things Sonnet missed
 ├── taste.md                    # Principles reinforced / corrected
-└── usage.json                  # Per-pass tokens + cost (B/C/V aggregate)
+└── usage.json                  # Per-pass tokens + cost; input split into uncached / cache write / cache read
 ```
 
 ## BM25 Search
@@ -359,7 +359,12 @@ queue nothing decided on.
 
 **Cost.** Two Sonnet calls, then one Opus call per project with candidates plus
 one to brief. Per-pass token + USD recorded in `runs/{DATE}/usage.json` — V's
-row is the sum across its calls. Typical cost: $1–3.
+row is the sum across its calls. Typical cost: $1–3. `inputTokens` is the
+full prompt, `uncachedInputTokens + cacheCreationTokens + cacheReadTokens`,
+and each part is kept as its own field. Cost prices each part at the model's
+own rate in `src/lib/pricing.ts`. Cache reads are not a flat 0.1× (Opus 5.5
+reads at 0.05×), and `claude --print` writes 1-hour cache entries, billed at
+2× base input.
 
 **Restartability.** Each `run*` function deletes its target artifact at
 the start of an attempt. Failure leaves absence (correct); success writes
