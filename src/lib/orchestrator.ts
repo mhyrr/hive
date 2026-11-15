@@ -45,7 +45,7 @@ import {
   writeTasteDecisions,
   type TasteConsolidateResult,
 } from "./taste-consolidate";
-import { appendUsageRecord, estimateCost } from "./pricing";
+import { appendUsageRecord, buildUsageRecord } from "./pricing";
 import { runWatches, type WatchCaller } from "./watch-run";
 
 // ---------------------------------------------------------------------------
@@ -635,21 +635,15 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
       await Bun.write(flagsPath, JSON.stringify(value.flags, null, 2));
       await Bun.write(tbPath, JSON.stringify(value.candidates, null, 2));
       for (const rec of value.usageRecords) {
-        await appendUsageRecord(paths, date, {
-          pass: rec.pass,
-          project: projectId,
-          provider: rec.usage.provider,
-          model: rec.usage.model,
-          inputTokens: rec.usage.inputTokens ?? 0,
-          outputTokens: rec.usage.outputTokens ?? 0,
-          durationMs: rec.usage.durationMs,
-          cost: estimateCost({
-            provider: rec.usage.provider,
-            model: rec.usage.model,
-            inputTokens: rec.usage.inputTokens ?? 0,
-            outputTokens: rec.usage.outputTokens ?? 0,
-          }),
-        });
+        await appendUsageRecord(
+          paths,
+          date,
+          buildUsageRecord(
+            rec.pass,
+            { ...rec.usage, inputTokens: rec.usage.inputTokens ?? 0, outputTokens: rec.usage.outputTokens ?? 0 },
+            projectId,
+          ),
+        );
       }
       const taReport: PassReport = {
         pass: `TA.${projectId}`,
@@ -709,38 +703,26 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
       );
       tcResults.push(tc);
       if (tc.replayUsage) {
-        await appendUsageRecord(paths, date, {
-          pass: "TR",
-          project: projectId,
-          provider: tc.replayUsage.provider,
-          model: tc.replayUsage.model,
-          inputTokens: tc.replayUsage.inputTokens ?? 0,
-          outputTokens: tc.replayUsage.outputTokens ?? 0,
-          durationMs: tc.replayUsage.durationMs,
-          cost: estimateCost({
-            provider: tc.replayUsage.provider,
-            model: tc.replayUsage.model,
-            inputTokens: tc.replayUsage.inputTokens ?? 0,
-            outputTokens: tc.replayUsage.outputTokens ?? 0,
-          }),
-        });
+        await appendUsageRecord(
+          paths,
+          date,
+          buildUsageRecord(
+            "TR",
+            { ...tc.replayUsage, inputTokens: tc.replayUsage.inputTokens ?? 0, outputTokens: tc.replayUsage.outputTokens ?? 0 },
+            projectId,
+          ),
+        );
       }
       if (tc.usage) {
-        await appendUsageRecord(paths, date, {
-          pass: "TC",
-          project: projectId,
-          provider: tc.usage.provider,
-          model: tc.usage.model,
-          inputTokens: tc.usage.inputTokens ?? 0,
-          outputTokens: tc.usage.outputTokens ?? 0,
-          durationMs: tc.usage.durationMs,
-          cost: estimateCost({
-            provider: tc.usage.provider,
-            model: tc.usage.model,
-            inputTokens: tc.usage.inputTokens ?? 0,
-            outputTokens: tc.usage.outputTokens ?? 0,
-          }),
-        });
+        await appendUsageRecord(
+          paths,
+          date,
+          buildUsageRecord(
+            "TC",
+            { ...tc.usage, inputTokens: tc.usage.inputTokens ?? 0, outputTokens: tc.usage.outputTokens ?? 0 },
+            projectId,
+          ),
+        );
       }
       const r: PassReport = {
         pass: `TC.${projectId}`,

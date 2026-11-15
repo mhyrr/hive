@@ -31,6 +31,11 @@ interface ClaudeJsonEnvelope {
     output_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    /** TTL split of cache_creation_input_tokens. `claude --print` writes 1h entries. */
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    };
   };
   modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number }>;
 }
@@ -273,6 +278,8 @@ export async function completeClaudeText(input: {
   const uncachedTokens = u?.input_tokens ?? null;
   const cacheCreationTokens = u?.cache_creation_input_tokens ?? 0;
   const cacheReadTokens = u?.cache_read_input_tokens ?? 0;
+  // A 1-hour cache write bills at 2× base input, a 5-minute one at 1.25×.
+  const cacheCreation1hTokens = u?.cache_creation?.ephemeral_1h_input_tokens ?? 0;
   const inputTokens =
     uncachedTokens === null ? null : uncachedTokens + cacheCreationTokens + cacheReadTokens;
   const outputTokens = u?.output_tokens ?? null;
@@ -285,6 +292,7 @@ export async function completeClaudeText(input: {
     outputTokens,
     cacheReadTokens,
     cacheCreationTokens,
+    cacheCreation1hTokens,
     totalTokens:
       inputTokens !== null && outputTokens !== null
         ? inputTokens + outputTokens

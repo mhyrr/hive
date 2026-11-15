@@ -11,7 +11,7 @@ import type { HivePaths } from "./paths";
 import { renderCanonDigest } from "./memory";
 import { buildExchangeExcerpt } from "./condition";
 import type { ConditionReport, ProjectSignal } from "./condition";
-import { estimateCost, appendUsageRecord } from "./pricing";
+import { appendUsageRecord, buildUsageRecord, cacheTokensOf, type CacheTokens } from "./pricing";
 
 const DEFAULT_PROVIDER = "anthropic";
 const DEFAULT_MODEL = "claude-opus-5-5";
@@ -349,11 +349,9 @@ export interface ExtractorCallResult<T> {
   candidates: T[];
   rejected: number;
   raw: string;
-  usage: {
+  usage: CacheTokens & {
     inputTokens: number | null;
     outputTokens: number | null;
-    cacheReadTokens?: number;
-    cacheCreationTokens?: number;
     durationMs: number | null;
     provider: string;
     model: string;
@@ -363,14 +361,12 @@ export interface ExtractorCallResult<T> {
 // Harness-agnostic completion shape. `provider` is kept in the contract for
 // usage accounting even though Claude Code is anthropic-only — pricing tables
 // key off it.
-export interface ModelTextCompletion {
+export interface ModelTextCompletion extends CacheTokens {
   provider: string;
   model: string;
   text: string;
   inputTokens: number | null;
   outputTokens: number | null;
-  cacheReadTokens?: number;
-  cacheCreationTokens?: number;
   durationMs: number | null;
 }
 
@@ -414,8 +410,7 @@ export async function callProjectExtractor(
     usage: {
       inputTokens: response.inputTokens,
       outputTokens: response.outputTokens,
-      cacheReadTokens: response.cacheReadTokens,
-      cacheCreationTokens: response.cacheCreationTokens,
+      ...cacheTokensOf(response),
       durationMs: response.durationMs,
       provider: response.provider,
       model: response.model,
@@ -446,8 +441,7 @@ export async function callReflectionExtractor(
     usage: {
       inputTokens: response.inputTokens,
       outputTokens: response.outputTokens,
-      cacheReadTokens: response.cacheReadTokens,
-      cacheCreationTokens: response.cacheCreationTokens,
+      ...cacheTokensOf(response),
       durationMs: response.durationMs,
       provider: response.provider,
       model: response.model,
@@ -540,14 +534,16 @@ export async function runProjectExtractor(
     userContent,
     opts.caller,
   );
-  const cost = estimateCost({
-    provider: result.usage.provider,
-    model: result.usage.model,
-    inputTokens: result.usage.inputTokens ?? 0,
-    outputTokens: result.usage.outputTokens ?? 0,
-    cacheReadTokens: result.usage.cacheReadTokens,
-    cacheCreationTokens: result.usage.cacheCreationTokens,
-  });
+  const usageRecord = buildUsageRecord(
+    "B",
+    {
+      ...result.usage,
+      inputTokens: result.usage.inputTokens ?? 0,
+      outputTokens: result.usage.outputTokens ?? 0,
+    },
+    opts.projectId,
+  );
+  const cost = usageRecord.cost;
   await writeJsonArtifact(outputPath, {
     pass: "B",
     project: opts.projectId,
@@ -558,16 +554,7 @@ export async function runProjectExtractor(
     usage: result.usage,
     cost,
   });
-  await appendUsageRecord(opts.paths, opts.date, {
-    pass: "B",
-    project: opts.projectId,
-    provider: result.usage.provider,
-    model: result.usage.model,
-    inputTokens: result.usage.inputTokens ?? 0,
-    outputTokens: result.usage.outputTokens ?? 0,
-    durationMs: result.usage.durationMs,
-    cost,
-  });
+  await appendUsageRecord(opts.paths, opts.date, usageRecord);
   return { outputPath, result };
 }
 
@@ -595,14 +582,15 @@ export async function runReflectionExtractor(
     userContent,
     opts.caller,
   );
-  const cost = estimateCost({
-    provider: result.usage.provider,
-    model: result.usage.model,
-    inputTokens: result.usage.inputTokens ?? 0,
-    outputTokens: result.usage.outputTokens ?? 0,
-    cacheReadTokens: result.usage.cacheReadTokens,
-    cacheCreationTokens: result.usage.cacheCreationTokens,
-  });
+  const usageRecord = buildUsageRecord(
+    "C",
+    {
+      ...result.usage,
+      inputTokens: result.usage.inputTokens ?? 0,
+      outputTokens: result.usage.outputTokens ?? 0,
+    },
+  );
+  const cost = usageRecord.cost;
   await writeJsonArtifact(outputPath, {
     pass: "C",
     date: opts.date,
@@ -612,15 +600,7 @@ export async function runReflectionExtractor(
     usage: result.usage,
     cost,
   });
-  await appendUsageRecord(opts.paths, opts.date, {
-    pass: "C",
-    provider: result.usage.provider,
-    model: result.usage.model,
-    inputTokens: result.usage.inputTokens ?? 0,
-    outputTokens: result.usage.outputTokens ?? 0,
-    durationMs: result.usage.durationMs,
-    cost,
-  });
+  await appendUsageRecord(opts.paths, opts.date, usageRecord);
   return { outputPath, result };
 }
 

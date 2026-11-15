@@ -21,7 +21,7 @@
  */
 import { completeClaudeText } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
-import { estimateCost } from "./pricing";
+import { cacheTokensOf, estimateCost, type CacheTokens } from "./pricing";
 import { findLoci, type Locus } from "./taste-segment";
 import type { SegmentOptions } from "./taste-segment";
 import type { TranscriptEvent } from "./transcript";
@@ -263,7 +263,7 @@ export interface ReplayRuleResult {
   inconclusive: boolean;
 }
 
-export interface ReplayUsage {
+export interface ReplayUsage extends CacheTokens {
   inputTokens: number | null;
   outputTokens: number | null;
   durationMs: number | null;
@@ -403,6 +403,7 @@ export async function replayCandidates(
     usage = {
       inputTokens: completion.inputTokens,
       outputTokens: completion.outputTokens,
+      ...cacheTokensOf(completion),
       durationMs: completion.durationMs,
       provider: completion.provider,
       model: completion.model,
@@ -411,6 +412,7 @@ export async function replayCandidates(
         model: completion.model,
         inputTokens: completion.inputTokens ?? 0,
         outputTokens: completion.outputTokens ?? 0,
+        ...cacheTokensOf(completion),
       }).totalUsd,
     };
   } catch (err) {

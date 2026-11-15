@@ -45,7 +45,7 @@ import { completeClaudeText } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
 import { appendCandidate, type CandidateInput } from "./memory";
 import type { HivePaths } from "./paths";
-import { estimateCost } from "./pricing";
+import { cacheTokensOf, estimateCost, sumCacheTokens, type CacheTokens } from "./pricing";
 import {
   replayCandidates,
   type ReplayCorpus,
@@ -324,14 +324,14 @@ export interface TasteConsolidateResult {
   newPrincipleProposals: string[];
   droppedNoise: number;
   droppedNegative: number;
-  usage: {
+  usage: (CacheTokens & {
     inputTokens: number | null;
     outputTokens: number | null;
     durationMs: number | null;
     provider: string;
     model: string;
     usd: number;
-  } | null;
+  }) | null;
   /** Replay judge usage (design §9), separate from the coherence call's. */
   replayUsage: ReplayUsage | null;
   errors: string[];
@@ -536,10 +536,12 @@ export async function runTasteConsolidate(
       model: completion.model,
       inputTokens: completion.inputTokens ?? 0,
       outputTokens: completion.outputTokens ?? 0,
+      ...cacheTokensOf(completion),
     }).totalUsd;
     result.usage = {
       inputTokens: completion.inputTokens,
       outputTokens: completion.outputTokens,
+      ...cacheTokensOf(completion),
       durationMs: completion.durationMs,
       provider: completion.provider,
       model: completion.model,
@@ -793,6 +795,7 @@ export function mergeConsolidateResults(
         merged.usage.inputTokens = (merged.usage.inputTokens ?? 0) + (r.usage.inputTokens ?? 0);
         merged.usage.outputTokens = (merged.usage.outputTokens ?? 0) + (r.usage.outputTokens ?? 0);
         merged.usage.durationMs = (merged.usage.durationMs ?? 0) + (r.usage.durationMs ?? 0);
+        Object.assign(merged.usage, sumCacheTokens([merged.usage, r.usage]));
         merged.usage.usd += r.usage.usd;
       }
     }
@@ -803,6 +806,7 @@ export function mergeConsolidateResults(
         merged.replayUsage.inputTokens = (merged.replayUsage.inputTokens ?? 0) + (r.replayUsage.inputTokens ?? 0);
         merged.replayUsage.outputTokens = (merged.replayUsage.outputTokens ?? 0) + (r.replayUsage.outputTokens ?? 0);
         merged.replayUsage.durationMs = (merged.replayUsage.durationMs ?? 0) + (r.replayUsage.durationMs ?? 0);
+        Object.assign(merged.replayUsage, sumCacheTokens([merged.replayUsage, r.replayUsage]));
         merged.replayUsage.usd += r.replayUsage.usd;
       }
     }
