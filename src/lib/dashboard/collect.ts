@@ -23,13 +23,6 @@ import {
   type MemorySection,
 } from "../memory";
 import { loadUsageSummary, formatUsd } from "../pricing";
-import {
-  computeCanonGrowth,
-  measureAllCanons,
-  readCanonSizeHistory,
-  type CanonGrowth,
-  type CanonSizeRecord,
-} from "../canon-size";
 import { collectActivity, type ProjectActivity } from "./activity";
 import { collectWatchesPage, type WatchesPageData } from "./watches-page";
 import {
@@ -40,6 +33,13 @@ import {
   type TasteUnitStatus,
 } from "../taste-store";
 import { TASTE_CATEGORIES, type TasteCategory } from "../taste-types";
+import {
+  computeCanonGrowth,
+  measureAllCanons,
+  readCanonSizeHistory,
+  type CanonGrowth,
+  type CanonSizeRecord,
+} from "../canon-size";
 
 // ---------------------------------------------------------------------------
 // Types
