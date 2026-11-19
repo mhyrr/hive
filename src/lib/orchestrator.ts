@@ -421,10 +421,18 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
         detail:
           `+${value.totals.accepted} ~${value.totals.superseded} ⊕${value.totals.merged} ✗${value.totals.rejected}` +
           (value.totals.gapsBriefed > 0 ? ` ⚑${value.totals.gapsBriefed} gap(s) briefed` : "") +
-          (forced > 0 ? ` ⚡${forced} directive(s) kept over verifier reject` : ""),
+          (forced > 0 ? ` ⚡${forced} directive(s) kept over verifier reject` : "") +
+          (value.canonSizeWarnings.length > 0
+            ? ` ⚠${value.canonSizeWarnings.length} canon(s) near the Verify budget`
+            : ""),
         durationMs,
       };
       emit({ type: "pass-complete", report: result.passes.F });
+      // A failed canon-size measurement is non-fatal to F but must not be
+      // silent: it is the early warning for the TK-137 failure mode.
+      for (const e of value.errors) {
+        if (e.startsWith("canon-size:")) result.errors.push(`Pass F: ${e}`);
+      }
       applyOK = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
