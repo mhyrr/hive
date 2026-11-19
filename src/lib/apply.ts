@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 
 import type { HivePaths } from "./paths";
 import { listProjects } from "./paths";
+import { recordCanonSize } from "./canon-size";
 import { emptyInbox, inboxBodyHash, parseInbox } from "./inbox";
 import {
   appendProjectMemory,
@@ -139,6 +140,9 @@ export interface ApplyResult {
   perProject: ProjectApplyOutcome[];
   reflectionFile: string | null;
   briefingPath: string | null;
+  /** Briefing lines for projects whose Verify prompt is past 60% of budget
+   * (TK-158). Empty on dry-run or when every project is below the line. */
+  canonSizeWarnings: string[];
   rejections: VerifierDecision[];
   errors: string[];
 }
@@ -603,6 +607,20 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
     reflectionFile = join(paths.reflectionsDir, `${date}.md`);
   }
 
+  // Measure canon size after tonight's writes, so the record and any warning
+  // describe the canon tomorrow's Verify calls will read. Its section goes into
+  // the run's briefing.md before that file is copied out. A measurement failure
+  // is reported, never fatal: it must not cost the night its briefing.
+  let canonWarnings: string[] = [];
+  const canonErrors: string[] = [];
+  if (!dryRun) {
+    try {
+      canonWarnings = (await recordCanonSize(paths, date)).warnings;
+    } catch (err) {
+      canonErrors.push(`canon-size: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   let briefingPath: string | null = null;
   if (!dryRun) {
     briefingPath = await landBriefing(paths, date);
@@ -663,7 +681,10 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
   // Add raw rejection count too (some rejections weren't tied to a project outcome).
   totals.rejected = Math.max(totals.rejected, rejections.length);
 
-  const errors = perProject.flatMap((o) => o.errors.map((e) => `${o.projectId}: ${e}`));
+  const errors = [
+    ...perProject.flatMap((o) => o.errors.map((e) => `${o.projectId}: ${e}`)),
+    ...canonErrors,
+  ];
 
   return {
     date,
@@ -671,6 +692,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
     perProject,
     reflectionFile,
     briefingPath,
+    canonSizeWarnings: canonWarnings,
     rejections,
     errors,
   };

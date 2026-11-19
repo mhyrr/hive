@@ -434,6 +434,27 @@ body.filtered-to-project .briefing-body > ol { columns: 1; max-width: 74ch; }
 }
 .upkeep-list .job { color: var(--muted); }
 .upkeep-list .when { color: var(--ink-soft); }
+
+/* Verify budget (TK-158): collapsed unless a project is past the warn line. */
+.canon-size { margin-top: 18px; font-family: var(--mono); font-size: 10.5px; }
+.canon-size summary {
+  cursor: pointer;
+  list-style: none;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.canon-size summary::-webkit-details-marker { display: none; }
+.canon-size summary::before { content: "▸ "; }
+.canon-size[open] summary::before { content: "▾ "; }
+.canon-size-note { color: var(--muted); max-width: 74ch; margin: 8px 0; line-height: 1.5; }
+.canon-size-table { border-collapse: collapse; color: var(--ink-soft); }
+.canon-size-table th { text-align: left; font-weight: normal; color: var(--muted); padding: 2px 14px 4px 0; }
+.canon-size-table td { padding: 2px 14px 2px 0; }
+.canon-size-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.canon-size-table tr.canon-warn td { color: var(--ink); }
+.canon-size-table tr.canon-act td { color: var(--ink); font-weight: 600; }
+@media (max-width: 640px) { .canon-size-table { display: block; overflow-x: auto; } }
 .yard-row {
   list-style: none;
   margin: 0;

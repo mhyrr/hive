@@ -74,7 +74,12 @@ function verifierModel(): { provider: string; modelId: string } {
 export const VERIFY_WINDOW_TOKENS = Number(process.env.HIVE_VERIFY_WINDOW_TOKENS) || 200_000;
 
 /** Room left for the model's own output plus the CLI's envelope overhead. */
-const OUTPUT_HEADROOM_TOKENS = 16_000;
+export const OUTPUT_HEADROOM_TOKENS = 16_000;
+
+/** The most a verifier prompt may carry: the window less output headroom.
+ * `assertPromptFits` throws above this, so it is the 100% line for any
+ * measurement of how close a prompt is to failing (TK-158). */
+export const VERIFY_BUDGET_TOKENS = VERIFY_WINDOW_TOKENS - OUTPUT_HEADROOM_TOKENS;
 
 /** Chars per token. Calibrated against the 2026-07-25 bundle that broke Pass V:
  * 734,495 chars measured 222,086 tokens = 3.31 chars/token. JSON-heavy canon
@@ -90,7 +95,7 @@ export function estimatePromptTokens(systemPrompt: string, userContent: string):
  * overage. `label` is the pass id the orchestrator logs (e.g. "V.revrec"). */
 export function assertPromptFits(label: string, systemPrompt: string, userContent: string): void {
   const estimated = estimatePromptTokens(systemPrompt, userContent);
-  const budget = VERIFY_WINDOW_TOKENS - OUTPUT_HEADROOM_TOKENS;
+  const budget = VERIFY_BUDGET_TOKENS;
   if (estimated <= budget) return;
   const k = (n: number) => `${Math.round(n / 1000)}k`;
   throw new Error(
