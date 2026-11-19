@@ -68,8 +68,10 @@ HIVE Commands:
   stack list|install|sync    Manage language/framework skill stacks
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
+  memory search <query>      Search memory (--top-k N, --logs; see: hive memory --help)
   next                       Show Act recommendations (one per project)
-  taste extract [opts]       Mine taste candidates from transcripts (phase 1)
+  taste status|review|...    Taste store: status, review, reject, admit, relink,
+                             consolidate, extract (see: hive taste --help)
   tickets                    Open tickets for the project you're standing in
   ticket [create|list|...]   Project ticket tracker
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
