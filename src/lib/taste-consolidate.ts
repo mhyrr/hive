@@ -43,6 +43,7 @@ import { join } from "node:path";
 
 import { completeClaudeText } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
+import { nightlyEffort, nightlyModel, nightlyPromptCacheOff } from "./nightly-config";
 import { appendCandidate, type CandidateInput } from "./memory";
 import type { HivePaths } from "./paths";
 import { cacheTokensOf, estimateCost, sumCacheTokens, type CacheTokens } from "./pricing";
@@ -72,22 +73,11 @@ import {
 } from "./taste-types";
 
 // ---------------------------------------------------------------------------
-// Model selection (mirrors taste-extract.ts; TC is Opus, like the fact verifier)
+// Model selection — nightly-config.ts holds the model, effort and cache policy.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PROVIDER = "anthropic";
-const CONSOLIDATE_MODEL = "claude-opus-5-5";
-
 export function tasteConsolidatorModel(): { provider: string; modelId: string } {
-  const override = process.env.HIVE_TASTE_CONSOLIDATE_MODEL;
-  if (override && override.includes("/")) {
-    const [provider, modelId] = override.split("/", 2);
-    return { provider: provider!, modelId: modelId! };
-  }
-  return {
-    provider: process.env.HIVE_TASTE_PROVIDER || DEFAULT_PROVIDER,
-    modelId: override || CONSOLIDATE_MODEL,
-  };
+  return nightlyModel("TC");
 }
 
 // ---------------------------------------------------------------------------
@@ -824,7 +814,8 @@ const defaultConsolidateCaller: ModelCaller = async (input) => {
       systemPrompt: input.systemPrompt,
       userContent: input.userContent,
       signal: ctrl.signal,
-      effort: "high",
+      effort: nightlyEffort("TC"),
+      promptCacheOff: nightlyPromptCacheOff(),
     });
   } finally {
     clearTimeout(timer);

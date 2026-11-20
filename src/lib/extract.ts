@@ -6,27 +6,12 @@
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
 import { renderCanonDigest } from "./memory";
 import { buildExchangeExcerpt } from "./condition";
 import type { ConditionReport, ProjectSignal } from "./condition";
 import { appendUsageRecord, buildUsageRecord, cacheTokensOf, type CacheTokens } from "./pricing";
-
-const DEFAULT_PROVIDER = "anthropic";
-const DEFAULT_MODEL = "claude-opus-5-5";
-
-function extractorModel(): { provider: string; modelId: string } {
-  const override = process.env.HIVE_EXTRACT_MODEL;
-  if (override && override.includes("/")) {
-    const [provider, modelId] = override.split("/", 2);
-    return { provider: provider!, modelId: modelId! };
-  }
-  return {
-    provider: process.env.HIVE_EXTRACT_PROVIDER || DEFAULT_PROVIDER,
-    modelId: override || DEFAULT_MODEL,
-  };
-}
+import { nightlyCaller, nightlyModel } from "./nightly-config";
 
 // ---------------------------------------------------------------------------
 // JSON parsing — tolerant of code fences and stray prose around the array
@@ -377,22 +362,13 @@ export type ModelCaller = (input: {
   userContent: string;
 }) => Promise<ModelTextCompletion>;
 
-// Pass B and C. `medium` is the starting point for an effort sweep on
-// Sonnet 5, not a measured optimum.
-const defaultCaller: ModelCaller = (input) =>
-  completeClaudeTextBounded({
-    modelId: input.modelId,
-    systemPrompt: input.systemPrompt,
-    userContent: input.userContent,
-    effort: "medium",
-  });
-
+// Model, effort and cache policy for B and C live in nightly-config.ts.
 export async function callProjectExtractor(
   systemPrompt: string,
   userContent: string,
-  caller: ModelCaller = defaultCaller,
+  caller: ModelCaller = nightlyCaller("B"),
 ): Promise<ExtractorCallResult<ProjectCandidate>> {
-  const { provider, modelId } = extractorModel();
+  const { provider, modelId } = nightlyModel("B");
   const response = await caller({ provider, modelId, systemPrompt, userContent });
   const raw = response.text;
   const parsed = parseExtractionJson(raw);
@@ -421,9 +397,9 @@ export async function callProjectExtractor(
 export async function callReflectionExtractor(
   systemPrompt: string,
   userContent: string,
-  caller: ModelCaller = defaultCaller,
+  caller: ModelCaller = nightlyCaller("C"),
 ): Promise<ExtractorCallResult<ReflectionCandidate>> {
-  const { provider, modelId } = extractorModel();
+  const { provider, modelId } = nightlyModel("C");
   const response = await caller({ provider, modelId, systemPrompt, userContent });
   const raw = response.text;
   const parsed = parseExtractionJson(raw);

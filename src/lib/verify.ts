@@ -23,8 +23,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { completeClaudeTextBounded } from "./claude";
 import type { HivePaths } from "./paths";
+import { nightlyCaller, nightlyModel } from "./nightly-config";
 import { inboxBodyHash, parseInbox } from "./inbox";
 import { listProjects } from "./paths";
 import {
@@ -49,20 +49,9 @@ import {
 } from "./pricing";
 import type { ProjectCandidate, ReflectionCandidate, ModelCaller } from "./extract";
 
-const DEFAULT_PROVIDER = "anthropic";
-const DEFAULT_MODEL = "claude-opus-5-5";
-
-function verifierModel(): { provider: string; modelId: string } {
-  const override = process.env.HIVE_VERIFY_MODEL;
-  if (override && override.includes("/")) {
-    const [provider, modelId] = override.split("/", 2);
-    return { provider: provider!, modelId: modelId! };
-  }
-  return {
-    provider: process.env.HIVE_VERIFY_PROVIDER || DEFAULT_PROVIDER,
-    modelId: override || DEFAULT_MODEL,
-  };
-}
+// Model, effort and cache policy: nightly-config.ts. "V" is the per-project
+// shards, "VBRIEF" the briefing call.
+type VerifierPass = "V" | "VBRIEF";
 
 // ---------------------------------------------------------------------------
 // Prompt budget — a spawned `claude --print` rejects an over-window prompt
@@ -768,21 +757,15 @@ export interface VerifierCallResult {
   cost: CostBreakdown;
 }
 
-const defaultCaller: ModelCaller = (input) =>
-  completeClaudeTextBounded({
-    modelId: input.modelId,
-    systemPrompt: input.systemPrompt,
-    userContent: input.userContent,
-    effort: "high",
-  });
-
 export async function callVerifier(
   systemPrompt: string,
   userContent: string,
-  caller: ModelCaller = defaultCaller,
-  opts: { label?: string; requireBriefing?: boolean; expectedIds?: string[] } = {},
+  caller: ModelCaller | undefined,
+  opts: { label?: string; requireBriefing?: boolean; expectedIds?: string[]; pass?: VerifierPass } = {},
 ): Promise<VerifierCallResult> {
-  const { provider, modelId } = verifierModel();
+  const pass = opts.pass ?? "V";
+  const { provider, modelId } = nightlyModel(pass);
+  caller ??= nightlyCaller(pass);
   assertPromptFits(opts.label ?? "V", systemPrompt, userContent);
   const response = await caller({ provider, modelId, systemPrompt, userContent });
   const raw = response.text;
@@ -989,6 +972,7 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
     principlesText: bundle.principlesText,
   });
   const brief = await callVerifier(briefSystem, briefUser, opts.caller, {
+    pass: "VBRIEF",
     label: "V.brief",
     requireBriefing: true,
     expectedIds: bundle.cCandidates.map((_, i) => `C[${i}]`),
@@ -1028,19 +1012,38 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
       })),
   }, null, 2));
 
-  // One usage record for the pass, summed across its calls. Same model
-  // throughout, so the cost math holds — and usage.json keeps exactly one V row
-  // regardless of how many projects were in play.
-  const totalUsage: UsageDelta & { durationMs: number | null } = {
-    provider: usages[0]?.provider ?? DEFAULT_PROVIDER,
-    model: usages[0]?.model ?? verifierModel().modelId,
-    inputTokens: usages.reduce((n, u) => n + u.inputTokens, 0),
-    outputTokens: usages.reduce((n, u) => n + u.outputTokens, 0),
-    ...sumCacheTokens(usages),
-    durationMs: usages.reduce((n, u) => n + (u.durationMs ?? 0), 0),
-  };
-  const usageRecord = buildUsageRecord("V", totalUsage);
-  const summary = await appendUsageRecord(opts.paths, opts.date, usageRecord);
+  // One usage record per model, summed across that model's calls, so each row
+  // prices at one rate. With the shards and the Brief on the same model (the
+  // default), usage.json keeps exactly one V row however many projects ran.
+  const byModel = new Map<string, Array<UsageDelta & { durationMs: number | null }>>();
+  for (const u of usages) {
+    const group = byModel.get(u.model) ?? [];
+    group.push(u);
+    byModel.set(u.model, group);
+  }
+  const usageRecords = [...byModel.values()].map((group) =>
+    buildUsageRecord("V", {
+      provider: group[0]!.provider,
+      model: group[0]!.model,
+      inputTokens: group.reduce((n, u) => n + u.inputTokens, 0),
+      outputTokens: group.reduce((n, u) => n + u.outputTokens, 0),
+      ...sumCacheTokens(group),
+      durationMs: group.reduce((n, u) => n + (u.durationMs ?? 0), 0),
+    }),
+  );
+  let summary = await appendUsageRecord(opts.paths, opts.date, usageRecords[0]!);
+  for (const record of usageRecords.slice(1)) {
+    summary = await appendUsageRecord(opts.paths, opts.date, record);
+  }
+  const passCost: CostBreakdown = usageRecords.reduce(
+    (acc, r) => ({
+      inputUsd: acc.inputUsd + r.cost.inputUsd,
+      outputUsd: acc.outputUsd + r.cost.outputUsd,
+      totalUsd: acc.totalUsd + r.cost.totalUsd,
+      modelKnown: acc.modelKnown && r.cost.modelKnown,
+    }),
+    { inputUsd: 0, outputUsd: 0, totalUsd: 0, modelKnown: true } as CostBreakdown,
+  );
 
   return {
     output,
@@ -1053,7 +1056,7 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
       usagePath: usagePath(opts.paths, opts.date),
     },
     usage: summary.records[summary.records.length - 1]!,
-    cost: usageRecord.cost,
+    cost: passCost,
     shardedProjects,
   };
 }

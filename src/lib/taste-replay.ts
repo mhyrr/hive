@@ -21,6 +21,7 @@
  */
 import { completeClaudeText } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
+import { nightlyEffort, nightlyModel, nightlyPromptCacheOff } from "./nightly-config";
 import { cacheTokensOf, estimateCost, type CacheTokens } from "./pricing";
 import { findLoci, type Locus } from "./taste-segment";
 import type { SegmentOptions } from "./taste-segment";
@@ -28,22 +29,11 @@ import type { TranscriptEvent } from "./transcript";
 import type { TasteCandidate } from "./taste-types";
 
 // ---------------------------------------------------------------------------
-// Model selection (mirrors taste-extract.ts; the judge is mid-tier — Sonnet)
+// Model selection — nightly-config.ts holds the model, effort and cache policy.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PROVIDER = "anthropic";
-const REPLAY_MODEL = "claude-opus-5-5";
-
 export function tasteReplayModel(): { provider: string; modelId: string } {
-  const override = process.env.HIVE_TASTE_REPLAY_MODEL;
-  if (override && override.includes("/")) {
-    const [provider, modelId] = override.split("/", 2);
-    return { provider: provider!, modelId: modelId! };
-  }
-  return {
-    provider: process.env.HIVE_TASTE_PROVIDER || DEFAULT_PROVIDER,
-    modelId: override || REPLAY_MODEL,
-  };
+  return nightlyModel("TR");
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +306,8 @@ const defaultReplayCaller: ModelCaller = async (input) => {
       systemPrompt: input.systemPrompt,
       userContent: input.userContent,
       signal: ctrl.signal,
-      effort: "medium",
+      effort: nightlyEffort("TR"),
+      promptCacheOff: nightlyPromptCacheOff(),
     });
   } finally {
     clearTimeout(timer);

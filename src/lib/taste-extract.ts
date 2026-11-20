@@ -9,6 +9,7 @@
  */
 import { completeClaudeText, type ClaudeEffort } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
+import { nightlyEffort, nightlyModel, nightlyPromptCacheOff } from "./nightly-config";
 import { cacheTokensOf, estimateCost, type CacheTokens } from "./pricing";
 import { segmentWindows, type SegmentOptions } from "./taste-segment";
 import type { LoadedTranscript, TranscriptEvent } from "./transcript";
@@ -26,33 +27,17 @@ import {
 } from "./taste-types";
 
 // ---------------------------------------------------------------------------
-// Model selection (mirrors extract.ts extractorModel / verify.ts verifierModel)
+// Model selection — nightly-config.ts holds the models, efforts and cache policy.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PROVIDER = "anthropic";
-const CLASSIFY_MODEL = "claude-haiku-4-5";
-const ANALYZE_MODEL = "claude-opus-5-5";
-
-function resolveModel(envVar: string, fallback: string): { provider: string; modelId: string } {
-  const override = process.env[envVar];
-  if (override && override.includes("/")) {
-    const [provider, modelId] = override.split("/", 2);
-    return { provider: provider!, modelId: modelId! };
-  }
-  return {
-    provider: process.env.HIVE_TASTE_PROVIDER || DEFAULT_PROVIDER,
-    modelId: override || fallback,
-  };
-}
-
-export const tasteClassifierModel = () => resolveModel("HIVE_TASTE_CLASSIFY_MODEL", CLASSIFY_MODEL);
-export const tasteAnalyzerModel = () => resolveModel("HIVE_TASTE_ANALYZE_MODEL", ANALYZE_MODEL);
+export const tasteClassifierModel = () => nightlyModel("TA");
+export const tasteAnalyzerModel = () => nightlyModel("TB");
 
 // Bound each model call so a stuck `claude --print` surfaces as a per-session
 // error (caught by runTasteExtract's isolation) instead of hanging the run.
 const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 900_000;
 
-function boundedCaller(options: { disableThinking?: boolean; effort?: ClaudeEffort }): ModelCaller {
+function boundedCaller(options: () => { disableThinking?: boolean; effort?: ClaudeEffort }): ModelCaller {
   return async (input) => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), CALL_TIMEOUT_MS);
@@ -62,7 +47,8 @@ function boundedCaller(options: { disableThinking?: boolean; effort?: ClaudeEffo
         systemPrompt: input.systemPrompt,
         userContent: input.userContent,
         signal: ctrl.signal,
-        ...options,
+        promptCacheOff: nightlyPromptCacheOff(),
+        ...options(),
       });
     } finally {
       clearTimeout(timer);
@@ -70,10 +56,11 @@ function boundedCaller(options: { disableThinking?: boolean; effort?: ClaudeEffo
   };
 }
 
-// TA is the Haiku classifier: thinking off keeps it fast. TB is the Opus
-// judgment step: adaptive thinking stays on and effort sets its depth.
-const defaultClassifyCaller = boundedCaller({ disableThinking: true });
-const defaultAnalyzeCaller = boundedCaller({ effort: "high" });
+// TA is the Haiku classifier: thinking off keeps it fast (Sonnet 5.5 and Opus
+// 5.5 reject disabled thinking, so TA must stay on a model that allows it). TB
+// is the judgment step: adaptive thinking stays on and effort sets its depth.
+const defaultClassifyCaller = boundedCaller(() => ({ disableThinking: true, effort: nightlyEffort("TA") }));
+const defaultAnalyzeCaller = boundedCaller(() => ({ effort: nightlyEffort("TB") }));
 
 // ---------------------------------------------------------------------------
 // Prompts — the load-bearing artifacts (design §4.1, §5.4)
