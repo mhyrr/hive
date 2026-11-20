@@ -155,6 +155,7 @@ describe("renderRunUsage", () => {
       date: "2026-04-26",
       available: false,
       totalInputTokens: 0,
+      totalInputSplit: null,
       totalOutputTokens: 0,
       totalUsd: 0,
       totalUsdFormatted: "$0.0000",
@@ -169,6 +170,7 @@ describe("renderRunUsage", () => {
       date: "2026-04-26",
       available: true,
       totalInputTokens: 80_000,
+      totalInputSplit: null,
       totalOutputTokens: 6_000,
       totalUsd: 1.17,
       totalUsdFormatted: "$1.17",
@@ -179,6 +181,8 @@ describe("renderRunUsage", () => {
           provider: "anthropic",
           model: "claude-sonnet-4-6",
           inputTokens: 8_000,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
           outputTokens: 800,
           usd: 0.036,
           usdFormatted: "$0.036",
@@ -190,6 +194,8 @@ describe("renderRunUsage", () => {
           provider: "anthropic",
           model: "claude-opus-4-6",
           inputTokens: 60_000,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
           outputTokens: 4_000,
           usd: 1.2,
           usdFormatted: "$1.20",
@@ -217,6 +223,7 @@ describe("renderRunUsage", () => {
       date: "2026-04-26",
       available: true,
       totalInputTokens: 100,
+      totalInputSplit: null,
       totalOutputTokens: 100,
       totalUsd: 0.001,
       totalUsdFormatted: "$0.0010",
@@ -227,6 +234,8 @@ describe("renderRunUsage", () => {
           provider: "anthropic",
           model: "claude-sonnet-4-6",
           inputTokens: 100,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
           outputTokens: 100,
           usd: 0.001,
           usdFormatted: "$0.0010",
@@ -237,6 +246,52 @@ describe("renderRunUsage", () => {
     const html = renderRunUsage(snap);
     expect(html).toContain("2026-04-26");
     expect(html).toContain("1 pass"); // singular
+  });
+
+  test("shows cache writes and reads per pass, and the input split in the total (TK-120)", () => {
+    const snap: RunUsageSnapshot = {
+      date: "2026-11-15",
+      available: true,
+      totalInputTokens: 32_284,
+      totalInputSplit: { uncachedInputTokens: 4_643, cacheCreationTokens: 27_641, cacheReadTokens: 0 },
+      totalOutputTokens: 5_331,
+      totalUsd: 0.33,
+      totalUsdFormatted: "$0.330",
+      passes: [
+        {
+          pass: "B",
+          project: "writing",
+          provider: "anthropic",
+          model: "claude-opus-5-5",
+          inputTokens: 27_643,
+          cacheCreationTokens: 27_641,
+          cacheReadTokens: 0,
+          outputTokens: 5_331,
+          usd: 0.33,
+          usdFormatted: "$0.330",
+          durationMs: 48_412,
+        },
+        {
+          pass: "TA",
+          project: "writing",
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          inputTokens: 4_641,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
+          outputTokens: 0,
+          usd: 0,
+          usdFormatted: "$0.0000",
+          durationMs: 1_000,
+        },
+      ],
+    };
+    const html = renderRunUsage(snap);
+    expect(html).toContain("<th>Cache write</th><th>Cache read</th>");
+    expect(html).toContain("32,284 input (4,643 uncached · 27,641 cache write · 0 cache read) + 5,331 output");
+    expect(html).toContain(`<td class="num">27,641</td>`);
+    // A record from before the split shows a dash, not a zero.
+    expect(html).toContain(`<td class="num">—</td>`);
   });
 });
 
@@ -250,13 +305,14 @@ describe("renderRunUsage taste labels", () => {
       date: "2026-06-25",
       available: true,
       totalInputTokens: 100,
+      totalInputSplit: null,
       totalOutputTokens: 100,
       totalUsd: 0.01,
       totalUsdFormatted: "$0.0100",
       passes: [
-        { pass: "TC", project: "alpha", provider: "anthropic", model: "claude-opus-4-6", inputTokens: 50, outputTokens: 50, usd: 0.005, usdFormatted: "$0.0050", durationMs: 100 },
-        { pass: "TR", project: "alpha", provider: "anthropic", model: "claude-sonnet-4-6", inputTokens: 50, outputTokens: 50, usd: 0.005, usdFormatted: "$0.0050", durationMs: 100 },
-        { pass: "B", project: "alpha", provider: "anthropic", model: "claude-sonnet-4-6", inputTokens: 0, outputTokens: 0, usd: 0, usdFormatted: "$0.0000", durationMs: 0 },
+        { pass: "TC", project: "alpha", provider: "anthropic", model: "claude-opus-4-6", inputTokens: 50, cacheCreationTokens: null, cacheReadTokens: null, outputTokens: 50, usd: 0.005, usdFormatted: "$0.0050", durationMs: 100 },
+        { pass: "TR", project: "alpha", provider: "anthropic", model: "claude-sonnet-4-6", inputTokens: 50, cacheCreationTokens: null, cacheReadTokens: null, outputTokens: 50, usd: 0.005, usdFormatted: "$0.0050", durationMs: 100 },
+        { pass: "B", project: "alpha", provider: "anthropic", model: "claude-sonnet-4-6", inputTokens: 0, cacheCreationTokens: null, cacheReadTokens: null, outputTokens: 0, usd: 0, usdFormatted: "$0.0000", durationMs: 0 },
       ],
     };
     const html = renderRunUsage(snap);

@@ -69,7 +69,8 @@ everything.
 ├── briefing.md                 # Morning briefing (lands in ~/.hive/briefings/)
 ├── gaps.md                     # Things Sonnet missed
 ├── taste.md                    # Principles reinforced / corrected
-└── usage.json                  # Per-pass tokens + cost (B/C/V aggregate)
+├── resume.json                 # Which passes finished for this date; a retry skips them
+└── usage.json                  # Per-pass tokens + cost; input split into uncached / cache write / cache read
 ```
 
 ## BM25 Search
@@ -357,14 +358,48 @@ the whole pass on purpose: Pass F drains a project's `candidates.md` whenever
 that project has candidates, decisions or not, so a partial V would drain a
 queue nothing decided on.
 
-**Cost.** Two Sonnet calls, then one Opus call per project with candidates plus
-one to brief. Per-pass token + USD recorded in `runs/{DATE}/usage.json` — V's
-row is the sum across its calls. Typical cost: $1–3.
+**Models.** `src/lib/nightly-config.ts` sets each pass's model and effort in
+one map: Sonnet 5.5 for B, C, TB, TC and TR, Opus 5.5 for V's shards and the
+Brief, Haiku 4.5 for TA. `HIVE_NIGHTLY_MODEL_<PASS>` (e.g. `_VBRIEF`) overrides
+one pass; the older `HIVE_EXTRACT_MODEL`, `HIVE_VERIFY_MODEL` and
+`HIVE_TASTE_*_MODEL` variables still work. `HIVE_NIGHTLY_EFFORT_<PASS>`
+overrides effort.
+
+**Cost.** Per-pass token + USD recorded in `runs/{DATE}/usage.json`, one V row
+per model across its calls. `hive memory cost --days 2` prints the last two
+runs side by side. `inputTokens` is the full prompt,
+`uncachedInputTokens + cacheCreationTokens + cacheReadTokens`, and each part
+is kept as its own field. Cost prices each part at the model's own rate in
+`src/lib/pricing.ts`.
+
+Prompt caching is off for every nightly call (`DISABLE_PROMPT_CACHING=1` on
+the `claude --print` child). Left on, the CLI writes each call's whole prompt
+to the 1-hour cache at 2× base input. The nightly's own transcripts for
+2026-11-17..20 show a 1.4% read rate: only the ~1k-token system prompt was
+read back. No nightly prompt repeats within an hour, and nights are 24 hours
+apart, so every write was paid for and never used. `HIVE_NIGHTLY_PROMPT_CACHE=on`
+restores the CLI default.
+
+**Taste cadence.** The taste track (TA → TB → TC/TR) runs every
+`HIVE_TASTE_EVERY_NIGHTS` nights (default 2), measured from the last run that
+finished, not from date parity, so a failed run makes the next night due. A
+run covers each project's sessions back to the last run that analyzed it
+(at most 7 days), and targets every project with signal on any night in that
+span. A skipped night logs `taste skipped (next run …)` and adds a Taste note
+to the briefing. `--taste-now` runs it regardless.
 
 **Restartability.** Each `run*` function deletes its target artifact at
 the start of an attempt. Failure leaves absence (correct); success writes
-fresh. Re-running on the same date overwrites cleanly without leaving
-stale outputs from a prior attempt.
+fresh.
+
+**Resume.** `runs/{DATE}/resume.json` records each pass as it finishes. A
+retry of the same date (the morning firings after a failed 2am run) skips a
+pass only when the manifest records it AND its artifact exists. A file on
+disk alone is never trusted. Once F has applied, the whole fact track is done
+for the date: a retry never applies canon twice, and a B project that failed
+in that run is named in the log rather than retried. V re-runs whenever B or
+C produced new output in the retry. Taste resumes per project. `--force`
+re-runs everything; dry-runs neither read nor write the manifest.
 
 ## Design Influences
 

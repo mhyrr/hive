@@ -22,7 +22,7 @@ import {
   daysBetween as daysBetweenStrings,
   type MemorySection,
 } from "../memory";
-import { loadUsageSummary, formatUsd } from "../pricing";
+import { loadUsageSummary, formatUsd, type InputSplit, type UsagePass } from "../pricing";
 import { collectActivity, type ProjectActivity } from "./activity";
 import { collectWatchesPage, type WatchesPageData } from "./watches-page";
 import {
@@ -172,11 +172,15 @@ export type ReflectionDay = {
 };
 
 export type RunUsagePassEntry = {
-  pass: "B" | "C" | "V";
+  pass: UsagePass;
   project: string | null;
   provider: string;
   model: string;
+  /** Full prompt context, cached slices included. */
   inputTokens: number;
+  /** Cache writes and reads within inputTokens; null on records from before TK-120. */
+  cacheCreationTokens: number | null;
+  cacheReadTokens: number | null;
   outputTokens: number;
   usd: number;
   usdFormatted: string;
@@ -187,6 +191,8 @@ export type RunUsageSnapshot = {
   date: string;
   available: boolean;
   totalInputTokens: number;
+  /** The three parts of totalInputTokens; null when any record predates TK-120. */
+  totalInputSplit: InputSplit | null;
   totalOutputTokens: number;
   totalUsd: number;
   totalUsdFormatted: string;
@@ -857,6 +863,8 @@ export async function collectRunUsage(
     provider: r.provider,
     model: r.model,
     inputTokens: r.inputTokens,
+    cacheCreationTokens: r.cacheCreationTokens ?? null,
+    cacheReadTokens: r.cacheReadTokens ?? null,
     outputTokens: r.outputTokens,
     usd: r.cost.totalUsd,
     usdFormatted: formatUsd(r.cost.totalUsd),
@@ -866,6 +874,16 @@ export async function collectRunUsage(
     date,
     available,
     totalInputTokens: summary.totals.inputTokens,
+    totalInputSplit:
+      summary.totals.uncachedInputTokens !== undefined &&
+      summary.totals.cacheCreationTokens !== undefined &&
+      summary.totals.cacheReadTokens !== undefined
+        ? {
+            uncachedInputTokens: summary.totals.uncachedInputTokens,
+            cacheCreationTokens: summary.totals.cacheCreationTokens,
+            cacheReadTokens: summary.totals.cacheReadTokens,
+          }
+        : null,
     totalOutputTokens: summary.totals.outputTokens,
     totalUsd: summary.totals.totalUsd,
     totalUsdFormatted: formatUsd(summary.totals.totalUsd),

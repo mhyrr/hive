@@ -31,6 +31,11 @@ interface ClaudeJsonEnvelope {
     output_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    /** TTL split of cache_creation_input_tokens. `claude --print` writes 1h entries. */
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    };
   };
   modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number }>;
 }
@@ -53,6 +58,7 @@ function spawnClaude(
   args: string[],
   stdinPayload: string,
   signal?: AbortSignal,
+  extraEnv: Record<string, string> = {},
 ): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
@@ -65,7 +71,7 @@ function spawnClaude(
       // verbose, slow, and off-task (observed: a Haiku classify ballooning to
       // 9k output tokens / 159s). Extraction passes carry their own system
       // prompt and disallow tools; they must not inherit the interactive persona.
-      env: { ...process.env, ANTHROPIC_API_KEY: undefined, HIVE_IDENTITY_IN_PROMPT: "1" },
+      env: { ...process.env, ANTHROPIC_API_KEY: undefined, HIVE_IDENTITY_IN_PROMPT: "1", ...extraEnv },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -158,7 +164,13 @@ export async function withDeadline<T>(
  * callers use this so a stalled extraction/verification fails fast and visibly
  * (in minutes) instead of eating hours of wall-clock. */
 export function completeClaudeTextBounded(
-  input: { modelId: string; systemPrompt: string; userContent: string; effort?: ClaudeEffort },
+  input: {
+    modelId: string;
+    systemPrompt: string;
+    userContent: string;
+    effort?: ClaudeEffort;
+    promptCacheOff?: boolean;
+  },
   timeoutMs: number = nightlyCallTimeoutMs(),
 ): Promise<ClaudeTextCompletion> {
   return withDeadline(timeoutMs, `claude --print (${input.modelId})`, (signal) =>
@@ -167,6 +179,7 @@ export function completeClaudeTextBounded(
       systemPrompt: input.systemPrompt,
       userContent: input.userContent,
       effort: input.effort,
+      promptCacheOff: input.promptCacheOff,
       signal,
     }),
   );
@@ -185,6 +198,11 @@ export async function completeClaudeText(input: {
   disableThinking?: boolean;
   /** `--effort` for this call. Unset inherits the user's effortLevel. */
   effort?: ClaudeEffort;
+  /** Send no `cache_control` (DISABLE_PROMPT_CACHING=1), so every input token
+   * bills once at base. Otherwise Claude Code writes the whole prompt to the
+   * 1-hour cache at 2× base, and a one-shot call never reads it back. The
+   * measurement is in nightlyPromptCacheOff(), nightly-config.ts. */
+  promptCacheOff?: boolean;
 }): Promise<ClaudeTextCompletion> {
   const bin = resolveClaudeBin();
   const startedAt = Date.now();
@@ -227,6 +245,7 @@ export async function completeClaudeText(input: {
     args,
     input.userContent,
     input.signal,
+    input.promptCacheOff ? { DISABLE_PROMPT_CACHING: "1" } : {},
   );
 
   if (exitCode !== 0) {
@@ -273,6 +292,8 @@ export async function completeClaudeText(input: {
   const uncachedTokens = u?.input_tokens ?? null;
   const cacheCreationTokens = u?.cache_creation_input_tokens ?? 0;
   const cacheReadTokens = u?.cache_read_input_tokens ?? 0;
+  // A 1-hour cache write bills at 2× base input, a 5-minute one at 1.25×.
+  const cacheCreation1hTokens = u?.cache_creation?.ephemeral_1h_input_tokens ?? 0;
   const inputTokens =
     uncachedTokens === null ? null : uncachedTokens + cacheCreationTokens + cacheReadTokens;
   const outputTokens = u?.output_tokens ?? null;
@@ -285,6 +306,7 @@ export async function completeClaudeText(input: {
     outputTokens,
     cacheReadTokens,
     cacheCreationTokens,
+    cacheCreation1hTokens,
     totalTokens:
       inputTokens !== null && outputTokens !== null
         ? inputTokens + outputTokens

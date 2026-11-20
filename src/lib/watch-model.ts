@@ -9,9 +9,11 @@
 import type { ClaudeEffort } from "./claude";
 import type { WatchTier } from "./watch";
 
+// standard moved to Sonnet 5.5 with the nightly extraction passes (2026-11-20,
+// nightly-config.ts); judgment stays on Opus, like Pass V.
 const TIER_DEFAULTS: Record<WatchTier, string> = {
   fast: "claude-haiku-4-5",
-  standard: "claude-opus-5-5",
+  standard: "claude-sonnet-5-5",
   judgment: "claude-opus-5-5",
 };
 
