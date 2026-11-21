@@ -28,7 +28,9 @@ import type {
   TastePrinciple,
   TicketsPageData,
   EpicBoard,
+  CanonSizeSnapshot,
 } from "./collect";
+import { CANON_ACT_AT, CANON_WARN_AT, formatCanonGrowth } from "../canon-size";
 import { DASHBOARD_CSS } from "./styles";
 import { DASHBOARD_JS } from "./script";
 import { renderPageNav } from "./html";
@@ -388,7 +390,8 @@ export function renderWork(activity: ProjectActivity[], aside = ""): string {
  */
 export function renderUpkeep(data: DashboardData): string {
   const health = data.health ?? [];
-  if (health.length === 0) return "";
+  const canon = renderCanonSize(data.canonSize ?? null);
+  if (health.length === 0 && !canon) return "";
 
   const jobs = health
     .map((h) => {
@@ -414,7 +417,46 @@ export function renderUpkeep(data: DashboardData): string {
 <section class="upkeep" id="section-upkeep" aria-labelledby="upkeep-label">
   <div class="yard-label"><h2 id="upkeep-label">Upkeep</h2></div>
   <ul class="upkeep-list">${jobs}${cost}${taste}</ul>
+  ${canon}
 </section>`;
+}
+
+/**
+ * Verify budget: each project's Pass V prompt against the budget
+ * assertPromptFits enforces (TK-158). Collapsed by default; the summary names
+ * the worst project, and opens on its own when one is past the warn line.
+ */
+export function renderCanonSize(snap: CanonSizeSnapshot | null): string {
+  if (!snap || snap.record.projects.length === 0) return "";
+  const { record, growth } = snap;
+  const kTok = (n: number) => `${Math.round(n / 1000)}k`;
+  const kb = (n: number) => `${Math.round(n / 1024)} KB`;
+  const worst = record.projects[0]!;
+  const flagged = record.projects.filter((p) => p.level !== "ok").length;
+  const rows = record.projects
+    .map((p) => {
+      const g = growth[p.projectId];
+      return `<tr class="canon-${p.level}">
+      <td>${escapeHtml(p.projectId)}</td>
+      <td class="num">${escapeHtml(kb(p.knowledgeBytes))}</td>
+      <td class="num">${escapeHtml(kTok(p.promptTokens))}</td>
+      <td class="num">${Math.round(p.pctOfBudget * 100)}%</td>
+      <td>${escapeHtml(g ? formatCanonGrowth(g) : "—")}</td>
+      <td>${p.level === "ok" ? "" : escapeHtml(p.level)}</td>
+    </tr>`;
+    })
+    .join("");
+  const summary =
+    `Verify budget · ${escapeHtml(worst.projectId)} ${Math.round(worst.pctOfBudget * 100)}%` +
+    (flagged > 0 ? ` · ${flagged} past ${Math.round(CANON_WARN_AT * 100)}%` : "");
+  return `<details class="canon-size"${flagged > 0 ? " open" : ""}>
+    <summary>${summary}</summary>
+    <p class="canon-size-note">Each project's Pass V Verify prompt with its canon and the taste principles, before the night's candidates. Tokens use the assertPromptFits estimate. 100% is the ${kTok(record.budgetTokens)} budget (${kTok(record.windowTokens)} window less output headroom), where the call is refused. Warn at ${Math.round(CANON_WARN_AT * 100)}%, act at ${Math.round(CANON_ACT_AT * 100)}%.</p>
+    <table class="canon-size-table">
+      <thead><tr><th>Project</th><th class="num">knowledge.md</th><th class="num">Tokens</th><th class="num">Budget</th><th>Growth</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </details>`;
 }
 
 /**

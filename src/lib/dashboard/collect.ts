@@ -33,6 +33,13 @@ import {
   type TasteUnitStatus,
 } from "../taste-store";
 import { TASTE_CATEGORIES, type TasteCategory } from "../taste-types";
+import {
+  computeCanonGrowth,
+  measureAllCanons,
+  readCanonSizeHistory,
+  type CanonGrowth,
+  type CanonSizeRecord,
+} from "../canon-size";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -226,6 +233,15 @@ export type DashboardData = {
   latestReflection: ReflectionDay | null;
   /** Latest nightly Propose output within the last 7 run dirs (TK-138). */
   propose: ProposeEntry | null;
+  /** Each project's Verify prompt against Pass V's budget, measured live, with
+   * growth from the nightly canon-size records (TK-158). Optional so fixtures
+   * that predate it still type-check. */
+  canonSize?: CanonSizeSnapshot | null;
+};
+
+export type CanonSizeSnapshot = {
+  record: CanonSizeRecord;
+  growth: Record<string, CanonGrowth>;
 };
 
 // ---------------------------------------------------------------------------
@@ -845,6 +861,22 @@ export async function collectLatestReflection(paths: HivePaths): Promise<Reflect
   return { date, body: body.trim(), ageDays };
 }
 
+/** Live canon-size measurement plus growth from the last week's nightly
+ * records. Arithmetic only: no model calls, no writes. Null on any failure, so
+ * the dashboard renders without the block rather than not at all. */
+export async function collectCanonSize(
+  paths: HivePaths,
+  date: string = new Date().toISOString().slice(0, 10),
+): Promise<CanonSizeSnapshot | null> {
+  try {
+    const record = await measureAllCanons(paths, date);
+    const growth = computeCanonGrowth(record, await readCanonSizeHistory(paths, date));
+    return { record, growth: Object.fromEntries(growth) };
+  } catch {
+    return null; // intentional: a measurement failure drops the block, not the page
+  }
+}
+
 export async function collectRunUsage(
   paths: HivePaths,
   date: string = new Date().toISOString().slice(0, 10),
@@ -1131,7 +1163,7 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, actWork, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, watches, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
+  const [health, projects, inboxes, tickets, actWork, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, watches, runUsage, tasteTrack, latestReflection, propose, canonSize] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -1147,6 +1179,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectTasteTrack(paths),
     collectLatestReflection(paths),
     collectPropose(paths),
+    collectCanonSize(paths),
   ]);
 
   const today = briefings[0]?.date ?? new Date().toISOString().slice(0, 10);
@@ -1174,5 +1207,6 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     tasteTrack,
     latestReflection,
     propose,
+    canonSize,
   };
 }
