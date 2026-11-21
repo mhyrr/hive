@@ -20,6 +20,7 @@ import {
 } from "../lib/memory";
 import {
   appendUsageRecord,
+  buildUsageRecord,
   estimateCost,
 } from "../lib/pricing";
 
@@ -264,6 +265,55 @@ describe("collectRunUsage", () => {
     expect(b?.project).toBe("alpha");
     const v = snap.passes.find((p) => p.pass === "V");
     expect(v?.project).toBeNull();
+    // Records built without the split surface as null, and so does the total.
+    expect(v?.cacheReadTokens).toBeNull();
+    expect(snap.totalInputSplit).toBeNull();
+  });
+
+  test("carries the cache split per pass and in the totals (TK-120)", async () => {
+    const paths = await freshHome();
+    const date = "2026-11-15";
+    await appendUsageRecord(
+      paths,
+      date,
+      buildUsageRecord(
+        "B",
+        {
+          provider: "anthropic",
+          model: "claude-opus-5-5",
+          inputTokens: 27_643,
+          cacheCreationTokens: 27_641,
+          cacheCreation1hTokens: 27_641,
+          cacheReadTokens: 0,
+          outputTokens: 5_331,
+          durationMs: 48_412,
+        },
+        "writing",
+      ),
+    );
+    await appendUsageRecord(
+      paths,
+      date,
+      buildUsageRecord("V", {
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+        inputTokens: 10_000,
+        cacheReadTokens: 9_000,
+        outputTokens: 100,
+        durationMs: 1,
+      }),
+    );
+    const snap = await collectRunUsage(paths, date);
+    expect(snap.passes[0]).toMatchObject({ cacheCreationTokens: 27_641, cacheReadTokens: 0 });
+    expect(snap.passes[1]).toMatchObject({ cacheCreationTokens: 0, cacheReadTokens: 9_000 });
+    expect(snap.totalInputSplit).toEqual({
+      uncachedInputTokens: 1_002,
+      cacheCreationTokens: 27_641,
+      cacheReadTokens: 9_000,
+    });
+    // B: 2×$4 + 27,641×$8 + 5,331×$20; V: 1,000×$4 + 9,000×$0.2 + 100×$20 (per MTok).
+    const expected = (2 * 4 + 27_641 * 8 + 5_331 * 20 + 1_000 * 4 + 9_000 * 0.2 + 100 * 20) / 1_000_000;
+    expect(snap.totalUsd).toBeCloseTo(expected, 9);
   });
 });
 

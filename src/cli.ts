@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 
+import { attachCommand } from "./commands/attach";
 import { contextCommand } from "./commands/context";
 import { councilCommand } from "./commands/council";
 import { dashboardCommand } from "./commands/dashboard";
@@ -29,6 +30,7 @@ import { findPiBin } from "./lib/pi-wire";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: initCommand,
+  attach: attachCommand,
   doctor: doctorCommand,
   context: contextCommand,
   prompts: contextCommand,
@@ -79,6 +81,7 @@ HIVE Commands:
   identity emit              Print canonical identity prefix (used by SessionStart hook)
   inbox                      Show project inbox (clear with: inbox clear)
   dashboard [build|open]     Build or open the Morning Edition dashboard
+  attach <agent>             Attach this terminal to a comb agent, in its directory
 
 ${name} (default: Claude Code with identity):
   hive                       Interactive ${name} session

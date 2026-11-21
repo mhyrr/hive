@@ -18,9 +18,10 @@ import {
   runReflectionExtractor,
 } from "../lib/extract";
 import { runVerifier } from "../lib/verify";
-import { formatUsd, loadUsageSummary } from "../lib/pricing";
+import { formatInputTokens, formatRunCostLine, formatUsd, loadUsageSummary } from "../lib/pricing";
 import { applyDecisions } from "../lib/apply";
 import { runNightly, type PassReport } from "../lib/orchestrator";
+import { nightlyCostReport, runDatesWithUsage } from "../lib/nightly-cost";
 
 function parseFlagsAndArgs(args: string[]): { flags: Record<string, string>; positional: string[] } {
   const flags: Record<string, string> = {};
@@ -96,10 +97,16 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory verify [--date YYYY-MM-DD]   Pass V: Opus verifies + writes briefing
   hive memory apply [--date YYYY-MM-DD] [--dry-run]
                                            Pass F: applies decisions to canon
-  hive memory nightly [--date YYYY-MM-DD] [--dry-run] [--no-taste]
+  hive memory nightly [--date YYYY-MM-DD] [--dry-run] [--no-taste] [--taste-now] [--force]
                                            Run the full V1 pipeline (A → B → C → V → F)
-                                           plus the taste track (TA → TB → TC);
-                                           --no-taste skips the taste track
+                                           plus the taste track (TA → TB → TC), which
+                                           runs every HIVE_TASTE_EVERY_NIGHTS nights (2);
+                                           --no-taste skips it, --taste-now runs it tonight.
+                                           A retry of the same date resumes finished
+                                           passes; --force re-runs them all
+  hive memory cost [--date YYYY-MM-DD] [--days N]
+                                           Per-pass input, cache and cost from usage.json
+                                           for the last N runs through --date (default 2)
   hive memory --project <name> ...         Specify project`;
 
   if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
@@ -117,11 +124,15 @@ export async function memoryCommand(args: string[]): Promise<void> {
     let requestedDate: string | undefined;
     let dryRun = false;
     let taste = true;
+    let tasteNow = false;
+    let force = false;
     const rest = positional.slice(1);
     for (let i = 0; i < rest.length; i++) {
       if (rest[i] === "--date") requestedDate = rest[++i];
       else if (rest[i] === "--dry-run") dryRun = true;
       else if (rest[i] === "--no-taste") taste = false;
+      else if (rest[i] === "--taste-now") tasteNow = true;
+      else if (rest[i] === "--force") force = true;
     }
     const displayDate = requestedDate ?? new Date().toISOString().slice(0, 10);
 
@@ -140,6 +151,8 @@ export async function memoryCommand(args: string[]): Promise<void> {
       ...(requestedDate ? { date: requestedDate } : {}),
       dryRun,
       taste,
+      tasteNow,
+      force,
       onProgress: (event) => {
         if (event.type === "pass-start") {
           const detail = event.detail ? ` — ${event.detail}` : "";
@@ -153,10 +166,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
     // Cost summary
     const usage = await loadUsageSummary(paths, result.date);
     if (usage.records.length > 0) {
-      console.log(
-        `Cost: ${usage.totals.inputTokens.toLocaleString()} in / ` +
-          `${usage.totals.outputTokens.toLocaleString()} out tokens · ${formatUsd(usage.totals.totalUsd)}`,
-      );
+      console.log(formatRunCostLine(usage.totals));
     }
 
     if (result.briefingPath) {
@@ -174,6 +184,19 @@ export async function memoryCommand(args: string[]): Promise<void> {
         `\nDone. ${(result.totalDurationMs / 1000).toFixed(1)}s total.${dryRun ? " (artifacts in runs/, V0 still owns canon)" : ""}`,
       );
     }
+    return;
+  }
+
+  if (subcommand === "cost") {
+    let through = new Date().toISOString().slice(0, 10);
+    let days = 2;
+    const rest = positional.slice(1);
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--date") through = rest[++i] ?? through;
+      else if (rest[i] === "--days") days = Math.max(1, Number(rest[++i]) || 2);
+    }
+    const dates = runDatesWithUsage(paths, through, days);
+    console.log(dates.length > 0 ? await nightlyCostReport(paths, dates) : `No usage.json on or before ${through}.`);
     return;
   }
 
@@ -343,13 +366,13 @@ export async function memoryCommand(args: string[]): Promise<void> {
     );
     console.log(
       `  Model: ${u.provider}/${u.model} · ` +
-        `tokens in/out: ${u.inputTokens}/${u.outputTokens} · ` +
+        `tokens: ${formatInputTokens(u)} / ${u.outputTokens.toLocaleString()} out · ` +
         `${u.durationMs ? `${u.durationMs}ms` : "duration ?"} · cost ${formatUsd(result.cost.totalUsd)}`,
     );
 
     const totals = await loadUsageSummary(paths, date);
     console.log(
-      `Run total: ${totals.totals.inputTokens} input + ${totals.totals.outputTokens} output tokens · ` +
+      `Run total: ${formatInputTokens(totals.totals)} / ${totals.totals.outputTokens.toLocaleString()} out tokens · ` +
         `${formatUsd(totals.totals.totalUsd)} (${totals.records.length} pass${totals.records.length === 1 ? "" : "es"})`,
     );
     return;

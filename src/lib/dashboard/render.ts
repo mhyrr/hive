@@ -1310,6 +1310,22 @@ const PASS_LABELS: Record<string, string> = {
   TR: "taste replay",
 };
 
+/** A token count, or an em dash for a record that predates the cache split. */
+function tokenCell(n: number | null | undefined): string {
+  return n == null ? "—" : n.toLocaleString();
+}
+
+/** " (2,104 uncached · 210,000 cache write · 73,311 cache read)", or "" without a split. */
+function inputSplitNote(usage: RunUsageSnapshot): string {
+  const s = usage.totalInputSplit;
+  if (!s) return "";
+  return (
+    ` (${s.uncachedInputTokens.toLocaleString()} uncached · ` +
+    `${s.cacheCreationTokens.toLocaleString()} cache write · ` +
+    `${s.cacheReadTokens.toLocaleString()} cache read)`
+  );
+}
+
 export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
   if (!usage || !usage.available) {
     const date = usage?.date ?? new Date().toISOString().slice(0, 10);
@@ -1330,6 +1346,8 @@ export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
   <td><strong>${passCell}</strong>${projectLabel}</td>
   <td>${escapeHtml(p.model)}</td>
   <td class="num">${p.inputTokens.toLocaleString()}</td>
+  <td class="num">${tokenCell(p.cacheCreationTokens)}</td>
+  <td class="num">${tokenCell(p.cacheReadTokens)}</td>
   <td class="num">${p.outputTokens.toLocaleString()}</td>
   <td class="num">${duration}</td>
   <td class="num"><strong>${escapeHtml(p.usdFormatted)}</strong></td>
@@ -1347,11 +1365,11 @@ export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
   <div class="run-usage">
     <p class="run-usage-total">
       <strong>${escapeHtml(usage.totalUsdFormatted)}</strong>
-      &nbsp;·&nbsp; ${usage.totalInputTokens.toLocaleString()} input + ${usage.totalOutputTokens.toLocaleString()} output tokens
+      &nbsp;·&nbsp; ${usage.totalInputTokens.toLocaleString()} input${inputSplitNote(usage)} + ${usage.totalOutputTokens.toLocaleString()} output tokens
     </p>
     <table class="run-usage-table">
       <thead>
-        <tr><th>Pass</th><th>Model</th><th>In</th><th>Out</th><th>Time</th><th>Cost</th></tr>
+        <tr><th>Pass</th><th>Model</th><th>In</th><th>Cache write</th><th>Cache read</th><th>Out</th><th>Time</th><th>Cost</th></tr>
       </thead>
       <tbody>
 ${rows}

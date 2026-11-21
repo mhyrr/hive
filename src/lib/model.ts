@@ -1,7 +1,9 @@
 // Shared completion interface for all CLI-backed model drivers.
 // Each driver (claude.ts, codex.ts, gemini.ts) returns this shape.
 
-export interface ModelTextCompletion {
+import type { CacheTokens } from "./pricing";
+
+export interface ModelTextCompletion extends CacheTokens {
   provider: string;
   model: string;
   text: string;
