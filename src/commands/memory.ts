@@ -42,6 +42,35 @@ function parseFlagsAndArgs(args: string[]): { flags: Record<string, string>; pos
   return { flags, positional };
 }
 
+const SEARCH_USAGE = "hive memory search <query> [--top-k N] [--logs] [--tag t] [--section s]";
+
+/**
+ * The search-only flags. Parsed here, not in parseFlagsAndArgs, because
+ * `condition` reads its own `--top-k` from the positional list.
+ */
+export function parseSearchArgs(rest: string[]): { query: string; topK?: number; includeLogs: boolean } {
+  const words: string[] = [];
+  let topK: number | undefined;
+  let includeLogs = false;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    if (arg === "--top-k") {
+      const n = Number(rest[++i]);
+      if (!Number.isInteger(n) || n < 1) {
+        throw new UsageError(`--top-k needs a positive whole number\n\n${SEARCH_USAGE}`);
+      }
+      topK = n;
+    } else if (arg === "--logs") {
+      includeLogs = true;
+    } else {
+      words.push(arg);
+    }
+  }
+  const query = words.join(" ").trim();
+  if (!query) throw new UsageError(`No search query provided.\n\n${SEARCH_USAGE}`);
+  return { query, ...(topK !== undefined ? { topK } : {}), includeLogs };
+}
+
 export async function memoryCommand(args: string[]): Promise<void> {
   const usage = `Usage:
   hive memory                              View all project memory
@@ -50,7 +79,11 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory convention <text>            Add a convention
   hive memory decision <text>              Add a decision
   hive memory question <text>              Add an open question
-  hive memory search <query> [--tag t] [--section s]  Search across all memory layers
+  hive memory search <query> [--top-k N] [--logs] [--tag t] [--section s]
+                                           Search compiled knowledge. Returns the top 10
+                                           matches by default; --top-k N raises the cap.
+                                           --logs also searches the last 14 days of
+                                           session logs (off by default).
   hive memory index                        Rebuild the project memory index
   hive memory reflect                      Batch-write learnings from stdin (JSON)
   hive memory promote                      Promote unprocessed reflections to memory
@@ -68,6 +101,11 @@ export async function memoryCommand(args: string[]): Promise<void> {
                                            plus the taste track (TA → TB → TC);
                                            --no-taste skips the taste track
   hive memory --project <name> ...         Specify project`;
+
+  if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
+    console.log(usage);
+    return;
+  }
 
   const paths = await ensureHiveScaffold();
   const { flags, positional } = parseFlagsAndArgs(args);
@@ -338,16 +376,13 @@ export async function memoryCommand(args: string[]): Promise<void> {
 
   // Search
   if (subcommand === "search") {
-    const query = positional.slice(1).join(" ").trim();
-    if (!query) {
-      throw new UsageError("No search query provided.\n\nhive memory search <query>");
-    }
+    const { query, topK, includeLogs } = parseSearchArgs(positional.slice(1));
     const { results, total } = await searchMemory(paths, projectId, query, {
       tag: flags.tag,
       section: flags.section as MemorySection | undefined,
       includeSuperseded: flags.noSuperseded !== "true",
-      topK: flags.topK ? Number(flags.topK) : undefined,
-      includeLogs: flags.logs === "true",
+      topK,
+      includeLogs,
     });
     console.log(formatSearchResults(results, query, total));
     return;
