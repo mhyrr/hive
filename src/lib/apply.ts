@@ -18,7 +18,6 @@ import { emptyInbox, inboxBodyHash, parseInbox } from "./inbox";
 import {
   appendProjectMemory,
   drainCandidates,
-  markEntryRecurrence,
   mergeTagsIntoEntry,
   rebuildIndex,
   readCandidates,

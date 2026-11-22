@@ -435,13 +435,14 @@ export function formatTags(tags: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Recurrence — one entry observed N times, not N entries
+// Recurrence marker — legacy, read-only
 // ---------------------------------------------------------------------------
 
-// TK-147: a gap the verifier re-observes night after night is the same question
-// getting louder. The count is rendered into the entry line so it is visible
-// where the entry is read, and sits between the prose and the tags:
+// TK-147 once rewrote re-observed gap entries with a count between the prose
+// and the tags:
 //   - Is the heartbeat still earning its keep? _(seen 3×, last 2026-08-17)_ [gap]
+// That writer is retired (6f3f6dc, TK-162), but older entries still carry the
+// marker. entryHash strips it so those entries keep their original hash.
 const RECURRENCE_PATTERN = /\s*_\(seen (\d+)×, last (\d{4}-\d{2}-\d{2})\)_$/;
 
 /** Split a marker off entry text. An unmarked entry has been seen once. */
@@ -457,10 +458,6 @@ export function parseRecurrence(text: string): {
     count: Number(match[1]),
     lastSeen: match[2]!,
   };
-}
-
-export function formatRecurrence(count: number, date: string = toDateLabel()): string {
-  return ` _(seen ${count}×, last ${date})_`;
 }
 
 // ---------------------------------------------------------------------------
@@ -820,65 +817,6 @@ export async function supersedeEntryByHash(
   });
 
   return { supersededText, newHash };
-}
-
-/**
- * TK-147: record that an existing entry was observed again. Rewrites the line
- * in place with an incremented recurrence marker — no new entry, no new hash.
- *
- * Idempotence is per call, not per day: two calls on the same date leave
- * "seen 3×" then "seen 4×". Callers are nightly passes that see a given gap
- * once per run, so the count tracks nights observed.
- */
-export async function markEntryRecurrence(
-  paths: HivePaths,
-  projectId: string,
-  section: MemorySection,
-  targetHash: string,
-  date: string = toDateLabel(),
-): Promise<{ count: number; text: string }> {
-  await ensureProjectMemoryDir(paths, projectId);
-  const filePath = knowledgePath(paths, projectId);
-  const header = sectionToHeader[section];
-
-  let count = 0;
-  let coreText = "";
-
-  await enqueue(filePath, async () => {
-    let content = await Bun.file(filePath).text();
-    const hit = findActiveEntryLineByHash(content, header, targetHash);
-    if (!hit) {
-      throw new Error(`No active ${section} entry with hash ${targetHash} in ${projectId}`);
-    }
-
-    const prior = parseRecurrence(hit.coreText);
-    count = prior.count + 1;
-    coreText = prior.text;
-
-    const lines = content.split("\n");
-    const tsPart = hit.ts ? `[${hit.ts}] ` : "";
-    lines[hit.lineIndex] =
-      `- ${tsPart}${coreText}${formatRecurrence(count, date)}${formatTags(hit.tags)}`;
-    content = lines.join("\n");
-
-    const check = validateMemoryStructure(content);
-    if (!check.valid) {
-      throw new Error(`Memory write would corrupt file: ${check.error}`);
-    }
-    await Bun.write(filePath, content);
-
-    // The damped bump, not the full one: a re-observation is the machine
-    // noticing again, not a human recalling. Enough to keep a still-open
-    // question from decaying out of the index while it keeps recurring.
-    const meta = await readMeta(paths, projectId);
-    const existing = meta.entries[targetHash];
-    if (existing) {
-      meta.entries[targetHash] = bumpRecallDamped(existing);
-      await writeMeta(paths, projectId, meta);
-    }
-  });
-
-  return { count, text: coreText };
 }
 
 export async function mergeTagsIntoEntry(
