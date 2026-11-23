@@ -2,6 +2,7 @@ import { ensureHiveScaffold, getProjectPaths } from "../lib/paths";
 import { UsageError } from "../lib/errors";
 import { resolveProjectFromCwd } from "../lib/project";
 import { emptyInbox, parseInbox } from "../lib/inbox";
+import { rescueInboxCandidates } from "../lib/identity-candidates";
 
 export async function inboxCommand(args: string[]): Promise<void> {
   const usage = `Usage:
@@ -31,8 +32,18 @@ export async function inboxCommand(args: string[]): Promise<void> {
   const file = Bun.file(pp.inbox);
 
   if (subcommand === "clear") {
+    // TK-157: identity candidates wait for Greg's answer, so a clear moves
+    // them to the pending store instead of dropping them.
+    let rescued = 0;
+    if (await file.exists()) {
+      const parsed = parseInbox(await file.text(), projectId);
+      rescued = (await rescueInboxCandidates(paths, projectId, parsed.body)).rescued;
+    }
     await Bun.write(pp.inbox, emptyInbox(projectId));
     console.log(`Inbox cleared for ${projectId}.`);
+    if (rescued > 0) {
+      console.log(`${rescued} identity candidate(s) kept as pending. See: hive identity candidates`);
+    }
     return;
   }
 

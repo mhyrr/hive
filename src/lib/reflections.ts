@@ -2,8 +2,8 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { HivePaths } from "./paths";
-import { getProjectPaths } from "./paths";
 import { toDateLabel, toIsoTimestamp } from "./time";
+import { addCandidates, type IdentityTarget } from "./identity-candidates";
 import {
   appendProjectMemory,
   searchMemory,
@@ -433,7 +433,7 @@ export async function promoteReflections(
     promoted: 0, skipped: 0, proposed: 0, details: [],
   };
 
-  // Collect identity proposals to batch into one inbox entry
+  // Collect identity proposals to queue as pending candidates
   const gregProposals: Array<{ text: string; date: string }> = [];
   const mayaProposals: Array<{ text: string; date: string }> = [];
 
@@ -469,7 +469,7 @@ export async function promoteReflections(
     await markPromoted(file.path);
   }
 
-  // Write batched identity proposals to inbox
+  // Queue identity proposals in the pending store (TK-157)
   if (gregProposals.length > 0) {
     await writeIdentityProposals(paths, projectId, "SELF.md", "About Greg", gregProposals);
     result.proposed += gregProposals.length;
@@ -544,8 +544,7 @@ export async function promoteReflectionsBatch(
     return result;
   }
 
-  // Per-project batched identity proposals so each project's inbox gets one
-  // consolidated entry per nightly, not one per reflection line.
+  // Per-project batched identity proposals, queued in the pending store
   const gregProposalsByProject = new Map<string, Array<{ text: string; date: string }>>();
   const mayaProposalsByProject = new Map<string, Array<{ text: string; date: string }>>();
   const projectsTouched = new Set<string>();
@@ -585,7 +584,7 @@ export async function promoteReflectionsBatch(
 
       // TK-057: same dedupe gate as system entries — most "About Greg/Maya"
       // candidates in the prior 54-item backlog were already covered by SOUL/
-      // IDENTITY/SELF text. Drop with citation rather than flooding the inbox.
+      // IDENTITY/SELF text. Drop with citation rather than flooding the pending store.
       const check = await checkDuplicate(paths, target, entry.text);
       if (check.duplicate) {
         ensureBucket(result, target).skipped++;
@@ -660,42 +659,30 @@ export async function promoteReflectionsBatch(
 }
 
 // ---------------------------------------------------------------------------
-// Inbox + file helpers
+// Identity candidates + file helpers
 // ---------------------------------------------------------------------------
 
+/** Queue identity candidates in the pending store (TK-157). They used to be
+ * appended to the project inbox, which the nightly clears once the briefing
+ * lands, so a candidate Greg had not answered yet was lost. The store keeps
+ * each one until Greg approves or declines it; see identity-candidates.ts. */
 async function writeIdentityProposals(
   paths: HivePaths,
   projectId: string,
-  targetFile: string,
-  label: string,
+  targetFile: IdentityTarget,
+  _label: string,
   proposals: Array<{ text: string; date: string }>,
 ): Promise<void> {
-  const pp = getProjectPaths(paths, projectId);
-  let content = "";
-  try {
-    content = await Bun.file(pp.inbox).text();
-  } catch {
-    // intentional: inbox doesn't exist yet — initialize with header
-    content = `# Inbox: ${projectId}\n\n`;
-  }
-
-  // TK-057: name the section by what it actually is — candidates for
-  // promotion that survived the dedupe + rate gates. The prior "Proposed
-  // edits to FILE.md" framing pre-classified every entry as
-  // identity-bound, which biased review toward accepting things that
-  // belonged in project memory instead.
-  const lines = [
-    `\n## ${toIsoTimestamp()} — Session learnings — candidates for promotion`,
-    ``,
-    `Target: \`${targetFile}\` (${label}). These passed the dedupe gate against the identity stack; review before applying.`,
-    ``,
-  ];
-  for (const p of proposals) {
-    lines.push(`- (${p.date}) ${p.text}`);
-  }
-  lines.push(``, `---`, ``);
-
-  await Bun.write(pp.inbox, content + lines.join("\n"));
+  await addCandidates(
+    paths,
+    proposals.map((p) => ({
+      target: targetFile,
+      text: p.text,
+      date: p.date,
+      project: projectId,
+      source: "pass-p",
+    })),
+  );
 }
 
 async function markPromoted(filePath: string): Promise<void> {

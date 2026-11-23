@@ -14,6 +14,7 @@ import {
 } from "../lib/reflections";
 import { appendProjectMemory, knowledgePath } from "../lib/memory";
 import { ensureHiveScaffold, type HivePaths, getProjectPaths } from "../lib/paths";
+import { listPendingCandidates } from "../lib/identity-candidates";
 
 // ---------------------------------------------------------------------------
 // Tokenization (reflection-specific, with stop word filtering)
@@ -259,7 +260,7 @@ describe("promoteReflections", () => {
     expect(content).toContain("[reflection]");
   });
 
-  test("routes greg entries to inbox as proposals", async () => {
+  test("queues greg entries as pending SELF.md candidates, not inbox lines (TK-157)", async () => {
     await Bun.write(
       join(paths.reflectionsDir, "2026-04-12.md"),
       `# Reflections\n\n## About Greg\n- Prefers design-first approaches\n- States constraints as hard boundaries\n`,
@@ -268,13 +269,16 @@ describe("promoteReflections", () => {
     const result = await promoteReflections(paths, "test-project");
     expect(result.proposed).toBe(2);
 
-    const inbox = await Bun.file(join(paths.projectsDir, "test-project", "inbox.md")).text();
-    expect(inbox).toContain("SELF.md");
-    expect(inbox).toContain("Prefers design-first approaches");
-    expect(inbox).toContain("States constraints as hard boundaries");
+    const pending = await listPendingCandidates(paths);
+    expect(pending.map((c) => c.text)).toEqual([
+      "Prefers design-first approaches",
+      "States constraints as hard boundaries",
+    ]);
+    expect(pending.every((c) => c.target === "SELF.md" && c.project === "test-project")).toBe(true);
+    expect(await Bun.file(join(paths.projectsDir, "test-project", "inbox.md")).exists()).toBe(false);
   });
 
-  test("routes maya entries to inbox for IDENTITY.md", async () => {
+  test("queues maya entries as pending IDENTITY.md candidates (TK-157)", async () => {
     await Bun.write(
       join(paths.reflectionsDir, "2026-04-12.md"),
       `# Reflections\n\n## About Maya\n- Cost tables enable fast decisions\n`,
@@ -283,9 +287,10 @@ describe("promoteReflections", () => {
     const result = await promoteReflections(paths, "test-project");
     expect(result.proposed).toBe(1);
 
-    const inbox = await Bun.file(join(paths.projectsDir, "test-project", "inbox.md")).text();
-    expect(inbox).toContain("IDENTITY.md");
-    expect(inbox).toContain("Cost tables enable fast decisions");
+    const pending = await listPendingCandidates(paths);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.target).toBe("IDENTITY.md");
+    expect(pending[0]!.text).toBe("Cost tables enable fast decisions");
   });
 
   test("deduplicates against existing knowledge", async () => {
@@ -521,7 +526,7 @@ describe("promoteReflectionsBatch", () => {
     expect(overflow).toContain("2 extra SELF.md proposal(s)");
   });
 
-  test("TK-057: inbox uses 'candidates for promotion' framing instead of 'Proposed edits to'", async () => {
+  test("TK-157: identity proposals go to the pending store, never the inbox", async () => {
     await Bun.write(
       join(paths.reflectionsDir, "2026-05-18.md"),
       `# Reflections\n\n## About Maya\n- Maya holds tension between plan and ship\n`,
@@ -533,9 +538,15 @@ describe("promoteReflectionsBatch", () => {
       date: "2026-05-18",
     });
 
-    const inbox = await Bun.file(join(paths.projectsDir, "alpha", "inbox.md")).text();
-    expect(inbox).toContain("Session learnings — candidates for promotion");
-    expect(inbox).not.toContain("Proposed edits to");
-    expect(inbox).toContain("Target: `IDENTITY.md`");
+    const pending = await listPendingCandidates(paths);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({
+      target: "IDENTITY.md",
+      text: "Maya holds tension between plan and ship",
+      date: "2026-05-18",
+      project: "alpha",
+      source: "pass-p",
+    });
+    expect(await Bun.file(join(paths.projectsDir, "alpha", "inbox.md")).exists()).toBe(false);
   });
 });

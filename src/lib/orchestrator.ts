@@ -35,6 +35,7 @@ import { runProjectExtractor, runReflectionExtractor } from "./extract";
 import { runVerifier } from "./verify";
 import { applyDecisions } from "./apply";
 import { promoteReflectionsBatch } from "./reflections";
+import { writePendingSection } from "./identity-candidates";
 import { buildDashboard } from "./dashboard";
 import { listProjects } from "./paths";
 import { loadTranscripts } from "./transcript";
@@ -170,6 +171,21 @@ async function copyStubToBriefings(
   return dest;
 }
 
+/** TK-157: write the identity candidates still waiting on Greg into the
+ * landed briefing and the run's copy. A failure is reported, never fatal. */
+async function listPendingIdentityCandidates(
+  paths: HivePaths,
+  result: NightlyResult,
+): Promise<void> {
+  if (!result.briefingPath) return;
+  try {
+    await writePendingSection(paths, join(paths.memoryRunsDir, result.date, STUB_BRIEFING_FILENAME));
+    await writePendingSection(paths, result.briefingPath);
+  } catch (err) {
+    result.errors.push(`identity-candidates: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Top-level
 // ---------------------------------------------------------------------------
@@ -289,6 +305,7 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     if (!dryRun) {
       result.briefingPath = await copyStubToBriefings(paths, date, stub);
       result.passes.F = { pass: "F", status: "skipped", detail: "stub-only briefing copied" };
+      await listPendingIdentityCandidates(paths, result);
       try {
         const { durationMs } = await timed(() => buildDashboard(paths));
         result.passes.dashboard = { pass: "dashboard", status: "complete", durationMs };
@@ -545,7 +562,9 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       // A failed canon-size measurement is non-fatal to F but must not be
       // silent: it is the early warning for the TK-137 failure mode.
       for (const e of value.errors) {
-        if (e.startsWith("canon-size:")) result.errors.push(`Pass F: ${e}`);
+        if (e.startsWith("canon-size:") || e.startsWith("identity-candidates:")) {
+          result.errors.push(`Pass F: ${e}`);
+        }
       }
       applyOK = true;
     } catch (err) {
@@ -557,8 +576,8 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
 
     // ---- Pass P (promote) — TK-027 ----------------------------------------
     // Closes the reflection loop: today's reflection file (just written by
-    // Pass F) gets routed entry-by-entry to project knowledge.md or to the
-    // appropriate inbox.md as an identity proposal. Default project is the
+    // Pass F) gets routed entry-by-entry to project knowledge.md or, as an
+    // identity candidate, to the pending store (TK-157). Default project is the
     // one with the highest exchange count today; per-entry `project=NAME`
     // hints in provenance override.
     if (applyOK) {
@@ -599,6 +618,10 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
         detail: "apply failed; nothing to promote",
       };
     }
+
+    // Pass P runs after F landed the briefing, so tonight's new identity
+    // candidates join the pending list there now, not a night late.
+    await listPendingIdentityCandidates(paths, result);
 
     // Dashboard rebuild is deferred until after the taste track — see below.
     rebuildDashboard = true;

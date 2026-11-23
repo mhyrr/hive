@@ -391,8 +391,24 @@ Pass F — Apply (mechanical)
   ↓   they stay in the briefing and gaps.md, never canon, reflections, or
   ↓   identity proposals; durable lessons are Pass B/C's to extract next run
   ↓ copy briefing.md → ~/.hive/briefings/{DATE}.md
-  ↓ clear each captured project inbox when its body still matches Pass V
+  ↓ clear each captured project inbox when its body still matches Pass V;
+  ↓   identity candidates in it move to ~/.hive/identity-candidates.json first
+  ↓ list every pending identity candidate in the briefing
+
+Pass P — Promote reflections
+  ↓ "About the System" lines → project knowledge.md
+  ↓ "About Maya" / "About Greg" lines → pending identity candidates
+  ↓   (identity-candidates.json, target IDENTITY.md / SELF.md); the landed
+  ↓   briefing's pending list is rewritten to include them
 ```
+
+**Identity candidates wait for an answer (TK-157).** The inbox is for
+findings the briefing consumes, and the nightly clears it every night. An
+identity candidate is a question for Greg, so it lives in
+`~/.hive/identity-candidates.json` until he answers it. `hive identity approve
+<id>` appends it to IDENTITY.md or SELF.md; `hive identity decline <id>` drops
+it. Both answers log to `~/.hive/identity-candidates.log`, and nothing else
+removes a candidate. Each night's briefing lists all pending candidates.
 
 **Provenance discipline.** Every candidate carries a provenance string the
 verifier checks against the day's signal. If the cited source can't be
