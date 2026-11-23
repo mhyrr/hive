@@ -18,7 +18,7 @@ import {
   type CanonSizeRecord,
 } from "../lib/canon-size";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
-import { VERIFY_BUDGET_TOKENS, VERIFY_WINDOW_TOKENS } from "../lib/verify";
+import { CHARS_PER_TOKEN, VERIFY_BUDGET_TOKENS, VERIFY_WINDOW_TOKENS } from "../lib/verify";
 import { renderCanonSize } from "../lib/dashboard/render";
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ function measurement(projectId: string, promptTokens: number, budget = 100_000):
   return {
     projectId,
     knowledgeBytes: promptTokens * 3,
-    promptChars: Math.round(promptTokens * 3.2),
+    promptChars: Math.round(promptTokens * CHARS_PER_TOKEN),
     promptTokens,
     pctOfBudget,
     level: canonSizeLevel(pctOfBudget),
@@ -163,8 +163,8 @@ describe("recordCanonSize", () => {
     const m = rec.projects[0]!;
     expect(rec.budgetTokens).toBe(VERIFY_BUDGET_TOKENS);
     expect(rec.windowTokens).toBe(VERIFY_WINDOW_TOKENS);
-    // Same arithmetic as estimatePromptTokens: ceil(chars / 3.2).
-    expect(m.promptTokens).toBe(Math.ceil(m.promptChars / 3.2));
+    // Same arithmetic as estimatePromptTokens: ceil(chars / CHARS_PER_TOKEN).
+    expect(m.promptTokens).toBe(Math.ceil(m.promptChars / CHARS_PER_TOKEN));
     expect(m.pctOfBudget).toBeCloseTo(m.promptTokens / VERIFY_BUDGET_TOKENS, 10);
     // The prompt carries the JSON-serialized canon, so it outweighs the file.
     expect(m.promptChars).toBeGreaterThan(m.knowledgeBytes);
@@ -172,7 +172,7 @@ describe("recordCanonSize", () => {
 
   test("warns in the briefing at the act line, stays quiet for a small project, records the night", async () => {
     // Size the big canon to land between 80% and 100% of the real budget.
-    const target = Math.round(VERIFY_BUDGET_TOKENS * 3.2 * 0.85);
+    const target = Math.round(VERIFY_BUDGET_TOKENS * CHARS_PER_TOKEN * 0.85);
     const paths = await fixture({ big: target, small: 20_000 });
     const date = "2026-11-19";
     const runDir = join(paths.memoryRunsDir, date);
