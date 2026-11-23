@@ -419,6 +419,13 @@ the whole pass on purpose: Pass F drains a project's `candidates.md` whenever
 that project has candidates, decisions or not, so a partial V would drain a
 queue nothing decided on.
 
+**V's budget.** The guard's window is Opus 5.5's 1M tokens (TK-164), less 16k
+for output. Set `HIVE_VERIFY_WINDOW_TOKENS` when V runs on a model with a
+smaller window. The token estimate is chars / 2.6. That is rounded down from the
+densest call measured, 2.68 chars/token on 2026-11-23, so it errs high. Pass F
+records each project's Verify prompt against this budget, and the briefing warns
+at 60% and 80% (TK-158).
+
 **Models.** `src/lib/nightly-config.ts` sets each pass's model and effort in
 one map: Sonnet 5.5 for B, C, TB, TC and TR, Opus 5.5 for V's shards and the
 Brief, Haiku 4.5 for TA. `HIVE_NIGHTLY_MODEL_<PASS>` (e.g. `_VBRIEF`) overrides

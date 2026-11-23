@@ -61,9 +61,13 @@ type VerifierPass = "V" | "VBRIEF";
 // unless you replay the prompt by hand. So measure before spawning.
 // ---------------------------------------------------------------------------
 
-/** Context window of the verifier model. Override when pointing V at a
- * larger-window model (e.g. a `[1m]` variant). */
-export const VERIFY_WINDOW_TOKENS = Number(process.env.HIVE_VERIFY_WINDOW_TOKENS) || 200_000;
+/** Context window of the verifier model. claude-opus-5-5 has a 1M window, and
+ * the CLI on Greg's subscription accepts it: on 2026-11-23 one `claude --print`
+ * call with a 320,454-token prompt returned success, and its envelope reported
+ * `contextWindow: 1000000` (TK-164). Before that this was 200k, which matched
+ * the older verifier model. Set HIVE_VERIFY_WINDOW_TOKENS when pointing V at a
+ * model with a different window. */
+export const VERIFY_WINDOW_TOKENS = Number(process.env.HIVE_VERIFY_WINDOW_TOKENS) || 1_000_000;
 
 /** Room left for the model's own output plus the CLI's envelope overhead. */
 export const OUTPUT_HEADROOM_TOKENS = 16_000;
@@ -73,11 +77,14 @@ export const OUTPUT_HEADROOM_TOKENS = 16_000;
  * measurement of how close a prompt is to failing (TK-158). */
 export const VERIFY_BUDGET_TOKENS = VERIFY_WINDOW_TOKENS - OUTPUT_HEADROOM_TOKENS;
 
-/** Chars per token. Calibrated against the 2026-07-25 bundle that broke Pass V:
- * 734,495 chars measured 222,086 tokens = 3.31 chars/token. JSON-heavy canon
- * tokenizes denser than prose, so round down — a conservative estimate fails
- * loudly on our side instead of silently on Anthropic's. */
-const CHARS_PER_TOKEN = 3.2;
+/** Chars per token. Rounded down from the densest measurement we have, so the
+ * estimate errs high and fails loudly on our side instead of on Anthropic's:
+ * - 2026-07-25, the bundle that broke Pass V: 734,495 chars = 222,086 tokens
+ *   (3.31 chars/token).
+ * - 2026-11-23, claude-opus-5-5, matreas + revrec knowledge.md: 859,161 chars
+ *   = 320,454 tokens (2.68 chars/token). The old 3.2 undercounted this by 19%
+ *   (TK-164). */
+export const CHARS_PER_TOKEN = 2.6;
 
 export function estimatePromptTokens(systemPrompt: string, userContent: string): number {
   return Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN);

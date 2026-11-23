@@ -23,6 +23,8 @@ import {
   refineBriefing,
   tallyBriefingCounts,
   VERIFY_WINDOW_TOKENS,
+  VERIFY_BUDGET_TOKENS,
+  OUTPUT_HEADROOM_TOKENS,
   type VerifierDecision,
   type ProjectVerifierBlock,
 } from "../lib/verify";
@@ -539,6 +541,19 @@ describe("prompt budget", () => {
     const chars = 734_495;
     const estimated = estimatePromptTokens("", "x".repeat(chars));
     expect(estimated).toBeGreaterThanOrEqual(222_086);
+  });
+
+  test("estimate is conservative against the measured 2026-11-23 opus-5-5 call", () => {
+    // TK-164: matreas + revrec knowledge.md, 859,161 chars, measured 320,454
+    // tokens on claude-opus-5-5. The old 3.2 chars/token estimate said ~268k.
+    const estimated = estimatePromptTokens("", "x".repeat(859_161));
+    expect(estimated).toBeGreaterThanOrEqual(320_454);
+  });
+
+  test("the default window is opus-5-5's 1M, and the budget follows it", () => {
+    if (process.env.HIVE_VERIFY_WINDOW_TOKENS) return; // an override is set; the default is not in play
+    expect(VERIFY_WINDOW_TOKENS).toBe(1_000_000);
+    expect(VERIFY_BUDGET_TOKENS).toBe(1_000_000 - OUTPUT_HEADROOM_TOKENS);
   });
 
   test("assertPromptFits passes a small prompt", () => {
