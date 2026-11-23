@@ -738,3 +738,248 @@ describe("runNightly — taste track", () => {
     expect(await readTasteUnits(projectTasteDir(paths, "alpha"))).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Nightly cost (2026-11-20): taste cadence, resume, per-pass models
+// ---------------------------------------------------------------------------
+
+/** Wrap a stub so every call reports the model the pass asked for, and count
+ * calls by pass (read from the prompt each builder emits). */
+function counted(base: ModelCaller): { caller: ModelCaller; calls: Record<string, number> } {
+  const calls: Record<string, number> = {};
+  const caller: ModelCaller = async (input) => {
+    const u = input.userContent;
+    const pass = u.startsWith("# Pass B") ? "B"
+      : u.startsWith("# Pass C") ? "C"
+      : u.startsWith("# Pass V — Verify") ? "V"
+      : u.startsWith("# Pass V — Brief") ? "VBRIEF"
+      : input.systemPrompt.includes("locating DIVERGENCE") ? "TA"
+      : input.systemPrompt.includes("extract durable TASTE") ? "TB"
+      : input.systemPrompt.includes("consolidation gate for a taste-memory") ? "TC"
+      : "other";
+    calls[pass] = (calls[pass] ?? 0) + 1;
+    return { ...(await base(input)), model: input.modelId };
+  };
+  return { caller, calls };
+}
+
+/** A transcript loader that records the window each project's TA/TB asked for. */
+function recordingLoader(projects: string[]): {
+  loader: typeof import("../lib/transcript").loadTranscripts;
+  windows: Array<{ project: string; hoursWindow: number | undefined }>;
+} {
+  const windows: Array<{ project: string; hoursWindow: number | undefined }> = [];
+  const byProject = Object.fromEntries(projects.map((p) => [p, [tasteSession(p)]]));
+  return {
+    windows,
+    loader: async (opts) => {
+      if (!opts.since) windows.push({ project: opts.project ?? "", hoursWindow: opts.hoursWindow });
+      return byProject[opts.project ?? ""] ?? [];
+    },
+  };
+}
+
+const TASTE_STUB: StubBehavior = { taFlagAll: true, tbCandidates: TB_ONE_CANDIDATE, tcDecisions: "[]" };
+// buildConditionReport scans the machine's real sessions; give it room (TK-159).
+const SLOW = 60_000;
+
+describe("runNightly — taste cadence (every N nights)", () => {
+  test("runs, skips the next night with a visible note, then catches up over both nights", async () => {
+    const paths = await freshHomeWith(["alpha", "bravo"]);
+    const { loader, windows } = recordingLoader(["alpha", "bravo"]);
+    const run = (date: string) =>
+      runNightly({ paths, date, tasteEveryNights: 2, caller: makeStub(TASTE_STUB), transcriptLoader: loader });
+
+    await seedActivity(paths, "alpha", "2026-04-21");
+    const n1 = await run("2026-04-21");
+    expect(n1.passes.TA.find((p) => p.pass === "TA.alpha")?.status).toBe("complete");
+    expect(windows).toEqual([{ project: "alpha", hoursWindow: 24 }]);
+
+    // Night 2: only bravo is active, and the track is not due.
+    await seedActivity(paths, "bravo", "2026-04-22");
+    const n2 = await run("2026-04-22");
+    expect(n2.passes.TA).toHaveLength(1);
+    expect(n2.passes.TA[0]?.status).toBe("skipped");
+    expect(n2.passes.TA[0]?.detail).toContain("taste skipped (next run 2026-04-23)");
+    for (const file of [join(paths.memoryRunsDir, "2026-04-22", "briefing.md"), n2.briefingPath!]) {
+      const text = await Bun.file(file).text();
+      expect(text).toContain("Taste track skipped tonight");
+      expect(text).toContain("Next run 2026-04-23; it covers every session since 2026-04-21");
+    }
+    expect(windows).toHaveLength(1); // no taste calls on the skipped night
+
+    // Night 3: only alpha is active tonight, but bravo's night-2 sessions are
+    // still owed. Both projects run over two nights of sessions.
+    await seedActivity(paths, "alpha", "2026-04-23");
+    const n3 = await run("2026-04-23");
+    expect(windows.slice(1)).toEqual([
+      { project: "alpha", hoursWindow: 48 },
+      { project: "bravo", hoursWindow: 48 },
+    ]);
+    expect(n3.passes.TA.find((p) => p.pass === "TA.bravo")?.detail).toContain("2 days of sessions");
+  }, SLOW);
+
+  test("a failed taste project leaves the track due the next night", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    await seedActivity(paths, "alpha", "2026-04-21");
+    await runNightly({
+      paths,
+      date: "2026-04-21",
+      tasteEveryNights: 2,
+      caller: makeStub({ ...TASTE_STUB, failTASessionFiles: new Set(["alpha.jsonl"]) }),
+      transcriptLoader: tasteLoader({ alpha: [tasteSession("alpha")] }),
+    });
+
+    await seedActivity(paths, "alpha", "2026-04-22");
+    const n2 = await runNightly({
+      paths,
+      date: "2026-04-22",
+      tasteEveryNights: 2,
+      caller: makeStub(TASTE_STUB),
+      transcriptLoader: tasteLoader({ alpha: [tasteSession("alpha")] }),
+    });
+    expect(n2.passes.TA.find((p) => p.pass === "TA.alpha")?.status).toBe("complete");
+  }, SLOW);
+
+  test("--taste-now runs the track on a night the gate would skip", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const loader = tasteLoader({ alpha: [tasteSession("alpha")] });
+    await seedActivity(paths, "alpha", "2026-04-21");
+    await runNightly({ paths, date: "2026-04-21", tasteEveryNights: 2, caller: makeStub(TASTE_STUB), transcriptLoader: loader });
+    await seedActivity(paths, "alpha", "2026-04-22");
+    const n2 = await runNightly({
+      paths, date: "2026-04-22", tasteEveryNights: 2, tasteNow: true,
+      caller: makeStub(TASTE_STUB), transcriptLoader: loader,
+    });
+    expect(n2.passes.TA.find((p) => p.pass === "TA.alpha")?.status).toBe("complete");
+  }, SLOW);
+});
+
+describe("runNightly — resume a failed run of the same date", () => {
+  test("after F applied, a retry re-runs only the failed taste project and never re-applies canon", async () => {
+    const paths = await freshHomeWith(["alpha", "bravo"]);
+    const date = "2026-04-21";
+    await seedActivity(paths, "alpha", date);
+    await seedActivity(paths, "bravo", date);
+    const loader = tasteLoader({ alpha: [tasteSession("alpha")], bravo: [tasteSession("bravo")] });
+
+    // The 2am run: everything lands except alpha's taste extraction.
+    const first = await runNightly({
+      paths, date, transcriptLoader: loader,
+      caller: makeStub({ ...TASTE_STUB, failTASessionFiles: new Set(["alpha.jsonl"]) }),
+    });
+    expect(first.passes.F.status).toBe("complete");
+    expect(first.errors.some((e) => e.includes("Pass TA/TB (alpha)"))).toBe(true);
+    const canonAfterFirst = await readProjectMemorySnapshot(paths, "alpha");
+
+    // The morning retry.
+    const { caller, calls } = counted(makeStub(TASTE_STUB));
+    const retry = await runNightly({ paths, date, transcriptLoader: loader, caller });
+
+    expect(calls.B ?? 0).toBe(0);
+    expect(calls.C ?? 0).toBe(0);
+    expect(calls.V ?? 0).toBe(0);
+    expect(calls.VBRIEF ?? 0).toBe(0);
+    for (const p of [retry.passes.B[0], retry.passes.C, retry.passes.V, retry.passes.F]) {
+      expect(p?.status).toBe("skipped");
+      expect(p?.detail).toContain("resumed — fact track already applied");
+    }
+    expect(await readProjectMemorySnapshot(paths, "alpha")).toEqual(canonAfterFirst);
+
+    expect(calls.TA).toBe(1); // alpha only
+    expect(retry.passes.TA.find((p) => p.pass === "TA.alpha")?.status).toBe("complete");
+    expect(retry.passes.TA.find((p) => p.pass === "TA.bravo")?.detail).toContain("resumed");
+    expect(retry.errors).toEqual([]);
+    expect(retry.briefingPath).toBe(join(paths.home, "briefings", `${date}.md`));
+
+    // The combined decisions file covers both projects: alpha from tonight,
+    // bravo carried from the first run's manifest.
+    const decisions = JSON.parse(
+      await Bun.file(join(paths.memoryRunsDir, date, "taste-decisions.json")).text(),
+    );
+    expect(decisions.written).toBe(2);
+
+    // A third firing finds the date fully done and calls no model pass.
+    const third = counted(makeStub(TASTE_STUB));
+    const t = await runNightly({ paths, date, transcriptLoader: loader, caller: third.caller });
+    expect(Object.keys(third.calls).filter((k) => k !== "other")).toEqual([]);
+    expect(t.passes.TA[0]?.detail).toContain("taste track already finished");
+  }, SLOW);
+
+  test("after a V failure, a retry reuses B and C and re-runs V and F", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = "2026-04-21";
+    await seedActivity(paths, "alpha", date);
+
+    const first = await runNightly({ paths, date, taste: false, caller: makeStub({ failV: true }) });
+    expect(first.passes.V.status).toBe("failed");
+
+    const { caller, calls } = counted(makeStub({}));
+    const retry = await runNightly({ paths, date, taste: false, caller });
+    expect(calls.B ?? 0).toBe(0);
+    expect(calls.C ?? 0).toBe(0);
+    expect(retry.passes.B[0]?.detail).toContain("resumed");
+    expect(retry.passes.C.detail).toContain("resumed");
+    expect(retry.passes.V.status).toBe("complete");
+    expect(retry.passes.F.status).toBe("complete");
+  }, SLOW);
+
+  test("--force re-runs every pass; dry-run neither reads nor writes the manifest", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = "2026-04-21";
+    await seedActivity(paths, "alpha", date);
+    await runNightly({ paths, date, taste: false, caller: makeStub({}) });
+
+    const forced = counted(makeStub({}));
+    const f = await runNightly({ paths, date, taste: false, force: true, caller: forced.caller });
+    expect(forced.calls.B).toBe(1);
+    expect(f.passes.F.status).toBe("complete");
+
+    const other = await freshHomeWith(["alpha"]);
+    await seedActivity(other, "alpha", date);
+    await runNightly({ paths: other, date, taste: false, dryRun: true, caller: makeStub({}) });
+    expect(existsSync(join(other.memoryRunsDir, date, "resume.json"))).toBe(false);
+  }, SLOW);
+});
+
+describe("runNightly — per-pass models (nightly-config.ts)", () => {
+  test("extraction and taste record Sonnet 5.5, V records Opus 5.5; VBRIEF switches alone", async () => {
+    const paths = await freshHomeWith(["alpha"]);
+    const date = "2026-04-21";
+    await seedActivity(paths, "alpha", date);
+    const stub = counted(
+      makeStub({
+        ...TASTE_STUB,
+        bResponses: {
+          alpha: JSON.stringify([{ type: "fact", content: "A new fact", tags: [], provenance: "topRanked[0]" }]),
+        },
+        vShardResponses: {
+          alpha: JSON.stringify({ decisions: [{ candidate_id: "B.alpha[0]", action: "accept" }], gaps: [] }),
+        },
+      }),
+    );
+    const saved = process.env.HIVE_NIGHTLY_MODEL_VBRIEF;
+    process.env.HIVE_NIGHTLY_MODEL_VBRIEF = "claude-sonnet-5-5";
+    try {
+      await runNightly({
+        paths, date, caller: stub.caller,
+        transcriptLoader: tasteLoader({ alpha: [tasteSession("alpha")] }),
+      });
+    } finally {
+      if (saved === undefined) delete process.env.HIVE_NIGHTLY_MODEL_VBRIEF;
+      else process.env.HIVE_NIGHTLY_MODEL_VBRIEF = saved;
+    }
+
+    const usage = await loadUsageSummary(paths, date);
+    const model = (pass: string) => [...new Set(usage.records.filter((r) => r.pass === pass).map((r) => r.model))];
+    expect(model("B")).toEqual(["claude-sonnet-5-5"]);
+    expect(model("C")).toEqual(["claude-sonnet-5-5"]);
+    expect(model("TA")).toEqual(["claude-haiku-4-5"]);
+    expect(model("TB")).toEqual(["claude-sonnet-5-5"]);
+    expect(model("TC")).toEqual(["claude-sonnet-5-5"]);
+    // Shards on Opus, the Brief switched to Sonnet: one V row per model, each
+    // priced at its own rate.
+    expect(model("V").sort()).toEqual(["claude-opus-5-5", "claude-sonnet-5-5"]);
+    for (const r of usage.records) expect(r.cost.modelKnown).toBe(true);
+  }, SLOW);
+});

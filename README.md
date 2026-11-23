@@ -79,12 +79,64 @@ candidates. After verification, they apply to future sessions.
 
 The nightly run also extracts **taste units**: judgments about how to do a type
 of work well. It files them under IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL,
-COMMUNICATION, or PROCESS. Recurring units move from `holding` to `pending`.
-You choose which units become `active`. Agents retrieve the active set with
-`search_taste`, and the `/taste` dashboard page shows the library.
+COMMUNICATION, or PROCESS. A new unit waits in `holding`. When it recurs across
+two distinct sessions, it admits itself to `active`. You do not approve each
+one. The exception is a unit that contradicts a principle in `principles.md`:
+it waits in `pending` for you. Agents retrieve the active set with
+`search_taste`, and the `/taste` dashboard page shows the library. See
+[The context layer](#the-context-layer) for the commands.
 
 The strongest principles move to `~/.hive/taste/principles.md`. This file loads
 last in every session and carries the most weight.
+
+### The context layer
+
+The context layer is what an agent gets back when it searches memory or taste.
+This section lists the behavior you will notice and the command for each. The
+design and its reasons are in
+[docs/specs/2026-08-16-context-layer-design.md](docs/specs/2026-08-16-context-layer-design.md).
+
+**Memory search returns few results on purpose.** `search_memory` and
+`hive memory search` return at most 10 entries. They also drop every entry that
+scores under a quarter of the best match. A precise query often returns two or
+three entries. When the cap cuts results, the output starts with
+`Showing top 10 of N matches`. Narrow the query, or raise the cap with `top_k`
+(MCP) or `--top-k N` (CLI).
+
+**Session logs are not searched by default.** Search covers compiled knowledge
+only. For questions like "when did we change X", turn logs on with
+`include_logs` (MCP) or `--logs` (CLI). That adds the last 14 days of logs.
+
+**Search matches word forms.** `model` finds `models`, and `verifier` finds
+`verifies`. Words of four letters or fewer match only exactly: `run` does not
+find `runs`.
+
+**Taste admits itself.** Units become `active` without your review. To manage
+the store:
+
+| You want to | Command |
+| --- | --- |
+| See the store: active, held contradictions, holding | `hive taste status [--since YYYY-MM-DD] [--json]` |
+| Decide the held contradictions | `hive taste review` |
+| Remove a bad unit and stop it coming back | `hive taste reject <hash\|dedupe_key>` |
+| Activate one held unit by hand | `hive taste admit <hash\|dedupe_key>` |
+| Clear links to principles you renamed or removed | `hive taste relink --apply` (dry run without `--apply`) |
+
+A launchd job checks every Sunday at 19:00. It notifies you only when
+contradictions wait in `pending`. Otherwise it stays silent.
+
+**"Remember this" cannot be rejected.** When you tell an agent to save
+something, it marks the save as a directive. The nightly verifier can reword the
+entry or merge it into an existing one, but it cannot reject it. The entry lands
+at the next nightly run. comb uses the same path: each queue answer (Go, Not
+now, Redirect) becomes a directive decision tagged `precedent`. To find past
+answers, search with `tag: precedent`.
+
+**Verifier gaps stay in the briefing.** The verifier's notes about the pipeline
+("Sonnet missed X") go to the morning briefing and `runs/{DATE}/gaps.md`. They
+never enter `knowledge.md`. Some older open questions still carry a
+`_(seen N×, last DATE)_` marker from a retired mechanism. Nothing updates those
+markers now.
 
 ### Identity
 
@@ -270,8 +322,8 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `read_hive_memory` | Read project intelligence: facts, conventions, decisions, open questions. |
 | `write_hive_memory` | Queue a fact, convention, decision, or question for nightly verification. Validated on write. |
 | `reflect_session` | Batch-write session learnings at end of session. |
-| `search_memory` | Search across all memory layers by keyword or tag. |
-| `search_taste` | Retrieve the active (human-approved) taste for a work type (IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). Merges project + general stores; holding/pending never leak in. |
+| `search_memory` | Search compiled knowledge by keyword or tag. Top 10 by default (`top_k` to raise); `include_logs` adds session logs. |
+| `search_taste` | Retrieve the active taste for a work type (IDEAS, DESIGN, IMPLEMENTATION, TEST_EVAL, COMMUNICATION, PROCESS). Merges project + general stores; holding/pending never leak in. |
 | `create_ticket` | Create a ticket with type, priority (P0-P3), tags, and dependencies. |
 | `list_tickets` | List and filter tickets by status, type, or tags. |
 | `show_ticket` | Show full ticket details. Supports partial ID matching. |
@@ -295,7 +347,9 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive memory convention <text>` | Add a convention |
 | `hive memory decision <text>` | Add a decision |
 | `hive memory question <text>` | Add an open question |
+| `hive memory search <query>` | Search memory (`--top-k N`, `--logs`, `--tag`, `--section`) |
 | `hive memory reflect` | Batch-write learnings from stdin (JSON) |
+| `hive taste status` | Taste store tally (`--since`, `--json`); see `hive taste --help` for `review`, `reject`, `admit`, `relink` |
 | `hive memory extract-sessions` | Condense last 24h session transcripts for nightly |
 | `hive identity emit` | Print the canonical identity prefix used by hooks and harness launchers |
 | `hive context` | Audit session-start context size against budgets (alias: `hive prompts`) |

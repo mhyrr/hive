@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 
+import { attachCommand } from "./commands/attach";
 import { contextCommand } from "./commands/context";
 import { councilCommand } from "./commands/council";
 import { dashboardCommand } from "./commands/dashboard";
@@ -28,6 +29,7 @@ import { findPiBin } from "./lib/pi-wire";
 
 const hiveCommands: Record<string, (args: string[]) => Promise<void>> = {
   init: initCommand,
+  attach: attachCommand,
   doctor: doctorCommand,
   context: contextCommand,
   prompts: contextCommand,
@@ -66,14 +68,17 @@ HIVE Commands:
   stack list|install|sync    Manage language/framework skill stacks
   council "<question>"       Multi-model council deliberation
   memory [view|fact|...]     View or add project memory
+  memory search <query>      Search memory (--top-k N, --logs; see: hive memory --help)
   next                       Show Act recommendations (one per project)
-  taste extract [opts]       Mine taste candidates from transcripts (phase 1)
+  taste status|review|...    Taste store: status, review, reject, admit, relink,
+                             consolidate, extract (see: hive taste --help)
   tickets                    Open tickets for the project you're standing in
   ticket [create|list|...]   Project ticket tracker
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
   identity emit              Print canonical identity prefix (used by SessionStart hook)
   inbox                      Show project inbox (clear with: inbox clear)
   dashboard [build|open]     Build or open the Morning Edition dashboard
+  attach <agent>             Attach this terminal to a comb agent, in its directory
 
 ${name} (default: Claude Code with identity):
   hive                       Interactive ${name} session

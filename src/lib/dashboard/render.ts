@@ -28,7 +28,9 @@ import type {
   TastePrinciple,
   TicketsPageData,
   EpicBoard,
+  CanonSizeSnapshot,
 } from "./collect";
+import { CANON_ACT_AT, CANON_WARN_AT, formatCanonGrowth } from "../canon-size";
 import { DASHBOARD_CSS } from "./styles";
 import { DASHBOARD_JS } from "./script";
 import { renderPageNav } from "./html";
@@ -388,7 +390,8 @@ export function renderWork(activity: ProjectActivity[], aside = ""): string {
  */
 export function renderUpkeep(data: DashboardData): string {
   const health = data.health ?? [];
-  if (health.length === 0) return "";
+  const canon = renderCanonSize(data.canonSize ?? null);
+  if (health.length === 0 && !canon) return "";
 
   const jobs = health
     .map((h) => {
@@ -414,7 +417,46 @@ export function renderUpkeep(data: DashboardData): string {
 <section class="upkeep" id="section-upkeep" aria-labelledby="upkeep-label">
   <div class="yard-label"><h2 id="upkeep-label">Upkeep</h2></div>
   <ul class="upkeep-list">${jobs}${cost}${taste}</ul>
+  ${canon}
 </section>`;
+}
+
+/**
+ * Verify budget: each project's Pass V prompt against the budget
+ * assertPromptFits enforces (TK-158). Collapsed by default; the summary names
+ * the worst project, and opens on its own when one is past the warn line.
+ */
+export function renderCanonSize(snap: CanonSizeSnapshot | null): string {
+  if (!snap || snap.record.projects.length === 0) return "";
+  const { record, growth } = snap;
+  const kTok = (n: number) => `${Math.round(n / 1000)}k`;
+  const kb = (n: number) => `${Math.round(n / 1024)} KB`;
+  const worst = record.projects[0]!;
+  const flagged = record.projects.filter((p) => p.level !== "ok").length;
+  const rows = record.projects
+    .map((p) => {
+      const g = growth[p.projectId];
+      return `<tr class="canon-${p.level}">
+      <td>${escapeHtml(p.projectId)}</td>
+      <td class="num">${escapeHtml(kb(p.knowledgeBytes))}</td>
+      <td class="num">${escapeHtml(kTok(p.promptTokens))}</td>
+      <td class="num">${Math.round(p.pctOfBudget * 100)}%</td>
+      <td>${escapeHtml(g ? formatCanonGrowth(g) : "—")}</td>
+      <td>${p.level === "ok" ? "" : escapeHtml(p.level)}</td>
+    </tr>`;
+    })
+    .join("");
+  const summary =
+    `Verify budget · ${escapeHtml(worst.projectId)} ${Math.round(worst.pctOfBudget * 100)}%` +
+    (flagged > 0 ? ` · ${flagged} past ${Math.round(CANON_WARN_AT * 100)}%` : "");
+  return `<details class="canon-size"${flagged > 0 ? " open" : ""}>
+    <summary>${summary}</summary>
+    <p class="canon-size-note">Each project's Pass V Verify prompt with its canon and the taste principles, before the night's candidates. Tokens use the assertPromptFits estimate. 100% is the ${kTok(record.budgetTokens)} budget (${kTok(record.windowTokens)} window less output headroom), where the call is refused. Warn at ${Math.round(CANON_WARN_AT * 100)}%, act at ${Math.round(CANON_ACT_AT * 100)}%.</p>
+    <table class="canon-size-table">
+      <thead><tr><th>Project</th><th class="num">knowledge.md</th><th class="num">Tokens</th><th class="num">Budget</th><th>Growth</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </details>`;
 }
 
 /**
@@ -1230,6 +1272,22 @@ const PASS_LABELS: Record<string, string> = {
   TR: "taste replay",
 };
 
+/** A token count, or an em dash for a record that predates the cache split. */
+function tokenCell(n: number | null | undefined): string {
+  return n == null ? "—" : n.toLocaleString();
+}
+
+/** " (2,104 uncached · 210,000 cache write · 73,311 cache read)", or "" without a split. */
+function inputSplitNote(usage: RunUsageSnapshot): string {
+  const s = usage.totalInputSplit;
+  if (!s) return "";
+  return (
+    ` (${s.uncachedInputTokens.toLocaleString()} uncached · ` +
+    `${s.cacheCreationTokens.toLocaleString()} cache write · ` +
+    `${s.cacheReadTokens.toLocaleString()} cache read)`
+  );
+}
+
 export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
   if (!usage || !usage.available) {
     const date = usage?.date ?? new Date().toISOString().slice(0, 10);
@@ -1250,6 +1308,8 @@ export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
   <td><strong>${passCell}</strong>${projectLabel}</td>
   <td>${escapeHtml(p.model)}</td>
   <td class="num">${p.inputTokens.toLocaleString()}</td>
+  <td class="num">${tokenCell(p.cacheCreationTokens)}</td>
+  <td class="num">${tokenCell(p.cacheReadTokens)}</td>
   <td class="num">${p.outputTokens.toLocaleString()}</td>
   <td class="num">${duration}</td>
   <td class="num"><strong>${escapeHtml(p.usdFormatted)}</strong></td>
@@ -1267,11 +1327,11 @@ export function renderRunUsage(usage: RunUsageSnapshot | undefined): string {
   <div class="run-usage">
     <p class="run-usage-total">
       <strong>${escapeHtml(usage.totalUsdFormatted)}</strong>
-      &nbsp;·&nbsp; ${usage.totalInputTokens.toLocaleString()} input + ${usage.totalOutputTokens.toLocaleString()} output tokens
+      &nbsp;·&nbsp; ${usage.totalInputTokens.toLocaleString()} input${inputSplitNote(usage)} + ${usage.totalOutputTokens.toLocaleString()} output tokens
     </p>
     <table class="run-usage-table">
       <thead>
-        <tr><th>Pass</th><th>Model</th><th>In</th><th>Out</th><th>Time</th><th>Cost</th></tr>
+        <tr><th>Pass</th><th>Model</th><th>In</th><th>Cache write</th><th>Cache read</th><th>Out</th><th>Time</th><th>Cost</th></tr>
       </thead>
       <tbody>
 ${rows}

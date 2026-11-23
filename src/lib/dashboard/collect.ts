@@ -22,7 +22,7 @@ import {
   daysBetween as daysBetweenStrings,
   type MemorySection,
 } from "../memory";
-import { loadUsageSummary, formatUsd } from "../pricing";
+import { loadUsageSummary, formatUsd, type InputSplit, type UsagePass } from "../pricing";
 import { collectActivity, type ProjectActivity } from "./activity";
 import {
   readTasteUnits,
@@ -32,6 +32,13 @@ import {
   type TasteUnitStatus,
 } from "../taste-store";
 import { TASTE_CATEGORIES, type TasteCategory } from "../taste-types";
+import {
+  computeCanonGrowth,
+  measureAllCanons,
+  readCanonSizeHistory,
+  type CanonGrowth,
+  type CanonSizeRecord,
+} from "../canon-size";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -171,11 +178,15 @@ export type ReflectionDay = {
 };
 
 export type RunUsagePassEntry = {
-  pass: "B" | "C" | "V";
+  pass: UsagePass;
   project: string | null;
   provider: string;
   model: string;
+  /** Full prompt context, cached slices included. */
   inputTokens: number;
+  /** Cache writes and reads within inputTokens; null on records from before TK-120. */
+  cacheCreationTokens: number | null;
+  cacheReadTokens: number | null;
   outputTokens: number;
   usd: number;
   usdFormatted: string;
@@ -186,6 +197,8 @@ export type RunUsageSnapshot = {
   date: string;
   available: boolean;
   totalInputTokens: number;
+  /** The three parts of totalInputTokens; null when any record predates TK-120. */
+  totalInputSplit: InputSplit | null;
   totalOutputTokens: number;
   totalUsd: number;
   totalUsdFormatted: string;
@@ -223,6 +236,15 @@ export type DashboardData = {
   latestReflection: ReflectionDay | null;
   /** Latest nightly Propose output within the last 7 run dirs (TK-138). */
   propose: ProposeEntry | null;
+  /** Each project's Verify prompt against Pass V's budget, measured live, with
+   * growth from the nightly canon-size records (TK-158). Optional so fixtures
+   * that predate it still type-check. */
+  canonSize?: CanonSizeSnapshot | null;
+};
+
+export type CanonSizeSnapshot = {
+  record: CanonSizeRecord;
+  growth: Record<string, CanonGrowth>;
 };
 
 // ---------------------------------------------------------------------------
@@ -841,6 +863,22 @@ export async function collectLatestReflection(paths: HivePaths): Promise<Reflect
   return { date, body: body.trim(), ageDays };
 }
 
+/** Live canon-size measurement plus growth from the last week's nightly
+ * records. Arithmetic only: no model calls, no writes. Null on any failure, so
+ * the dashboard renders without the block rather than not at all. */
+export async function collectCanonSize(
+  paths: HivePaths,
+  date: string = new Date().toISOString().slice(0, 10),
+): Promise<CanonSizeSnapshot | null> {
+  try {
+    const record = await measureAllCanons(paths, date);
+    const growth = computeCanonGrowth(record, await readCanonSizeHistory(paths, date));
+    return { record, growth: Object.fromEntries(growth) };
+  } catch {
+    return null; // intentional: a measurement failure drops the block, not the page
+  }
+}
+
 export async function collectRunUsage(
   paths: HivePaths,
   date: string = new Date().toISOString().slice(0, 10),
@@ -853,6 +891,8 @@ export async function collectRunUsage(
     provider: r.provider,
     model: r.model,
     inputTokens: r.inputTokens,
+    cacheCreationTokens: r.cacheCreationTokens ?? null,
+    cacheReadTokens: r.cacheReadTokens ?? null,
     outputTokens: r.outputTokens,
     usd: r.cost.totalUsd,
     usdFormatted: formatUsd(r.cost.totalUsd),
@@ -862,6 +902,16 @@ export async function collectRunUsage(
     date,
     available,
     totalInputTokens: summary.totals.inputTokens,
+    totalInputSplit:
+      summary.totals.uncachedInputTokens !== undefined &&
+      summary.totals.cacheCreationTokens !== undefined &&
+      summary.totals.cacheReadTokens !== undefined
+        ? {
+            uncachedInputTokens: summary.totals.uncachedInputTokens,
+            cacheCreationTokens: summary.totals.cacheCreationTokens,
+            cacheReadTokens: summary.totals.cacheReadTokens,
+          }
+        : null,
     totalOutputTokens: summary.totals.outputTokens,
     totalUsd: summary.totals.totalUsd,
     totalUsdFormatted: formatUsd(summary.totals.totalUsd),
@@ -1127,7 +1177,7 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, actWork, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, runUsage, tasteTrack, latestReflection, propose] = await Promise.all([
+  const [health, projects, inboxes, tickets, actWork, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, runUsage, tasteTrack, latestReflection, propose, canonSize] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -1142,6 +1192,7 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectTasteTrack(paths),
     collectLatestReflection(paths),
     collectPropose(paths),
+    collectCanonSize(paths),
   ]);
 
   const today = briefings[0]?.date ?? new Date().toISOString().slice(0, 10);
@@ -1168,5 +1219,6 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     tasteTrack,
     latestReflection,
     propose,
+    canonSize,
   };
 }

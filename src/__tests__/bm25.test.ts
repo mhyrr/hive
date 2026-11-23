@@ -162,6 +162,13 @@ describe("entryHash", () => {
     // Same text with and without tags should hash the same
     expect(entryHash("a fact [auth, api]")).toBe(entryHash("a fact"));
   });
+
+  test("strips a legacy recurrence marker before hashing", () => {
+    // Entries written by the retired TK-147 path still carry the marker; they
+    // must keep the hash they had before it was added, or meta loses its link.
+    const legacy = "Still unanswered? _(seen 3×, last 2026-08-17)_ [gap]";
+    expect(entryHash(legacy)).toBe(entryHash("Still unanswered?"));
+  });
 });
 
 // ---------------------------------------------------------------------------

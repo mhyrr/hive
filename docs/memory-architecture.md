@@ -14,6 +14,12 @@ substring matching.
 > what becomes canonical. See "V1 Nightly Pipeline" below for the write
 > path. Read paths (`searchMemory`, `read_hive_memory`) are unchanged.
 
+> **2026-08-17 — Context layer.** Search now caps and floors its results,
+> leaves session logs out unless asked, and stems tokens. Taste units admit
+> themselves. The behavior is described below; the design and its evidence are
+> in [specs/2026-08-16-context-layer-design.md](specs/2026-08-16-context-layer-design.md),
+> which is the authority where the two differ.
+
 ## Three-Layer Model
 
 Memory flows from raw capture to compiled intelligence to navigational
@@ -28,16 +34,19 @@ Session → Log (Layer 1) → Knowledge (Layer 2) → Index (Layer 3)
 
 **Log** — Raw session capture. Daily markdown files under
 `~/.hive/memory/projects/<name>/log/`. Written by `reflect_session`
-and `appendToLog`. Entries have timestamps and type labels. Searched
-with a 14-day window by default. No metadata tracking — recency is
-the implicit ranking signal.
+and `appendToLog`. Entries have timestamps and type labels. Search
+leaves logs out unless the caller sets `include_logs` (CLI: `--logs`);
+then it reads a 14-day window. No metadata tracking — recency is the
+implicit ranking signal.
 
 **Knowledge** — Compiled project intelligence. A single `knowledge.md`
 with four sections: Durable Facts, Conventions, Decisions, Open
 Questions. Written deliberately by agents via `write_hive_memory`.
-Entries can be superseded (struck through with a date). Tags and the
-optional recurrence marker (`_(seen 3×, last 2026-08-17)_`) are metadata
-on the line: `entryHash` strips both, so an entry's identity is its prose.
+Entries can be superseded (struck through with a date). Tags are
+metadata on the line, and so is the legacy recurrence marker
+(`_(seen 3×, last 2026-08-17)_`) that TK-147 wrote on recurring gap
+questions until 2026-08-28. `entryHash` strips both, so an entry's
+identity is its prose. Nothing writes or updates the marker now.
 The verifier's own gaps ("Sonnet missed X") never enter this file — they
 are the pipeline reporting on itself and live in the briefing and
 `runs/{DATE}/gaps.md`. This is the system of record.
@@ -68,8 +77,10 @@ everything.
 ├── verifier-output.json        # Full Pass V structured output (read by Pass F)
 ├── briefing.md                 # Morning briefing (lands in ~/.hive/briefings/)
 ├── gaps.md                     # Things Sonnet missed
+├── gaps.applied.log            # Pass F's disposition for each gap (JSONL, always "briefing")
 ├── taste.md                    # Principles reinforced / corrected
-└── usage.json                  # Per-pass tokens + cost (B/C/V aggregate)
+├── resume.json                 # Which passes finished for this date; a retry skips them
+└── usage.json                  # Per-pass tokens + cost; input split into uncached / cache write / cache read
 ```
 
 ## BM25 Search
@@ -110,10 +121,51 @@ well for short documents like memory entries.
 
 ### Tokenization
 
-Simple whitespace + punctuation split, lowercased. No stemming or
-stop-word removal — the corpus is small enough that exact tokens work
-fine, and stemming adds complexity without meaningful recall
-improvement at this scale.
+Text is lowercased and split on whitespace and punctuation. Each token
+then goes through `stem()` (`src/lib/memory.ts`). There is no stop-word
+removal.
+
+`stem()` is light suffix stripping, not Porter. It tries these suffixes
+in order and takes the first that fits: `ies`, `ied`, `ier`, `ing`,
+`age`, `ment`, `ness`, `es`, `ed`, `s`, `y`, `e`. Two guards keep it
+conservative:
+
+- A token of four characters or fewer is never stemmed. `runs` does
+  not become `run`, so a search for `run` misses `runs`. This is a
+  known limit.
+- A suffix is skipped if the stem left would be shorter than four
+  characters. `notes` skips `es` (it would leave `not`) and takes `s`
+  (`note`). A final `s` after another `s` is never stripped (`class`).
+
+The goal is convergence, not correct English. The query and the entry
+go through the same function, so the stem only has to be the same on
+both sides. `model`/`models` meet, and `verifier`/`verifies`/`verified`
+all become `verif`. Before stemming, the query "what model does the
+verifier use" scored zero against the entry that answered it.
+
+### Result limits
+
+Search ranks every match, then cuts twice (`searchMemory`):
+
+1. **Relevance floor.** It drops every result that scores under
+   `SEARCH_FLOOR` (0.25) × the top score. This cut does most of the
+   work: a precise query has one strong hit and returns two or three
+   results.
+2. **Cap.** It keeps at most `SEARCH_TOP_K` (10) results. The cap
+   binds only on vague queries. Callers raise it with `top_k` (MCP)
+   or `--top-k N` (CLI).
+
+When the cap cuts, the output says so:
+`Showing top 10 of N matches for "…" (… narrow the query or pass top_k for more)`.
+N counts the results that passed the floor, not every entry that
+scored above zero.
+
+**Session logs are out by default**, from the results and from the
+BM25 corpus. Logs were most of the document count, and that skewed
+IDF against compiled knowledge. Set `include_logs` (MCP) or `--logs`
+(CLI) for forensics such as "when did we change X".
+
+`taste-store.ts` `searchTasteStore` uses the same 0.25 floor.
 
 ## Decay and Strength
 
@@ -169,7 +221,9 @@ Two paths strengthen entries — explicit search and auto-load. Both update
 metadata, with auto-load damped to avoid drowning out genuine retrieval.
 
 **Explicit search** — when `searchMemory()` returns an entry, its metadata
-is updated:
+is updated. Only returned entries are bumped, not every entry that scored
+above zero. Internal probes that no person reads (dedupe checks) pass
+`noBump` and bump nothing:
 
 - `lastRecalled` set to today
 - `recallCount` incremented by 1
@@ -208,22 +262,23 @@ strength:
 finalScore = bm25Score * strength
 ```
 
-**Log entries:**
+**Log entries** (only with `include_logs`):
 ```
 recencyWeight = linear from 1.0 (today) to 0.1 (14 days ago)
 finalScore = bm25Score * recencyWeight
 ```
 
-Results are sorted by `finalScore` descending across all layers.
-Knowledge and log entries compete on the same scale — a highly
-relevant log entry from today can outrank a weak knowledge entry.
+Results are sorted by `finalScore` descending across all layers, then
+cut by the floor and the cap (see "Result limits"). With logs included,
+knowledge and log entries compete on the same scale — a highly relevant
+log entry from today can outrank a weak knowledge entry.
 
 ## Metadata Lifecycle
 
 | Operation | Metadata effect |
 |-----------|----------------|
 | `appendProjectMemory()` | Creates entry: `createdAt = now`, `halfLife = 30`, `recallCount = 0` |
-| `searchMemory()` | Bumps `lastRecalled`, `recallCount += 1`, `halfLife += 7` (cap 90) |
+| `searchMemory()` | For returned entries only: bumps `lastRecalled`, `recallCount += 1`, `halfLife += 7` (cap 90). No effect with `noBump`. |
 | `rebuildIndex()` | Damped bump for indexed entries: `recallCount += 0.25`, `halfLife += 1` (cap 90). Also reads strength to rank entries. |
 | `supersedeEntry()` / `supersedeEntryByHash()` | Removes old entry metadata, creates fresh for new entry |
 | `mergeTagsIntoEntry()` | Adds tags to an existing entry; metadata untouched |
@@ -285,6 +340,13 @@ force-admits it to canon regardless. The accept-bar, `cite_unverifiable`,
 The verifier prompt is told this; Pass F enforces it as a hard backstop
 (`directivesForceAdmitted` in the apply tally records any override). A
 directive still reaches canon at the next nightly run, not same-session.
+
+**comb precedents.** comb writes each answer Greg gives on its queue (Go,
+Not now, Redirect) through `write_hive_memory` as a `decision` with
+`directive: true` and tags `precedent` and `queue` (comb `src/queue.ts`
+`syncPrecedent`, comb TK-001). It goes to the queue item's project when
+HIVE knows that project, and to `comb` otherwise. Search with
+`tag: precedent` to find earlier answers before you ask again.
 
 ## V1 Nightly Pipeline
 
@@ -357,14 +419,106 @@ the whole pass on purpose: Pass F drains a project's `candidates.md` whenever
 that project has candidates, decisions or not, so a partial V would drain a
 queue nothing decided on.
 
-**Cost.** Two Sonnet calls, then one Opus call per project with candidates plus
-one to brief. Per-pass token + USD recorded in `runs/{DATE}/usage.json` — V's
-row is the sum across its calls. Typical cost: $1–3.
+**Models.** `src/lib/nightly-config.ts` sets each pass's model and effort in
+one map: Sonnet 5.5 for B, C, TB, TC and TR, Opus 5.5 for V's shards and the
+Brief, Haiku 4.5 for TA. `HIVE_NIGHTLY_MODEL_<PASS>` (e.g. `_VBRIEF`) overrides
+one pass; the older `HIVE_EXTRACT_MODEL`, `HIVE_VERIFY_MODEL` and
+`HIVE_TASTE_*_MODEL` variables still work. `HIVE_NIGHTLY_EFFORT_<PASS>`
+overrides effort.
+
+**Cost.** Per-pass token + USD recorded in `runs/{DATE}/usage.json`, one V row
+per model across its calls. `hive memory cost --days 2` prints the last two
+runs side by side. `inputTokens` is the full prompt,
+`uncachedInputTokens + cacheCreationTokens + cacheReadTokens`, and each part
+is kept as its own field. Cost prices each part at the model's own rate in
+`src/lib/pricing.ts`.
+
+Prompt caching is off for every nightly call (`DISABLE_PROMPT_CACHING=1` on
+the `claude --print` child). Left on, the CLI writes each call's whole prompt
+to the 1-hour cache at 2× base input. The nightly's own transcripts for
+2026-11-17..20 show a 1.4% read rate: only the ~1k-token system prompt was
+read back. No nightly prompt repeats within an hour, and nights are 24 hours
+apart, so every write was paid for and never used. `HIVE_NIGHTLY_PROMPT_CACHE=on`
+restores the CLI default.
+
+**Taste cadence.** The taste track (TA → TB → TC/TR) runs every
+`HIVE_TASTE_EVERY_NIGHTS` nights (default 2), measured from the last run that
+finished, not from date parity, so a failed run makes the next night due. A
+run covers each project's sessions back to the last run that analyzed it
+(at most 7 days), and targets every project with signal on any night in that
+span. A skipped night logs `taste skipped (next run …)` and adds a Taste note
+to the briefing. `--taste-now` runs it regardless.
 
 **Restartability.** Each `run*` function deletes its target artifact at
 the start of an attempt. Failure leaves absence (correct); success writes
-fresh. Re-running on the same date overwrites cleanly without leaving
-stale outputs from a prior attempt.
+fresh.
+
+**Resume.** `runs/{DATE}/resume.json` records each pass as it finishes. A
+retry of the same date (the morning firings after a failed 2am run) skips a
+pass only when the manifest records it AND its artifact exists. A file on
+disk alone is never trusted. Once F has applied, the whole fact track is done
+for the date: a retry never applies canon twice, and a B project that failed
+in that run is named in the log rather than retried. V re-runs whenever B or
+C produced new output in the retry. Taste resumes per project. `--force`
+re-runs everything; dry-runs neither read nor write the manifest.
+
+## Taste Lifecycle
+
+Taste units live in category stores: `~/.hive/memory/taste/` for general
+taste and `~/.hive/memory/projects/<name>/taste/` per project. The nightly
+taste track runs per project: TA flags moments in the day's transcripts,
+TB analyzes them into candidate units, and TC (`taste-consolidate.ts`)
+gates the candidates and writes the store. `hive memory nightly --no-taste` skips
+the track.
+
+```
+candidate ──► holding ──(gate passes)──► active      retrieved by search_taste
+                 │
+                 └──(gate passes, contradicts a principle)──► pending ──► human
+```
+
+- **holding.** Below the gate. Never retrieved. Recurrence accumulates
+  across nights here; decay sinks units that never recur.
+- **The gate.** A unit passes when its recurrence (distinct sessions,
+  counted across nights) reaches 2, or when the coherence call judges
+  that Greg endorsed the rule outright. A FUZZY-tier unit must also pass
+  replay against the last 90 days of transcripts. If replay cannot
+  decide, the unit holds.
+- **active.** Passing units admit themselves. There is no human gate on
+  instances: the old gate admitted nothing in 22 nights. A wrong unit
+  costs one retrieval slot it must still win on BM25. An active unit is
+  never demoted by a later run.
+- **pending.** Means one thing: the unit passed the gate but its
+  coherence came back `contradicts`, so it disagrees with a principle
+  already injected into every session. A person decides which side is
+  wrong.
+
+**Ladders.** The coherence call links each unit to a principle with
+`ladders_up_to`. The value must be a heading copied exactly from
+`principles.md` — a closed enum the validator enforces. A heading the
+model invents is not kept as a link; it moves to `wanted_principle` and
+the unit becomes `uncovered`. Repeated `wanted_principle` values are the
+evidence for a new principle.
+
+**Operator commands** (`hive taste --help`):
+
+| Command | Does |
+| --- | --- |
+| `hive taste status [--since D] [--json]` | Counts active, pending, holding; `--since` lists units admitted since D |
+| `hive taste review` | Walks the pending (contradiction) queue, one keypress per unit |
+| `hive taste reject <ref>` | Removes the unit and blacklists its key so it is not proposed again |
+| `hive taste admit <ref>` | Sets one unit to active by hand |
+| `hive taste admit --all-pending [--apply]` | Migration for units the old human gate stranded in pending; dry run without `--apply` |
+| `hive taste relink [--apply]` | Clears ladder links that name no current heading; run after editing `principles.md`; dry run without `--apply` |
+
+`<ref>` is a unit's hash or `dedupe_key`.
+
+**Weekly reminder.** `hive init` installs
+`com.hive.taste-review.plist`, which runs
+`~/.hive/scripts/taste-review.sh` on Sundays at 19:00. The script calls
+`hive taste status --json --since <7 days ago>` and sends a notification
+only when units wait in pending. Otherwise it writes a log line and
+exits.
 
 ## Design Influences
 
@@ -396,5 +550,6 @@ stale outputs from a prior attempt.
 - **Automatic deletion**: Decay never removes entries. Knowledge.md
   is a curated document. Pruning is a human judgment call.
 
-- **Stemming / NLP**: The corpus is small. Simple tokenization works.
-  Stemming would add complexity for marginal recall improvement.
+- **Linguistic stemming / NLP**: `stem()` is a dozen suffix rules
+  aimed at convergence. Porter or lemmatization would add complexity
+  for little gain at this corpus size.

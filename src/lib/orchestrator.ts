@@ -19,7 +19,8 @@
 //
 // docs/specs/2026-04-26-memory-design.md §Group 8
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { HivePaths } from "./paths";
@@ -45,7 +46,18 @@ import {
   writeTasteDecisions,
   type TasteConsolidateResult,
 } from "./taste-consolidate";
-import { appendUsageRecord, estimateCost } from "./pricing";
+import { appendUsageRecord, buildUsageRecord } from "./pricing";
+import { tasteEveryNights } from "./nightly-config";
+import {
+  catchUpDates,
+  decideTasteGate,
+  emptyManifest,
+  projectCatchUpDays,
+  readManifest,
+  writeManifest,
+  type ResumeManifest,
+  type TasteGate,
+} from "./nightly-resume";
 
 // ---------------------------------------------------------------------------
 // Result shape
@@ -174,6 +186,14 @@ export interface RunNightlyOptions {
   caller?: ModelCaller;
   /** Run the taste track (TA→TB→TC). Default true; `--no-taste` sets false. */
   taste?: boolean;
+  /** Run the taste track tonight even when the cadence gate says it isn't due
+   * (`--taste-now`). */
+  tasteNow?: boolean;
+  /** Taste cadence in nights. Defaults to tasteEveryNights() (config/env). */
+  tasteEveryNights?: number;
+  /** Re-run every pass, ignoring runs/{DATE}/resume.json (`--force`). Pass F
+   * then applies a second time for the date. */
+  force?: boolean;
   /** Injectable transcript reader (testing seam). Defaults to the real loader. */
   transcriptLoader?: typeof loadTranscripts;
   onProgress?: (event: ProgressEvent) => void;
@@ -281,8 +301,42 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     return result;
   }
 
+  // ---- Resume -------------------------------------------------------------
+  // A retry of the same date (the morning firings after a failed 2am run)
+  // skips the passes resume.json records as finished. Once F has applied, the
+  // whole fact track is done for the date: re-running it would apply canon a
+  // second time. Dry-runs neither read nor write the manifest.
+  const resumeOn = !dryRun && !options.force;
+  const manifest: ResumeManifest =
+    (resumeOn ? readManifest(paths, date) : null) ?? emptyManifest(date);
+  const persist = async (): Promise<void> => {
+    if (!dryRun) await writeManifest(paths, manifest);
+  };
+  const runDir = join(paths.memoryRunsDir, date);
+  const factApplied = resumeOn && manifest.F ? manifest.F : null;
+  const resumedFact = `resumed — fact track already applied at ${factApplied}`;
+  // Set when B or C produces new output in this invocation, so V can't be
+  // resumed from decisions made on older inputs.
+  let factInputsChanged = false;
+
   // ---- Pass B (per project with signal) -------------------------------------
-  const targets = condition.projects.filter(projectHasSignal);
+  const targets = factApplied ? [] : condition.projects.filter(projectHasSignal);
+  if (factApplied) {
+    const failedBefore = condition.projects
+      .filter(projectHasSignal)
+      .filter((p) => !manifest.B[p.projectName])
+      .map((p) => p.projectName);
+    result.passes.B = [{
+      pass: "B",
+      status: "skipped",
+      detail:
+        resumedFact +
+        (failedBefore.length > 0
+          ? `; B failed then for ${failedBefore.join(", ")} and is not retried (it would re-apply canon)`
+          : ""),
+    }];
+    emit({ type: "pass-skipped", report: result.passes.B[0]! });
+  }
   emit({
     type: "pass-start",
     pass: "B",
@@ -299,11 +353,27 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   const bReports: PassReport[] = [];
   for (const p of targets) {
     const projectId = p.projectName;
+    const bPath = join(runDir, `candidates.B.${projectId}.json`);
+    if (resumeOn && manifest.B[projectId] && existsSync(bPath)) {
+      const n = countArtifactCandidates(bPath);
+      result.candidateCounts.bByProject[projectId] = n;
+      const r: PassReport = {
+        pass: `B.${projectId}`,
+        status: "skipped",
+        detail: `resumed — ${n} candidate(s) from ${manifest.B[projectId]}`,
+      };
+      emit({ type: "pass-skipped", report: r });
+      bReports.push(r);
+      continue;
+    }
     emit({ type: "pass-start", pass: `B.${projectId}` });
+    factInputsChanged = true;
     try {
       const { value, durationMs } = await timed(() =>
         runProjectExtractor({ paths, projectId, date, caller }),
       );
+      manifest.B[projectId] = new Date().toISOString();
+      await persist();
       result.candidateCounts.bByProject[projectId] = value.result.candidates.length;
       const r: PassReport = {
         pass: `B.${projectId}`,
@@ -321,14 +391,29 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       bReports.push(r);
     }
   }
-  result.passes.B = bReports;
+  if (!factApplied) result.passes.B = bReports;
 
   // ---- Pass C (cross-project reflections) -----------------------------------
-  emit({ type: "pass-start", pass: "C", detail: "Opus — cross-project reflections" });
-  try {
+  const cPath = join(runDir, "candidates.C.json");
+  if (factApplied) {
+    result.passes.C = { pass: "C", status: "skipped", detail: resumedFact };
+    emit({ type: "pass-skipped", report: result.passes.C });
+  } else if (resumeOn && manifest.C && existsSync(cPath)) {
+    result.candidateCounts.c = countArtifactCandidates(cPath);
+    result.passes.C = {
+      pass: "C",
+      status: "skipped",
+      detail: `resumed — ${result.candidateCounts.c} reflection(s) from ${manifest.C}`,
+    };
+    emit({ type: "pass-skipped", report: result.passes.C });
+  } else try {
+    emit({ type: "pass-start", pass: "C", detail: "cross-project reflections" });
+    factInputsChanged = true;
     const { value, durationMs } = await timed(() =>
       runReflectionExtractor({ paths, date, caller }),
     );
+    manifest.C = new Date().toISOString();
+    await persist();
     result.candidateCounts.c = value.result.candidates.length;
     result.passes.C = {
       pass: "C",
@@ -347,16 +432,37 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   // ---- Pass V (Opus verify) -------------------------------------------------
   // V is the only pass whose failure is fatal — without decisions there's
   // nothing for F to apply and no briefing to land.
-  emit({
-    type: "pass-start",
-    pass: "V",
-    detail: "Opus — one call per project with candidates, then the brief",
-  });
   let verifyOK = false;
-  try {
+  const decisionsPath = join(runDir, "decisions.json");
+  const vResumable =
+    resumeOn &&
+    !!manifest.V &&
+    !factInputsChanged &&
+    existsSync(decisionsPath) &&
+    existsSync(join(runDir, "verifier-output.json"));
+  if (factApplied || vResumable) {
+    const decisions = readDecisions(decisionsPath);
+    for (const d of decisions) {
+      result.decisionCounts[d.action] = (result.decisionCounts[d.action] ?? 0) + 1;
+    }
+    result.passes.V = {
+      pass: "V",
+      status: "skipped",
+      detail: factApplied ? resumedFact : `resumed — ${decisions.length} decision(s) from ${manifest.V}`,
+    };
+    emit({ type: "pass-skipped", report: result.passes.V });
+    verifyOK = true;
+  } else try {
+    emit({
+      type: "pass-start",
+      pass: "V",
+      detail: "one call per project with candidates, then the brief",
+    });
     const { value, durationMs } = await timed(() =>
       runVerifier({ paths, date, caller }),
     );
+    manifest.V = new Date().toISOString();
+    await persist();
     for (const d of value.output.decisions) {
       const k = d.action;
       result.decisionCounts[k] = (result.decisionCounts[k] ?? 0) + 1;
@@ -402,12 +508,20 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
     emit({ type: "pass-skipped", report: result.passes.F });
     emit({ type: "pass-skipped", report: result.passes.dashboard });
   } else {
-    emit({ type: "pass-start", pass: "F", detail: "applying decisions to canon" });
     let applyOK = false;
-    try {
+    if (factApplied) {
+      result.passes.F = { pass: "F", status: "skipped", detail: resumedFact };
+      emit({ type: "pass-skipped", report: result.passes.F });
+      const landed = join(paths.home, "briefings", `${date}.md`);
+      if (existsSync(landed)) result.briefingPath = landed;
+      applyOK = true;
+    } else try {
+      emit({ type: "pass-start", pass: "F", detail: "applying decisions to canon" });
       const { value, durationMs } = await timed(() =>
         applyDecisions({ paths, date }),
       );
+      manifest.F = new Date().toISOString();
+      await persist();
       result.briefingPath = value.briefingPath;
       const forced = value.totals.directivesForceAdmitted;
       result.passes.F = {
@@ -416,10 +530,18 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
         detail:
           `+${value.totals.accepted} ~${value.totals.superseded} ⊕${value.totals.merged} ✗${value.totals.rejected}` +
           (value.totals.gapsBriefed > 0 ? ` ⚑${value.totals.gapsBriefed} gap(s) briefed` : "") +
-          (forced > 0 ? ` ⚡${forced} directive(s) kept over verifier reject` : ""),
+          (forced > 0 ? ` ⚡${forced} directive(s) kept over verifier reject` : "") +
+          (value.canonSizeWarnings.length > 0
+            ? ` ⚠${value.canonSizeWarnings.length} canon(s) near the Verify budget`
+            : ""),
         durationMs,
       };
       emit({ type: "pass-complete", report: result.passes.F });
+      // A failed canon-size measurement is non-fatal to F but must not be
+      // silent: it is the early warning for the TK-137 failure mode.
+      for (const e of value.errors) {
+        if (e.startsWith("canon-size:")) result.errors.push(`Pass F: ${e}`);
+      }
       applyOK = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -483,7 +605,27 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
   // overridden by the empirical lesson — run the claude-heavy passes in series.
   // Independent of the fact track's success (it reads transcripts, not V's
   // output), so it runs even if V/F failed.
-  if (options.taste ?? true) {
+  //
+  // Cadence: every N nights (nightly-config.ts tasteEveryNights). A run covers
+  // every session since the last one, so a skipped night loses nothing.
+  const skipTaste = (detail: string): void => {
+    const skip = (pass: string): PassReport => ({ pass, status: "skipped", detail });
+    result.passes.TA = [skip("TA")];
+    result.passes.TB = [skip("TB")];
+    result.passes.TC = [skip("TC")];
+    emit({ type: "pass-skipped", report: result.passes.TA[0]! });
+  };
+  const gate = decideTasteGate(paths, date, options.tasteEveryNights ?? tasteEveryNights());
+  const tasteStarted = resumeOn && Object.keys(manifest.taste).length > 0;
+  if (!(options.taste ?? true)) {
+    skipTaste("disabled via --no-taste");
+  } else if (resumeOn && manifest.tasteComplete) {
+    skipTaste(`resumed — taste track already finished at ${manifest.tasteComplete}`);
+  } else if (!gate.run && !options.tasteNow && !tasteStarted) {
+    const detail = `taste skipped (next run ${gate.nextRun}) — ${gate.reason}`;
+    skipTaste(detail);
+    await noteTasteSkipInBriefing(runDir, result.briefingPath, gate);
+  } else {
     await runTasteTrack({
       paths,
       date,
@@ -493,16 +635,11 @@ export async function runNightly(options: RunNightlyOptions): Promise<NightlyRes
       emit,
       result,
       transcriptLoader: options.transcriptLoader ?? loadTranscripts,
+      gate,
+      manifest: dryRun ? null : manifest,
+      resume: resumeOn,
+      persist,
     });
-  } else {
-    const skip = (pass: string): PassReport => ({
-      pass,
-      status: "skipped",
-      detail: "disabled via --no-taste",
-    });
-    result.passes.TA = [skip("TA")];
-    result.passes.TB = [skip("TB")];
-    result.passes.TC = [skip("TC")];
   }
 
   // ---- Dashboard rebuild — runs LAST -----------------------------------------
@@ -552,24 +689,49 @@ interface TasteTrackArgs {
   emit: (event: ProgressEvent) => void;
   result: NightlyResult;
   transcriptLoader: typeof loadTranscripts;
+  gate: TasteGate;
+  /** Where finished projects are recorded; null on dry-run. */
+  manifest: ResumeManifest | null;
+  /** Skip projects the manifest records as finished for this date. */
+  resume: boolean;
+  persist: () => Promise<void>;
 }
 
 async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
-  const { paths, date, dryRun, condition, caller, emit, result, transcriptLoader } = args;
+  const { paths, date, dryRun, condition, caller, emit, result, transcriptLoader, gate, manifest } = args;
   const runDir = join(paths.memoryRunsDir, date);
   // Anchor the transcript window to the run date, matching condition's window
   // (so a retroactive `--date` covers the named day, not the wall clock).
   const now = new Date(`${date}T23:59:59.999Z`);
 
-  // Combined TC artifact — clear stale at track start (restartability).
+  // Combined TC artifact — clear stale at track start (restartability). It is
+  // rebuilt below from this run's TC results plus any resumed ones.
   await rm(join(runDir, "taste-decisions.json"), { force: true });
   await rm(join(runDir, "taste-decisions.md"), { force: true });
 
-  const targets = condition.projects.filter(projectHasSignal);
+  const targets = tasteTargets(paths, date, condition, gate.catchUpDays);
   const tcResults: TasteConsolidateResult[] = [];
+  let anyFailed = false;
 
-  for (const p of targets) {
-    const projectId = p.projectName;
+  for (const projectId of targets) {
+    // ---- Resume: this project already finished the track for this date ----
+    const done = args.resume ? manifest?.taste[projectId] : undefined;
+    if (done) {
+      if (done.tc) tcResults.push(done.tc);
+      const r: PassReport = { pass: `TA.${projectId}`, status: "skipped", detail: `resumed — finished at ${done.at}` };
+      result.passes.TA.push(r);
+      emit({ type: "pass-skipped", report: r });
+      continue;
+    }
+    // Back to the last run that analyzed this project, so nothing between
+    // taste runs is lost and nothing is analyzed twice.
+    const days = projectCatchUpDays(paths, date, projectId, gate);
+    const hoursWindow = condition.hoursWindow + 24 * (days - 1);
+    const markDone = async (tc: TasteConsolidateResult | null): Promise<void> => {
+      if (!manifest || dryRun) return;
+      manifest.taste[projectId] = { at: new Date().toISOString(), tc };
+      await args.persist();
+    };
 
     // ---- TA + TB (per-project batched extraction) ----
     const flagsPath = join(runDir, `taste-flags.${projectId}.json`);
@@ -580,33 +742,29 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
     emit({ type: "pass-start", pass: `TA.${projectId}` });
     let extract: Awaited<ReturnType<typeof runProjectTasteExtract>>;
     try {
-      const loaded = await transcriptLoader({ project: projectId, hoursWindow: condition.hoursWindow, now });
+      const loaded = await transcriptLoader({ project: projectId, hoursWindow, now });
       const { value, durationMs } = await timed(() => runProjectTasteExtract(loaded, { caller }));
       extract = value;
       await mkdir(runDir, { recursive: true });
       await Bun.write(flagsPath, JSON.stringify(value.flags, null, 2));
       await Bun.write(tbPath, JSON.stringify(value.candidates, null, 2));
       for (const rec of value.usageRecords) {
-        await appendUsageRecord(paths, date, {
-          pass: rec.pass,
-          project: projectId,
-          provider: rec.usage.provider,
-          model: rec.usage.model,
-          inputTokens: rec.usage.inputTokens ?? 0,
-          outputTokens: rec.usage.outputTokens ?? 0,
-          durationMs: rec.usage.durationMs,
-          cost: estimateCost({
-            provider: rec.usage.provider,
-            model: rec.usage.model,
-            inputTokens: rec.usage.inputTokens ?? 0,
-            outputTokens: rec.usage.outputTokens ?? 0,
-          }),
-        });
+        await appendUsageRecord(
+          paths,
+          date,
+          buildUsageRecord(
+            rec.pass,
+            { ...rec.usage, inputTokens: rec.usage.inputTokens ?? 0, outputTokens: rec.usage.outputTokens ?? 0 },
+            projectId,
+          ),
+        );
       }
       const taReport: PassReport = {
         pass: `TA.${projectId}`,
         status: "complete",
-        detail: `${value.windowCount} window(s) · ${value.flaggedCount} flagged`,
+        detail:
+          `${value.windowCount} window(s) · ${value.flaggedCount} flagged` +
+          (days > 1 ? ` · ${days} days of sessions` : ""),
         durationMs,
       };
       result.passes.TA.push(taReport);
@@ -625,6 +783,7 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
       result.passes.TB.push({ pass: `TB.${projectId}`, status: "skipped", detail: "extract failed" });
       emit({ type: "pass-failed", report: taReport });
       result.errors.push(`Pass TA/TB (${projectId}): ${msg}`);
+      anyFailed = true;
       continue; // one project's failure never blocks the others
     }
 
@@ -635,6 +794,7 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
     }
     if (extract.candidates.length === 0) {
       result.passes.TC.push({ pass: `TC.${projectId}`, status: "skipped", detail: "no candidates" });
+      await markDone(null);
       continue;
     }
     // Replay eval corpus (design §9) — built from a WIDER 90d window than
@@ -660,39 +820,28 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
         runTasteConsolidate(extract.candidates, { paths, projectId, now: date, caller, replayCorpus }),
       );
       tcResults.push(tc);
+      await markDone(tc);
       if (tc.replayUsage) {
-        await appendUsageRecord(paths, date, {
-          pass: "TR",
-          project: projectId,
-          provider: tc.replayUsage.provider,
-          model: tc.replayUsage.model,
-          inputTokens: tc.replayUsage.inputTokens ?? 0,
-          outputTokens: tc.replayUsage.outputTokens ?? 0,
-          durationMs: tc.replayUsage.durationMs,
-          cost: estimateCost({
-            provider: tc.replayUsage.provider,
-            model: tc.replayUsage.model,
-            inputTokens: tc.replayUsage.inputTokens ?? 0,
-            outputTokens: tc.replayUsage.outputTokens ?? 0,
-          }),
-        });
+        await appendUsageRecord(
+          paths,
+          date,
+          buildUsageRecord(
+            "TR",
+            { ...tc.replayUsage, inputTokens: tc.replayUsage.inputTokens ?? 0, outputTokens: tc.replayUsage.outputTokens ?? 0 },
+            projectId,
+          ),
+        );
       }
       if (tc.usage) {
-        await appendUsageRecord(paths, date, {
-          pass: "TC",
-          project: projectId,
-          provider: tc.usage.provider,
-          model: tc.usage.model,
-          inputTokens: tc.usage.inputTokens ?? 0,
-          outputTokens: tc.usage.outputTokens ?? 0,
-          durationMs: tc.usage.durationMs,
-          cost: estimateCost({
-            provider: tc.usage.provider,
-            model: tc.usage.model,
-            inputTokens: tc.usage.inputTokens ?? 0,
-            outputTokens: tc.usage.outputTokens ?? 0,
-          }),
-        });
+        await appendUsageRecord(
+          paths,
+          date,
+          buildUsageRecord(
+            "TC",
+            { ...tc.usage, inputTokens: tc.usage.inputTokens ?? 0, outputTokens: tc.usage.outputTokens ?? 0 },
+            projectId,
+          ),
+        );
       }
       const r: PassReport = {
         pass: `TC.${projectId}`,
@@ -708,6 +857,7 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
       result.passes.TC.push(r);
       emit({ type: "pass-failed", report: r });
       result.errors.push(`Pass TC (${projectId}): ${msg}`);
+      anyFailed = true;
     }
   }
 
@@ -719,5 +869,79 @@ async function runTasteTrack(args: TasteTrackArgs): Promise<void> {
     } catch (err) {
       result.errors.push(`taste-decisions write: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  // The track counts as run (and resets the cadence) only when every project
+  // finished. A failure leaves the night due, so a retry or the next night
+  // picks up the failed project's sessions.
+  if (manifest && !dryRun && !anyFailed) {
+    manifest.tasteComplete = new Date().toISOString();
+    await args.persist();
+  }
+}
+
+/**
+ * Projects the taste track covers tonight: every project with signal on any
+ * night since the last taste run, read from each night's condition.json.
+ * Tonight's signal comes from the in-memory report. A night with no
+ * condition.json (the nightly never ran) contributes nothing.
+ */
+function tasteTargets(
+  paths: HivePaths,
+  date: string,
+  condition: ConditionReport,
+  catchUpDays: number,
+): string[] {
+  const names = new Set(condition.projects.filter(projectHasSignal).map((p) => p.projectName));
+  for (const d of catchUpDates(date, catchUpDays)) {
+    if (d === date) continue;
+    const file = join(paths.memoryRunsDir, d, "condition.json");
+    if (!existsSync(file)) continue;
+    try {
+      const prior = JSON.parse(readFileSync(file, "utf-8")) as ConditionReport;
+      for (const p of prior.projects.filter(projectHasSignal)) names.add(p.projectName);
+    } catch {
+      // intentional: an unreadable report adds no targets; tonight's still run
+    }
+  }
+  return [...names];
+}
+
+/** Count candidates in a B/C artifact ({ candidates: [...] }). */
+function countArtifactCandidates(file: string): number {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf-8")) as { candidates?: unknown[] };
+    return parsed.candidates?.length ?? 0;
+  } catch {
+    // intentional: a count is display-only; V reads the file itself
+    return 0;
+  }
+}
+
+function readDecisions(file: string): Array<{ action: keyof NightlyResult["decisionCounts"] }> {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf-8")) as {
+      decisions?: Array<{ action: keyof NightlyResult["decisionCounts"] }>;
+    };
+    return parsed.decisions ?? [];
+  } catch {
+    // intentional: counts are display-only
+    return [];
+  }
+}
+
+/** Say in the briefing that the taste track sat tonight out, so a quiet taste
+ * section reads as scheduled, not broken. Writes the run copy and the landed
+ * copy when they exist. */
+async function noteTasteSkipInBriefing(
+  runDir: string,
+  landedPath: string | null,
+  gate: TasteGate,
+): Promise<void> {
+  const note =
+    `\n\n## Taste\n- Taste track skipped tonight (${gate.reason}). ` +
+    `Next run ${gate.nextRun}; it covers every session since ${gate.lastRun ?? "the last run"}.\n`;
+  for (const file of [join(runDir, "briefing.md"), landedPath]) {
+    if (file && existsSync(file)) await appendFile(file, note);
   }
 }
