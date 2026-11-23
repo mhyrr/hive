@@ -103,10 +103,6 @@ async function buildFixture(): Promise<string> {
   // --- logs ---
   const logsDir = join(home, "logs");
   await mkdir(logsDir, { recursive: true });
-  await writeFile(
-    join(logsDir, "watches.log"),
-    "2026-04-17T07:00:00Z observe: no-delta\n",
-  );
   await writeFile(join(logsDir, "nightly.log"), "=== HIVE nightly complete: 2026-04-17T02:00:00Z ===\n");
   await writeFile(join(logsDir, "hive-sync.log"), "synced OK\n");
 
@@ -228,7 +224,7 @@ describe("dashboard collectors", () => {
     const health = await collectHealth(paths);
 
     const labels = health.map((h) => h.label);
-    expect(labels).toEqual(["WATCHES", "NIGHTLY", "SYNC"]);
+    expect(labels).toEqual(["NIGHTLY", "SYNC"]);
 
     // SYNC has no marker requirement — last line is just "synced OK"
     const sync = health.find((h) => h.label === "SYNC")!;
@@ -246,7 +242,7 @@ describe("dashboard collectors", () => {
     expect(data.volumeNumber).toBe(2);
     expect(data.today).toBe("2026-04-17");
     expect(data.todayBriefing?.date).toBe("2026-04-17");
-    expect(data.health.length).toBe(3);
+    expect(data.health.length).toBe(2);
     expect(data.inboxes.length).toBe(2);
   });
 

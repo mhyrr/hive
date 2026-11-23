@@ -24,7 +24,6 @@ import {
 } from "../memory";
 import { loadUsageSummary, formatUsd, type InputSplit, type UsagePass } from "../pricing";
 import { collectActivity, type ProjectActivity } from "./activity";
-import { collectWatchesPage, type WatchesPageData } from "./watches-page";
 import {
   readTasteUnits,
   generalTasteDir,
@@ -46,7 +45,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export type HealthEntry = {
-  label: string;           // "NIGHTLY", "WATCHES", "SYNC"
+  label: string;           // "NIGHTLY", "SYNC"
   lastLine: string;        // trimmed tail line
   mtime: string | null;    // ISO timestamp
 };
@@ -217,8 +216,6 @@ export type DashboardData = {
   activity: ProjectActivity[];
   /** Whole-store memory totals per project. Not the recentMemory slice. */
   memoryStats: MemoryStat[];
-  /** Watch state and the last thing each watch actually said. */
-  watches: WatchesPageData;
   generatedAt: string;
   volumeNumber: number;     // count of briefings (proxy for "days since install")
   today: string;            // YYYY-MM-DD (from latest briefing or system)
@@ -299,7 +296,6 @@ function parseProjectPath(configMd: string): string | null {
 export async function collectHealth(paths: HivePaths): Promise<HealthEntry[]> {
   const logsDir = join(paths.home, "logs");
   const jobs = [
-    { label: "WATCHES", file: "watches.log", marker: null as string | null },
     { label: "NIGHTLY", file: "nightly.log", marker: "nightly complete" },
     { label: "SYNC", file: "hive-sync.log", marker: null as string | null },
   ];
@@ -1181,7 +1177,7 @@ export async function collectTastePage(paths: HivePaths): Promise<TastePageData>
 // ---------------------------------------------------------------------------
 
 export async function collectDashboardData(paths: HivePaths): Promise<DashboardData> {
-  const [health, projects, inboxes, tickets, actWork, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, watches, runUsage, tasteTrack, latestReflection, propose, canonSize] = await Promise.all([
+  const [health, projects, inboxes, tickets, actWork, briefings, promotionCandidates, openQuestions, recentMemory, memoryStats, runUsage, tasteTrack, latestReflection, propose, canonSize] = await Promise.all([
     collectHealth(paths),
     collectProjects(paths),
     collectInboxes(paths),
@@ -1192,7 +1188,6 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     collectOpenQuestions(paths),
     collectRecentMemory(paths),
     collectMemoryStats(paths),
-    collectWatchesPage(paths),
     collectRunUsage(paths),
     collectTasteTrack(paths),
     collectLatestReflection(paths),
@@ -1220,7 +1215,6 @@ export async function collectDashboardData(paths: HivePaths): Promise<DashboardD
     openQuestions,
     recentMemory,
     memoryStats,
-    watches,
     runUsage,
     tasteTrack,
     latestReflection,

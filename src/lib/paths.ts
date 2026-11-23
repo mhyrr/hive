@@ -10,24 +10,22 @@ export type HivePaths = {
   agents: string;
   trust: string;
   config: string;
-  /** Watch Act board (one slot per project). Read by `hive next`. */
+  /** Board written by v1 Watch Act (one slot per project). Read by `hive next`. */
   next: string;
   memoryDir: string;
   memoryProjectsDir: string;
   memoryDailyDir: string;
   memoryRunsDir: string;
   projectsDir: string;
-  /** Private execution records for Watch Act. Historical dispatch records may coexist. */
+  /** Execution records from v1 Watch Act and older dispatch runs. Read-only in v2. */
   runsDir: string;
   reflectionsDir: string;
-  watchesDir: string;
 };
 
 export type ProjectPaths = {
   root: string;
   config: string;
   inbox: string;
-  watchesDir: string;
 };
 
 export function resolveHiveHome(): string {
@@ -51,7 +49,6 @@ export function getHivePaths(home: string = resolveHiveHome()): HivePaths {
     projectsDir: join(home, "projects"),
     runsDir: join(home, "runs"),
     reflectionsDir: join(home, "reflections"),
-    watchesDir: join(home, "watches"),
   };
 }
 
@@ -62,7 +59,6 @@ export function getProjectPaths(paths: HivePaths, projectId: string): ProjectPat
     root,
     config: join(root, "config.md"),
     inbox: join(root, "inbox.md"),
-    watchesDir: join(root, "watches"),
   };
 }
 
@@ -83,7 +79,6 @@ export async function ensureHiveScaffold(
   await mkdir(paths.projectsDir, { recursive: true });
   await mkdir(paths.runsDir, { recursive: true });
   await mkdir(paths.reflectionsDir, { recursive: true });
-  await mkdir(paths.watchesDir, { recursive: true });
 
   return paths;
 }
