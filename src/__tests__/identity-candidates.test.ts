@@ -39,6 +39,14 @@ describe("pending store", () => {
     expect(await listPendingCandidates(paths)).toHaveLength(2);
   });
 
+  test("a declined candidate does not come back from the pipeline, only by hand", async () => {
+    const paths = await freshHome();
+    const [c] = await addCandidates(paths, [input("Spot-check reports")]);
+    await declineCandidate(paths, c!.id);
+    expect(await addCandidates(paths, [input("Spot-check reports")])).toHaveLength(0);
+    expect(await addCandidates(paths, [{ ...input("Spot-check reports"), source: "cli" }])).toHaveLength(1);
+  });
+
   test("a corrupt store fails loudly instead of being overwritten", async () => {
     const paths = await freshHome();
     await writeFile(candidatesPath(paths), "{ not json");

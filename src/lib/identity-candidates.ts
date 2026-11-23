@@ -131,8 +131,25 @@ export interface ProposeInput {
   source: string;
 }
 
+async function declinedIds(paths: HivePaths): Promise<Set<string>> {
+  const file = candidatesLogPath(paths);
+  if (!existsSync(file)) return new Set();
+  const ids = new Set<string>();
+  for (const line of (await readFile(file, "utf-8")).split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as Partial<CandidateLogLine>;
+      if (entry.action === "declined" && typeof entry.id === "string") ids.add(entry.id);
+    } catch {
+      // intentional: a torn log line hides one decline, it must not block proposals
+    }
+  }
+  return ids;
+}
+
 /** Add candidates to the store. A candidate already pending (same target and
- * text) is skipped. Returns the candidates that were added. */
+ * text) is skipped. So is one Greg already declined, unless a person files it
+ * again by hand (source "cli"). Returns the candidates that were added. */
 export async function addCandidates(
   paths: HivePaths,
   inputs: ProposeInput[],
@@ -140,6 +157,7 @@ export async function addCandidates(
   if (inputs.length === 0) return [];
   const store = await readStore(paths);
   const known = new Set(store.pending.map((c) => c.id));
+  const declined = await declinedIds(paths);
   const added: IdentityCandidate[] = [];
   const now = new Date().toISOString();
   for (const input of inputs) {
@@ -147,6 +165,7 @@ export async function addCandidates(
     if (!text) continue;
     const id = candidateId(input.target, text);
     if (known.has(id)) continue;
+    if (declined.has(id) && input.source !== "cli") continue;
     known.add(id);
     added.push({
       id,
