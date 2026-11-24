@@ -464,6 +464,18 @@ read back. No nightly prompt repeats within an hour, and nights are 24 hours
 apart, so every write was paid for and never used. `HIVE_NIGHTLY_PROMPT_CACHE=on`
 restores the CLI default.
 
+**Batch transport (TK-168, off by default).** `HIVE_NIGHTLY_TRANSPORT=batch`
+routes every `completeClaudeText` call in the process through
+`src/lib/anthropic-batch.ts`: one Message Batch per call, paid with
+`ANTHROPIC_API_KEY` at 50% of list from the Console org that receives the Max
+plan's monthly API credit. The request is hive's own system prompt and user
+prompt with the pass's effort and no tools. It drops Claude Code's wrapper
+(an Agent SDK identity line and five `<system-reminder>` blocks, about 300-700
+tokens a call). Usage rows carry provider `anthropic-batch`, and
+`estimateCost` halves them. The per-call deadline defaults to 3h. Passes still
+call one project at a time, so a night's wall time is the sum of its batch
+turnarounds.
+
 **Taste cadence.** The taste track (TA → TB → TC/TR) runs every
 `HIVE_TASTE_EVERY_NIGHTS` nights (default 2), measured from the last run that
 finished, not from date parity, so a failed run makes the next night due. A
