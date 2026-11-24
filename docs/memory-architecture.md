@@ -61,6 +61,7 @@ everything.
 ```
 ~/.hive/memory/projects/<name>/
 ├── knowledge.md      # Compiled intelligence (human-editable). Only Pass F writes here.
+├── archive.md        # Entries that left canon: retired by V, or superseded (TK-166). Search reads it; V and the index don't.
 ├── candidates.md     # Mid-session writes pending nightly admission (JSONL).
 ├── _meta.json        # Strength/decay metadata (engine state)
 ├── _index.md         # Auto-generated session-start summary
@@ -78,6 +79,8 @@ everything.
 ├── briefing.md                 # Morning briefing (lands in ~/.hive/briefings/)
 ├── gaps.md                     # Things Sonnet missed
 ├── gaps.applied.log            # Pass F's disposition for each gap (JSONL, always "briefing")
+├── verify-shadow.{json,md}     # Shadow nights only: full V vs neighbour-scoped V, per candidate (TK-166)
+├── retirements.skipped.log     # Retires Pass F skipped because a same-night decision touched the target
 ├── taste.md                    # Principles reinforced / corrected
 ├── resume.json                 # Which passes finished for this date; a retry skips them
 └── usage.json                  # Per-pass tokens + cost; input split into uncached / cache write / cache read
@@ -282,6 +285,8 @@ log entry from today can outrank a weak knowledge entry.
 | `rebuildIndex()` | Damped bump for indexed entries: `recallCount += 0.25`, `halfLife += 1` (cap 90). Also reads strength to rank entries. |
 | `supersedeEntry()` / `supersedeEntryByHash()` | Removes old entry metadata, creates fresh for new entry |
 | `mergeTagsIntoEntry()` | Adds tags to an existing entry; metadata untouched |
+| `retireEntryByHash()` | Removes the entry's metadata; the line moves to archive.md. Archive hits rank at a fixed strength of 0.5 and are never bumped |
+| `restoreArchivedEntry()` | Creates fresh metadata for the restored entry |
 | `appendCandidate()` | No metadata effect — candidates queue lives outside the strength model until Pass F admits them |
 
 Metadata is engine state, not part of the knowledge document.
@@ -441,6 +446,19 @@ smaller window. The token estimate is chars / 2.6. That is rounded down from the
 densest call measured, 2.68 chars/token on 2026-11-23, so it errs high. Pass F
 records each project's Verify prompt against this budget, and the briefing warns
 at 60% and 80% (TK-158).
+
+**Forgetting (TK-166, all off by default).** Four switches in
+`src/lib/forgetting.ts`, from docs/design/2026-11-23-forgetting.md:
+
+| variable | effect |
+|---|---|
+| `HIVE_VERIFY_SCOPE=neighbors` | Each V shard reads the union of its candidates' BM25 top-20 canon entries (text only), not the whole canon. |
+| `HIVE_VERIFY_SHADOW=on` | Full-canon V applies as usual. Then a neighbour-scoped V decides the same candidates and applies nothing. `runs/{DATE}/verify-shadow.{json,md}` compares the two; `hive memory shadow-report --days 7` totals the nights. Its spend is the `VS` row in usage.json. A shadow failure never fails V. The shadow runs before Pass F, so its calls share one wall-clock budget, `HIVE_VERIFY_SHADOW_BUDGET_MS` (default 15 min); a project left when it runs out is recorded as skipped. |
+| `HIVE_VERIFY_RETIRE=on` | V may return `retirements[]`: an entry it was shown, a reason (stale, contradicted, trivia), and the candidate or signal id that shows it. Never for disuse. Pass F moves the line to archive.md unless a same-night supersede or merge names it. |
+| `HIVE_MEMORY_ARCHIVE_SUPERSEDED=on` | A supersede moves the old line to archive.md instead of striking it through. `hive memory archive-superseded` moves the existing ones. |
+
+`hive memory restore <hash>` moves an archived entry back. `scripts/forgetting-replay.ts`
+replays saved nights through the neighbour selector with no model calls.
 
 **Models.** `src/lib/nightly-config.ts` sets each pass's model and effort in
 one map: Sonnet 5.5 for B, C, TB, TC and TR, Opus 5.5 for V's shards and the

@@ -22,6 +22,7 @@ import {
   mergeTagsIntoEntry,
   rebuildIndex,
   readCandidates,
+  retireEntryByHash,
   supersedeEntryByHash,
   type Candidate,
   type MemorySection,
@@ -32,10 +33,12 @@ import {
   type ReflectionLanding,
 } from "./reflections";
 import type {
+  RetireDecision,
   VerifierDecision,
   VerifierGap,
   VerifierOutput,
 } from "./verify";
+import { archiveSupersededOn } from "./forgetting";
 import type { ProjectCandidate, ReflectionCandidate } from "./extract";
 
 // ---------------------------------------------------------------------------
@@ -116,6 +119,8 @@ export interface ProjectApplyOutcome {
   superseded: number;
   merged: number;
   rejected: number;
+  /** Entries Pass V retired to archive.md (TK-166). */
+  retired: number;
   directivesForceAdmitted: number;  // directives the verifier tried to reject but were kept (TK-123)
   drainedCandidates: number;
   drainPath: string | null;
@@ -131,6 +136,7 @@ export interface ApplyResult {
     superseded: number;
     merged: number;
     rejected: number;
+    retired: number;
     directivesForceAdmitted: number;
     /** Project-scoped verifier gaps. They stay in the briefing and gaps.md;
      * they never enter canon. */
@@ -154,6 +160,7 @@ function emptyOutcome(projectId: string): ProjectApplyOutcome {
     superseded: 0,
     merged: 0,
     rejected: 0,
+    retired: 0,
     directivesForceAdmitted: 0,
     drainedCandidates: 0,
     drainPath: null,
@@ -170,10 +177,16 @@ function emptyOutcome(projectId: string): ProjectApplyOutcome {
 async function loadDecisionsArtifact(
   paths: HivePaths,
   date: string,
-): Promise<{ decisions: VerifierDecision[] }> {
+): Promise<{ decisions: VerifierDecision[]; retirements: RetireDecision[] }> {
   const file = join(paths.memoryRunsDir, date, "decisions.json");
-  const raw = JSON.parse(await Bun.file(file).text()) as { decisions?: VerifierDecision[] };
-  return { decisions: Array.isArray(raw.decisions) ? raw.decisions : [] };
+  const raw = JSON.parse(await Bun.file(file).text()) as {
+    decisions?: VerifierDecision[];
+    retirements?: RetireDecision[];
+  };
+  return {
+    decisions: Array.isArray(raw.decisions) ? raw.decisions : [],
+    retirements: Array.isArray(raw.retirements) ? raw.retirements : [],
+  };
 }
 
 async function loadVerifierOutputArtifacts(
@@ -223,6 +236,7 @@ interface ApplyContext {
   paths: HivePaths;
   date: string;
   dryRun: boolean;
+  archiveSuperseded: boolean;
   sources: CandidateSources;
   projectIds: Set<string>;
 }
@@ -305,6 +319,7 @@ async function applyProjectDecision(
           decision.target_hash,
           content.content,
           content.tags,
+          { archive: ctx.archiveSuperseded },
         );
       } catch (err) {
         outcome.errors.push(
@@ -491,6 +506,52 @@ export interface ApplyOptions {
   paths: HivePaths;
   date: string;
   dryRun?: boolean;
+  /** Override HIVE_MEMORY_ARCHIVE_SUPERSEDED (TK-166). */
+  archiveSuperseded?: boolean;
+}
+
+/**
+ * Pass V's retirements (TK-166). An entry that tonight's decisions also
+ * superseded or merged into is left alone: those decisions say the entry still
+ * matters, and the supersede has already moved it. Anything else that fails is
+ * an error on the project, like a failed supersede.
+ */
+async function applyRetirements(
+  ctx: ApplyContext,
+  retirements: RetireDecision[],
+  decisions: VerifierDecision[],
+  ensureOutcome: (id: string) => ProjectApplyOutcome,
+): Promise<string[]> {
+  const skipped: string[] = [];
+  for (const r of retirements) {
+    if (!r.project || !ctx.projectIds.has(r.project)) {
+      skipped.push(`retire ${r.target_hash}: unknown project ${String(r.project)}`);
+      continue;
+    }
+    const outcome = ensureOutcome(r.project);
+    const touched = decisions.some((d) => {
+      const src = parseCandidateId(d.candidate_id);
+      return (
+        src !== null && "project" in src && src.project === r.project &&
+        (d.action === "supersede" || d.action === "merge") && d.target_hash === r.target_hash
+      );
+    });
+    if (touched) {
+      skipped.push(`${r.project}: retire ${r.target_hash} skipped, a decision tonight supersedes or merges into it`);
+      continue;
+    }
+    if (!ctx.dryRun) {
+      try {
+        const note = [r.evidence, r.note].filter(Boolean).join(": ");
+        await retireEntryByHash(ctx.paths, r.project, r.target_hash, r.reason, note);
+      } catch (err) {
+        outcome.errors.push(`retire ${r.target_hash}: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+    }
+    outcome.retired++;
+  }
+  return skipped;
 }
 
 export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
@@ -501,11 +562,12 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
     paths,
     date,
     dryRun,
+    archiveSuperseded: opts.archiveSuperseded ?? archiveSupersededOn(),
     sources: await loadCandidateSources(paths, date, projectIds),
     projectIds: new Set(projectIds),
   };
 
-  const { decisions } = await loadDecisionsArtifact(paths, date);
+  const { decisions, retirements } = await loadDecisionsArtifact(paths, date);
   const verifierExtras = await loadVerifierOutputArtifacts(paths, date);
   const capturedInboxes = await loadCapturedInboxes(paths, date);
 
@@ -554,6 +616,14 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
     }
   }
 
+  // Retirements after every decision, so a same-night supersede wins.
+  const retireNotes = await applyRetirements(ctx, retirements, decisions, ensureOutcome);
+  if (retireNotes.length > 0 && !dryRun) {
+    const logPath = join(paths.memoryRunsDir, date, "retirements.skipped.log");
+    await mkdir(dirname(logPath), { recursive: true });
+    await appendFile(logPath, retireNotes.join("\n") + "\n");
+  }
+
   // Gaps stay in the briefing; nothing lands.
   const gapStats = await landGaps(ctx, verifierExtras.gaps);
 
@@ -562,7 +632,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
     const outcome = outcomeByProject.get(projectId);
     const midSession = ctx.sources.midSession.get(projectId) ?? [];
     const touched =
-      (outcome && outcome.accepted + outcome.superseded + outcome.merged > 0) ||
+      (outcome && outcome.accepted + outcome.superseded + outcome.merged + outcome.retired > 0) ||
       midSession.length > 0;
     if (!touched) continue;
     const o = ensureOutcome(projectId);
@@ -676,6 +746,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
       superseded: acc.superseded + o.superseded,
       merged: acc.merged + o.merged,
       rejected: acc.rejected + o.rejected,
+      retired: acc.retired + o.retired,
       directivesForceAdmitted: acc.directivesForceAdmitted + o.directivesForceAdmitted,
       gapsBriefed: acc.gapsBriefed,
       reflectionsLanded: acc.reflectionsLanded,
@@ -685,6 +756,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
       superseded: 0,
       merged: 0,
       rejected: 0,
+      retired: 0,
       directivesForceAdmitted: 0,
       gapsBriefed: gapStats.briefed,
       reflectionsLanded,

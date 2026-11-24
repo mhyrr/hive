@@ -175,7 +175,9 @@ import { dirname, join } from "node:path";
 
 import type { HivePaths } from "./paths";
 
-export type UsagePass = "B" | "C" | "V" | "TA" | "TB" | "TC" | "TR";
+/** "VS" is the shadow verifier (TK-166): neighbour-scoped V calls that decide
+ * but never apply. Kept apart from "V" so the shadow week's cost shows. */
+export type UsagePass = "B" | "C" | "V" | "VS" | "TA" | "TB" | "TC" | "TR";
 
 export interface PassUsageRecord extends Partial<InputSplit> {
   pass: UsagePass;

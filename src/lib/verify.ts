@@ -24,17 +24,39 @@ import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { HivePaths } from "./paths";
-import { nightlyCaller, nightlyModel } from "./nightly-config";
+import { nightlyCaller, nightlyEffort, nightlyModel, nightlyPromptCacheOff } from "./nightly-config";
+import { completeClaudeTextBounded, nightlyCallTimeoutMs, withDeadline } from "./claude";
 import { inboxBodyHash, parseInbox } from "./inbox";
 import { listProjects } from "./paths";
 import {
   entryHash,
   readCandidates,
   readProjectMemorySnapshot,
+  RETIRE_REASONS,
   type Candidate,
   type MemoryEntry,
   type ProjectDecision,
+  type RetireReason,
 } from "./memory";
+import {
+  canonEntries,
+  NEIGHBOR_K,
+  retireOn,
+  scopeCanon,
+  verifyScope,
+  verifyShadowOn,
+  type ScopedCanon,
+} from "./forgetting";
+import {
+  compareShard,
+  renderShadowBriefingSection,
+  renderShadowMarkdown,
+  shadowFailure,
+  shadowNightPath,
+  totalCounts,
+  type ShadowNight,
+  type ShadowProjectReport,
+} from "./verify-shadow";
 import type { ConditionReport, ProjectSignal } from "./condition";
 import {
   estimateCost,
@@ -180,13 +202,57 @@ export interface VerifierGap {
   source: string;                // citation back into the inputs
 }
 
+/** A `retire` (TK-166): one canon entry leaves for archive.md on the night's
+ * evidence. Not a candidate decision, so it lives in its own array: a candidate
+ * can be accepted AND show that an older entry is now false. */
+export interface RetireDecision {
+  target_hash: string;
+  reason: RetireReason;
+  /** The candidate id or signal id (e.g. "B.alpha[2]", "topRanked[4]") that shows it. */
+  evidence: string;
+  note?: string;
+  /** Set by runVerifier: the shard the retire came from. */
+  project?: string;
+}
+
 export interface VerifierOutput {
   decisions: VerifierDecision[];
   gaps: VerifierGap[];
   briefing_markdown: string;
+  /** Present only when retire is on (HIVE_VERIFY_RETIRE=on). */
+  retirements?: RetireDecision[];
+  /** Retirements dropped as malformed or out of scope, one line each. A bad
+   * retire is dropped, never fatal: it must not cost the night its canon. */
+  retirement_errors?: string[];
 }
 
 const VALID_ACTIONS = new Set<DecisionAction>(["accept", "supersede", "merge", "reject"]);
+
+/** Keep the well-formed retirements, and say why each other one was dropped. */
+export function parseRetirements(raw: unknown): { retirements: RetireDecision[]; errors: string[] } {
+  const retirements: RetireDecision[] = [];
+  const errors: string[] = [];
+  if (raw === undefined || raw === null) return { retirements, errors };
+  if (!Array.isArray(raw)) return { retirements, errors: ["retirements is not an array"] };
+  for (const [i, r] of raw.entries()) {
+    const o = (r && typeof r === "object" ? r : {}) as Record<string, unknown>;
+    if (typeof o.target_hash !== "string" || !o.target_hash) {
+      errors.push(`retirements[${i}]: no target_hash`);
+    } else if (!RETIRE_REASONS.includes(o.reason as RetireReason)) {
+      errors.push(`retirements[${i}] ${o.target_hash}: reason must be one of ${RETIRE_REASONS.join(", ")}, got ${String(o.reason)}`);
+    } else if (typeof o.evidence !== "string" || !o.evidence.trim()) {
+      errors.push(`retirements[${i}] ${o.target_hash}: no evidence cited`);
+    } else {
+      retirements.push({
+        target_hash: o.target_hash,
+        reason: o.reason as RetireReason,
+        evidence: o.evidence.trim(),
+        ...(typeof o.note === "string" && o.note.trim() ? { note: o.note.trim() } : {}),
+      });
+    }
+  }
+  return { retirements, errors };
+}
 
 /** Validate a verifier response. Project-shard calls write no prose, so they
  * pass `requireBriefing: false`; only the briefer must return a briefing. */
@@ -243,7 +309,14 @@ export function validateVerifierOutput(
     return { error: "briefing_markdown missing or empty" };
   }
 
-  return { decisions, gaps, briefing_markdown: briefing };
+  const { retirements, errors: retirementErrors } = parseRetirements(o.retirements);
+  return {
+    decisions,
+    gaps,
+    briefing_markdown: briefing,
+    ...(retirements.length > 0 ? { retirements } : {}),
+    ...(retirementErrors.length > 0 ? { retirement_errors: retirementErrors } : {}),
+  };
 }
 
 /** Every candidate a call was shown must come back decided exactly once. Pass F
@@ -431,9 +504,36 @@ export function buildBrieferSystemPrompt(soulText: string): string {
  * gaps, never prose, so voice context would be several thousand tokens spent on
  * nothing — and those tokens are exactly what's scarce here.
  */
-export function buildProjectVerifierSystemPrompt(): string {
-  return PROJECT_VERIFIER_SYSTEM_PROMPT;
+export function buildProjectVerifierSystemPrompt(
+  opts: { retire?: boolean; scope?: "full" | "neighbors" } = {},
+): string {
+  const parts = [PROJECT_VERIFIER_SYSTEM_PROMPT];
+  if (opts.scope === "neighbors") parts.push(NEIGHBOR_SCOPE_NOTE);
+  if (opts.retire) parts.push(RETIRE_RULES);
+  return parts.join("\n\n");
 }
+
+/** Appended when V reads neighbours, not the whole canon (TK-166). */
+const NEIGHBOR_SCOPE_NOTE = `# Canon scope tonight
+
+The canon block holds only the entries nearest tonight's candidates: for each candidate, the ${NEIGHBOR_K} existing entries that share the most words with it. It is not the whole canon. Cite target_hash only from the block. An entry a candidate repeats is almost always among its nearest entries, so check them before you accept.`;
+
+/** Appended when retire is on (HIVE_VERIFY_RETIRE=on, TK-166). The rule:
+ * retire on evidence, never on disuse (docs/design/2026-11-23-forgetting.md). */
+const RETIRE_RULES = `# Retire (optional third job)
+
+You may also retire existing canon entries from the canon block. Retire an entry only when tonight's inputs show that it is:
+- **stale**: it was true once, and tonight's evidence shows it no longer is (the code changed, a decision was reversed, a gap was closed);
+- **contradicted**: a candidate or tonight's signal states the opposite, with better evidence;
+- **trivia**: it records a one-off incident or detail that would not help a session a month from now. Judge only entries next to tonight's work; this is not a sweep.
+
+Never retire an entry because it looks old or nobody uses it. Cite the evidence: the candidate_id or the topRanked id that shows it. If a candidate is simply a better version of an entry, use supersede, not retire. Most nights retire nothing, and an empty array is the normal answer. A retired entry moves to an archive that search still covers, so a wrong retire can be undone, but hold it to the same bar as an accept.
+
+Add this key to the JSON object:
+
+  "retirements": [
+    { "target_hash": "<8-char hex from the canon block>", "reason": "stale" | "contradicted" | "trivia", "evidence": "<candidate_id or topRanked[i]>", "note": "<one sentence: what is no longer true, or why it is trivia>" }
+  ]`;
 
 // ---------------------------------------------------------------------------
 // User content assembly
@@ -491,8 +591,10 @@ export function buildProjectVerifierUserContent(
   date: string,
   principlesText: string,
   block: ProjectVerifierBlock,
+  opts: { scope?: ScopedCanon } = {},
 ): string {
   const sections: string[] = [];
+  const canon = opts.scope?.canon ?? block.canon;
 
   sections.push(`# Pass V — Verify · ${date} · project: ${block.projectId}
 
@@ -504,13 +606,16 @@ Decide every candidate below against this project's canon. Output the JSON objec
 ${principlesText.trim() || "(no principles file present)"}
 `);
 
-  sections.push(`## Canon (existing entries — reference target_hash by hash)
+  const canonHeading = opts.scope
+    ? `## Canon: the ${opts.scope.shownEntries} of ${opts.scope.totalEntries} entries nearest tonight's candidates (reference target_hash by hash)`
+    : `## Canon (existing entries — reference target_hash by hash)`;
+  sections.push(`${canonHeading}
 
 ${fence({
-    facts: block.canon.facts,
-    conventions: block.canon.conventions,
-    decisions: block.canon.decisions,
-    questions: block.canon.questions,
+    facts: canon.facts,
+    conventions: canon.conventions,
+    decisions: canon.decisions,
+    questions: canon.questions,
   })}
 `);
 
@@ -807,6 +912,11 @@ export interface RunVerifierOptions {
   paths: HivePaths;
   date: string;
   caller?: ModelCaller;
+  /** Overrides for the TK-166 switches. Unset reads the environment
+   * (src/lib/forgetting.ts); tests set them directly. */
+  scope?: "full" | "neighbors";
+  retire?: boolean;
+  shadow?: boolean;
 }
 
 export interface RunVerifierResult {
@@ -823,6 +933,141 @@ export interface RunVerifierResult {
   cost: CostBreakdown;
   /** Projects that got their own verifier call, in order. */
   shardedProjects: string[];
+  /** Set on a shadow night: where the comparison landed, and what it found. */
+  shadow?: { jsonPath: string; markdownPath: string; report: ShadowNight };
+}
+
+/** What each candidate asks about, in candidate-id order: its content, plus a
+ * mid-session candidate's supersedesHint, which names the entry it replaces in
+ * words that may differ from its own. */
+export function blockQueries(block: ProjectVerifierBlock): string[] {
+  return [
+    ...block.midSessionCandidates.map((c) => (c.supersedesHint ? `${c.content} ${c.supersedesHint}` : c.content)),
+    ...block.bCandidates.map((c) => c.content),
+  ];
+}
+
+/** A retire may name only an entry the call was shown. V cites hashes it
+ * read; anything else is a hallucinated or out-of-scope hash, dropped with a
+ * line in retirement_errors. */
+function keepShownRetirements(
+  projectId: string,
+  out: VerifierOutput,
+  shown: SerializedCanon,
+  errors: string[],
+): RetireDecision[] {
+  for (const e of out.retirement_errors ?? []) errors.push(`${projectId}: ${e}`);
+  const hashes = new Set(canonEntries(shown).map((e) => e.hash));
+  const kept: RetireDecision[] = [];
+  const seen = new Set<string>();
+  for (const r of out.retirements ?? []) {
+    if (!hashes.has(r.target_hash)) {
+      errors.push(`${projectId}: retire ${r.target_hash} names an entry the call was not shown`);
+    } else if (!seen.has(r.target_hash)) {
+      seen.add(r.target_hash);
+      kept.push({ ...r, project: projectId });
+    }
+  }
+  return kept;
+}
+
+/** The shadow's total wall-clock budget. It runs before Pass F inside the
+ * nightly's 60-minute cap, so a stalled shadow call must not be able to eat
+ * the night. On 2026-11-24 all of V (shards and brief) took 279s.
+ * Override with HIVE_VERIFY_SHADOW_BUDGET_MS. */
+export function shadowBudgetMs(): number {
+  const raw = Number(process.env.HIVE_VERIFY_SHADOW_BUDGET_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60_000;
+}
+
+/** The shadow's caller, bounded by what is left of its budget. The real caller
+ * gets the deadline itself, so a timed-out `claude --print` child is killed,
+ * not left running beside Pass F. An injected caller (tests) is raced instead. */
+function shadowCaller(injected: ModelCaller | undefined, remainingMs: number): ModelCaller {
+  const ms = Math.min(remainingMs, nightlyCallTimeoutMs());
+  if (injected) return (input) => withDeadline(ms, "shadow verifier", () => injected(input));
+  return (input) =>
+    completeClaudeTextBounded(
+      {
+        modelId: input.modelId,
+        systemPrompt: input.systemPrompt,
+        userContent: input.userContent,
+        effort: nightlyEffort("V"),
+        promptCacheOff: nightlyPromptCacheOff(),
+      },
+      ms,
+    );
+}
+
+/** Run neighbour-scoped V over the shards full V just decided, and compare.
+ * Writes nothing; the caller lands the report. */
+async function runShadow(input: {
+  date: string;
+  principlesText: string;
+  shards: Array<{
+    block: ProjectVerifierBlock;
+    decisions: VerifierDecision[];
+    retirements: RetireDecision[];
+    promptTokens: number;
+  }>;
+  retire: boolean;
+  caller: ModelCaller | undefined;
+}): Promise<{ report: ShadowNight; usages: Array<UsageDelta & { durationMs: number | null }> }> {
+  const system = buildProjectVerifierSystemPrompt({ retire: input.retire, scope: "neighbors" });
+  const projects: ShadowProjectReport[] = [];
+  const usages: Array<UsageDelta & { durationMs: number | null }> = [];
+  const deadline = Date.now() + shadowBudgetMs();
+  for (const s of input.shards) {
+    const scoped = scopeCanon(s.block.canon, blockQueries(s.block));
+    const canonStats = {
+      totalEntries: scoped.totalEntries,
+      totalBytes: scoped.totalBytes,
+      shownEntries: scoped.shownEntries,
+      shownBytes: scoped.shownBytes,
+    };
+    const contentById = new Map<string, string>(
+      digestShardDecisions(s.block, s.decisions)
+        .filter((d) => d.content)
+        .map((d) => [d.candidate_id, d.content!]),
+    );
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      projects.push(shadowFailure(s.block.projectId, canonStats, "skipped: the shadow's time budget was spent"));
+      continue;
+    }
+    try {
+      const user = buildProjectVerifierUserContent(input.date, input.principlesText, s.block, { scope: scoped });
+      const call = await callVerifier(system, user, shadowCaller(input.caller, remaining), {
+        label: `V.shadow.${s.block.projectId}`,
+        requireBriefing: false,
+        expectedIds: blockCandidateIds(s.block),
+      });
+      usages.push(call.usage);
+      const discarded: string[] = [];
+      const neighborRetirements = input.retire
+        ? keepShownRetirements(s.block.projectId, call.output, scoped.canon, discarded)
+        : [];
+      projects.push(
+        compareShard({
+          projectId: s.block.projectId,
+          fullDecisions: s.decisions,
+          neighborDecisions: call.output.decisions,
+          neighborScope: new Set(canonEntries(scoped.canon).map((e) => e.hash)),
+          canon: canonStats,
+          contentById,
+          fullRetirements: s.retirements,
+          neighborRetirements,
+          promptTokens: { full: s.promptTokens, neighbor: estimatePromptTokens(system, user) },
+        }),
+      );
+    } catch (err) {
+      projects.push(shadowFailure(s.block.projectId, canonStats, err instanceof Error ? err.message : String(err)));
+    }
+  }
+  return {
+    report: { version: 1, date: input.date, k: NEIGHBOR_K, projects, totals: totalCounts(projects) },
+    usages,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -866,9 +1111,11 @@ export function refineBriefing(
   briefing: string,
   decisions: VerifierDecision[],
   gaps: VerifierGap[],
+  retired = 0,
 ): string {
   const counts = tallyBriefingCounts(decisions);
-  const accurateLine = `- Added: ${counts.added} entries. Superseded: ${counts.superseded}. Reflections: ${counts.reflections}.`;
+  const retiredPart = retired > 0 ? ` Retired: ${retired}.` : "";
+  const accurateLine = `- Added: ${counts.added} entries. Superseded: ${counts.superseded}.${retiredPart} Reflections: ${counts.reflections}.`;
 
   let out = briefing;
   if (ADDED_LINE_RE.test(out)) {
@@ -928,7 +1175,8 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   // Clear any stale artifacts from a prior run on this date before the LLM
   // call. If Opus fails, downstream sees absence (correct) rather than
   // yesterday's success masquerading as today's.
-  for (const p of [decisionsPath, gapsPath, briefingPath, fullOutputPath, inboxSnapshotPath]) {
+  const shadowPaths = [shadowNightPath(opts.paths, opts.date), join(runDir, "verify-shadow.md")];
+  for (const p of [decisionsPath, gapsPath, briefingPath, fullOutputPath, inboxSnapshotPath, ...shadowPaths]) {
     await rm(p, { force: true });
   }
 
@@ -952,13 +1200,29 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
   // candidates.md whenever that project has candidates, decisions or not, so a
   // partial run would drain candidates nothing decided on. All-or-nothing keeps
   // the queue intact for tomorrow.
-  const shardSystem = buildProjectVerifierSystemPrompt();
+  //
+  // TK-166 switches (src/lib/forgetting.ts), all off by default: the scope V
+  // reads, whether it may retire, and whether a neighbour-scoped shadow runs.
+  const scope = opts.scope ?? verifyScope();
+  const retire = opts.retire ?? retireOn();
+  const shadow = (opts.shadow ?? verifyShadowOn()) && scope === "full";
+  const shardSystem = buildProjectVerifierSystemPrompt({ retire, scope });
+  const retirements: RetireDecision[] = [];
+  const retirementErrors: string[] = [];
+  const fullShards: Array<{
+    block: ProjectVerifierBlock;
+    decisions: VerifierDecision[];
+    retirements: RetireDecision[];
+    promptTokens: number;
+  }> = [];
   for (const block of bundle.perProject) {
     if (!blockHasCandidates(block)) continue;
+    const scoped = scope === "neighbors" ? scopeCanon(block.canon, blockQueries(block)) : undefined;
     const userContent = buildProjectVerifierUserContent(
       bundle.date,
       bundle.principlesText,
       block,
+      scoped ? { scope: scoped } : {},
     );
     const shard = await callVerifier(shardSystem, userContent, opts.caller, {
       label: `V.${block.projectId}`,
@@ -970,6 +1234,17 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
     digest.push(...digestShardDecisions(block, shard.output.decisions));
     usages.push(shard.usage);
     shardedProjects.push(block.projectId);
+
+    const kept = retire
+      ? keepShownRetirements(block.projectId, shard.output, scoped?.canon ?? block.canon, retirementErrors)
+      : [];
+    retirements.push(...kept);
+    fullShards.push({
+      block,
+      decisions: shard.output.decisions,
+      retirements: kept,
+      promptTokens: estimatePromptTokens(shardSystem, userContent),
+    });
   }
 
   // ---- Briefing call ------------------------------------------------------
@@ -1003,13 +1278,22 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
     decisions,
     gaps,
     briefing_markdown: brief.output.briefing_markdown,
+    ...(retire ? { retirements } : {}),
+    ...(retirementErrors.length > 0 ? { retirement_errors: retirementErrors } : {}),
   };
 
-  await Bun.write(decisionsPath, JSON.stringify({ decisions: output.decisions }, null, 2));
+  await Bun.write(
+    decisionsPath,
+    JSON.stringify(
+      { decisions: output.decisions, ...(retire ? { retirements } : {}) },
+      null,
+      2,
+    ),
+  );
   await Bun.write(gapsPath, formatGapsMarkdown(output.gaps));
   // Refine Opus's prose before landing — fixes flaky footer counts and surfaces
   // gaps as a section instead of just a count.
-  const refined = refineBriefing(output.briefing_markdown, output.decisions, output.gaps);
+  const refined = refineBriefing(output.briefing_markdown, output.decisions, output.gaps, retirements.length);
   await Bun.write(briefingPath, refined);
   // Full structured output — Pass F (Apply) consumes this for gap-landing
   // and taste-readout. Markdown files above are for humans.
@@ -1057,7 +1341,53 @@ export async function runVerifier(opts: RunVerifierOptions): Promise<RunVerifier
     { inputUsd: 0, outputUsd: 0, totalUsd: 0, modelKnown: true } as CostBreakdown,
   );
 
+  // ---- Shadow (TK-166) ----------------------------------------------------
+  // After every real artifact is on disk, so a shadow that hangs or dies can
+  // cost the night nothing but its own comparison. Shadow failures are caught
+  // per project and recorded; they never fail Pass V.
+  let shadowResult: RunVerifierResult["shadow"];
+  if (shadow && fullShards.length > 0) try {
+    const night = await runShadow({
+      date: bundle.date,
+      principlesText: bundle.principlesText,
+      shards: fullShards,
+      retire,
+      caller: opts.caller,
+    });
+    const jsonPath = shadowNightPath(opts.paths, opts.date);
+    const mdPath = join(runDir, "verify-shadow.md");
+    if (night.usages.length > 0) {
+      const record = buildUsageRecord("VS", {
+        provider: night.usages[0]!.provider,
+        model: night.usages[0]!.model,
+        inputTokens: night.usages.reduce((n, u) => n + u.inputTokens, 0),
+        outputTokens: night.usages.reduce((n, u) => n + u.outputTokens, 0),
+        ...sumCacheTokens(night.usages),
+        durationMs: night.usages.reduce((n, u) => n + (u.durationMs ?? 0), 0),
+      });
+      await appendUsageRecord(opts.paths, opts.date, record);
+      night.report.usage = {
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+        totalUsd: record.cost.totalUsd,
+      };
+    }
+    await Bun.write(jsonPath, JSON.stringify(night.report, null, 2));
+    await Bun.write(mdPath, renderShadowMarkdown(night.report));
+    await Bun.write(briefingPath, `${refined.trimEnd()}\n\n${renderShadowBriefingSection(night.report)}`);
+    shadowResult = { jsonPath, markdownPath: mdPath, report: night.report };
+  } catch (err) {
+    // Not per-project: something in the shadow harness itself. Record the
+    // night as failed so the summary counts it instead of skipping it.
+    const msg = err instanceof Error ? err.message : String(err);
+    const zero = { totalEntries: 0, totalBytes: 0, shownEntries: 0, shownBytes: 0 };
+    const projects = [shadowFailure("(shadow)", zero, msg)];
+    const report: ShadowNight = { version: 1, date: bundle.date, k: NEIGHBOR_K, projects, totals: totalCounts(projects) };
+    await Bun.write(shadowNightPath(opts.paths, opts.date), JSON.stringify(report, null, 2)).catch(() => 0);
+  }
+
   return {
+    ...(shadowResult ? { shadow: shadowResult } : {}),
     output,
     artifacts: {
       decisionsPath,

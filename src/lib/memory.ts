@@ -40,7 +40,9 @@ export type LogEntry = {
 };
 
 export type SearchResult = {
-  source: "knowledge" | "index" | "log";
+  source: "knowledge" | "index" | "log" | "archive";
+  /** For archive hits: how and when the entry left canon (TK-166). */
+  archived?: { kind: "retired" | "superseded"; date: string; reason?: string };
   /** Stable entry hash for knowledge hits — lets the caller bump only what it returned. */
   hash?: string;
   file: string;
@@ -769,6 +771,7 @@ export async function supersedeEntryByHash(
   targetHash: string,
   newText: string,
   newTags: string[] = [],
+  opts: { archive?: boolean } = {},
 ): Promise<{ supersededText: string; newHash: string }> {
   const cleanedNew = validateMemoryEntry(newText);
   await ensureProjectMemoryDir(paths, projectId);
@@ -788,10 +791,15 @@ export async function supersedeEntryByHash(
     const lines = content.split("\n");
     // Recompose the original raw entry (with ts + tags) so the strikethrough
     // preserves what was there, not just the core text.
-    const original = hit.ts
-      ? `[${hit.ts}] ${hit.coreText}${formatTags(hit.tags)}`
-      : `${hit.coreText}${formatTags(hit.tags)}`;
-    lines[hit.lineIndex] = `- ${formatSuperseded(original)}`;
+    const original = rawEntryOf(hit);
+    if (opts.archive) {
+      // TK-166: the old line leaves knowledge.md for archive.md. The archive
+      // write goes first, so a failure in between duplicates, never loses.
+      await appendArchiveLine(paths, projectId, section, `${original} → superseded ${toDateLabel()}`);
+      lines.splice(hit.lineIndex, 1);
+    } else {
+      lines[hit.lineIndex] = `- ${formatSuperseded(original)}`;
+    }
     supersededText = hit.coreText;
     content = lines.join("\n");
 
@@ -867,6 +875,280 @@ export async function mergeTagsIntoEntry(
   });
 
   return { mergedTags: resultMerged, addedTags: resultAdded };
+}
+
+// ---------------------------------------------------------------------------
+// Archive — archive.md, beside knowledge.md (TK-166).
+//
+// Where an entry goes when it leaves canon: retired by Pass V on a night's
+// evidence, or superseded by a better version. Search still covers the file;
+// Pass V and the session-start index never read it. Nothing is deleted, and
+// `restoreArchivedEntry` moves a line back.
+//
+// One line per entry, under the same section headers as knowledge.md:
+//   - <entry exactly as it stood, ts and tags included> → retired 2026-11-24: stale — <note>
+//   - <entry exactly as it stood> → superseded 2026-11-24
+// ---------------------------------------------------------------------------
+
+/** Why Pass V may retire an entry. Each one is a judgment on the night's
+ * evidence. None of them is "nobody used it" (docs/design/2026-11-23-forgetting.md §6 G). */
+export const RETIRE_REASONS = ["stale", "contradicted", "trivia"] as const;
+export type RetireReason = (typeof RETIRE_REASONS)[number];
+
+export type ArchivedEntry = {
+  section: MemorySection;
+  hash: string;
+  text: string;
+  tags: string[];
+  ts: string | null;
+  kind: "retired" | "superseded";
+  date: string;
+  reason?: string;
+  note?: string;
+};
+
+const SECTION_OF_HEADER: Record<string, MemorySection> = {
+  [sectionHeaders.facts]: "fact",
+  [sectionHeaders.conventions]: "convention",
+  [sectionHeaders.decisions]: "decision",
+  [sectionHeaders.questions]: "question",
+};
+
+// Greedy head, so the marker is the LAST " → retired|superseded DATE" on the line.
+const ARCHIVE_LINE_PATTERN =
+  /^(.*)\s→\s(retired|superseded)\s(\d{4}-\d{2}-\d{2})(?::\s(\w+)(?:\s—\s(.*))?)?$/;
+
+export function archivePath(paths: HivePaths, projectId: string): string {
+  return join(memoryProjectDir(paths, projectId), "archive.md");
+}
+
+function newArchiveFile(projectId: string): string {
+  return (
+    `# Archive: ${projectId}\n\n` +
+    `Entries that left knowledge.md, retired by Pass V or superseded. Search covers this file; ` +
+    `Pass V and the index do not read it. \`hive memory restore <hash>\` moves an entry back.\n`
+  );
+}
+
+function rawEntryOf(hit: { ts: string | null; coreText: string; tags: string[] }): string {
+  return hit.ts
+    ? `[${hit.ts}] ${hit.coreText}${formatTags(hit.tags)}`
+    : `${hit.coreText}${formatTags(hit.tags)}`;
+}
+
+/** Split a raw entry (as it stood in knowledge.md) into ts, prose and tags. */
+function parseRawEntry(raw: string): { ts: string | null; text: string; tags: string[] } {
+  const tsMatch = raw.match(/^\[([^\]]+)\]\s+(.*)$/);
+  const { text, tags } = parseTags(tsMatch?.[2] ?? raw);
+  return { ts: tsMatch?.[1]?.trim() ?? null, text, tags };
+}
+
+async function appendArchiveLine(
+  paths: HivePaths,
+  projectId: string,
+  section: MemorySection,
+  line: string,
+): Promise<void> {
+  const file = archivePath(paths, projectId);
+  await enqueue(file, async () => {
+    const f = Bun.file(file);
+    const content = (await f.exists()) ? await f.text() : newArchiveFile(projectId);
+    await Bun.write(file, appendToSection(content, sectionToHeader[section], `- ${line}`));
+  });
+}
+
+export function parseArchive(content: string): ArchivedEntry[] {
+  const out: ArchivedEntry[] = [];
+  let section: MemorySection | null = null;
+  for (const line of content.split("\n")) {
+    if (line.startsWith("## ")) {
+      section = SECTION_OF_HEADER[line.trim()] ?? null;
+      continue;
+    }
+    if (!section || !line.startsWith("- ")) continue;
+    const m = line.slice(2).trim().match(ARCHIVE_LINE_PATTERN);
+    if (!m) continue;
+    const { ts, text, tags } = parseRawEntry(m[1]!.trim());
+    out.push({
+      section,
+      hash: entryHash(text),
+      text,
+      tags,
+      ts,
+      kind: m[2] as "retired" | "superseded",
+      date: m[3]!,
+      ...(m[4] ? { reason: m[4] } : {}),
+      ...(m[5] ? { note: m[5].trim() } : {}),
+    });
+  }
+  return out;
+}
+
+export async function readArchive(paths: HivePaths, projectId: string): Promise<ArchivedEntry[]> {
+  const f = Bun.file(archivePath(paths, projectId));
+  if (!(await f.exists())) return [];
+  return parseArchive(await f.text());
+}
+
+/** Find an active entry by hash in any of the four sections. */
+function findActiveEntryAnySection(
+  content: string,
+  targetHash: string,
+): (HashedEntryHit & { section: MemorySection }) | null {
+  for (const section of ["fact", "convention", "decision", "question"] as const) {
+    const hit = findActiveEntryLineByHash(content, sectionToHeader[section], targetHash);
+    if (hit) return { ...hit, section };
+  }
+  return null;
+}
+
+/**
+ * Pass V's `retire`: move one active entry from knowledge.md to archive.md with
+ * the reason and the evidence note. The meta row goes too, as on supersede, so
+ * _meta.json keeps describing active canon only.
+ */
+export async function retireEntryByHash(
+  paths: HivePaths,
+  projectId: string,
+  targetHash: string,
+  reason: RetireReason,
+  note = "",
+): Promise<{ section: MemorySection; retiredText: string }> {
+  if (!RETIRE_REASONS.includes(reason)) throw new Error(`Unknown retire reason: ${reason}`);
+  await ensureProjectMemoryDir(paths, projectId);
+  const filePath = knowledgePath(paths, projectId);
+  let result: { section: MemorySection; retiredText: string } | null = null;
+
+  await enqueue(filePath, async () => {
+    const content = await Bun.file(filePath).text();
+    const hit = findActiveEntryAnySection(content, targetHash);
+    if (!hit) throw new Error(`No active entry with hash ${targetHash} in ${projectId}`);
+
+    // One line per entry: a newline in the note would split it.
+    const cleanNote = note.replace(/\s+/g, " ").trim();
+    const marker = `→ retired ${toDateLabel()}: ${reason}${cleanNote ? ` — ${cleanNote}` : ""}`;
+    // Archive first: a failure between the two writes duplicates, never loses.
+    await appendArchiveLine(paths, projectId, hit.section, `${rawEntryOf(hit)} ${marker}`);
+
+    const lines = content.split("\n");
+    lines.splice(hit.lineIndex, 1);
+    const updated = lines.join("\n");
+    const check = validateMemoryStructure(updated);
+    if (!check.valid) throw new Error(`Memory write would corrupt file: ${check.error}`);
+    await Bun.write(filePath, updated);
+
+    const meta = await readMeta(paths, projectId);
+    delete meta.entries[targetHash];
+    await writeMeta(paths, projectId, meta);
+    result = { section: hit.section, retiredText: hit.coreText };
+  });
+
+  return result!;
+}
+
+/** Move an archived entry back into knowledge.md, in its original section with
+ * its original timestamp and tags. Its strength starts fresh. */
+export async function restoreArchivedEntry(
+  paths: HivePaths,
+  projectId: string,
+  hash: string,
+): Promise<ArchivedEntry> {
+  await ensureProjectMemoryDir(paths, projectId);
+  const aPath = archivePath(paths, projectId);
+  const kPath = knowledgePath(paths, projectId);
+  let restored: ArchivedEntry | null = null;
+
+  await enqueue(kPath, async () => {
+    const f = Bun.file(aPath);
+    if (!(await f.exists())) throw new Error(`${projectId} has no archive.md`);
+    await enqueue(aPath, async () => {
+      const archive = await f.text();
+      const lines = archive.split("\n");
+      let section: MemorySection | null = null;
+      let found = -1;
+      let entry: ArchivedEntry | null = null;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        if (line.startsWith("## ")) {
+          section = SECTION_OF_HEADER[line.trim()] ?? null;
+          continue;
+        }
+        if (!section || !line.startsWith("- ")) continue;
+        const parsed = parseArchive(`${sectionToHeader[section]}\n${line}`)[0];
+        if (parsed?.hash === hash) {
+          found = i;
+          entry = parsed;
+          break;
+        }
+      }
+      if (!entry || found < 0) throw new Error(`No archived entry with hash ${hash} in ${projectId}`);
+
+      const knowledge = await Bun.file(kPath).text();
+      if (findActiveEntryAnySection(knowledge, hash)) {
+        throw new Error(`Entry ${hash} is already active in ${projectId}`);
+      }
+      const raw = entry.ts
+        ? `- [${entry.ts}] ${entry.text}${formatTags(entry.tags)}`
+        : `- ${entry.text}${formatTags(entry.tags)}`;
+      const updated = appendToSection(knowledge, sectionToHeader[entry.section], raw);
+      const check = validateMemoryStructure(updated);
+      if (!check.valid) throw new Error(`Memory write would corrupt file: ${check.error}`);
+      // Knowledge first: a failure between the two writes duplicates, never loses.
+      await Bun.write(kPath, updated);
+      lines.splice(found, 1);
+      await Bun.write(aPath, lines.join("\n"));
+
+      const meta = await readMeta(paths, projectId);
+      meta.entries[hash] = createEntryMeta();
+      await writeMeta(paths, projectId, meta);
+      restored = entry;
+    });
+  });
+
+  return restored!;
+}
+
+/**
+ * Move every `~~old~~ → superseded DATE` line out of knowledge.md into
+ * archive.md, keeping its date. A one-time tidy for canons written before
+ * supersede archived on its own. V and search already skip these lines, so
+ * this changes file size, not behavior. `dryRun` counts without writing.
+ */
+export async function archiveSupersededLines(
+  paths: HivePaths,
+  projectId: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<{ moved: number }> {
+  await ensureProjectMemoryDir(paths, projectId);
+  const kPath = knowledgePath(paths, projectId);
+  let moved = 0;
+
+  await enqueue(kPath, async () => {
+    const content = await Bun.file(kPath).text();
+    const keep: string[] = [];
+    const out: Array<{ section: MemorySection; line: string }> = [];
+    let section: MemorySection | null = null;
+    for (const line of content.split("\n")) {
+      if (line.startsWith("## ")) section = SECTION_OF_HEADER[line.trim()] ?? null;
+      const raw = line.startsWith("- ") ? line.slice(2).trim() : "";
+      const m = section && raw ? raw.match(SUPERSEDED_PATTERN) : null;
+      if (m && section) {
+        out.push({ section, line: `${m[1]} → superseded ${m[2]}` });
+        continue;
+      }
+      keep.push(line);
+    }
+    moved = out.length;
+    if (opts.dryRun || out.length === 0) return;
+
+    for (const o of out) await appendArchiveLine(paths, projectId, o.section, o.line);
+    const updated = keep.join("\n");
+    const check = validateMemoryStructure(updated);
+    if (!check.valid) throw new Error(`Memory write would corrupt file: ${check.error}`);
+    await Bun.write(kPath, updated);
+  });
+
+  return { moved };
 }
 
 // ---------------------------------------------------------------------------
@@ -1319,6 +1601,14 @@ export interface SearchOutcome {
 export const SEARCH_TOP_K = 10;
 /** Keep only results scoring at least this fraction of the best hit (taste uses the same). */
 export const SEARCH_FLOOR = 0.25;
+/** Fixed strength for archive hits (TK-166): half a fresh entry's 1.0. */
+export const ARCHIVE_STRENGTH = 0.5;
+const SECTION_PLURAL: Record<MemorySection, string> = {
+  fact: "facts",
+  convention: "conventions",
+  decision: "decisions",
+  question: "questions",
+};
 
 export async function searchMemory(
   paths: HivePaths,
@@ -1341,6 +1631,13 @@ export async function searchMemory(
     includeLogs?: boolean;
     /** Skip retrieval strengthening. For internal probes (dedupe checks) that no human reads. */
     noBump?: boolean;
+    /**
+     * Search archive.md too (TK-166). Default FALSE: internal probes (the
+     * decompose memory probe, the reflections dedupe check) read hits as live
+     * canon. The human-facing searches, `hive memory search` and the
+     * search_memory tool, turn it on and label archive hits.
+     */
+    includeArchive?: boolean;
   } = {},
 ): Promise<SearchOutcome> {
   const results: SearchResult[] = [];
@@ -1386,6 +1683,17 @@ export async function searchMemory(
   collectSection(snapshot.decisions, "decisions", "decision");
   collectSection(snapshot.questions, "questions", "question");
 
+  // Archive (TK-166): entries that left canon. Retired entries are always
+  // searchable. Superseded ones show only when the caller asks for superseded,
+  // the same rule as when they sat in knowledge.md as strikethrough lines.
+  const archived = (options.includeArchive ? await readArchive(paths, projectId) : []).filter((a) => {
+    if (options.section && options.section !== a.section) return false;
+    if (a.kind === "superseded" && !options.includeSuperseded) return false;
+    if (tagFilter && !a.tags.some((t) => t === tagFilter)) return false;
+    return true;
+  });
+  const archiveTexts = archived.map((a) => `${a.text} ${a.tags.join(" ")}`);
+
   // Collect log entries only when explicitly asked. Keeping them out of the
   // corpus as well as the results matters: they dominated the document count,
   // which skewed IDF against the compiled knowledge we actually want ranked.
@@ -1393,7 +1701,7 @@ export async function searchMemory(
   const logTexts = logEntries.map((e) => e.text);
 
   // Build BM25 corpus from all searchable documents
-  const allDocs = [...allEntries.map((e) => e.text), ...logTexts];
+  const allDocs = [...allEntries.map((e) => e.text), ...archiveTexts, ...logTexts];
   const corpus = buildCorpus(allDocs);
 
   // Score knowledge entries
@@ -1414,6 +1722,24 @@ export async function searchMemory(
       });
     }
   }
+
+  // Score archive entries. They have no meta row, so they get a fixed strength
+  // below a fresh entry's 1.0: an archived line should not outrank a live one
+  // that matches as well.
+  archived.forEach((a, i) => {
+    const score = bm25Score(query, archiveTexts[i]!, corpus);
+    if (score <= 0) return;
+    results.push({
+      source: "archive",
+      hash: a.hash,
+      file: "archive.md",
+      section: SECTION_PLURAL[a.section],
+      entry: a.ts ? `[${a.ts}] ${a.text}` : a.text,
+      tags: a.tags,
+      score: score * ARCHIVE_STRENGTH,
+      archived: { kind: a.kind, date: a.date, ...(a.reason ? { reason: a.reason } : {}) },
+    });
+  });
 
   // Score log entries
   const today = toDateLabel();
@@ -1488,6 +1814,7 @@ export function formatSearchResults(
 
   // Results are already sorted by score — present in order
   const knowledge = results.filter((r) => r.source === "knowledge");
+  const archive = results.filter((r) => r.source === "archive");
   const log = results.filter((r) => r.source === "log");
 
   if (knowledge.length > 0) {
@@ -1496,6 +1823,17 @@ export function formatSearchResults(
       const tagStr = e.tags.length > 0 ? ` [${e.tags.join(", ")}]` : "";
       const scoreStr = ` (score: ${e.score.toFixed(2)})`;
       lines.push(`  - [${e.section}] ${e.entry}${tagStr}${scoreStr}`);
+    }
+    lines.push(``);
+  }
+
+  if (archive.length > 0) {
+    lines.push(`### Archive (left canon; may be out of date)`);
+    for (const e of archive) {
+      const tagStr = e.tags.length > 0 ? ` [${e.tags.join(", ")}]` : "";
+      const a = e.archived;
+      const why = a ? ` _(${a.kind} ${a.date}${a.reason ? `: ${a.reason}` : ""}; hash ${e.hash})_` : "";
+      lines.push(`  - [${e.section}] ${e.entry}${tagStr}${why} (score: ${e.score.toFixed(2)})`);
     }
     lines.push(``);
   }

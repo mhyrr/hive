@@ -9,8 +9,11 @@ import {
   searchMemory,
   formatSearchResults,
   rebuildIndex,
+  restoreArchivedEntry,
+  archiveSupersededLines,
   type MemorySection,
 } from "../lib/memory";
+import { loadShadowNights, summarizeShadowNights } from "../lib/verify-shadow";
 import { promoteReflections } from "../lib/reflections";
 import { buildConditionReport, writeConditionReport } from "../lib/condition";
 import {
@@ -107,6 +110,12 @@ export async function memoryCommand(args: string[]): Promise<void> {
   hive memory cost [--date YYYY-MM-DD] [--days N]
                                            Per-pass input, cache and cost from usage.json
                                            for the last N runs through --date (default 2)
+  hive memory shadow-report [--date YYYY-MM-DD] [--days N]
+                                           Total the shadow verifier's disagreements over the
+                                           last N shadow nights through --date (default 7)
+  hive memory restore <hash>               Move an archived entry back into knowledge.md
+  hive memory archive-superseded [--dry-run]
+                                           Move struck-through superseded lines to archive.md
   hive memory --project <name> ...         Specify project`;
 
   if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
@@ -197,6 +206,18 @@ export async function memoryCommand(args: string[]): Promise<void> {
     }
     const dates = runDatesWithUsage(paths, through, days);
     console.log(dates.length > 0 ? await nightlyCostReport(paths, dates) : `No usage.json on or before ${through}.`);
+    return;
+  }
+
+  if (subcommand === "shadow-report") {
+    let through = new Date().toISOString().slice(0, 10);
+    let days = 7;
+    const rest = positional.slice(1);
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--date") through = rest[++i] ?? through;
+      else if (rest[i] === "--days") days = Math.max(1, Number(rest[++i]) || 7);
+    }
+    console.log(summarizeShadowNights(await loadShadowNights(paths, through, days)));
     return;
   }
 
@@ -406,8 +427,25 @@ export async function memoryCommand(args: string[]): Promise<void> {
       includeSuperseded: flags.noSuperseded !== "true",
       topK,
       includeLogs,
+      includeArchive: true,
     });
     console.log(formatSearchResults(results, query, total));
+    return;
+  }
+
+  if (subcommand === "restore") {
+    const hash = positional[1];
+    if (!hash) throw new UsageError(`restore needs the entry hash (search shows it)\n\n${usage}`);
+    const entry = await restoreArchivedEntry(paths, projectId, hash);
+    await rebuildIndex(paths, projectId);
+    console.log(`Restored ${hash} to ${projectId} ${entry.section}s: ${entry.text}`);
+    return;
+  }
+
+  if (subcommand === "archive-superseded") {
+    const dryRun = positional.includes("--dry-run");
+    const { moved } = await archiveSupersededLines(paths, projectId, { dryRun });
+    console.log(`${dryRun ? "Would move" : "Moved"} ${moved} superseded line(s) from ${projectId} knowledge.md to archive.md.`);
     return;
   }
 
