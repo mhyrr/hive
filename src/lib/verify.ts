@@ -24,7 +24,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { HivePaths } from "./paths";
-import { nightlyCaller, nightlyModel } from "./nightly-config";
+import { nightlyCaller, nightlyEffort, nightlyModel, nightlyPromptCacheOff } from "./nightly-config";
+import { completeClaudeTextBounded, nightlyCallTimeoutMs, withDeadline } from "./claude";
 import { inboxBodyHash, parseInbox } from "./inbox";
 import { listProjects } from "./paths";
 import {
@@ -965,6 +966,34 @@ function keepShownRetirements(
   return kept;
 }
 
+/** The shadow's total wall-clock budget. It runs before Pass F inside the
+ * nightly's 60-minute cap, so a stalled shadow call must not be able to eat
+ * the night. On 2026-11-24 all of V (shards and brief) took 279s.
+ * Override with HIVE_VERIFY_SHADOW_BUDGET_MS. */
+export function shadowBudgetMs(): number {
+  const raw = Number(process.env.HIVE_VERIFY_SHADOW_BUDGET_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60_000;
+}
+
+/** The shadow's caller, bounded by what is left of its budget. The real caller
+ * gets the deadline itself, so a timed-out `claude --print` child is killed,
+ * not left running beside Pass F. An injected caller (tests) is raced instead. */
+function shadowCaller(injected: ModelCaller | undefined, remainingMs: number): ModelCaller {
+  const ms = Math.min(remainingMs, nightlyCallTimeoutMs());
+  if (injected) return (input) => withDeadline(ms, "shadow verifier", () => injected(input));
+  return (input) =>
+    completeClaudeTextBounded(
+      {
+        modelId: input.modelId,
+        systemPrompt: input.systemPrompt,
+        userContent: input.userContent,
+        effort: nightlyEffort("V"),
+        promptCacheOff: nightlyPromptCacheOff(),
+      },
+      ms,
+    );
+}
+
 /** Run neighbour-scoped V over the shards full V just decided, and compare.
  * Writes nothing; the caller lands the report. */
 async function runShadow(input: {
@@ -982,6 +1011,7 @@ async function runShadow(input: {
   const system = buildProjectVerifierSystemPrompt({ retire: input.retire, scope: "neighbors" });
   const projects: ShadowProjectReport[] = [];
   const usages: Array<UsageDelta & { durationMs: number | null }> = [];
+  const deadline = Date.now() + shadowBudgetMs();
   for (const s of input.shards) {
     const scoped = scopeCanon(s.block.canon, blockQueries(s.block));
     const canonStats = {
@@ -995,9 +1025,14 @@ async function runShadow(input: {
         .filter((d) => d.content)
         .map((d) => [d.candidate_id, d.content!]),
     );
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      projects.push(shadowFailure(s.block.projectId, canonStats, "skipped: the shadow's time budget was spent"));
+      continue;
+    }
     try {
       const user = buildProjectVerifierUserContent(input.date, input.principlesText, s.block, { scope: scoped });
-      const call = await callVerifier(system, user, input.caller, {
+      const call = await callVerifier(system, user, shadowCaller(input.caller, remaining), {
         label: `V.shadow.${s.block.projectId}`,
         requireBriefing: false,
         expectedIds: blockCandidateIds(s.block),

@@ -11,7 +11,9 @@
 //                                      same candidates, writes nothing to canon,
 //                                      and a comparison lands in
 //                                      runs/{DATE}/verify-shadow.{json,md}.
-//                                      Roughly doubles V's spend.
+//                                      Roughly doubles V's spend. Its calls
+//                                      share HIVE_VERIFY_SHADOW_BUDGET_MS
+//                                      (default 15 min; see verify.ts).
 //   HIVE_VERIFY_RETIRE=on              V may retire canon entries on the night's
 //                                      evidence (stale, contradicted, trivia).
 //                                      Retired entries move to archive.md.

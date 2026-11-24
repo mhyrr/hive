@@ -196,6 +196,30 @@ describe("runVerifier with shadow on", () => {
     expect(await loadUsageSummary(paths, today()).then((u) => u.records.map((r) => r.pass))).toEqual(["V"]);
   });
 
+  test("a shadow call past its time budget is cut off and recorded", async () => {
+    const { paths } = await home("hive-shadow-budget-");
+    await seedCanon(paths);
+    await appendCandidate(paths, "alpha", { type: "fact", content: "deploys use fly" });
+    const { caller: base } = routedCaller({
+      full: { decisions: [{ candidate_id: "candidates.alpha[0]", action: "accept" }], gaps: [] },
+      shadow: { decisions: [{ candidate_id: "candidates.alpha[0]", action: "accept" }], gaps: [] },
+    });
+    const slow: ModelCaller = async (input) => {
+      if (input.systemPrompt.includes("# Canon scope tonight")) await Bun.sleep(300);
+      return base(input);
+    };
+    const prev = process.env.HIVE_VERIFY_SHADOW_BUDGET_MS;
+    process.env.HIVE_VERIFY_SHADOW_BUDGET_MS = "50";
+    try {
+      const result = await runVerifier({ paths, date: today(), caller: slow, shadow: true });
+      expect(result.output.decisions.length).toBe(1);
+      expect(result.shadow?.report.projects[0]?.error).toContain("timed out after 50ms");
+    } finally {
+      if (prev === undefined) delete process.env.HIVE_VERIFY_SHADOW_BUDGET_MS;
+      else process.env.HIVE_VERIFY_SHADOW_BUDGET_MS = prev;
+    }
+  });
+
   test("off by default: no shadow call, no comparison file", async () => {
     const { paths } = await home("hive-shadow-off-");
     await seedCanon(paths);
