@@ -31,6 +31,15 @@ a real failure to expose, not paper over with an API key fallback.
 Detached work has no API-key fallback. Interactive harnesses retain
 their native authentication behavior.
 
+One opt-in exception, chosen up front and never as a fallback (TK-168):
+`HIVE_NIGHTLY_TRANSPORT=batch` sends every nightly call through the Message
+Batches API (`src/lib/anthropic-batch.ts`) with `ANTHROPIC_API_KEY`, billed at
+50% to the Console org linked to the Max plan's monthly API credit. If the key
+is missing or a batch fails, the run fails. It never drops back to OAuth, and
+the OAuth path never picks up the key. Batch calls wait in a queue (most finish
+within an hour), so the per-call deadline defaults to 3h in this mode and
+nightly.sh's whole-run cap must be raised to match.
+
 ## Development
 
 - Runtime: Bun + TypeScript

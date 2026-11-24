@@ -41,7 +41,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { completeClaudeText } from "./claude";
+import { completeClaudeText, defaultCallTimeoutMs } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
 import { nightlyEffort, nightlyModel, nightlyPromptCacheOff } from "./nightly-config";
 import { appendCandidate, type CandidateInput } from "./memory";
@@ -806,7 +806,7 @@ export function mergeConsolidateResults(
 
 const defaultConsolidateCaller: ModelCaller = async (input) => {
   const ctrl = new AbortController();
-  const timeoutMs = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 900_000;
+  const timeoutMs = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || defaultCallTimeoutMs();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await completeClaudeText({
