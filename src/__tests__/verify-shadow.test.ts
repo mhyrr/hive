@@ -306,7 +306,7 @@ describe("retire", () => {
     expect(archived!.note).toBe("candidates.alpha[0]: deploys left fly");
     expect((await readMeta(paths, "alpha")).entries[deployA]).toBeUndefined();
 
-    const { results } = await searchMemory(paths, "alpha", "main branch fly");
+    const { results } = await searchMemory(paths, "alpha", "main branch fly", { includeArchive: true });
     expect(results.find((r) => r.hash === deployA)?.source).toBe("archive");
 
     // The briefing footer counts it.

@@ -427,6 +427,7 @@ export async function memoryCommand(args: string[]): Promise<void> {
       includeSuperseded: flags.noSuperseded !== "true",
       topK,
       includeLogs,
+      includeArchive: true,
     });
     console.log(formatSearchResults(results, query, total));
     return;

@@ -937,9 +937,14 @@ export interface RunVerifierResult {
   shadow?: { jsonPath: string; markdownPath: string; report: ShadowNight };
 }
 
-/** What each candidate asks about: its content, in candidate-id order. */
+/** What each candidate asks about, in candidate-id order: its content, plus a
+ * mid-session candidate's supersedesHint, which names the entry it replaces in
+ * words that may differ from its own. */
 export function blockQueries(block: ProjectVerifierBlock): string[] {
-  return [...block.midSessionCandidates.map((c) => c.content), ...block.bCandidates.map((c) => c.content)];
+  return [
+    ...block.midSessionCandidates.map((c) => (c.supersedesHint ? `${c.content} ${c.supersedesHint}` : c.content)),
+    ...block.bCandidates.map((c) => c.content),
+  ];
 }
 
 /** A retire may name only an entry the call was shown. V cites hashes it

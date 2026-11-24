@@ -1631,6 +1631,13 @@ export async function searchMemory(
     includeLogs?: boolean;
     /** Skip retrieval strengthening. For internal probes (dedupe checks) that no human reads. */
     noBump?: boolean;
+    /**
+     * Search archive.md too (TK-166). Default FALSE: internal probes (the
+     * decompose memory probe, the reflections dedupe check) read hits as live
+     * canon. The human-facing searches, `hive memory search` and the
+     * search_memory tool, turn it on and label archive hits.
+     */
+    includeArchive?: boolean;
   } = {},
 ): Promise<SearchOutcome> {
   const results: SearchResult[] = [];
@@ -1679,7 +1686,7 @@ export async function searchMemory(
   // Archive (TK-166): entries that left canon. Retired entries are always
   // searchable. Superseded ones show only when the caller asks for superseded,
   // the same rule as when they sat in knowledge.md as strikethrough lines.
-  const archived = (await readArchive(paths, projectId)).filter((a) => {
+  const archived = (options.includeArchive ? await readArchive(paths, projectId) : []).filter((a) => {
     if (options.section && options.section !== a.section) return false;
     if (a.kind === "superseded" && !options.includeSuperseded) return false;
     if (tagFilter && !a.tags.some((t) => t === tagFilter)) return false;

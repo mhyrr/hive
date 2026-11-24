@@ -349,6 +349,7 @@ server.registerTool("search_memory", {
     logDays: log_days ?? 14,
     topK: top_k ?? undefined,
     includeLogs: include_logs ?? false,
+    includeArchive: true,
   });
 
   const formatted = formatSearchResults(results, query, total);

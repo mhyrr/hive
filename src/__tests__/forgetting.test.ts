@@ -72,7 +72,7 @@ describe("retireEntryByHash", () => {
     expect(canon.facts.map((f) => f.hash)).not.toContain(hash);
 
     // Search still does, labelled as archived, and without a recall bump.
-    const { results } = await searchMemory(paths, "alpha", "campaigns unbuilt");
+    const { results } = await searchMemory(paths, "alpha", "campaigns unbuilt", { includeArchive: true });
     const hit = results.find((x) => x.hash === hash);
     expect(hit?.source).toBe("archive");
     expect(hit?.file).toBe("archive.md");
@@ -99,8 +99,13 @@ describe("retireEntryByHash", () => {
     await appendProjectMemory(paths, "alpha", "fact", "the widget cache uses redis");
     await appendProjectMemory(paths, "alpha", "fact", "the widget cache used memcached");
     await retireEntryByHash(paths, "alpha", entryHash("the widget cache used memcached"), "stale");
-    const { results } = await searchMemory(paths, "alpha", "widget cache", { floor: 0 });
+    const { results } = await searchMemory(paths, "alpha", "widget cache", { floor: 0, includeArchive: true });
     expect(results.map((r) => r.source)).toEqual(["knowledge", "archive"]);
+
+    // Internal probes (decompose, the reflections dedupe) don't opt in, so
+    // they never read an archived line as live canon.
+    const internal = await searchMemory(paths, "alpha", "widget cache", { floor: 0 });
+    expect(internal.results.map((r) => r.source)).toEqual(["knowledge"]);
   });
 
   test("refuses an unknown hash and an unknown reason", async () => {
@@ -159,9 +164,9 @@ describe("supersede with archive", () => {
     expect(a).toMatchObject({ hash: oldHash, kind: "superseded", tags: ["auth"] });
 
     // Superseded archive lines follow the old include_superseded rule.
-    const hidden = await searchMemory(paths, "alpha", "Guardian JWT");
+    const hidden = await searchMemory(paths, "alpha", "Guardian JWT", { includeArchive: true });
     expect(hidden.results.some((r) => r.hash === oldHash)).toBe(false);
-    const shown = await searchMemory(paths, "alpha", "Guardian JWT", { includeSuperseded: true });
+    const shown = await searchMemory(paths, "alpha", "Guardian JWT", { includeSuperseded: true, includeArchive: true });
     expect(shown.results.find((r) => r.hash === oldHash)?.source).toBe("archive");
   });
 
