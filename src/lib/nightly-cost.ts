@@ -20,7 +20,7 @@ export interface PassCostRow {
   totalUsd: number;
 }
 
-const PASS_ORDER = ["B", "C", "V", "TA", "TB", "TR", "TC"];
+const PASS_ORDER = ["B", "C", "V", "VS", "TA", "TB", "TR", "TC"];
 
 /** One row per (pass, model), in pipeline order. */
 export function passCostRows(records: PassUsageRecord[]): PassCostRow[] {
