@@ -134,6 +134,12 @@ export interface CostBreakdown {
   modelKnown: boolean;
 }
 
+/** Provider tag on usage from the Message Batches transport (TK-168). Batch
+ * requests bill at 50% of list on input, output and cache tokens alike
+ * (platform.claude.com/docs/en/about-claude/pricing#batch-processing). */
+export const BATCH_PROVIDER = "anthropic-batch";
+const BATCH_MULTIPLIER = 0.5;
+
 export function estimateCost(usage: UsageDelta): CostBreakdown {
   const r = rateForModel(usage.model);
   if (!r) {
@@ -148,6 +154,14 @@ export function estimateCost(usage: UsageDelta): CostBreakdown {
       s.cacheReadTokens * r.cacheReadPerMTok) /
     1_000_000;
   const outputUsd = (usage.outputTokens * r.outputPerMTok) / 1_000_000;
+  if (usage.provider === BATCH_PROVIDER) {
+    return {
+      inputUsd: inputUsd * BATCH_MULTIPLIER,
+      outputUsd: outputUsd * BATCH_MULTIPLIER,
+      totalUsd: (inputUsd + outputUsd) * BATCH_MULTIPLIER,
+      modelKnown: true,
+    };
+  }
   return {
     inputUsd,
     outputUsd,

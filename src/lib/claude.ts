@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelTextCompletion } from "./model";
+import { BATCH_PROVIDER, completeBatchText, nightlyTransport } from "./anthropic-batch";
 
 export type { ModelTextCompletion };
 
@@ -16,7 +17,8 @@ export type { ModelTextCompletion };
 export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ClaudeTextCompletion extends ModelTextCompletion {
-  provider: "anthropic";
+  /** "anthropic-batch" when HIVE_NIGHTLY_TRANSPORT=batch sent the call (TK-168). */
+  provider: "anthropic" | typeof BATCH_PROVIDER;
 }
 
 interface ClaudeJsonEnvelope {
@@ -125,7 +127,14 @@ function spawnClaude(
  * Stall damage stays bounded by the whole-pipeline cap in nightly.sh. */
 export function nightlyCallTimeoutMs(): number {
   const raw = Number(process.env.HIVE_NIGHTLY_CALL_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 900_000;
+  return Number.isFinite(raw) && raw > 0 ? raw : defaultCallTimeoutMs();
+}
+
+/** Per-call deadline when nothing overrides it. A batch call waits in the
+ * Message Batches queue ("most batches complete within 1 hour", up to 24h), so
+ * the 15-minute `claude --print` bound would cancel healthy batches. */
+export function defaultCallTimeoutMs(): number {
+  return nightlyTransport() === "batch" ? 3 * 3_600_000 : 900_000;
 }
 
 /** Race `run` against a deadline. On timeout: abort the signal (so a spawned
@@ -204,6 +213,17 @@ export async function completeClaudeText(input: {
    * measurement is in nightlyPromptCacheOff(), nightly-config.ts. */
   promptCacheOff?: boolean;
 }): Promise<ClaudeTextCompletion> {
+  if (nightlyTransport() === "batch") {
+    const done = await completeBatchText({
+      modelId: input.modelId,
+      systemPrompt: input.systemPrompt,
+      userContent: input.userContent,
+      effort: input.effort,
+      signal: input.signal,
+    });
+    return { ...done, provider: BATCH_PROVIDER };
+  }
+
   const bin = resolveClaudeBin();
   const startedAt = Date.now();
 

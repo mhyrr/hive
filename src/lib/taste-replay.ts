@@ -19,7 +19,7 @@
  * stays in holding (we do NOT fail open and promote on no evidence), and the
  * inconclusive verdict is logged so it's visible.
  */
-import { completeClaudeText } from "./claude";
+import { completeClaudeText, defaultCallTimeoutMs } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
 import { nightlyEffort, nightlyModel, nightlyPromptCacheOff } from "./nightly-config";
 import { cacheTokensOf, estimateCost, type CacheTokens } from "./pricing";
@@ -295,7 +295,7 @@ function balancedSample(corpus: ReplayCorpus, sample: number): ReplayWindow[] {
   return [...pos.slice(0, takePos), ...neg.slice(0, takeNeg)];
 }
 
-const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 900_000;
+const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || defaultCallTimeoutMs();
 
 const defaultReplayCaller: ModelCaller = async (input) => {
   const ctrl = new AbortController();

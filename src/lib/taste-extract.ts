@@ -7,7 +7,7 @@
  * the survivors fully and emits typed taste candidates carrying reasoning +
  * immutable evidence. Most flags do not survive TB — that is the design.
  */
-import { completeClaudeText, type ClaudeEffort } from "./claude";
+import { completeClaudeText, defaultCallTimeoutMs, type ClaudeEffort } from "./claude";
 import { parseExtractionJson, type ModelCaller } from "./extract";
 import { nightlyEffort, nightlyModel, nightlyPromptCacheOff } from "./nightly-config";
 import { cacheTokensOf, estimateCost, type CacheTokens } from "./pricing";
@@ -35,7 +35,7 @@ export const tasteAnalyzerModel = () => nightlyModel("TB");
 
 // Bound each model call so a stuck `claude --print` surfaces as a per-session
 // error (caught by runTasteExtract's isolation) instead of hanging the run.
-const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || 900_000;
+const CALL_TIMEOUT_MS = Number(process.env.HIVE_TASTE_CALL_TIMEOUT_MS) || defaultCallTimeoutMs();
 
 function boundedCaller(options: () => { disableThinking?: boolean; effort?: ClaudeEffort }): ModelCaller {
   return async (input) => {
