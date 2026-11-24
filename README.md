@@ -352,6 +352,7 @@ Available to supported harnesses when the HIVE MCP server is registered:
 | `hive taste status` | Taste store tally (`--since`, `--json`); see `hive taste --help` for `review`, `reject`, `admit`, `relink` |
 | `hive memory extract-sessions` | Condense last 24h session transcripts for nightly |
 | `hive identity emit` | Print the canonical identity prefix used by hooks and harness launchers |
+| `hive identity candidates` | List IDENTITY.md / SELF.md candidates waiting on an answer (`approve <id>` or `decline <id>`) |
 | `hive context` | Audit session-start context size against budgets (alias: `hive prompts`) |
 | `hive context --json` | Same audit as JSON, for tracking size over time |
 | `hive inbox` | Show the current project's findings inbox (`hive inbox clear` clears it) |

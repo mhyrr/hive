@@ -15,6 +15,7 @@ import type { HivePaths } from "./paths";
 import { listProjects } from "./paths";
 import { recordCanonSize } from "./canon-size";
 import { emptyInbox, inboxBodyHash, parseInbox } from "./inbox";
+import { rescueInboxCandidates, writePendingSection } from "./identity-candidates";
 import {
   appendProjectMemory,
   drainCandidates,
@@ -461,6 +462,10 @@ async function truncateCapturedInbox(
   if (!existsSync(inboxPath)) return false;
   const current = parseInbox(await Bun.file(inboxPath).text(), projectId);
   if (inboxBodyHash(current.body) !== expectedBodyHash) return false;
+  // TK-157: an identity candidate is not a finding the briefing consumes. It
+  // waits for Greg's answer, so move it to the pending store before the clear.
+  // A failed rescue throws here, and the inbox stays as it was.
+  await rescueInboxCandidates(paths, projectId, current.body);
   await writeFile(inboxPath, emptyInbox(projectId));
   return true;
 }
@@ -611,12 +616,12 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
   // the run's briefing.md before that file is copied out. A measurement failure
   // is reported, never fatal: it must not cost the night its briefing.
   let canonWarnings: string[] = [];
-  const canonErrors: string[] = [];
+  const reportedErrors: string[] = [];
   if (!dryRun) {
     try {
       canonWarnings = (await recordCanonSize(paths, date)).warnings;
     } catch (err) {
-      canonErrors.push(`canon-size: ${err instanceof Error ? err.message : String(err)}`);
+      reportedErrors.push(`canon-size: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -643,6 +648,16 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
       } catch (err) {
         outcome.errors.push(`inbox-truncate: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+
+    // TK-157: every briefing lists the identity candidates still waiting on
+    // Greg, including any the clear above just rescued. The ask repeats each
+    // night until he answers it. A failure is reported, never fatal.
+    try {
+      await writePendingSection(paths, join(paths.memoryRunsDir, date, "briefing.md"));
+      await writePendingSection(paths, briefingPath);
+    } catch (err) {
+      reportedErrors.push(`identity-candidates: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -682,7 +697,7 @@ export async function applyDecisions(opts: ApplyOptions): Promise<ApplyResult> {
 
   const errors = [
     ...perProject.flatMap((o) => o.errors.map((e) => `${o.projectId}: ${e}`)),
-    ...canonErrors,
+    ...reportedErrors,
   ];
 
   return {

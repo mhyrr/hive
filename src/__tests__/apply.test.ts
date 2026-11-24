@@ -14,6 +14,11 @@ import {
 } from "../lib/memory";
 import { ensureHiveScaffold, type HivePaths } from "../lib/paths";
 import { inboxBodyHash } from "../lib/inbox";
+import {
+  approveCandidate,
+  declineCandidate,
+  listPendingCandidates,
+} from "../lib/identity-candidates";
 
 // ---------------------------------------------------------------------------
 // parseCandidateId
@@ -620,5 +625,131 @@ describe("landGaps — project gaps stay out of canon", () => {
     expect(await Bun.file(logPath).exists()).toBe(false);
     const snap = await readProjectMemorySnapshot(paths, "alpha");
     expect(snap.questions.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TK-157: identity candidates survive the inbox clear
+// ---------------------------------------------------------------------------
+
+describe("applyDecisions — identity candidates stay pending (TK-157)", () => {
+  // The section shape Pass P wrote into inboxes until TK-157. One live copy
+  // sits in an inbox today, so the clear has to recognise it.
+  const CANDIDATE_SECTION = [
+    "## 2026-11-14T07:06:19Z — Session learnings — candidates for promotion",
+    "",
+    "Target: `IDENTITY.md` (About Maya). These passed the dedupe gate against the identity stack; review before applying.",
+    "",
+    "- (2026-11-14) Check a principle's scope before applying it.",
+    "- (2026-11-13) Maya spot-checks agent reports before relaying them.",
+    "",
+    "---",
+  ].join("\n");
+  const INBOX_BODY = [
+    "- earlier finding",
+    "",
+    CANDIDATE_SECTION,
+    "",
+    "## 2026-11-14T08:00:00Z — observe",
+    "- a watch finding after the candidates",
+  ].join("\n");
+
+  async function seedNight(paths: HivePaths, date: string, inbox: string | null): Promise<void> {
+    const runDir = join(paths.memoryRunsDir, date);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "decisions.json"), JSON.stringify({ decisions: [] }));
+    await writeFile(join(runDir, "briefing.md"), `# HIVE — ${date}\n\n## Headline\nQuiet day.\n`);
+    const inboxes = inbox === null ? [] : [{ projectId: "alpha", bodyHash: inboxBodyHash(inbox) }];
+    await writeFile(join(runDir, "inboxes.json"), JSON.stringify({ version: 1, inboxes }));
+    if (inbox !== null) {
+      await writeFile(join(paths.projectsDir, "alpha", "inbox.md"), `# Inbox: alpha\n\n${inbox}\n`);
+    }
+  }
+
+  async function newHome(prefix: string): Promise<HivePaths> {
+    const paths = await ensureHiveScaffold(await mkdtemp(join(tmpdir(), prefix)));
+    await mkdir(join(paths.projectsDir, "alpha"), { recursive: true });
+    await writeFile(join(paths.projectsDir, "alpha", "config.md"), "---\nname: alpha\npath: /tmp/nope/alpha\n---\n");
+    return paths;
+  }
+
+  test("the clear drops findings, keeps candidates pending and briefed, and only an answer removes them", async () => {
+    const paths = await newHome("hive-tk157-");
+    await writeFile(
+      paths.identity,
+      "# HIVE Identity\n\n## Things You've Learned\n\n- Read before acting.\n\n## Working With Greg\n\nSee SELF.md.\n",
+    );
+
+    // Night 1: the inbox holds two findings and two candidates.
+    await seedNight(paths, "2026-11-15", INBOX_BODY);
+    const night1 = await applyDecisions({ paths, date: "2026-11-15" });
+    expect(night1.errors).toEqual([]);
+    expect(night1.perProject.find((p) => p.projectId === "alpha")?.inboxTruncated).toBe(true);
+
+    // Findings cleared (TK-059 behaviour kept).
+    expect(await Bun.file(join(paths.projectsDir, "alpha", "inbox.md")).text()).toBe("# Inbox: alpha\n\n");
+
+    // Candidates still pending, with their project and reflection date.
+    let pending = await listPendingCandidates(paths);
+    expect(pending.map((c) => [c.target, c.text, c.date, c.project])).toEqual([
+      ["IDENTITY.md", "Check a principle's scope before applying it.", "2026-11-14", "alpha"],
+      ["IDENTITY.md", "Maya spot-checks agent reports before relaying them.", "2026-11-13", "alpha"],
+    ]);
+    const [scope, spotCheck] = pending;
+
+    // Shown in the landed briefing and in the run's copy.
+    for (const file of [night1.briefingPath!, join(paths.memoryRunsDir, "2026-11-15", "briefing.md")]) {
+      const briefing = await Bun.file(file).text();
+      expect(briefing).toContain("## Identity candidates (pending)");
+      expect(briefing).toContain(`\`${scope!.id}\` → IDENTITY.md`);
+      expect(briefing).toContain("Check a principle's scope before applying it.");
+      expect(briefing).toContain(`\`${spotCheck!.id}\` → IDENTITY.md`);
+    }
+
+    // Night 2: nothing new in the inbox. The candidates are still asked about.
+    await seedNight(paths, "2026-11-16", null);
+    const night2 = await applyDecisions({ paths, date: "2026-11-16" });
+    expect(night2.errors).toEqual([]);
+    expect(await listPendingCandidates(paths)).toHaveLength(2);
+    expect(await Bun.file(night2.briefingPath!).text()).toContain(scope!.id);
+
+    // Approve applies one to IDENTITY.md and removes only it.
+    await approveCandidate(paths, scope!.id);
+    pending = await listPendingCandidates(paths);
+    expect(pending.map((c) => c.id)).toEqual([spotCheck!.id]);
+    const identity = await Bun.file(paths.identity).text();
+    expect(identity).toContain(
+      "- Read before acting.\n- Check a principle's scope before applying it.\n\n## Working With Greg",
+    );
+
+    // Decline removes the other and leaves IDENTITY.md alone.
+    await declineCandidate(paths, spotCheck!.id, { reason: "already in AGENTS.md" });
+    expect(await listPendingCandidates(paths)).toEqual([]);
+    expect(await Bun.file(paths.identity).text()).toBe(identity);
+
+    const log = (await Bun.file(join(paths.home, "identity-candidates.log")).text())
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { action: string; id: string; reason?: string });
+    expect(log.filter((l) => l.action === "approved").map((l) => l.id)).toEqual([scope!.id]);
+    expect(log.filter((l) => l.action === "declined")).toEqual([
+      expect.objectContaining({ id: spotCheck!.id, reason: "already in AGENTS.md" }),
+    ]);
+
+    // Night 3: answered candidates leave the briefing.
+    await seedNight(paths, "2026-11-17", null);
+    const night3 = await applyDecisions({ paths, date: "2026-11-17" });
+    expect(await Bun.file(night3.briefingPath!).text()).not.toContain("Identity candidates");
+  });
+
+  test("an inbox changed after Pass V keeps its candidates in place for the next night", async () => {
+    const paths = await newHome("hive-tk157-race-");
+    await seedNight(paths, "2026-11-15", INBOX_BODY);
+    const inboxPath = join(paths.projectsDir, "alpha", "inbox.md");
+    await writeFile(inboxPath, `# Inbox: alpha\n\n${INBOX_BODY}\n- late note\n`);
+
+    await applyDecisions({ paths, date: "2026-11-15" });
+    expect(await Bun.file(inboxPath).text()).toContain("Check a principle's scope");
+    expect(await listPendingCandidates(paths)).toEqual([]);
   });
 });

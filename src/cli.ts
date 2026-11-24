@@ -76,6 +76,7 @@ HIVE Commands:
   ticket [create|list|...]   Project ticket tracker
   goal "<rough goal>"        Decompose a rough goal into epic + child tickets
   identity emit              Print canonical identity prefix (used by SessionStart hook)
+  identity candidates        List pending IDENTITY.md/SELF.md candidates (approve|decline <id>)
   inbox                      Show project inbox (clear with: inbox clear)
   dashboard [build|open]     Build or open the Morning Edition dashboard
   attach <agent>             Attach this terminal to a comb agent, in its directory
