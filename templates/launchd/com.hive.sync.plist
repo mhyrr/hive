@@ -8,7 +8,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>$HOME/.hive/scripts/hive-sync.sh >> $HOME/.hive/logs/hive-sync.log 2>&1</string>
+        <string>$HOME/.hive/scripts/hive-sync.sh >> $HOME/.hive/logs/hive-sync.log 2>&amp;1</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

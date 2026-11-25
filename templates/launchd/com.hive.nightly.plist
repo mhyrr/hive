@@ -8,15 +8,34 @@
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>$HOME/.hive/scripts/nightly.sh >> $HOME/.hive/logs/nightly.log 2>&1</string>
+        <string>$HOME/.hive/scripts/nightly.sh >> $HOME/.hive/logs/nightly.log 2>&amp;1</string>
     </array>
+    <!-- 02:00 is the real run; the morning firings are retries for nights the
+         laptop slept on battery through the 2am attempt. nightly.sh exits
+         immediately when runs/{DATE}/.complete exists, so at most one firing
+         per day does work. launchd never starts a second instance of the same
+         label while one is running. -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>2</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>2</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>12</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+    </array>
     <key>StandardErrorPath</key>
     <string>/tmp/hive-nightly-err.log</string>
 </dict>
