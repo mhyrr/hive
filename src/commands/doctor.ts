@@ -21,6 +21,7 @@ import {
 } from "../lib/cursor-wire";
 import { LOAD_IDENTITY_HOOK } from "../lib/identity-hook-template";
 import { assembleIdentity } from "../lib/identity";
+import { checkInstallDrift } from "../lib/install-drift";
 import {
   auditProjectInstructionFiles,
   formatBytes,
@@ -968,6 +969,13 @@ export async function doctorCommand(args: string[]): Promise<void> {
     { heading: "Cursor", checks: await checkCursor() },
     { heading: "Models", checks: checkModels() },
     { heading: "Scheduler", checks: checkScheduler() },
+    {
+      heading: "Install drift",
+      checks: checkInstallDrift({
+        scripts: join(getHivePaths().home, "scripts"),
+        launchd: join(process.env.HOME || "", "Library", "LaunchAgents"),
+      }),
+    },
     { heading: "Memory schema", checks: await checkMemorySchema() },
     { heading: "Registered CLAUDE.md", checks: await checkStaleClaudeMd() },
     { heading: "Instruction files", checks: await checkInstructionFiles() },
